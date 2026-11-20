@@ -57,7 +57,7 @@ class PostgreSQLGeneratedIdTests(unittest.TestCase):
     def test_returns_generated_identity_without_committing(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             connection.execute(
                 "CREATE TEMP TABLE insert_probe "

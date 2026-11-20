@@ -652,7 +652,7 @@ class FixedAssetPostgreSQLDepreciationIntegrationTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         connection = connect_postgres(
-            __import__("os").environ["NEXUS_TEST_POSTGRES_DSN"]
+            __import__("os").environ["NEXUS_TEST_POSTGRES_DSN"], schema="public"
         )
         asset = {
             "id": 71,

@@ -326,6 +326,167 @@ def seed_egypt_2026(conn):
     return rule_id
 
 
+def _tier_rows_signature(rows):
+    return tuple(
+        (
+            None if row["income_max"] in (None, "") else _d(row["income_max"]),
+            _d(row["lower_bound"]),
+            None if row["upper_bound"] in (None, "") else _d(row["upper_bound"]),
+            _d(row["rate"]),
+        )
+        for row in rows
+    )
+
+
+def _tier_list_signature(tiers):
+    return tuple(
+        (
+            None if income_max is None else _d(income_max),
+            _d(lower),
+            None if upper is None else _d(upper),
+            _d(rate),
+        )
+        for income_max, bands in tiers
+        for lower, upper, rate in bands
+    )
+
+
+def upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(conn):
+    """Upgrade only the untouched legacy preset; recalculate automatic draft lines only."""
+    rule = _execute(conn, """
+        SELECT * FROM payroll_rule_sets
+        WHERE country_code='EG' AND category_code='local'
+          AND effective_from='2026-01-01'
+        ORDER BY id DESC LIMIT 1
+    """).fetchone()
+    if not rule:
+        return {"tier_status": "missing", "draft_lines_recalculated": 0,
+                "posted_lines_review_required": 0}
+
+    baseline_metadata = (
+        _d(rule["personal_exemption_annual"]) == Decimal("20000")
+        and _d(rule["taxable_rounding_unit"]) == Decimal("10")
+        and _d(rule["insurance_floor"]) == Decimal("2700")
+        and _d(rule["insurance_ceiling"]) == Decimal("16700")
+        and _d(rule["employee_insurance_rate"]) == Decimal("11")
+        and _d(rule["employer_insurance_rate"]) == Decimal("18.75")
+        and str(rule["notes"] or "") == "إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد"
+    )
+    if not baseline_metadata:
+        return {"tier_status": "custom", "draft_lines_recalculated": 0,
+                "posted_lines_review_required": 0}
+
+    canonical = [
+        ("600000", [("0","40000","0"),("40000","55000","10"),("55000","70000","15"),
+                    ("70000","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("700000", [("0","55000","10"),("55000","70000","15"),("70000","200000","20"),
+                    ("200000","400000","22.5"),("400000",None,"25")]),
+        ("800000", [("0","70000","15"),("70000","200000","20"),("200000","400000","22.5"),
+                    ("400000",None,"25")]),
+        ("900000", [("0","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("1200000", [("0","400000","22.5"),("400000",None,"25")]),
+        (None, [("0","1200000","25"),("1200000",None,"27.5")]),
+    ]
+    legacy = canonical[:-1] + [(None, [("0",None,"27.5")])]
+    current_rows = _execute(conn, """
+        SELECT income_max,lower_bound,upper_bound,rate
+        FROM payroll_tax_tier_brackets WHERE rule_set_id=?
+        ORDER BY CASE WHEN income_max IS NULL THEN 1 ELSE 0 END,
+          CAST(income_max AS NUMERIC),CAST(lower_bound AS NUMERIC),id
+    """, (rule["id"],)).fetchall()
+    current_signature = _tier_rows_signature(current_rows)
+    if current_signature == _tier_list_signature(canonical):
+        tier_status = "already_current"
+    elif current_signature == _tier_list_signature(legacy):
+        _execute(conn, "DELETE FROM payroll_tax_tier_brackets WHERE rule_set_id=?", (rule["id"],))
+        _executemany(conn, """
+            INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+            VALUES(?,?,?,?,?)
+        """, [
+            (rule["id"], income_max, lower, upper, rate)
+            for income_max, bands in canonical for lower, upper, rate in bands
+        ])
+        tier_status = "updated"
+    else:
+        return {"tier_status": "custom", "draft_lines_recalculated": 0,
+                "posted_lines_review_required": 0}
+
+    posted = _execute(conn, """
+        SELECT COUNT(*) AS row_count
+        FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
+        WHERE r.status='posted' AND r.period>='2026-01'
+          AND l.rule_set_id=?
+    """, (rule["id"],)).fetchone()
+    draft_rows = _execute(conn, """
+        SELECT l.id,l.gross_pay,l.absence_deduction,l.stamp_duty,
+               l.advance_deduction,l.other_deductions,l.penalty_deduction,
+               l.insured_wage,r.period,e.legal_category,e.insurance_enabled
+        FROM payroll_lines l
+        JOIN payroll_runs r ON r.id=l.run_id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE r.status='draft' AND r.period>='2026-01'
+          AND l.rule_set_id=? AND e.legal_category='local'
+        ORDER BY r.period,l.id
+    """, (rule["id"],)).fetchall()
+    recalculated = 0
+    for line in draft_rows:
+        employee = {
+            "legal_category": line["legal_category"],
+            "insurance_enabled": line["insurance_enabled"],
+            "insured_wage": line["insured_wage"],
+        }
+        gross = _m(line["gross_pay"])
+        absence = _m(line["absence_deduction"])
+        automatic = calculate_payroll_deductions(
+            conn, employee, gross, line["period"],
+            taxable_gross_monthly=max(Decimal("0"), gross - absence),
+        )
+        if automatic is None:
+            raise ValueError("تعذر إعادة حساب مسودة المرتبات: لا توجد قاعدة ضريبية سارية.")
+        if automatic["rule_set_id"] != rule["id"]:
+            continue
+        stamp = _m(line["stamp_duty"])
+        advance = _m(line["advance_deduction"])
+        other = _m(line["other_deductions"])
+        penalty = _m(line["penalty_deduction"])
+        employer_insurance = automatic["employer_insurance"]
+        employee_insurance = automatic["employee_insurance"]
+        tax = automatic["tax"]
+        total_entitlements = _m(gross + employer_insurance)
+        total_deductions = _m(
+            employer_insurance + employee_insurance + tax + stamp
+            + advance + other + absence + penalty
+        )
+        net_pay = _m(total_entitlements - total_deductions)
+        _execute(conn, """
+            UPDATE payroll_lines SET taxable_income_tax=?,employee_insurance=?,
+                employer_insurance=?,rule_set_id=?,taxable_annual=?,insured_wage=?,
+                total_entitlements=?,total_deductions=?,net_pay=?
+            WHERE id=?
+        """, (
+            str(tax), str(employee_insurance), str(employer_insurance),
+            automatic["rule_set_id"], str(automatic["taxable_annual"]),
+            str(automatic["insured_wage"]), str(total_entitlements),
+            str(total_deductions), str(net_pay), line["id"],
+        ))
+        if table_exists(conn, "payroll_line_items"):
+            for item_name, amount in (
+                ("ضريبة المرتبات", tax),
+                ("حصة الموظف في التأمينات", employee_insurance),
+                ("حصة الشركة في التأمينات", employer_insurance),
+            ):
+                _execute(conn, """UPDATE payroll_line_items SET amount=?
+                    WHERE payroll_line_id=? AND source_type='payroll_compliance' AND item_name=?""",
+                    (str(amount), line["id"], item_name))
+        recalculated += 1
+    return {
+        "tier_status": tier_status,
+        "draft_lines_recalculated": recalculated,
+        "posted_lines_review_required": int(posted["row_count"] or 0),
+    }
+
+
+
 def _authorized(fn):
     @wraps(fn)
     def wrapped(*args, **kwargs):
@@ -353,6 +514,23 @@ def rules():
                 _audit(conn, "payroll_rule_preset_loaded", "EG/local/2026-01-01 id=" + str(rule_id))
                 conn.commit()
                 flash("تم تحميل إعداد مصر 2026 للفئة local. راجع القواعد والشرائح قبل تشغيل أول مسير.", "success")
+            elif action == "upgrade_egypt_2026_tiers":
+                if session.get("role") != "admin":
+                    raise ValueError("تحديث بيانات شرائح مصر 2026 متاح لمدير النظام فقط.")
+                begin_write_transaction(conn)
+                upgrade_result = upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(conn)
+                if upgrade_result["tier_status"] in {"updated", "already_current"}:
+                    _audit(conn, "egypt_2026_payroll_tiers_reconciled",
+                           "status=" + upgrade_result["tier_status"]
+                           + " draft_lines=" + str(upgrade_result["draft_lines_recalculated"])
+                           + " posted_lines_review=" + str(upgrade_result["posted_lines_review_required"]))
+                    conn.commit()
+                    flash("تمت مراجعة شرائح مصر 2026 وإعادة حساب " + str(upgrade_result["draft_lines_recalculated"])
+                          + " سطرًا في المسيرات غير المرحلة. المسيرات المرحلة التي تحتاج مراجعة: "
+                          + str(upgrade_result["posted_lines_review_required"]) + ".", "success")
+                else:
+                    conn.rollback()
+                    flash("لم يتم تغيير أي بيانات: الإعداد غير موجود أو يحتوي على تعديلات مخصصة تحتاج مراجعة يدوية.", "warning")
             elif action == "create_rule":
                 country = request.form.get("country_code", "").strip().upper()
                 category = request.form.get("category_code", "").strip().lower()

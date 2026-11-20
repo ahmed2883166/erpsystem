@@ -164,7 +164,7 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
         from db_compat import insert_and_get_id
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         schema = "nexus_identity_probe_" + uuid.uuid4().hex
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
@@ -192,7 +192,7 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
         import uuid
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         schema = "nexus_script_probe_" + uuid.uuid4().hex
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
@@ -226,7 +226,7 @@ class PostgreSQLQmarkExecutionTests(unittest.TestCase):
     def test_qmark_parameters_execute_on_postgresql(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             row = execute_compat(
                 connection,

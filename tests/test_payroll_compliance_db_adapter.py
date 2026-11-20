@@ -41,7 +41,7 @@ class PayrollCompliancePostgreSQLAdapterTests(unittest.TestCase):
     def test_qmark_execution_helpers_work_on_postgresql(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN, application_name="NEXUS payroll adapter test")
+        connection = connect_postgres(POSTGRES_DSN, application_name="NEXUS payroll adapter test", schema="public")
         try:
             _execute(
                 connection,
@@ -81,7 +81,7 @@ class PayrollCompliancePostgreSQLSchemaInitializationTests(unittest.TestCase):
 
         schema = "nexus_payroll_rules_" + uuid.uuid4().hex
         admin = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS payroll schema initialization test"
+            POSTGRES_DSN, application_name="NEXUS payroll schema initialization test", schema="public"
         )
         original_db = payroll_compliance._db
         try:
@@ -90,7 +90,7 @@ class PayrollCompliancePostgreSQLSchemaInitializationTests(unittest.TestCase):
 
             def open_schema_connection():
                 connection = connect_postgres(
-                    POSTGRES_DSN, application_name="NEXUS payroll schema initialization test"
+                    POSTGRES_DSN, application_name="NEXUS payroll schema initialization test", schema="public"
                 )
                 connection.execute(f'SET search_path TO "{schema}"')
                 return connection

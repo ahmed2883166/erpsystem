@@ -38,7 +38,7 @@ class BankingMetadataPostgreSQLTests(unittest.TestCase):
     def test_bank_helpers_read_metadata_in_rolled_back_schema(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         schema = "nexus_banking_meta_" + uuid.uuid4().hex
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')
@@ -59,7 +59,7 @@ class BankingMetadataPostgreSQLTests(unittest.TestCase):
     def test_bank_statement_match_updates_reconciled_state_exactly_once(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             connection.execute("""
                 CREATE TEMP TABLE bank_transactions (
@@ -121,7 +121,7 @@ class BankingMetadataPostgreSQLTests(unittest.TestCase):
     def test_postgresql_transfer_reconciliation_waits_for_both_bank_accounts(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             connection.execute("""
                 CREATE TEMP TABLE bank_transactions (

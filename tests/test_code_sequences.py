@@ -46,7 +46,7 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
 
         cls.connect_postgres = staticmethod(connect_postgres)
         cls.schema = "nexus_sequences_" + uuid.uuid4().hex
-        connection = connect_postgres(cls.dsn)
+        connection = connect_postgres(cls.dsn, schema="public")
         try:
             connection.execute(f'CREATE SCHEMA "{cls.schema}"')
             connection.execute(f'SET search_path TO "{cls.schema}"')
@@ -69,7 +69,7 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
     def tearDownClass(cls):
         if not getattr(cls, "dsn", ""):
             return
-        connection = cls.connect_postgres(cls.dsn)
+        connection = cls.connect_postgres(cls.dsn, schema="public")
         try:
             connection.execute(f'DROP SCHEMA IF EXISTS "{cls.schema}" CASCADE')
             connection.commit()
@@ -79,7 +79,7 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
     def test_sequence_continues_after_legacy_codes_and_rolls_back(self):
         from code_sequences import next_code
 
-        connection = self.connect_postgres(self.dsn)
+        connection = self.connect_postgres(self.dsn, schema="public")
         try:
             connection.execute(f'SET search_path TO "{self.schema}"')
             code = next_code(connection, "customer", "CUS", "customers", "code")
@@ -100,7 +100,7 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
             connection.close()
 
     def test_legacy_sequence_handles_values_above_signed_32_bit_range(self):
-        connection = self.connect_postgres(self.dsn)
+        connection = self.connect_postgres(self.dsn, schema="public")
         try:
             connection.execute(f'SET search_path TO "{self.schema}"')
             connection.execute("INSERT INTO customers(code) VALUES(%s)", ("CUS-3000000000",))
@@ -126,7 +126,7 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
         barrier = Barrier(2)
 
         def reserve_and_insert():
-            connection = self.connect_postgres(self.dsn)
+            connection = self.connect_postgres(self.dsn, schema="public")
             try:
                 connection.execute(f'SET search_path TO "{self.schema}"')
                 barrier.wait(timeout=10)

@@ -33,7 +33,7 @@ class PurchasingSalesMetadataPostgreSQLTests(unittest.TestCase):
     def test_both_modules_read_metadata_in_a_rolled_back_postgresql_schema(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         schema = "nexus_sales_purchase_meta_" + uuid.uuid4().hex
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')

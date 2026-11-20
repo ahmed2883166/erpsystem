@@ -52,7 +52,7 @@ class WorkforcePostgreSQLDialectIntegrationTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         connection = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS workforce dialect integration test"
+            POSTGRES_DSN, application_name="NEXUS workforce dialect integration test", schema="public"
         )
         try:
             connection.execute("""
@@ -91,7 +91,7 @@ class WorkforcePostgreSQLSchemaInitializationTests(unittest.TestCase):
 
         schema = "nexus_workforce_" + uuid.uuid4().hex
         admin = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS workforce schema initialization test"
+            POSTGRES_DSN, application_name="NEXUS workforce schema initialization test", schema="public"
         )
         original_db = workforce._db
         try:
@@ -100,7 +100,7 @@ class WorkforcePostgreSQLSchemaInitializationTests(unittest.TestCase):
 
             def open_schema_connection():
                 connection = connect_postgres(
-                    POSTGRES_DSN, application_name="NEXUS workforce schema initialization test"
+                    POSTGRES_DSN, application_name="NEXUS workforce schema initialization test", schema="public"
                 )
                 connection.execute(f'SET search_path TO "{schema}"')
                 return connection

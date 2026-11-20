@@ -425,7 +425,7 @@ class PostgreSQLDecimalAggregateIntegrationTests(unittest.TestCase):
     def setUp(self):
         import uuid
         from postgres_database import connect_postgres
-        self.connection = connect_postgres(POSTGRES_DSN)
+        self.connection = connect_postgres(POSTGRES_DSN, schema="public")
         self.schema = "nexus_decimal_" + uuid.uuid4().hex[:12]
         self.connection.execute('CREATE SCHEMA "' + self.schema + '"')
         self.connection.execute('SET LOCAL search_path TO "' + self.schema + '"')

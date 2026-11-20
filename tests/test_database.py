@@ -80,7 +80,7 @@ class PostgreSQLPaginationTests(unittest.TestCase):
     def test_fetch_page_supports_dict_rows_and_postgres_placeholders(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         try:
             connection.execute(
                 "CREATE TEMP TABLE pagination_probe (id BIGINT PRIMARY KEY, group_id BIGINT NOT NULL)"

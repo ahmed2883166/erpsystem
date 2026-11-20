@@ -172,7 +172,7 @@ class PostgreSQLStockCoreTests(unittest.TestCase):
         import uuid
         from postgres_database import connect_postgres
 
-        self.connection = connect_postgres(POSTGRES_DSN)
+        self.connection = connect_postgres(POSTGRES_DSN, schema="public")
         self.schema = "nexus_stock_test_" + uuid.uuid4().hex
         self.connection.execute(f'CREATE SCHEMA "{self.schema}"')
         self.connection.execute(f'SET LOCAL search_path TO "{self.schema}"')

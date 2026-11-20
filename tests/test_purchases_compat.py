@@ -175,7 +175,7 @@ class PostgreSQLPurchaseReceiptIntegrationTests(unittest.TestCase):
     def setUp(self):
         from postgres_database import connect_postgres
 
-        self.connection = connect_postgres(POSTGRES_DSN)
+        self.connection = connect_postgres(POSTGRES_DSN, schema="public")
         self.connection.execute(
             "CREATE TEMP TABLE purchase_orders ("
             "id BIGINT PRIMARY KEY, supplier_id BIGINT NOT NULL, status TEXT NOT NULL)"

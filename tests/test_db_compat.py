@@ -431,7 +431,7 @@ class PostgreSQLSchemaCompatibilityTests(unittest.TestCase):
     def test_schema_helpers_use_current_search_path(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN)
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
         schema = "nexus_compat_" + uuid.uuid4().hex
         try:
             connection.execute(f'CREATE SCHEMA "{schema}"')

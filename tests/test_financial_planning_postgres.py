@@ -17,13 +17,13 @@ class FinancialPlanningPostgreSQLSchemaTests(unittest.TestCase):
 
         schema = "nexus_financial_planning_" + uuid.uuid4().hex
         admin = connect_postgres(
-            POSTGRES_DSN, application_name="NEXUS financial planning schema test", schema="public"
+            POSTGRES_DSN, application_name="NEXUS financial planning schema test", schema="public", schema="public"
         )
         try:
             admin.execute(f'CREATE SCHEMA "{schema}"')
             admin.commit()
             connection = connect_postgres(
-                POSTGRES_DSN, application_name="NEXUS financial planning schema test"
+                POSTGRES_DSN, application_name="NEXUS financial planning schema test", schema="public"
             )
             connection.execute(f'SET search_path TO "{schema}"')
             connection.execute("""

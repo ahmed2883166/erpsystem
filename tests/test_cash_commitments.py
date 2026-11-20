@@ -501,7 +501,7 @@ class CashCommitmentsPostgreSQLSchemaTests(unittest.TestCase):
         from postgres_database import connect_postgres
 
         self.schema = "nexus_cash_commitments_" + uuid.uuid4().hex[:12]
-        self.conn = connect_postgres(POSTGRES_DSN)
+        self.conn = connect_postgres(POSTGRES_DSN, schema="public")
         self.conn.execute(f'CREATE SCHEMA "{self.schema}"')
         # Session-level search_path survives commits made by the initializer.
         self.conn.execute(f'SET search_path TO "{self.schema}"')

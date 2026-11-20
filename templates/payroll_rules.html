@@ -12,6 +12,12 @@
 <form method="post"><input type="hidden" name="action" value="seed_egypt_2026"><button type="submit">تحميل إعداد مصر 2026</button></form>
 {% else %}
 <p class="success">إعداد مصر 2026 مسجل بالفعل. تم إخفاء إعادة التحميل لحماية أي تعديلات أو شرائح محفوظة.</p>
+{% if session.get('role') == 'admin' %}
+<form method="post" onsubmit="return confirm('سيتم تحديث الشرائح القديمة المطابقة للإعداد المبدئي فقط، وإعادة حساب المسيرات غير المرحلة المرتبطة بها. لن يتم تعديل المسيرات المرحلة أو أي قواعد مخصصة. هل تريد المتابعة؟')">
+  <input type="hidden" name="action" value="upgrade_egypt_2026_tiers">
+  <button type="submit" class="secondary">تحديث شرائح مصر 2026 وإعادة حساب المسودات</button>
+</form>
+{% endif %}
 {% endif %}
 <small>هذا الإعداد مبدئي ولا يغطي جميع الاستثناءات والتسويات السنوية. لا تعتمد عليه قبل المراجعة القانونية والمحاسبية.</small></section>
 {% endif %}

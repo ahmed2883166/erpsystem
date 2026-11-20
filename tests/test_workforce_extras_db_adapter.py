@@ -39,11 +39,11 @@ class WorkforceExtrasPostgreSQLAdapterTests(unittest.TestCase):
 
         schema = "nexus_workforce_extras_" + uuid.uuid4().hex
         original_db = workforce_extras._db
-        admin = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras schema test")
+        admin = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras schema test", schema="public")
         try:
             admin.execute(f'CREATE SCHEMA "{schema}"')
             admin.commit()
-            connection = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras schema test")
+            connection = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras schema test", schema="public")
             connection.execute(f'SET search_path TO "{schema}"')
             connection.execute("""
                 CREATE TABLE employees (
@@ -90,7 +90,7 @@ class WorkforceExtrasPostgreSQLAdapterTests(unittest.TestCase):
             connection.close()
 
             def open_schema_connection():
-                conn = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras schema test")
+                conn = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras schema test", schema="public")
                 conn.execute(f'SET search_path TO "{schema}"')
                 return conn
 
@@ -130,7 +130,7 @@ class WorkforceExtrasPostgreSQLAdapterTests(unittest.TestCase):
     def test_qmark_queries_and_write_transaction(self):
         from postgres_database import connect_postgres
 
-        connection = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras adapter test")
+        connection = connect_postgres(POSTGRES_DSN, application_name="NEXUS workforce extras adapter test", schema="public")
         try:
             self.assertTrue(begin_write_transaction(connection))
             _execute(

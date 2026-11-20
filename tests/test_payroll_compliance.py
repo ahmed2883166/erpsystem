@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 from decimal import Decimal
 
-from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules, _lock_posted_payroll_period)
+from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules, _lock_posted_payroll_period, upgrade_egypt_2026_tax_tiers_and_recalculate_drafts)
 
 
 class PayrollComplianceTests(unittest.TestCase):
@@ -170,6 +170,64 @@ class PayrollComplianceTests(unittest.TestCase):
                 )
                 self.assertEqual(result["taxable_annual"], expected_base)
                 self.assertEqual(result["tax"], expected_tax)
+
+    def test_egypt_2026_legacy_production_tiers_upgrade_and_only_draft_lines_recalculate(self):
+        rule_id = seed_egypt_2026(self.conn)
+        self.conn.execute("""DELETE FROM payroll_tax_tier_brackets
+            WHERE rule_set_id=? AND income_max IS NULL""", (rule_id,))
+        self.conn.execute("""INSERT INTO payroll_tax_tier_brackets(
+            rule_set_id,income_max,lower_bound,upper_bound,rate
+        ) VALUES(?,NULL,'0',NULL,'27.5')""", (rule_id,))
+        self.conn.executescript("""
+            CREATE TABLE employees(
+                id INTEGER PRIMARY KEY,legal_category TEXT,insurance_enabled INTEGER
+            );
+            CREATE TABLE payroll_runs(id INTEGER PRIMARY KEY,period TEXT,status TEXT);
+            CREATE TABLE payroll_lines(
+                id INTEGER PRIMARY KEY,run_id INTEGER,employee_id INTEGER,
+                gross_pay TEXT,absence_deduction TEXT,stamp_duty TEXT,
+                advance_deduction TEXT,other_deductions TEXT,penalty_deduction TEXT,
+                employer_insurance TEXT,employee_insurance TEXT,taxable_income_tax TEXT,
+                total_entitlements TEXT,total_deductions TEXT,net_pay TEXT,
+                rule_set_id INTEGER,taxable_annual TEXT,insured_wage TEXT
+            );
+            INSERT INTO employees VALUES(1,'local',0);
+            INSERT INTO payroll_runs VALUES(1,'2026-11','draft');
+            INSERT INTO payroll_runs VALUES(2,'2026-11','posted');
+            INSERT INTO payroll_lines VALUES
+                (1,1,1,'103000','0','0','0','0','0','0','0','27866.67',
+                 '103000','27866.67','75133.33',1,'1216000','0'),
+                (2,2,1,'103000','0','0','0','0','0','0','0','27866.67',
+                 '103000','27866.67','75133.33',1,'1216000','0');
+        """)
+        result = upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(self.conn)
+        self.assertEqual(result["tier_status"], "updated")
+        self.assertEqual(result["draft_lines_recalculated"], 1)
+        self.assertEqual(result["posted_lines_review_required"], 1)
+        draft = self.conn.execute(
+            "SELECT taxable_income_tax,net_pay FROM payroll_lines WHERE id=1"
+        ).fetchone()
+        posted = self.conn.execute(
+            "SELECT taxable_income_tax,net_pay FROM payroll_lines WHERE id=2"
+        ).fetchone()
+        self.assertEqual(draft["taxable_income_tax"], "25366.67")
+        self.assertEqual(draft["net_pay"], "77633.33")
+        self.assertEqual(posted["taxable_income_tax"], "27866.67")
+        self.assertEqual(posted["net_pay"], "75133.33")
+        second = upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(self.conn)
+        self.assertEqual(second["tier_status"], "already_current")
+
+    def test_egypt_2026_tax_upgrade_does_not_overwrite_custom_brackets(self):
+        rule_id = seed_egypt_2026(self.conn)
+        self.conn.execute("""UPDATE payroll_tax_tier_brackets SET rate='26'
+            WHERE rule_set_id=? AND income_max='1200000' AND lower_bound='400000'""", (rule_id,))
+        before = self.conn.execute("""SELECT rate FROM payroll_tax_tier_brackets
+            WHERE rule_set_id=? AND income_max='1200000' AND lower_bound='400000'""", (rule_id,)).fetchone()[0]
+        result = upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(self.conn)
+        after = self.conn.execute("""SELECT rate FROM payroll_tax_tier_brackets
+            WHERE rule_set_id=? AND income_max='1200000' AND lower_bound='400000'""", (rule_id,)).fetchone()[0]
+        self.assertEqual(result["tier_status"], "custom")
+        self.assertEqual(before, after)
 
     def test_no_effective_rule_uses_manual_fallback(self):
         self.add_rule()
