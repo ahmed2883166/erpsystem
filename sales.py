@@ -1144,7 +1144,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
                 "توجد مرتجعات قديمة غير مرتبطة بطبقة FIFO الأصلية بشكل فريد. يلزم مراجعة يدوية قبل إصدار مرتجع إضافي."
             )
         lot_remaining = []
-        for allocation in original_allocations:
+        for allocation in reversed(original_allocations):
             allocated_qty = Decimal(allocation["quantity"])
             original_lot_cost = Decimal(allocation["cost_total"])
             allocation_id = allocation["id"]
