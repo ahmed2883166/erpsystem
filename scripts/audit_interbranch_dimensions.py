@@ -38,7 +38,8 @@ def audit_interbranch_dimensions(database_path):
         entry_cols = _columns(conn, "journal_entries")
         needed = {
             "stock_movements": {"id", "movement_no", "movement_type", "movement_date",
-                                "source_warehouse_id", "target_warehouse_id"},
+                                "source_warehouse_id", "target_warehouse_id", "journal_entry_id",
+                                "accounting_status"},
             "stock_warehouses": {"id", "code", "name_ar", "branch_id"},
             "journal_entries": {"id", "status"},
             "journal_lines": {"entry_id", "account_id", "debit", "credit", "branch_id",
@@ -124,13 +125,9 @@ def audit_interbranch_dimensions(database_path):
 
             if movement["source_branch_id"] is None or movement["target_branch_id"] is None:
                 issues.append("warehouse_missing_current_branch_mapping")
-            elif movement["source_branch_id"] != movement["target_branch_id"]:
-                clearing_lines = [
-                    line for line in lines
-                    if line["account_code"] == "1185"
-                ]
-                if not clearing_lines:
-                    issues.append("interbranch_clearing_lines_not_found_by_default_account_1185")
+            # The inter-branch clearing account is activity-configurable. This
+            # standalone audit deliberately does not guess its code; validation
+            # belongs in the configured account-role audit.
 
             # Deduplicate issue codes while preserving order.
             issues = list(dict.fromkeys(issues))
