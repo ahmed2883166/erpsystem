@@ -99,6 +99,19 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_legacy_sequence_handles_values_above_signed_32_bit_range(self):
+        connection = self.connect_postgres(self.dsn)
+        try:
+            connection.execute(f'SET search_path TO "{self.schema}"')
+            connection.execute("INSERT INTO customers(code) VALUES(%s)", ("CUS-3000000000",))
+            self.assertEqual(
+                next_code(connection, "large_customer", "CUS", "customers", "code"),
+                "CUS-3000000001",
+            )
+            connection.rollback()
+        finally:
+            connection.close()
+
     def test_concurrent_first_reservations_are_unique(self):
         from concurrent.futures import ThreadPoolExecutor
         from threading import Barrier

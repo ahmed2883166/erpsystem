@@ -143,6 +143,33 @@ class PayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["tax"], Decimal("12353.13"))
         self.assertEqual(result["insured_wage"], Decimal("16700.00"))
 
+    def test_egypt_tax_tier_selection_at_every_annual_income_boundary(self):
+        seed_egypt_2026(self.conn)
+        self.conn.execute("""UPDATE payroll_rule_sets
+            SET personal_exemption_annual='0', insurance_floor='0', insurance_ceiling='0',
+                employee_insurance_rate='0', employer_insurance_rate='0'
+            WHERE country_code='EG' AND category_code='local'""")
+        self.employee["insurance_enabled"] = 0
+        cases = [
+            ("50000.00", Decimal("600000.00"), Decimal("10395.83")),
+            ("50001.67", Decimal("600020.00"), Decimal("10729.58")),
+            ("58333.33", Decimal("699990.00"), Decimal("12812.29")),
+            ("58335.00", Decimal("700020.00"), Decimal("13042.08")),
+            ("66666.66", Decimal("799990.00"), Decimal("15124.79")),
+            ("66668.34", Decimal("800020.00"), Decimal("15417.08")),
+            ("75000.00", Decimal("900000.00"), Decimal("17500.00")),
+            ("75001.67", Decimal("900020.00"), Decimal("17917.08")),
+            ("100000.00", Decimal("1200000.00"), Decimal("24166.67")),
+            ("100001.67", Decimal("1200020.00"), Decimal("25000.46")),
+        ]
+        for monthly_gross, expected_base, expected_tax in cases:
+            with self.subTest(monthly_gross=monthly_gross):
+                result = calculate_payroll_deductions(
+                    self.conn, self.employee, monthly_gross, "2026-11"
+                )
+                self.assertEqual(result["taxable_annual"], expected_base)
+                self.assertEqual(result["tax"], expected_tax)
+
     def test_no_effective_rule_uses_manual_fallback(self):
         self.add_rule()
         self.assertIsNone(calculate_payroll_deductions(self.conn, self.employee, 10000, "2025-12"))

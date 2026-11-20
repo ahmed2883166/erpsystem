@@ -12,7 +12,7 @@ _PREFIX = re.compile(r"[A-Z][A-Z0-9]*\Z")
 def _next_legacy_number(connection, table, column, prefix):
     row = execute_compat(
         connection,
-        f"SELECT MAX(CAST(SUBSTR({column}, ?) AS INTEGER)) AS last_no "
+        f"SELECT MAX(CAST(SUBSTR({column}, ?) AS BIGINT)) AS last_no "
         f"FROM {table} WHERE {column} LIKE ?",
         (len(prefix) + 2, prefix + "-%"),
     ).fetchone()
