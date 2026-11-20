@@ -395,6 +395,18 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                 "Target schema baseline fingerprint is missing or invalid; "
                 "verification is blocked."
             )
+        if (
+            not isinstance(expected_baseline_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_baseline_sha256)
+        ):
+            raise ValueError(
+                "The reviewed baseline SHA-256 is required; verification is blocked."
+            )
+        if baseline_sha256.strip() != expected_baseline_sha256:
+            raise ValueError(
+                "Target PostgreSQL schema was installed from a different baseline; "
+                "verification is blocked."
+            )
         target_tables = {
             row["table_name"] for row in dst.execute(
                 "SELECT table_name FROM information_schema.tables "

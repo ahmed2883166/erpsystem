@@ -572,7 +572,8 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self._create_target()
         source_path = self._source()
         result = copy_database(
-            source_path, self.dsn, self.schema, batch_size=2, apply=True
+            source_path, self.dsn, self.schema, batch_size=2, apply=True,
+            expected_baseline_sha256="a" * 64,
         )
         self.assertTrue(result["committed"])
         self.assertEqual(result["baseline_sha256"], "a" * 64)
@@ -580,7 +581,9 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self.assertEqual(result["secondary_indexes_rebuilt"], 1)
         self.assertEqual(result["dashboard_triggers_rebuilt"], 15)
         self.assertEqual(result["dashboard_version_after_copy"], 1)
-        verification = verify_copy(source_path, self.dsn, self.schema)
+        verification = verify_copy(
+            source_path, self.dsn, self.schema, expected_baseline_sha256="a" * 64
+        )
         self.assertEqual(verification["baseline_sha256"], "a" * 64)
         self.assertTrue(verification["passed"], verification["issues"])
         self.assertEqual(verification["source_table_count"], 7)
@@ -634,10 +637,13 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         source_path = self._source()
         with self.assertRaisesRegex(ValueError, "no NEXUS baseline installation marker"):
             copy_database(
-                source_path, self.dsn, self.schema, batch_size=2, apply=True
+                source_path, self.dsn, self.schema, batch_size=2, apply=True,
+                expected_baseline_sha256="a" * 64,
             )
         with self.assertRaisesRegex(ValueError, "no NEXUS baseline installation marker"):
-            verify_copy(source_path, self.dsn, self.schema)
+            verify_copy(
+                source_path, self.dsn, self.schema, expected_baseline_sha256="a" * 64
+            )
         with psycopg.connect(self.dsn) as conn:
             account_count = conn.execute(
                 f'SELECT COUNT(*) FROM "{self.schema}"."accounts"'
@@ -650,7 +656,7 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         with self.assertRaises(Exception):
             copy_database(
                 self._source(invalid_amount=True), self.dsn, self.schema,
-                batch_size=1, apply=True,
+                batch_size=1, apply=True, expected_baseline_sha256="a" * 64,
             )
         with psycopg.connect(self.dsn) as conn:
             account_count = conn.execute(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import heapq
+import hashlib
 import json
 import os
 import re
@@ -269,7 +270,8 @@ def open_sqlite_readonly(path: str):
 
 def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
                   batch_size: int = 500, *, apply: bool = False,
-                  snapshot_manifest: str | None = None) -> dict:
+                  snapshot_manifest: str | None = None,
+                  expected_baseline_sha256: str | None = None) -> dict:
     if not apply:
         raise ValueError("Copy is disabled by default. Pass apply=True only after reviewing the isolated target.")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):
@@ -383,6 +385,18 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
             ):
                 raise ValueError(
                     "Target schema baseline fingerprint is missing or invalid; copy blocked."
+                )
+            if (
+                not isinstance(expected_baseline_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", expected_baseline_sha256)
+            ):
+                raise ValueError(
+                    "The reviewed baseline SHA-256 is required; copy blocked."
+                )
+            if baseline_sha256.strip() != expected_baseline_sha256:
+                raise ValueError(
+                    "Target PostgreSQL schema was installed from a different baseline; "
+                    "copy blocked."
                 )
 
             target_tables = {
@@ -530,14 +544,20 @@ def main(argv=None) -> int:
     parser.add_argument("--batch-size", type=int, default=500)
     parser.add_argument("--snapshot-manifest", required=True,
                         help="Manifest created for this exact immutable SQLite snapshot")
+    parser.add_argument("--baseline-sql", required=True,
+                        help="Exact reviewed baseline SQL used to install PostgreSQL schema")
     parser.add_argument("--apply", action="store_true", help="Explicitly authorize writes to the isolated empty target schema")
     args = parser.parse_args(argv)
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
     try:
+        expected_baseline_sha256 = hashlib.sha256(
+            Path(args.baseline_sql).expanduser().read_bytes()
+        ).hexdigest()
         result = copy_database(
             args.sqlite, args.postgres_dsn, args.schema, args.batch_size,
             apply=args.apply, snapshot_manifest=args.snapshot_manifest,
+            expected_baseline_sha256=expected_baseline_sha256,
         )
     except Exception as exc:
         parser.error(str(exc))

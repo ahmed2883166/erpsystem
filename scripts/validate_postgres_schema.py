@@ -262,8 +262,8 @@ def main(argv=None):
     )
     parser.add_argument(
         "--expected-review",
-        default="",
-        help="Optional generator review JSON; verify PostgreSQL object counts match it",
+        required=True,
+        help="Generator review JSON for this exact baseline; validates DDL SHA-256 and schema inventory",
     )
     args = parser.parse_args(argv)
     if not args.dsn:
