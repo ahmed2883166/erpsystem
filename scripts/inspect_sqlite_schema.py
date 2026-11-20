@@ -15,7 +15,7 @@ def _quote_identifier(value):
     return '"' + str(value).replace('"', '""') + '"'
 
 
-def _temporary_database_path(value):
+def _temporary_database_path(value, *, allow_non_temp=False):
     path = Path(value).expanduser().resolve(strict=True)
     if not path.is_file():
         raise ValueError("Database path must point to an existing file.")
@@ -29,9 +29,9 @@ def _temporary_database_path(value):
     return path
 
 
-def inspect_database(database_path, include_row_counts=False):
+def inspect_database(database_path, include_row_counts=False, *, allow_non_temp=False):
     """Return schema metadata and integrity checks; never return row values."""
-    path = _temporary_database_path(database_path)
+    path = _temporary_database_path(database_path, allow_non_temp=allow_non_temp)
     uri_path = quote(path.as_posix(), safe="/:")
     connection = sqlite3.connect(
         f"file:{uri_path}?mode=ro", uri=True, timeout=5
