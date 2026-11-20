@@ -249,7 +249,7 @@ def generate_trigger_ddl(triggers):
     return lines
 
 
-def generate_postgres_ddl(snapshot):
+def generate_postgres_ddl(snapshot, *, require_all_numeric_overrides=True):
     tables = snapshot.get("tables")
     if not isinstance(tables, list) or not tables:
         raise ValueError("Schema snapshot contains no tables.")
@@ -292,7 +292,7 @@ def generate_postgres_ddl(snapshot):
         and (table_name not in columns_by_table
         or column_name not in columns_by_table[table_name])
     )
-    if unknown_overrides:
+    if unknown_overrides and require_all_numeric_overrides:
         raise ValueError(
             "PostgreSQL type overrides reference missing schema columns: "
             + ", ".join(unknown_overrides)
