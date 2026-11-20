@@ -614,15 +614,20 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
         # A byte-for-byte copy can still preserve an operational lineage defect.
         # Legacy transfer layers without receipt_line_id cannot be safely attributed
         # to a GRNI receipt, so block migration sign-off until they are reviewed.
-        if {"stock_valuation_layers", "stock_movements"}.issubset(source_tables):
+        if ({"stock_valuation_layers", "stock_movements"}.issubset(source_tables)
+                and {"stock_valuation_layers", "stock_movements"}.issubset(target_tables)):
             required_lineage = {
                 "stock_valuation_layers": {"source_movement_id", "receipt_line_id"},
                 "stock_movements": {"id", "movement_type"},
             }
             missing_lineage = {
-                table: sorted(columns - set(source_columns.get(table, [])))
+                table: {
+                    "sqlite": sorted(columns - set(source_columns.get(table, []))),
+                    "postgres": sorted(columns - set(target_columns_by_table.get(table, []))),
+                }
                 for table, columns in required_lineage.items()
-                if columns - set(source_columns.get(table, []))
+                if (columns - set(source_columns.get(table, []))
+                    or columns - set(target_columns_by_table.get(table, [])))
             }
             if missing_lineage:
                 controls_skipped.append({
