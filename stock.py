@@ -667,11 +667,14 @@ def post_interbranch_transfer_journal(c, movement_id, movement_no, product, move
                 f"لا يمكن ترحيل التحويل بين الفروع قبل تفعيل الحساب التفصيلي {clearing_code} "
                 "(تحويلات مخزون بين الفروع) من نوع أصل."
             )
+        # Account 1185 is an asset/receivable control: the source branch
+        # records the amount due from the receiving branch (debit), while the
+        # receiving branch carries the matching payable/credit balance.
         lines.extend([
-            (clearing["id"], amount, 0, "مدين - مخزون مستلم بالفرع الوجهة",
-             {"branch_id": target_branch_id}),
-            (clearing["id"], 0, amount, "دائن - مخزون محول من الفرع المصدر",
+            (clearing["id"], amount, 0, "مدين - مستحق للفرع المصدر عن المخزون المحول",
              {"branch_id": source_branch_id}),
+            (clearing["id"], 0, amount, "دائن - مقابل المخزون المستلم من الفرع المصدر",
+             {"branch_id": target_branch_id}),
         ])
 
     entry_id = post_journal(
