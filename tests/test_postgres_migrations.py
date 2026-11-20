@@ -42,7 +42,7 @@ class PostgreSQLMigrationUnitTests(unittest.TestCase):
     def test_repository_core_migration_is_loadable_and_splits_function_body_safely(self):
         migration_dir = Path(__file__).resolve().parents[1] / "postgres_migrations"
         migrations = load_migrations(migration_dir)
-        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+        self.assertEqual([item.version for item in migrations], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
         self.assertTrue(any(
             "CREATE TABLE IF NOT EXISTS journal_posting_keys" in statement
             for statement in _split_sql_statements(migrations[11].sql)
