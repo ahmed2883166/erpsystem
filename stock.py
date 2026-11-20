@@ -646,11 +646,14 @@ def post_interbranch_transfer_journal(c, movement_id, movement_no, product, move
     source_warehouse_id = int(movement["source_warehouse_id"])
     target_warehouse_id = int(movement["target_warehouse_id"])
     product_id = int(movement["product_id"])
+    target_dimensions = {"stock_product_id": product_id, "stock_warehouse_id": target_warehouse_id}
+    source_dimensions = {"stock_product_id": product_id, "stock_warehouse_id": source_warehouse_id}
+    if target_branch_id is not None:
+        target_dimensions["branch_id"] = target_branch_id
+        source_dimensions["branch_id"] = source_branch_id
     lines = [
-        (inventory["id"], amount, 0, "إثبات قيمة المخزون في المخزن الوجهة",
-         {"stock_product_id": product_id, "stock_warehouse_id": target_warehouse_id}),
-        (inventory["id"], 0, amount, "إخراج قيمة المخزون من المخزن المصدر",
-         {"stock_product_id": product_id, "stock_warehouse_id": source_warehouse_id}),
+        (inventory["id"], amount, 0, "إثبات قيمة المخزون في المخزن الوجهة", target_dimensions),
+        (inventory["id"], 0, amount, "إخراج قيمة المخزون من المخزن المصدر", source_dimensions),
     ]
 
     if source_branch_id != target_branch_id:
