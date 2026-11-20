@@ -7,12 +7,23 @@ import uuid
 from banking import (
     _columns,
     _table_exists,
+    _bank_statement_reference_expression,
     refresh_bank_transaction_reconciled,
     save_statement_line_match,
 )
 
 
 class BankingMetadataSQLiteTests(unittest.TestCase):
+    def test_statement_reference_expression_is_portable_on_sqlite(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            self.assertEqual(
+                _bank_statement_reference_expression(connection),
+                "COALESCE(t.transaction_no, 'قيد #'||mje.id)",
+            )
+        finally:
+            connection.close()
+
     def test_bank_helpers_read_table_and_columns_from_sqlite(self):
         connection = sqlite3.connect(":memory:")
         connection.row_factory = sqlite3.Row
@@ -35,6 +46,22 @@ POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
 @unittest.skipUnless(POSTGRES_DSN, "NEXUS_TEST_POSTGRES_DSN is not configured")
 class BankingMetadataPostgreSQLTests(unittest.TestCase):
+    def test_statement_reference_expression_casts_integer_id_to_text(self):
+        from postgres_database import connect_postgres
+
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
+        try:
+            expression = _bank_statement_reference_expression(connection)
+            row = connection.execute(
+                "SELECT " + expression + " AS transaction_no "
+                "FROM (SELECT NULL::TEXT AS transaction_no) t "
+                "CROSS JOIN (SELECT 17::BIGINT AS id) mje"
+            ).fetchone()
+            self.assertEqual(row["transaction_no"], "قيد #17")
+        finally:
+            connection.rollback()
+            connection.close()
+
     def test_bank_helpers_read_metadata_in_rolled_back_schema(self):
         from postgres_database import connect_postgres
 
