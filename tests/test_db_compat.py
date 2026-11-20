@@ -211,7 +211,7 @@ class _FakePsycopgConnection:
 
     def execute(self, statement):
         self.statements.append(statement)
-        if statement.strip().upper() == "BEGIN":
+        if self.autocommit is False or statement.strip().upper() == "BEGIN":
             self.info.transaction_status = SimpleNamespace(name="INTRANS")
 
 
