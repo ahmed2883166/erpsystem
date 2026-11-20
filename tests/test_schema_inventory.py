@@ -116,6 +116,9 @@ class SQLiteSchemaInventoryTests(unittest.TestCase):
         self.assertIn("stock_valuation_layers", table_names)
         self.assertIn("payroll_runs", table_names)
         self.assertIn("opening_balance_import_refs", table_names)
+        self.assertIn("activity_profiles", table_names)
+        self.assertIn("company_activity_packs", table_names)
+        self.assertIn("company_activity_account_map", table_names)
         table_map = {table["name"]: table for table in schema["tables"]}
         journal_columns = {
             column["name"] for column in table_map["journal_lines"]["columns"]
