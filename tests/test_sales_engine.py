@@ -2893,7 +2893,7 @@ class SalesIntegrationTests(unittest.TestCase):
             self.db, invoice["invoice_id"], "2026-11-11", "مرتجع جزئي أول",
             [{"invoice_line_id": line_id, "quantity": "3"}], 1,
         )
-        self.assertEqual(first["total_cost"], Decimal("30.00"))
+        self.assertEqual(first["total_cost"], Decimal("40.00"))
         first_lots = self.db.execute(
             """SELECT lot_id,quantity FROM sales_credit_note_line_lots
                WHERE credit_note_line_id=(SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)
@@ -2901,13 +2901,14 @@ class SalesIntegrationTests(unittest.TestCase):
             (first["credit_note_id"],),
         ).fetchall()
         self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in first_lots],
-                         [(source_lots[0]["lot_id"], Decimal("3"))])
+                         [(source_lots[1]["lot_id"], Decimal("1")),
+                          (source_lots[0]["lot_id"], Decimal("2"))])
 
         second = sales.post_credit_note(
             self.db, invoice["invoice_id"], "2026-11-12", "مرتجع جزئي ثان",
             [{"invoice_line_id": line_id, "quantity": "3"}], 1,
         )
-        self.assertEqual(second["total_cost"], Decimal("40.00"))
+        self.assertEqual(second["total_cost"], Decimal("30.00"))
         second_lots = self.db.execute(
             """SELECT lot_id,quantity FROM sales_credit_note_line_lots
                WHERE credit_note_line_id=(SELECT id FROM sales_credit_note_lines WHERE credit_note_id=?)
@@ -2916,8 +2917,7 @@ class SalesIntegrationTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(
             [(row["lot_id"], Decimal(row["quantity"])) for row in second_lots],
-            [(source_lots[0]["lot_id"], Decimal("2")),
-             (source_lots[1]["lot_id"], Decimal("1"))],
+            [(source_lots[0]["lot_id"], Decimal("3"))],
         )
         self.assertEqual(first["total_cost"] + second["total_cost"], Decimal("70.00"))
         self.db.commit()
