@@ -268,7 +268,8 @@ def open_sqlite_readonly(path: str):
 
 
 def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
-                  batch_size: int = 500, *, apply: bool = False) -> dict:
+                  batch_size: int = 500, *, apply: bool = False,
+                  snapshot_manifest: str | None = None) -> dict:
     if not apply:
         raise ValueError("Copy is disabled by default. Pass apply=True only after reviewing the isolated target.")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", schema):
@@ -284,6 +285,19 @@ def copy_database(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
         from .audit_sqlite_postgres_migration import inspect_numeric_source
     else:
         from audit_sqlite_postgres_migration import inspect_numeric_source
+
+    if not snapshot_manifest:
+        raise ValueError(
+            "A verified SQLite snapshot manifest is required; copy from a frozen snapshot, "
+            "not a live company database."
+        )
+    if __package__:
+        from .snapshot_sqlite_before_postgres import verify_sqlite_snapshot
+    else:
+        from snapshot_sqlite_before_postgres import verify_sqlite_snapshot
+    snapshot_result = verify_sqlite_snapshot(sqlite_path, snapshot_manifest)
+    if not snapshot_result.get("verified"):
+        raise ValueError("SQLite snapshot verification did not pass; copy blocked.")
 
     numeric_audit = inspect_numeric_source(sqlite_path)
     if not numeric_audit.get("safe_for_numeric_migration"):
@@ -514,12 +528,17 @@ def main(argv=None) -> int:
     parser.add_argument("--postgres-dsn", default=os.environ.get("NEXUS_POSTGRES_DSN"))
     parser.add_argument("--schema", default="nexus")
     parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--snapshot-manifest", required=True,
+                        help="Manifest created for this exact immutable SQLite snapshot")
     parser.add_argument("--apply", action="store_true", help="Explicitly authorize writes to the isolated empty target schema")
     args = parser.parse_args(argv)
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
     try:
-        result = copy_database(args.sqlite, args.postgres_dsn, args.schema, args.batch_size, apply=args.apply)
+        result = copy_database(
+            args.sqlite, args.postgres_dsn, args.schema, args.batch_size,
+            apply=args.apply, snapshot_manifest=args.snapshot_manifest,
+        )
     except Exception as exc:
         parser.error(str(exc))
     print(json.dumps(result, ensure_ascii=False, indent=2))

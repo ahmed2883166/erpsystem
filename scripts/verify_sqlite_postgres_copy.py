@@ -338,13 +338,21 @@ def _cursor_rows(cursor, batch_size=500):
 
 
 
-def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> dict:
+def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
+                snapshot_manifest: str | None = None) -> dict:
     try:
         import psycopg
         from psycopg.rows import dict_row
     except ImportError as exc:
         raise RuntimeError("Install psycopg[binary]>=3.2,<4.0 to verify PostgreSQL copies.") from exc
     _ident(schema)
+    if __package__:
+        from .snapshot_sqlite_before_postgres import verify_sqlite_snapshot
+    else:
+        from snapshot_sqlite_before_postgres import verify_sqlite_snapshot
+    snapshot_result = verify_sqlite_snapshot(sqlite_path, snapshot_manifest)
+    if not snapshot_result.get("verified"):
+        raise ValueError("SQLite snapshot verification did not pass; verification is blocked.")
     source_path = Path(sqlite_path).expanduser().resolve(strict=True)
     uri = "file:" + quote(source_path.as_posix(), safe="/:") + "?mode=ro"
     src = sqlite3.connect(uri, uri=True, timeout=10)
@@ -693,10 +701,14 @@ def main(argv=None):
     parser.add_argument("--sqlite", required=True)
     parser.add_argument("--postgres-dsn", default=os.environ.get("NEXUS_POSTGRES_DSN"))
     parser.add_argument("--schema", default="nexus")
+    parser.add_argument("--snapshot-manifest",
+                        help="Manifest for this exact SQLite snapshot; defaults to adjacent manifest")
     args = parser.parse_args(argv)
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
-    result = verify_copy(args.sqlite, args.postgres_dsn, args.schema)
+    result = verify_copy(
+        args.sqlite, args.postgres_dsn, args.schema, args.snapshot_manifest
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["passed"] else 2
 
