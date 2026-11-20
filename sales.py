@@ -1147,7 +1147,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
         for allocation in original_allocations:
             allocated_qty = Decimal(allocation["quantity"])
             original_lot_cost = Decimal(allocation["cost_total"])
-            allocation_id = allocation.get("id")
+            allocation_id = allocation["id"]
             already_returned_qty = returned_by_allocation.get(allocation_id, Decimal("0"))
             already_returned_cost = returned_cost_by_allocation.get(allocation_id, Decimal("0"))
             if allocation["lot_id"] in legacy_returned_by_lot:
@@ -1156,7 +1156,7 @@ def post_credit_note(conn, invoice_id, credit_date, reason, lines, created_by=No
             available_lot_qty = allocated_qty - already_returned_qty
             if available_lot_qty > 0:
                 lot_remaining.append({
-                    "lot_id": allocation["lot_id"], "source_invoice_lot_id": allocation.get("id"),
+                    "lot_id": allocation["lot_id"], "source_invoice_lot_id": allocation["id"],
                     "available": available_lot_qty,
                     "original_qty": allocated_qty, "original_cost": original_lot_cost,
                     "remaining_cost": original_lot_cost - already_returned_cost,
