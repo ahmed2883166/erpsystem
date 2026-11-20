@@ -19,13 +19,14 @@ def _temporary_database_path(value, *, allow_non_temp=False):
     path = Path(value).expanduser().resolve(strict=True)
     if not path.is_file():
         raise ValueError("Database path must point to an existing file.")
-    temp_root = Path(tempfile.gettempdir()).resolve()
-    try:
-        path.relative_to(temp_root)
-    except ValueError as exc:
-        raise ValueError(
-            "Refusing to inspect a database outside the OS temporary directory."
-        ) from exc
+    if not allow_non_temp:
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            path.relative_to(temp_root)
+        except ValueError as exc:
+            raise ValueError(
+                "Refusing to inspect a database outside the OS temporary directory."
+            ) from exc
     return path
 
 
