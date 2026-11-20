@@ -1,4 +1,7 @@
+import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -103,6 +106,33 @@ class SQLiteSnapshotTests(unittest.TestCase):
                 FileNotFoundError, "Specified SQLite snapshot manifest does not exist"
             ):
                 verify_sqlite_snapshot(result["snapshot"], missing)
+
+    def test_postgres_migration_cli_help_runs_from_outside_repo_without_pythonpath(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        scripts = (
+            "snapshot_sqlite_before_postgres.py",
+            "audit_postgres_numeric_data.py",
+            "install_postgres_baseline.py",
+            "build_postgres_baseline.py",
+            "audit_sqlite_postgres_migration.py",
+        )
+        with tempfile.TemporaryDirectory(prefix="nexus-cli-help-cwd-") as folder:
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            for script in scripts:
+                result = subprocess.run(
+                    [sys.executable, str(repository_root / "scripts" / script), "--help"],
+                    cwd=folder,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(
+                    result.returncode, 0,
+                    f"{script} --help failed: {result.stderr}",
+                )
+                self.assertIn("usage:", result.stdout.lower())
 
     def test_snapshot_refuses_missing_source_without_creating_database(self):
         with tempfile.TemporaryDirectory(prefix="admrail-snapshot-missing-") as folder:
