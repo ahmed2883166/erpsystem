@@ -115,6 +115,15 @@ class SQLiteSchemaInventoryTests(unittest.TestCase):
         self.assertIn("supplier_bills", table_names)
         self.assertIn("stock_valuation_layers", table_names)
         self.assertIn("payroll_runs", table_names)
+        self.assertIn("opening_balance_import_refs", table_names)
+        table_map = {table["name"]: table for table in schema["tables"]}
+        journal_columns = {
+            column["name"] for column in table_map["journal_lines"]["columns"]
+        }
+        self.assertTrue({
+            "branch_id", "cost_center_id", "project_id", "stock_product_id",
+            "stock_warehouse_id", "customer_id", "salesperson_id", "supplier_id",
+        }.issubset(journal_columns))
         self.assertGreater(schema["summary"]["table_count"], 80)
         self.assertGreater(schema["summary"]["foreign_key_count"], 20)
         self.assertEqual(schema["foreign_key_violations"], [])
