@@ -6,7 +6,7 @@ from copy import deepcopy
 from threading import RLock
 from accounting_core import register_decimal_aggregates, decimal_sum_expression
 from income_statement import build_income_statement
-from db_compat import table_exists, table_columns, database_dialect, transaction_is_active, transactional_migration
+from db_compat import table_exists, table_columns, database_dialect, begin_write_transaction, transactional_migration
 from db_sql import execute_compat
 
 CENT = Decimal("0.01")
@@ -418,9 +418,7 @@ def _management_cache_database_identity(conn):
 def cached_management_snapshot(conn, start, end, dimensions=None):
     """Return a cached Decimal-safe snapshot, invalidated by DB-level triggers."""
     dimensions = dimensions or {}
-    started_transaction = not transaction_is_active(conn)
-    if started_transaction:
-        execute_compat(conn, "BEGIN")
+    started_transaction = begin_write_transaction(conn)
     try:
         version_row = execute_compat(conn, 
             "SELECT version FROM management_dashboard_data_version WHERE id=1"
