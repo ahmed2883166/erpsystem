@@ -124,6 +124,71 @@ def _audit_explicit_numeric_override(connection, table, column, target_type, exp
     }
 
 
+def audit_integer_storage_classes(connection, snapshot, *, max_examples=10):
+    """Reject non-integer SQLite storage classes in columns mapped to BIGINT."""
+    results = []
+    for table in snapshot.get("tables", []):
+        table_name = table["name"]
+        qtable = _quote_identifier(table_name)
+        for column in table.get("columns", []):
+            declared = (column.get("type") or "").strip().upper()
+            if declared not in {"INTEGER", "BIGINT"}:
+                continue
+            column_name = column["name"]
+            qcolumn = _quote_identifier(column_name)
+            actual = connection.execute(
+                f"PRAGMA table_info({qtable})"
+            ).fetchall()
+            actual_type = next(
+                ((row["type"] if isinstance(row, sqlite3.Row) else row[2]) or "").strip().upper()
+                for row in actual
+                if (row["name"] if isinstance(row, sqlite3.Row) else row[1]) == column_name
+            ) if any(
+                (row["name"] if isinstance(row, sqlite3.Row) else row[1]) == column_name
+                for row in actual
+            ) else None
+            if actual_type != declared:
+                results.append({
+                    "table": table_name, "column": column_name,
+                    "status": "schema_mismatch", "actual_type": actual_type,
+                })
+                continue
+            counts = {
+                row["storage_class"]: int(row["row_count"])
+                for row in connection.execute(
+                    f"SELECT typeof({qcolumn}) AS storage_class, COUNT(*) AS row_count "
+                    f"FROM {qtable} WHERE {qcolumn} IS NOT NULL GROUP BY typeof({qcolumn})"
+                ).fetchall()
+            }
+            invalid = {kind: count for kind, count in counts.items() if kind != "integer"}
+            null_count = int(connection.execute(
+                f"SELECT COUNT(*) FROM {qtable} WHERE {qcolumn} IS NULL"
+            ).fetchone()[0])
+            required_nulls = null_count if column.get("notnull") else 0
+            status = (
+                "non_integer_storage_class" if invalid
+                else "not_null_violation" if required_nulls
+                else "integer_storage_only" if counts
+                else "no_source_data"
+            )
+            samples = []
+            if invalid:
+                samples = [
+                    {"rowid": row[0], "storage_class": row[1], "value": str(row[2])[:80]}
+                    for row in connection.execute(
+                        f"SELECT rowid, typeof({qcolumn}), {qcolumn} FROM {qtable} "
+                        f"WHERE {qcolumn} IS NOT NULL AND typeof({qcolumn}) <> 'integer' "
+                        f"LIMIT ?", (max_examples,)
+                    ).fetchall()
+                ]
+            results.append({
+                "table": table_name, "column": column_name, "status": status,
+                "storage_class_counts": counts, "null_count": null_count,
+                "invalid_samples": samples,
+            })
+    return results
+
+
 def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
     """Audit all TEXT numeric candidates in a schema snapshot against a read-only DB."""
     if max_examples < 0 or max_examples > 100:
@@ -255,6 +320,15 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         for (table, column), target_type in sorted(POSTGRES_TYPE_OVERRIDES.items())
         if table in snapshot_table_names
     ]
+    integer_columns = audit_integer_storage_classes(
+        connection, snapshot, max_examples=max_examples
+    )
+    integer_status_counts = {}
+    for item in integer_columns:
+        integer_status_counts[item["status"]] = (
+            integer_status_counts.get(item["status"], 0) + 1
+        )
+
     counts = {}
     for item in result_columns:
         counts[item["status"]] = counts.get(item["status"], 0) + 1
@@ -274,6 +348,9 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         and all(item["status"] in {
             "fits_declared_precision", "no_source_data"
         } for item in override_columns)
+        and all(item["status"] in {
+            "integer_storage_only", "no_source_data"
+        } for item in integer_columns)
     )
     return {
         "source_read_only": True,
@@ -287,6 +364,8 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         "safe_for_numeric_migration": safe,
         "status_counts": counts,
         "override_status_counts": override_counts,
+        "integer_storage_class_counts": integer_status_counts,
+        "integer_storage_class_audit": integer_columns,
         "columns": result_columns,
         "explicit_numeric_overrides": override_columns,
         "policy": (
@@ -295,7 +374,9 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
             "No rounding is approved; REAL source columns containing values remain blocked "
             "until a documented binary-float conversion policy is accepted. Columns with no "
             "non-NULL source values are informational and safe for this snapshot. Empty strings, "
-            "invalid values, schema drift, and out-of-range values block automatic approval."
+            "invalid values, schema drift, and out-of-range values block automatic approval. "
+            "SQLite INTEGER/BIGINT affinity columns are also checked by typeof(); text, real, "
+            "and blob storage classes block PostgreSQL BIGINT copy."
         ),
     }
 

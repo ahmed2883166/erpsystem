@@ -158,6 +158,44 @@ class PostgreSQLNumericDataAuditTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_integer_affinity_columns_reject_text_and_real_storage_classes(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.executescript("""
+                CREATE TABLE sample(quantity INTEGER, optional_id BIGINT);
+                INSERT INTO sample(quantity, optional_id) VALUES(12, 3);
+                INSERT INTO sample(quantity, optional_id) VALUES('abc', 4);
+                INSERT INTO sample(quantity, optional_id) VALUES(1.5, NULL);
+                CREATE TABLE journal_lines(debit TEXT, credit TEXT);
+                CREATE TABLE currencies(rate_to_base TEXT);
+                CREATE TABLE tax_rates(rate TEXT);
+                CREATE TABLE fx_exchange_rates(rate_to_base TEXT);
+            """)
+            report = audit_numeric_candidates(
+                connection, _snapshot([
+                    ("quantity", "INTEGER"), ("optional_id", "BIGINT")
+                ])
+            )
+            self.assertFalse(report["safe_for_numeric_migration"])
+            columns = {
+                (item["table"], item["column"]): item
+                for item in report["integer_storage_class_audit"]
+            }
+            self.assertEqual(
+                columns[("sample", "quantity")]["status"],
+                "non_integer_storage_class",
+            )
+            self.assertEqual(
+                columns[("sample", "quantity")]["storage_class_counts"],
+                {"integer": 1, "real": 1, "text": 1},
+            )
+            self.assertEqual(
+                columns[("sample", "optional_id")]["status"],
+                "integer_storage_only",
+            )
+        finally:
+            connection.close()
+
     def test_database_connection_is_read_only(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "source.sqlite"
