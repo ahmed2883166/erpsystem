@@ -118,6 +118,13 @@ def init_purchase_schema(c):
       email TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT '',
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS purchase_orders(
+      id INTEGER PRIMARY KEY, po_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+      order_date TEXT NOT NULL, expected_date TEXT, status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT NOT NULL DEFAULT '', created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      submitted_by INTEGER, submitted_at TEXT, approved_by INTEGER, approved_at TEXT,
+      rejected_by INTEGER, rejected_at TEXT, rejection_reason TEXT, approval_reason TEXT
+    );
     CREATE TABLE IF NOT EXISTS purchase_requests(
       id INTEGER PRIMARY KEY, request_no TEXT NOT NULL UNIQUE,
       request_date TEXT NOT NULL, required_date TEXT,
@@ -133,13 +140,6 @@ def init_purchase_schema(c):
     );
     CREATE INDEX IF NOT EXISTS idx_purchase_requests_status_date
       ON purchase_requests(status, request_date, id);
-    CREATE TABLE IF NOT EXISTS purchase_orders(
-      id INTEGER PRIMARY KEY, po_no TEXT NOT NULL UNIQUE, supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
-      order_date TEXT NOT NULL, expected_date TEXT, status TEXT NOT NULL DEFAULT 'draft',
-      notes TEXT NOT NULL DEFAULT '', created_by INTEGER, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      submitted_by INTEGER, submitted_at TEXT, approved_by INTEGER, approved_at TEXT,
-      rejected_by INTEGER, rejected_at TEXT, rejection_reason TEXT, approval_reason TEXT
-    );
     CREATE TABLE IF NOT EXISTS purchase_order_lines(
       id INTEGER PRIMARY KEY, po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
       product_id INTEGER NOT NULL REFERENCES stock_products(id), quantity TEXT NOT NULL,
