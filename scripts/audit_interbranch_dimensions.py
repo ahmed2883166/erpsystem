@@ -37,7 +37,7 @@ def audit_interbranch_dimensions(database_path):
         line_cols = _columns(conn, "journal_lines")
         entry_cols = _columns(conn, "journal_entries")
         needed = {
-            "stock_movements": {"id", "movement_no", "movement_type", "movement_date",
+            "stock_movements": {"id", "movement_no", "movement_type", "movement_date", "product_id",
                                 "source_warehouse_id", "target_warehouse_id", "journal_entry_id",
                                 "accounting_status"},
             "stock_warehouses": {"id", "code", "name_ar", "branch_id"},
