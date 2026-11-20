@@ -1,5 +1,6 @@
 """Validate generated NEXUS DDL against an isolated PostgreSQL database."""
 import argparse
+import hashlib
 import json
 import os
 import uuid
@@ -179,6 +180,16 @@ def validate(ddl_path, dsn, expected_review_path=None):
             )
             if expected_review_path:
                 expected_review = json.loads(Path(expected_review_path).read_text(encoding="utf-8"))
+                expected_digest = expected_review.get("baseline_sha256")
+                actual_digest = hashlib.sha256(ddl.encode("utf-8")).hexdigest()
+                if not isinstance(expected_digest, str) or expected_digest != actual_digest:
+                    raise AssertionError(
+                        "Generated PostgreSQL DDL SHA-256 does not match the reviewed baseline: "
+                        + json.dumps({
+                            "expected": expected_digest,
+                            "actual": actual_digest,
+                        }, ensure_ascii=False, sort_keys=True)
+                    )
                 mismatches = {
                     key: {"expected": expected_review.get(key), "actual": actual_counts[key]}
                     for key in actual_counts
