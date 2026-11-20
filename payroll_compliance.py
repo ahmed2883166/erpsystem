@@ -175,9 +175,21 @@ def _validate_rule_period(effective_from, effective_to):
 
 
 def activate_payroll_rule(conn, rule_id):
+    # Serialize activations for the same country/category before checking for
+    # overlapping effective periods. SQLite uses BEGIN IMMEDIATE; PostgreSQL
+    # uses a transaction-scoped advisory lock so different target rows cannot race.
+    begin_write_transaction(conn)
     rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
     if not rule:
         raise ValueError("مجموعة القواعد غير موجودة.")
+    if database_dialect(conn) == "postgresql":
+        lock_key = str(rule["country_code"]).upper() + ":" + str(rule["category_code"]).lower()
+        _execute(conn, "SELECT pg_advisory_xact_lock(?, hashtext(?))",
+                 (0x50415952, lock_key))
+        rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=? FOR UPDATE",
+                        (rule_id,)).fetchone()
+        if not rule:
+            raise ValueError("مجموعة القواعد غير موجودة.")
     if rule["status"] not in {"approved", "active"}:
         raise ValueError("يجب اعتماد مجموعة القواعد أولًا قبل تفعيلها.")
     start, end = _validate_rule_period(rule["effective_from"], rule["effective_to"])
