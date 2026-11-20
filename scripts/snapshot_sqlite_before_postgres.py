@@ -162,11 +162,21 @@ def verify_sqlite_snapshot(
 ) -> dict:
     """Verify checksum, SQLite integrity, foreign keys, and manifest row counts."""
     snapshot = Path(snapshot_path).expanduser().resolve(strict=True)
-    manifest = (
-        Path(manifest_path).expanduser().resolve(strict=True)
-        if manifest_path
-        else snapshot.with_name(snapshot.name.replace(".sqlite3", ".manifest.json"))
-    )
+    if manifest_path:
+        manifest = Path(manifest_path).expanduser().resolve()
+    else:
+        manifest_name = (
+            snapshot.stem + ".manifest.json"
+            if snapshot.suffix.lower() == ".sqlite3"
+            else snapshot.name + ".manifest.json"
+        )
+        manifest = snapshot.with_name(manifest_name)
+    if not manifest.is_file():
+        raise FileNotFoundError(
+            "No adjacent SQLite snapshot manifest was found; "
+            "pass --snapshot-manifest explicitly."
+        )
+    manifest = manifest.resolve(strict=True)
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     if payload.get("snapshot_file") != snapshot.name:
         raise ValueError("Snapshot manifest points to a different database file.")
@@ -184,6 +194,7 @@ def verify_sqlite_snapshot(
     return {
         "verified": True,
         "snapshot": str(snapshot),
+        "manifest": str(manifest),
         "sha256": checksum,
         "table_count": len(counts),
         "row_count_total": sum(counts.values()),
