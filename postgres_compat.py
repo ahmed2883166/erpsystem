@@ -92,8 +92,10 @@ class PooledPostgresCompatConnection:
         self._closed = False
         self._desired_autocommit = bool(autocommit)
         self._connection = None
+        entered = False
         try:
             raw_connection = lease.__enter__()
+            entered = True
             self._connection = PostgresCompatConnection(raw_connection)
             raw_connection.autocommit = True
             if statement_timeout_ms is not None:
@@ -104,7 +106,8 @@ class PooledPostgresCompatConnection:
             raw_connection.autocommit = self._desired_autocommit
         except Exception as exc:
             self._closed = True
-            lease.__exit__(type(exc), exc, exc.__traceback__)
+            if entered:
+                lease.__exit__(type(exc), exc, exc.__traceback__)
             raise
 
     @property
@@ -117,7 +120,7 @@ class PooledPostgresCompatConnection:
 
     def _reset_session(self):
         raw = self._connection._connection
-        if not raw.autocommit:
+        if not getattr(raw, "autocommit", False):
             raw.rollback()
         raw.autocommit = True
         raw.execute("RESET statement_timeout")
@@ -150,7 +153,7 @@ class PooledPostgresCompatConnection:
         try:
             if exc_type is not None:
                 raw.rollback()
-            elif not raw.autocommit:
+            elif not getattr(raw, "autocommit", False):
                 raw.commit()
             self._reset_session()
         except Exception as reset_error:
@@ -158,7 +161,7 @@ class PooledPostgresCompatConnection:
             self._lease.__exit__(type(reset_error), reset_error, reset_error.__traceback__)
             raise
         self._closed = True
-        self._lease.__exit__(None, None, None)
+        self._lease.__exit__(exc_type, exc_value, traceback)
         return False
 
     def __getattr__(self, name):
