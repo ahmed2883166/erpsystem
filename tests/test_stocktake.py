@@ -42,6 +42,7 @@ class StocktakeRouteTests(unittest.TestCase):
         conn.execute("CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT,is_group INTEGER,active INTEGER)")
         conn.executemany("INSERT INTO accounts(code,name_ar,account_type,is_group,active) VALUES(?,?,?,?,?)", [
             ("1130","مخزون","asset",0,1),
+            ("1150","مخزون تجاري","asset",0,1),
             ("5510","عجز وهالك مخزون","expense",0,1),
             ("6990","فروق الجرد والزيادات","expense",0,1),
         ])
@@ -263,7 +264,7 @@ class StocktakeRouteTests(unittest.TestCase):
             CREATE TABLE journal_lines(
                 id INTEGER PRIMARY KEY,entry_id INTEGER NOT NULL,account_id INTEGER NOT NULL,
                 debit TEXT NOT NULL,credit TEXT NOT NULL,memo TEXT NOT NULL DEFAULT '',
-                branch_id INTEGER
+                branch_id INTEGER,stock_product_id INTEGER,stock_warehouse_id INTEGER
             );
         """)
         conn.commit()
@@ -296,12 +297,22 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual(source_qty,Decimal("6"))
         self.assertEqual(target_qty,Decimal("4"))
 
-        first_lines = conn.execute("""SELECT jl.debit,jl.credit,jl.branch_id
-            FROM journal_lines jl WHERE jl.entry_id=? ORDER BY jl.id""",
+        first_lines = conn.execute("""SELECT jl.debit,jl.credit,jl.branch_id,jl.account_id,
+                jl.stock_product_id,jl.stock_warehouse_id,a.code account_code
+            FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+            WHERE jl.entry_id=? ORDER BY jl.id""",
             (first["journal_entry_id"],)).fetchall()
-        self.assertEqual(len(first_lines),2)
+        self.assertEqual(len(first_lines),4)
+        inventory_lines = [line for line in first_lines if line["account_code"] == "1150"]
+        clearing_lines = [line for line in first_lines if line["account_code"] == "1185"]
+        self.assertEqual(len(inventory_lines),2)
+        self.assertEqual(len(clearing_lines),2)
+        self.assertEqual(
+            {(line["stock_product_id"],line["stock_warehouse_id"]) for line in inventory_lines},
+            {(self.product_id,self.warehouse_id),(self.product_id,target_warehouse)},
+        )
         branch_net = {source_branch:Decimal("0"),target_branch:Decimal("0")}
-        for line in first_lines:
+        for line in clearing_lines:
             branch_net[line["branch_id"]] += Decimal(line["debit"])-Decimal(line["credit"])
         self.assertEqual(branch_net[target_branch],Decimal("20"))
         self.assertEqual(branch_net[source_branch],Decimal("-20"))
@@ -341,14 +352,26 @@ class StocktakeRouteTests(unittest.TestCase):
         self.assertEqual({row["branch_id"]:Decimal(str(row["net"])) for row in branch_rows},
                          {source_branch:Decimal("0"),target_branch:Decimal("0")})
 
-        # A transfer between warehouses of the same branch moves stock without a GL journal.
+        # A same-branch warehouse transfer reclassifies inventory by warehouse,
+        # without creating an interbranch clearing balance.
         transfer(self.warehouse_id,same_branch_warehouse,1,"تحويل داخلي داخل نفس الفرع")
         conn = stock.get_db()
         same = conn.execute("""SELECT * FROM stock_movements
             WHERE movement_type='transfer' ORDER BY id DESC LIMIT 1""").fetchone()
-        self.assertEqual(same["accounting_status"],"not_required")
-        self.assertIsNone(same["journal_entry_id"])
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],2)
+        self.assertEqual(same["accounting_status"],"posted")
+        self.assertIsNotNone(same["journal_entry_id"])
+        same_lines = conn.execute("""SELECT jl.*,a.code account_code FROM journal_lines jl
+            JOIN accounts a ON a.id=jl.account_id WHERE jl.entry_id=?""",
+            (same["journal_entry_id"],)).fetchall()
+        self.assertEqual(len(same_lines),2)
+        self.assertTrue(all(line["account_code"]=="1150" for line in same_lines))
+        self.assertEqual(
+            {(line["stock_product_id"],line["stock_warehouse_id"],line["branch_id"])
+             for line in same_lines},
+            {(self.product_id,self.warehouse_id,source_branch),
+             (self.product_id,same_branch_warehouse,source_branch)},
+        )
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0],3)
 
         # A one-sided branch assignment must not silently bypass interbranch accounting.
         conn.execute("INSERT INTO stock_warehouses(code,name_ar) VALUES('W-UNASSIGNED','مخزن بلا فرع')")
