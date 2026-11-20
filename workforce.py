@@ -4320,10 +4320,11 @@ def custody():
             flash(str(e), "error")
         c.close()
         return redirect(url_for("workforce.custody"))
+    returned_total_sql = decimal_sum_expression(c, "cr.amount")
     custody_page = fetch_page(c,
-        """SELECT x.*,e.employee_code,e.full_name,
-                  COALESCE((SELECT SUM(CAST(cr.amount AS NUMERIC))
-                            FROM custody_returns cr WHERE cr.custody_id=x.id),0) AS returned_total
+        f"""SELECT x.*,e.employee_code,e.full_name,
+                  (SELECT {returned_total_sql}
+                     FROM custody_returns cr WHERE cr.custody_id=x.id) AS returned_total
            FROM employee_custodies x
            JOIN employees e ON e.id=x.employee_id ORDER BY x.id DESC""",
         "SELECT COUNT(*) FROM employee_custodies",
