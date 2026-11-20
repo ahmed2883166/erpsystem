@@ -105,6 +105,35 @@ class PostgreSQLAccountingCoreTests(unittest.TestCase):
             connection.close()
 
 
+    def test_stock_layer_numeric_expression_does_not_compare_numeric_to_text(self):
+        from postgres_database import connect_postgres
+        from accounting_core import decimal_layer_value_sum_expression
+
+        connection = connect_postgres(POSTGRES_DSN, schema="public")
+        try:
+            connection.execute("""
+                CREATE TEMP TABLE stock_layer_expression_probe(
+                    value_remaining NUMERIC,
+                    quantity NUMERIC,
+                    unit_cost NUMERIC
+                )
+            """)
+            connection.execute(
+                "INSERT INTO stock_layer_expression_probe VALUES "
+                "(NULL, 2, 3.25), (5.75, 10, 1)"
+            )
+            expression = decimal_layer_value_sum_expression(
+                connection, "value_remaining", "quantity", "unit_cost"
+            )
+            total = connection.execute(
+                "SELECT " + expression + " AS total_value "
+                "FROM stock_layer_expression_probe"
+            ).fetchone()["total_value"]
+            self.assertEqual(Decimal(str(total)), Decimal("12.25"))
+        finally:
+            connection.rollback()
+            connection.close()
+
     def test_concurrent_same_reference_posts_only_one_journal(self):
         from postgres_database import connect_postgres
         from accounting_core import post_journal
