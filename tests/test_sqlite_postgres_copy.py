@@ -47,7 +47,7 @@ class SQLitePostgresPreflightForeignKeyTests(unittest.TestCase):
 
     def test_preflight_blocks_missing_postgres_foreign_key(self):
         source, target = self._info([])
-        report = build_report(source, target)
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
         self.assertFalse(report["preflight_passed"])
         self.assertEqual(
             report["foreign_key_differences"]["missing_in_postgres"],
@@ -57,7 +57,7 @@ class SQLitePostgresPreflightForeignKeyTests(unittest.TestCase):
     def test_preflight_passes_when_foreign_key_definition_matches(self):
         fk = ("child", ("parent_id",), "parent", ("id",), "NO ACTION", "CASCADE")
         source, target = self._info([fk])
-        report = build_report(source, target)
+        report = build_report(source, target, {"safe_for_numeric_migration": True})
         self.assertTrue(report["preflight_passed"])
         self.assertEqual(report["foreign_key_differences"], {
             "missing_in_postgres": [], "extra_in_postgres": []
