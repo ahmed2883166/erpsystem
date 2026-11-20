@@ -26,7 +26,6 @@ jobs:
           POSTGRES_USER: nexus_test
           POSTGRES_PASSWORD: nexus_test
           POSTGRES_DB: nexus_test
-        command: ["postgres", "-c", "log_min_error_statement=warning"]
         ports:
           - 5432:5432
         options: >-
@@ -70,6 +69,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install ruff
+      - name: Enable PostgreSQL warning statement diagnostics
+        run: |
+          container_id="$(docker ps --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n 1)"
+          test -n "$container_id"
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_min_error_statement = 'warning'"
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf()"
       - name: Compile Python files
         run: python -m compileall -q .
       - name: Static analysis (unused imports and variables)
@@ -80,6 +85,13 @@ jobs:
         run: python scripts/build_postgres_baseline.py --output-dir "$RUNNER_TEMP/nexus-postgres-baseline"
       - name: Exercise full Flask initialization and real PostgreSQL workflows
         run: python scripts/smoke_postgres_full_runtime.py --baseline "$RUNNER_TEMP/nexus-postgres-baseline/nexus_full_schema.sql"
+      - name: Collect PostgreSQL transaction warning diagnostics
+        if: always()
+        run: |
+          container_id="$(docker ps -a --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n 1)"
+          if [ -n "$container_id" ]; then
+            docker logs "$container_id" 2>&1 | grep -E 'WARNING:|STATEMENT:' | tail -n 300 || true
+          fi
   windows-smoke:
     name: Windows local runtime and backup/restore smoke tests
     runs-on: windows-latest
