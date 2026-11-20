@@ -6,14 +6,53 @@ import uuid
 
 from banking import (
     _columns,
+    is_cash_or_bank_account,
     _table_exists,
     _bank_statement_reference_expression,
     refresh_bank_transaction_reconciled,
     save_statement_line_match,
 )
+from chart_templates import account_metadata_for
 
 
 class BankingMetadataSQLiteTests(unittest.TestCase):
+    def test_bank_name_in_expense_account_is_not_classified_as_cash(self):
+        metadata = account_metadata_for(
+            "expense", "7242", "عمولات ومصاريف بنكية"
+        )
+        self.assertNotEqual(metadata["account_subtype"], "cash")
+        self.assertEqual(metadata["account_subtype"], "finance_cost")
+
+    def test_cash_account_classification_requires_registry_or_asset_type(self):
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute(
+                "CREATE TABLE cash_accounts(account_id INTEGER PRIMARY KEY)"
+            )
+            connection.execute(
+                "INSERT INTO cash_accounts(account_id) VALUES(1)"
+            )
+            registered_bank = connection.execute(
+                "SELECT 1 AS id, 'مصرف تجاري' AS name_ar, 'asset' AS account_type"
+            ).fetchone()
+            bank_fee_expense = connection.execute(
+                "SELECT 2 AS id, 'عمولات ومصاريف بنكية' AS name_ar, 'expense' AS account_type"
+            ).fetchone()
+            legacy_bank_asset = connection.execute(
+                "SELECT 3 AS id, 'بنك قديم' AS name_ar, 'asset' AS account_type"
+            ).fetchone()
+            ordinary_expense = connection.execute(
+                "SELECT 4 AS id, 'مصروف صيانة' AS name_ar, 'expense' AS account_type"
+            ).fetchone()
+
+            self.assertTrue(is_cash_or_bank_account(connection, registered_bank))
+            self.assertFalse(is_cash_or_bank_account(connection, bank_fee_expense))
+            self.assertTrue(is_cash_or_bank_account(connection, legacy_bank_asset))
+            self.assertFalse(is_cash_or_bank_account(connection, ordinary_expense))
+        finally:
+            connection.close()
+
     def test_statement_reference_expression_is_portable_on_sqlite(self):
         connection = sqlite3.connect(":memory:")
         try:
