@@ -44,7 +44,7 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         ''')
         self.pg.execute(f'''
             CREATE TABLE "{self.schema}".management_dashboard_data_version (
-                id SMALLINT PRIMARY KEY CHECK (id = 1),
+                id BIGINT PRIMARY KEY CHECK (id = 1),
                 version BIGINT NOT NULL
             )
         ''')
