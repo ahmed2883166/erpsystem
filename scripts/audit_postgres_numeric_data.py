@@ -128,7 +128,7 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
     """Audit all TEXT numeric candidates in a schema snapshot against a read-only DB."""
     if max_examples < 0 or max_examples > 100:
         raise ValueError("max_examples must be between 0 and 100.")
-    _, review = generate_postgres_ddl(snapshot)
+    _, review = generate_postgres_ddl(snapshot, require_all_numeric_overrides=False)
     integrity_check = [row[0] for row in connection.execute("PRAGMA integrity_check").fetchall()]
     foreign_key_violations = [
         {
@@ -239,6 +239,13 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         for table in snapshot.get("tables", [])
         for column in table.get("columns", [])
     }
+    snapshot_table_names = {
+        table["name"] for table in snapshot.get("tables", [])
+    }
+    # A deliberately partial source database may not contain whole optional
+    # modules (for example, a focused test fixture without currencies). Skip
+    # overrides for absent tables, but fail closed if a present table is missing
+    # an expected column or its declared source type has drifted.
     override_columns = [
         _audit_explicit_numeric_override(
             connection, table, column, target_type,
@@ -246,6 +253,7 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
             max_examples=max_examples,
         )
         for (table, column), target_type in sorted(POSTGRES_TYPE_OVERRIDES.items())
+        if table in snapshot_table_names
     ]
     counts = {}
     for item in result_columns:
@@ -257,8 +265,15 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         bool(result_columns or override_columns)
         and integrity_check == ["ok"]
         and not foreign_key_violations
-        and all(item["status"] == "convertible_exact_decimal" for item in result_columns)
-        and all(item["status"] == "fits_declared_precision" for item in override_columns)
+        # An entirely NULL/empty column has no values to convert. It is safe
+        # for this snapshot; blank strings, invalid values, REAL values with
+        # data, schema drift, and precision overflow remain blocking.
+        and all(item["status"] in {
+            "convertible_exact_decimal", "no_source_data"
+        } for item in result_columns)
+        and all(item["status"] in {
+            "fits_declared_precision", "no_source_data"
+        } for item in override_columns)
     )
     return {
         "source_read_only": True,
@@ -277,9 +292,10 @@ def audit_numeric_candidates(connection, snapshot, *, max_examples=10):
         "policy": (
             "TEXT candidates are parsed as exact Decimal values. Explicit NUMERIC(p,s) "
             "overrides are separately checked against their declared precision and scale. "
-            "No rounding is approved; REAL source columns remain blocked until a documented "
-            "binary-float conversion policy is accepted. Empty, invalid, missing, and "
-            "out-of-range values block automatic approval."
+            "No rounding is approved; REAL source columns containing values remain blocked "
+            "until a documented binary-float conversion policy is accepted. Columns with no "
+            "non-NULL source values are informational and safe for this snapshot. Empty strings, "
+            "invalid values, schema drift, and out-of-range values block automatic approval."
         ),
     }
 
