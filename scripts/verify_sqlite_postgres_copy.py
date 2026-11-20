@@ -120,6 +120,17 @@ def _inventory_valuation_required(source_tables):
     return bool(set(source_tables) & inventory_core)
 
 
+def _sqlite_legacy_unlinked_transfer_layer_count(conn):
+    """Count transfer/relocation valuation layers whose receipt ancestry is unknown."""
+    return int(conn.execute("""
+        SELECT COUNT(*)
+        FROM stock_valuation_layers l
+        JOIN stock_movements m ON m.id=l.source_movement_id
+        WHERE m.movement_type IN ('transfer','relocate')
+          AND l.receipt_line_id IS NULL
+    """).fetchone()[0])
+
+
 def _sqlite_foreign_key_map(conn, tables):
     """Return normalized FK definitions, preserving composite-key column order."""
     result = []
@@ -599,6 +610,50 @@ def verify_copy(sqlite_path: str, postgres_dsn: str, schema: str = "nexus") -> d
                     "stock_valuation_layers", amount, ("product_id", "warehouse_id"),
                     f"stock_valuation_layers.{amount}_by_product_warehouse",
                 )
+
+        # A byte-for-byte copy can still preserve an operational lineage defect.
+        # Legacy transfer layers without receipt_line_id cannot be safely attributed
+        # to a GRNI receipt, so block migration sign-off until they are reviewed.
+        if {"stock_valuation_layers", "stock_movements"}.issubset(source_tables):
+            required_lineage = {
+                "stock_valuation_layers": {"source_movement_id", "receipt_line_id"},
+                "stock_movements": {"id", "movement_type"},
+            }
+            missing_lineage = {
+                table: sorted(columns - set(source_columns.get(table, [])))
+                for table, columns in required_lineage.items()
+                if columns - set(source_columns.get(table, []))
+            }
+            if missing_lineage:
+                controls_skipped.append({
+                    "control": "inventory.transfer_receipt_lineage",
+                    "reason": "required_columns_missing",
+                    "missing": missing_lineage,
+                })
+            else:
+                source_unlinked = _sqlite_legacy_unlinked_transfer_layer_count(src)
+                target_unlinked = dst.execute(
+                    "SELECT COUNT(*) AS n FROM " + _ident(schema) + "." +
+                    _ident("stock_valuation_layers") + " l JOIN " + _ident(schema) + "." +
+                    _ident("stock_movements") + " m ON m.id=l.source_movement_id "
+                    "WHERE m.movement_type IN ('transfer','relocate') "
+                    "AND l.receipt_line_id IS NULL"
+                ).fetchone()["n"]
+                if source_unlinked != target_unlinked:
+                    issues.append({
+                        "control": "inventory.transfer_receipt_lineage.count",
+                        "sqlite": source_unlinked,
+                        "postgres": target_unlinked,
+                    })
+                else:
+                    controls.append("inventory.transfer_receipt_lineage.count")
+                if source_unlinked:
+                    controls_skipped.append({
+                        "control": "inventory.transfer_receipt_lineage",
+                        "reason": "legacy_transfer_layers_require_manual_lineage_review",
+                        "sqlite_unlinked_layer_count": source_unlinked,
+                        "postgres_unlinked_layer_count": target_unlinked,
+                    })
 
         dst.execute("SET CONSTRAINTS ALL IMMEDIATE")
         dst.rollback()
