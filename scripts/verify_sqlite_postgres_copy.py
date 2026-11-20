@@ -389,8 +389,8 @@ def verify_copy(
                 len(primary) == 1
                 and (primary[0]["type"] or "").strip().upper() == "INTEGER"
                 # This cache-version table is a fixed singleton (id=1), not
-                # an auto-numbered entity. Its PostgreSQL baseline deliberately
-                # uses SMALLINT without an identity sequence.
+                # an auto-numbered entity. The reviewed PostgreSQL baseline keeps
+                # its BIGINT primary key non-identity, matching this source rule.
                 and not (
                     table == "management_dashboard_data_version"
                     and primary[0]["name"] == "id"
