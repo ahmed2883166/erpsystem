@@ -25,6 +25,19 @@ invoiceBody.addEventListener('keydown',function(event){
  else{
   next=row.cloneNode(true);
   next.hidden=false;
+  // cloneNode does not copy search listeners; unwrap the cloned widget so
+  // the searchable-select observer can initialize a fresh control after insertion.
+  next.querySelectorAll('.nexus-search-select').forEach(wrapper=>{
+    const select=wrapper.querySelector('select');
+    if(select)wrapper.replaceWith(select);
+  });
+  next.querySelectorAll('select').forEach(select=>{
+    select.removeAttribute('data-nexus-search-ready');
+    select.removeAttribute('aria-hidden');
+    select.removeAttribute('aria-controls');
+    select.removeAttribute('aria-expanded');
+    select.classList.remove('select2-hidden-accessible');
+  });
   // Cloned controls must not retain duplicate DOM IDs or stale search widgets.
   next.querySelectorAll('[id]').forEach(element=>element.removeAttribute('id'));
   next.querySelectorAll('input').forEach(input=>{
