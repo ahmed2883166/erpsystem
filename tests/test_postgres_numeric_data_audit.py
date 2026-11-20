@@ -39,7 +39,17 @@ class PostgreSQLNumericDataAuditTests(unittest.TestCase):
     def test_preserves_exact_decimal_strings_and_reports_precision_without_float(self):
         connection = sqlite3.connect(":memory:")
         try:
-            connection.execute("CREATE TABLE sample(amount TEXT)")
+            connection.executescript("""
+                CREATE TABLE sample(amount TEXT);
+                CREATE TABLE journal_lines(debit TEXT, credit TEXT);
+                CREATE TABLE currencies(rate_to_base TEXT);
+                CREATE TABLE tax_rates(rate TEXT);
+                CREATE TABLE fx_exchange_rates(rate_to_base TEXT);
+                INSERT INTO journal_lines VALUES('0.00','0.00');
+                INSERT INTO currencies VALUES('1.0000000000');
+                INSERT INTO tax_rates VALUES('0.140000');
+                INSERT INTO fx_exchange_rates VALUES('1.0000000000');
+            """)
             connection.executemany(
                 "INSERT INTO sample(amount) VALUES(?)",
                 [("0.10",), ("12345678901234567890.123456789",), ("-2.50",), (None,)],
