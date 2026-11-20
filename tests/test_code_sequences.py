@@ -108,6 +108,33 @@ class PostgreSQLNumberSequenceTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_autocommit_blueprint_connection_starts_explicit_sequence_transaction(self):
+        connection = self.connect_postgres(
+            self.dsn, schema="public", autocommit=True
+        )
+        try:
+            connection.execute(f'SET search_path TO "{self.schema}"')
+            code = next_code(
+                connection, "blueprint_customer", "CUS", "customers", "code"
+            )
+            self.assertEqual(code, "CUS-000010")
+            self.assertEqual(
+                connection.info.transaction_status.name, "INTRANS"
+            )
+            connection.execute(
+                "INSERT INTO customers(code) VALUES(%s)", (code,)
+            )
+            connection.commit()
+            self.assertEqual(
+                next_code(
+                    connection, "blueprint_customer", "CUS", "customers", "code"
+                ),
+                "CUS-000011",
+            )
+            connection.rollback()
+        finally:
+            connection.close()
+
     def test_sequence_continues_after_legacy_codes_and_rolls_back(self):
         from code_sequences import next_code
 
