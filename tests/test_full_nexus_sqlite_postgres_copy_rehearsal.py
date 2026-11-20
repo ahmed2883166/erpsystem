@@ -81,7 +81,7 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.snapshot_path = snapshot["snapshot"]
         self.snapshot_manifest = snapshot["manifest"]
         self.expected_baseline_sha256 = hashlib.sha256(
-            self.ddl_path.read_bytes()
+            self.ddl_path.read_text(encoding="utf-8").encode("utf-8")
         ).hexdigest()
 
     def tearDown(self):
