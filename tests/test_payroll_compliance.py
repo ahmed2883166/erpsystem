@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 from decimal import Decimal
 
-from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules, _lock_posted_payroll_period, upgrade_egypt_2026_tax_tiers_and_recalculate_drafts)
+from payroll_compliance import (calculate_payroll_deductions, seed_egypt_2026, _payroll_obligations, ensure_default_payroll_rules, _lock_posted_payroll_period, upgrade_egypt_2026_tax_tiers_and_recalculate_drafts, approve_payroll_rule, activate_payroll_rule)
 
 
 class PayrollComplianceTests(unittest.TestCase):
@@ -228,6 +228,34 @@ class PayrollComplianceTests(unittest.TestCase):
             WHERE rule_set_id=? AND income_max='1200000' AND lower_bound='400000'""", (rule_id,)).fetchone()[0]
         self.assertEqual(result["tier_status"], "custom")
         self.assertEqual(before, after)
+
+    def test_rule_effective_end_date_and_approval_activation_flow(self):
+        rule_id = self.add_rule()
+        self.conn.execute("UPDATE payroll_rule_sets SET effective_to='2026-11-30',status='active' WHERE id=?", (rule_id,))
+        self.assertIsNotNone(calculate_payroll_deductions(self.conn, self.employee, 10000, "2026-11"))
+        self.assertIsNone(calculate_payroll_deductions(self.conn, self.employee, 10000, "2026-12"))
+        next_id = self.conn.execute("""
+            INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,effective_to,
+                personal_exemption_annual,insurance_floor,insurance_ceiling,
+                employee_insurance_rate,employer_insurance_rate,status)
+            VALUES('EG','local','2026-12-01',NULL,'24000','1000','10000','10','15','draft')
+        """).lastrowid
+        self.conn.execute("INSERT INTO payroll_tax_brackets(rule_set_id,lower_bound,upper_bound,rate) VALUES(?,?,?,?)", (next_id,"0",None,"10"))
+        approve_payroll_rule(self.conn, next_id)
+        activate_payroll_rule(self.conn, next_id)
+        self.assertIsNotNone(calculate_payroll_deductions(self.conn, self.employee, 10000, "2026-12"))
+
+    def test_activation_rejects_overlapping_active_periods(self):
+        first_id = self.add_rule()
+        second_id = self.conn.execute("""
+            INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,effective_to,
+                personal_exemption_annual,insurance_floor,insurance_ceiling,
+                employee_insurance_rate,employer_insurance_rate,status)
+            VALUES('EG','local','2026-06-01',NULL,'24000','1000','10000','10','15','approved')
+        """).lastrowid
+        with self.assertRaisesRegex(ValueError, "تتداخل"):
+            activate_payroll_rule(self.conn, second_id)
+        self.assertEqual(self.conn.execute("SELECT status FROM payroll_rule_sets WHERE id=?", (first_id,)).fetchone()[0], "active")
 
     def test_no_effective_rule_uses_manual_fallback(self):
         self.add_rule()
