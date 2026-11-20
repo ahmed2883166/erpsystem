@@ -2966,14 +2966,16 @@ class SalesIntegrationTests(unittest.TestCase):
                ORDER BY id""",
             (credit["credit_note_id"],),
         ).fetchall()
+        # A full FIFO return restores every issued layer; the persisted order
+        # follows reverse issue order, just like a partial return.
         self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in returned_lots],
-                         [(row["lot_id"], Decimal(row["quantity"])) for row in original_lots])
+                         [(row["lot_id"], Decimal(row["quantity"])) for row in reversed(original_lots)])
         movements = self.db.execute(
             """SELECT lot_id,quantity FROM stock_movements
                WHERE movement_no LIKE 'SCN-%' ORDER BY id"""
         ).fetchall()
         self.assertEqual([(row["lot_id"], Decimal(row["quantity"])) for row in movements],
-                         [(row["lot_id"], Decimal(row["quantity"])) for row in original_lots])
+                         [(row["lot_id"], Decimal(row["quantity"])) for row in reversed(original_lots)])
         expected_return_cost = sum(
             (Decimal(row["cost_total"]) for row in original_lots), Decimal("0")
         )
