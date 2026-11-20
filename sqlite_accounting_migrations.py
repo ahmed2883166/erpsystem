@@ -96,12 +96,12 @@ def _rebuild_real_columns_as_text(connection, table_name, column_names):
         rf'(?i)({numeric_literal})\s*(<=|>=|<>|!=|=|<|>)\s*({qualified_column})'
     )
     between_pattern = re.compile(
-        rf'(?i)({qualified_column})\\s+(NOT\\s+)?BETWEEN\\s+'
-        rf'({qualified_column}|{numeric_literal})\\s+AND\\s+'
+        rf'(?i)({qualified_column})\s+(NOT\s+)?BETWEEN\s+'
+        rf'({qualified_column}|{numeric_literal})\s+AND\s+'
         rf'({qualified_column}|{numeric_literal})'
     )
     in_pattern = re.compile(
-        rf'(?i)({qualified_column})\\s+(NOT\\s+)?IN\\s*\\(([^()]*)\\)'
+        rf'(?i)({qualified_column})\s+(NOT\s+)?IN\s*\(([^()]*)\)'
     )
     for trigger_index, statement in enumerate(trigger_sql):
         statement = between_pattern.sub(
