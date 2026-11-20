@@ -18,7 +18,7 @@ class HistoricalInterbranchDimensionAuditTests(unittest.TestCase):
             );
             CREATE TABLE stock_movements(
                 id INTEGER PRIMARY KEY, movement_no TEXT, movement_type TEXT,
-                movement_date TEXT, source_warehouse_id INTEGER, target_warehouse_id INTEGER,
+                movement_date TEXT, product_id INTEGER, source_warehouse_id INTEGER, target_warehouse_id INTEGER,
                 journal_entry_id INTEGER, accounting_status TEXT
             );
             CREATE TABLE journal_entries(id INTEGER PRIMARY KEY, status TEXT);
