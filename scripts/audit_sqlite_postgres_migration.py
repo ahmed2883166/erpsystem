@@ -18,6 +18,8 @@ from scripts.verify_sqlite_postgres_copy import (
     _pg_foreign_key_map,
     _sqlite_foreign_key_map,
 )
+from scripts.audit_postgres_numeric_data import audit_numeric_candidates
+from scripts.inspect_sqlite_schema import inspect_database
 
 
 def inspect_sqlite(path: str) -> dict:
@@ -54,6 +56,20 @@ def inspect_sqlite(path: str) -> dict:
         }
     finally:
         conn.close()
+
+
+def inspect_numeric_source(path: str) -> dict:
+    """Run the exact-Decimal audit against the same read-only SQLite source."""
+    snapshot = inspect_database(path, allow_non_temp=True)
+    source = Path(path).expanduser().resolve(strict=True)
+    uri = "file:" + quote(source.as_posix(), safe="/:") + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=10)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only = ON")
+        return audit_numeric_candidates(connection, snapshot)
+    finally:
+        connection.close()
 
 
 def inspect_postgres(dsn: str, schema: str) -> dict:
@@ -96,7 +112,7 @@ def inspect_postgres(dsn: str, schema: str) -> dict:
         conn.close()
 
 
-def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
+def build_report(sqlite_info: dict, postgres_info: dict, numeric_audit: dict) -> dict:
     source = sqlite_info["tables"]
     # The PostgreSQL baseline installer owns this metadata table; it is not
     # application data and must not block a SQLite-to-PostgreSQL preflight.
@@ -143,13 +159,16 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
             })
     source_ok = sqlite_info["integrity_check"] == ["ok"]
     fk_ok = not sqlite_info["foreign_key_violations"]
-    ready = (source_ok and fk_ok and not missing_tables and not extra_tables
+    numeric_ok = bool(numeric_audit.get("safe_for_numeric_migration"))
+    ready = (source_ok and fk_ok and numeric_ok and not missing_tables and not extra_tables
              and not column_issues and not count_differences
              and not missing_foreign_keys and not extra_foreign_keys)
     return {
         "read_only": True,
         "source_integrity_ok": source_ok,
         "source_foreign_keys_ok": fk_ok,
+        "numeric_audit_passed": numeric_ok,
+        "numeric_audit": numeric_audit,
         "missing_postgres_tables": missing_tables,
         "extra_postgres_tables": extra_tables,
         "column_differences": column_issues,
@@ -162,8 +181,8 @@ def build_report(sqlite_info: dict, postgres_info: dict) -> dict:
         "next_step": (
             "A separately reviewed data-copy run may be planned."
             if ready else
-            "Do not copy yet: complete schema coverage, resolve source integrity issues, "
-            "and use an empty isolated PostgreSQL target."
+            "Do not copy yet: complete schema coverage, resolve source integrity and numeric "
+            "audit issues, and use an empty isolated PostgreSQL target."
         ),
     }
 
@@ -178,7 +197,10 @@ def main(argv=None) -> int:
     if not args.postgres_dsn:
         parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
     try:
-        report = build_report(inspect_sqlite(args.sqlite), inspect_postgres(args.postgres_dsn, args.schema))
+        sqlite_info = inspect_sqlite(args.sqlite)
+        numeric_audit = inspect_numeric_source(args.sqlite)
+        postgres_info = inspect_postgres(args.postgres_dsn, args.schema)
+        report = build_report(sqlite_info, postgres_info, numeric_audit)
     except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
         parser.error(str(exc))
     print(json.dumps(report, ensure_ascii=False, indent=2))
