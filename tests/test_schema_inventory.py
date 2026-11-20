@@ -127,7 +127,7 @@ class SQLiteSchemaInventoryTests(unittest.TestCase):
             "branch_id", "cost_center_id", "project_id", "stock_product_id",
             "stock_warehouse_id", "customer_id", "salesperson_id", "supplier_id",
         }.issubset(journal_columns))
-        self.assertGreater(schema["summary"]["table_count"], 80)
+        self.assertEqual(schema["summary"]["table_count"], 149)
         self.assertGreater(schema["summary"]["foreign_key_count"], 20)
         self.assertEqual(schema["foreign_key_violations"], [])
         self.assertEqual(schema["integrity_check"], ["ok"])
