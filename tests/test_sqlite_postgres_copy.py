@@ -1,6 +1,9 @@
 import unittest
 from unittest.mock import patch
 from decimal import Decimal
+from pathlib import Path
+
+from scripts.snapshot_sqlite_before_postgres import create_sqlite_snapshot
 
 from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, normalize_value, order_self_referencing_rows, quote_ident
 from scripts.verify_sqlite_postgres_copy import (
@@ -567,12 +570,19 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
                 f'FOR EACH ROW EXECUTE FUNCTION "{self.schema}".nexus_reject_audit_log_mutation()'
             )
 
+    def _snapshot(self, source_path):
+        return create_sqlite_snapshot(
+            source_path, Path(source_path).parent / "verified-snapshots"
+        )
+
     def test_real_postgres_copy_preserves_ids_relationships_decimals_and_sequences(self):
         import psycopg
         self._create_target()
-        source_path = self._source()
+        snapshot = self._snapshot(self._source())
+        source_path = snapshot["snapshot"]
         result = copy_database(
             source_path, self.dsn, self.schema, batch_size=2, apply=True,
+            snapshot_manifest=snapshot["manifest"],
             expected_baseline_sha256="a" * 64,
         )
         self.assertTrue(result["committed"])
@@ -582,7 +592,9 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self.assertEqual(result["dashboard_triggers_rebuilt"], 15)
         self.assertEqual(result["dashboard_version_after_copy"], 1)
         verification = verify_copy(
-            source_path, self.dsn, self.schema, expected_baseline_sha256="a" * 64
+            source_path, self.dsn, self.schema,
+            snapshot_manifest=snapshot["manifest"],
+            expected_baseline_sha256="a" * 64,
         )
         self.assertEqual(verification["baseline_sha256"], "a" * 64)
         self.assertTrue(verification["passed"], verification["issues"])
@@ -634,15 +646,19 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
         self._create_target()
         with psycopg.connect(self.dsn) as conn:
             conn.execute(f'DROP TABLE "{self.schema}"."nexus_schema_installation"')
-        source_path = self._source()
+        snapshot = self._snapshot(self._source())
+        source_path = snapshot["snapshot"]
         with self.assertRaisesRegex(ValueError, "no NEXUS baseline installation marker"):
             copy_database(
                 source_path, self.dsn, self.schema, batch_size=2, apply=True,
+                snapshot_manifest=snapshot["manifest"],
                 expected_baseline_sha256="a" * 64,
             )
         with self.assertRaisesRegex(ValueError, "no NEXUS baseline installation marker"):
             verify_copy(
-                source_path, self.dsn, self.schema, expected_baseline_sha256="a" * 64
+                source_path, self.dsn, self.schema,
+                snapshot_manifest=snapshot["manifest"],
+                expected_baseline_sha256="a" * 64,
             )
         with psycopg.connect(self.dsn) as conn:
             account_count = conn.execute(
@@ -653,10 +669,13 @@ class SQLitePostgresCopyIntegrationTests(unittest.TestCase):
     def test_real_postgres_copy_rolls_back_all_tables_on_insert_failure(self):
         import psycopg
         self._create_target(reject_negative=True)
+        snapshot = self._snapshot(self._source(invalid_amount=True))
         with self.assertRaises(Exception):
             copy_database(
-                self._source(invalid_amount=True), self.dsn, self.schema,
-                batch_size=1, apply=True, expected_baseline_sha256="a" * 64,
+                snapshot["snapshot"], self.dsn, self.schema,
+                batch_size=1, apply=True,
+                snapshot_manifest=snapshot["manifest"],
+                expected_baseline_sha256="a" * 64,
             )
         with psycopg.connect(self.dsn) as conn:
             account_count = conn.execute(

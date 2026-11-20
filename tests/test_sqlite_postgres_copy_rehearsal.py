@@ -13,6 +13,7 @@ from pathlib import Path
 from postgres_database import connect_postgres
 from scripts.copy_sqlite_to_postgres import copy_database
 from scripts.verify_sqlite_postgres_copy import verify_copy
+from scripts.snapshot_sqlite_before_postgres import create_sqlite_snapshot
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
@@ -98,6 +99,11 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
             source.commit()
         finally:
             source.close()
+        snapshot = create_sqlite_snapshot(
+            self.sqlite_path, Path(self.temp_dir.name) / "verified-snapshots"
+        )
+        self.snapshot_path = snapshot["snapshot"]
+        self.snapshot_manifest = snapshot["manifest"]
 
     def tearDown(self):
         try:
@@ -121,11 +127,13 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
 
         with self.assertRaises(Exception):
             copy_database(
-                self.sqlite_path,
+                self.snapshot_path,
                 POSTGRES_DSN,
                 schema=self.schema,
                 batch_size=1,
                 apply=True,
+                snapshot_manifest=self.snapshot_manifest,
+                expected_baseline_sha256="0" * 64,
             )
 
         # Parent rows were inserted before the journal-line trigger fired.
@@ -149,11 +157,13 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
 
     def test_copy_and_financial_verification_preserve_all_rows_and_totals(self):
         result = copy_database(
-            self.sqlite_path,
+            self.snapshot_path,
             POSTGRES_DSN,
             schema=self.schema,
             batch_size=2,
             apply=True,
+            snapshot_manifest=self.snapshot_manifest,
+            expected_baseline_sha256="0" * 64,
         )
         self.assertTrue(result["committed"])
         self.assertTrue(result["source_read_only"])
@@ -163,7 +173,11 @@ class SQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
             {"accounts": 2, "journal_entries": 2, "journal_lines": 4, "management_dashboard_data_version": 1},
         )
 
-        report = verify_copy(self.sqlite_path, POSTGRES_DSN, schema=self.schema)
+        report = verify_copy(
+            self.snapshot_path, POSTGRES_DSN, schema=self.schema,
+            snapshot_manifest=self.snapshot_manifest,
+            expected_baseline_sha256="0" * 64,
+        )
         self.assertTrue(report["passed"], report["issues"])
         self.assertEqual(report["issue_count"], 0)
         self.assertEqual(report["source_row_count"], 9)

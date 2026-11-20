@@ -4,6 +4,7 @@ The SQLite source is initialized by the real NEXUS application in a subprocess.
 The PostgreSQL target is a unique temporary schema built from the generated
 full NEXUS baseline. No existing company database is opened.
 """
+import hashlib
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from postgres_baseline import install_postgres_baseline_file
 from postgres_database import connect_postgres
 from scripts.copy_sqlite_to_postgres import copy_database
 from scripts.verify_sqlite_postgres_copy import verify_copy
+from scripts.snapshot_sqlite_before_postgres import create_sqlite_snapshot
 
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
@@ -73,6 +75,14 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         install_postgres_baseline_file(
             self.pg, self.ddl_path, schema=self.schema
         )
+        snapshot = create_sqlite_snapshot(
+            self.sqlite_path, self.root / "verified-snapshots"
+        )
+        self.snapshot_path = snapshot["snapshot"]
+        self.snapshot_manifest = snapshot["manifest"]
+        self.expected_baseline_sha256 = hashlib.sha256(
+            self.ddl_path.read_bytes()
+        ).hexdigest()
 
     def tearDown(self):
         try:
@@ -90,11 +100,13 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.assertEqual(review["foreign_key_count"] > 0, True)
 
         result = copy_database(
-            str(self.sqlite_path),
+            self.snapshot_path,
             POSTGRES_DSN,
             schema=self.schema,
             batch_size=250,
             apply=True,
+            snapshot_manifest=self.snapshot_manifest,
+            expected_baseline_sha256=self.expected_baseline_sha256,
         )
         self.assertTrue(result["committed"])
         self.assertTrue(result["source_read_only"])
@@ -113,7 +125,11 @@ class FullNEXUSSQLitePostgreSQLCopyRehearsalTests(unittest.TestCase):
         self.assertEqual(result["table_row_counts"].get("stock_movements"), 1)
         self.assertEqual(result["table_row_counts"].get("stock_valuation_layers"), 1)
 
-        report = verify_copy(str(self.sqlite_path), POSTGRES_DSN, schema=self.schema)
+        report = verify_copy(
+            self.snapshot_path, POSTGRES_DSN, schema=self.schema,
+            snapshot_manifest=self.snapshot_manifest,
+            expected_baseline_sha256=self.expected_baseline_sha256,
+        )
         self.assertTrue(report["source_integrity_ok"])
         self.assertTrue(report["source_foreign_keys_ok"])
         self.assertEqual(report["source_table_count"], review["table_count"])
