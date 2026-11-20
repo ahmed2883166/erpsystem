@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from decimal import Decimal
 
 from scripts.copy_sqlite_to_postgres import copy_database, dependency_order, normalize_value, order_self_referencing_rows, quote_ident
@@ -110,6 +111,22 @@ class SQLitePostgresCopyPlanningTests(unittest.TestCase):
     def test_copy_requires_explicit_apply_before_any_connection(self):
         with self.assertRaisesRegex(ValueError, "disabled by default"):
             copy_database("missing.sqlite", "postgresql://invalid", apply=False)
+
+    def test_copy_blocks_unsafe_numeric_source_before_postgres_connection(self):
+        audit = {
+            "safe_for_numeric_migration": False,
+            "status_counts": {"invalid_values": 1, "precision_overflow": 0},
+        }
+        with patch(
+            "scripts.audit_sqlite_postgres_migration.inspect_numeric_source",
+            return_value=audit,
+        ) as numeric_audit:
+            with self.assertRaisesRegex(ValueError, "Numeric migration audit did not pass"):
+                copy_database(
+                    "source.sqlite", "postgresql://invalid", "nexus",
+                    apply=True,
+                )
+        numeric_audit.assert_called_once_with("source.sqlite")
 
     def test_copy_refuses_public_schema_before_connecting(self):
         with self.assertRaisesRegex(ValueError, "dedicated, isolated"):
