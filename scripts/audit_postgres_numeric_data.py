@@ -153,13 +153,14 @@ def audit_integer_storage_classes(connection, snapshot, *, max_examples=10):
                     "status": "schema_mismatch", "actual_type": actual_type,
                 })
                 continue
-            counts = {
-                row["storage_class"]: int(row["row_count"])
-                for row in connection.execute(
-                    f"SELECT typeof({qcolumn}) AS storage_class, COUNT(*) AS row_count "
-                    f"FROM {qtable} WHERE {qcolumn} IS NOT NULL GROUP BY typeof({qcolumn})"
-                ).fetchall()
-            }
+            counts = {}
+            for row in connection.execute(
+                f"SELECT typeof({qcolumn}) AS storage_class, COUNT(*) AS row_count "
+                f"FROM {qtable} WHERE {qcolumn} IS NOT NULL GROUP BY typeof({qcolumn})"
+            ).fetchall():
+                storage_class = row["storage_class"] if isinstance(row, sqlite3.Row) else row[0]
+                row_count = row["row_count"] if isinstance(row, sqlite3.Row) else row[1]
+                counts[storage_class] = int(row_count)
             invalid = {kind: count for kind, count in counts.items() if kind != "integer"}
             null_count = int(connection.execute(
                 f"SELECT COUNT(*) FROM {qtable} WHERE {qcolumn} IS NULL"
@@ -174,9 +175,14 @@ def audit_integer_storage_classes(connection, snapshot, *, max_examples=10):
             samples = []
             if invalid:
                 samples = [
-                    {"rowid": row[0], "storage_class": row[1], "value": str(row[2])[:80]}
+                    {
+                        "rowid": row["rowid"] if isinstance(row, sqlite3.Row) else row[0],
+                        "storage_class": row["storage_class"] if isinstance(row, sqlite3.Row) else row[1],
+                        "value": str(row["value"] if isinstance(row, sqlite3.Row) else row[2])[:80],
+                    }
                     for row in connection.execute(
-                        f"SELECT rowid, typeof({qcolumn}), {qcolumn} FROM {qtable} "
+                        f"SELECT rowid, typeof({qcolumn}) AS storage_class, "
+                        f"{qcolumn} AS value FROM {qtable} "
                         f"WHERE {qcolumn} IS NOT NULL AND typeof({qcolumn}) <> 'integer' "
                         f"LIMIT ?", (max_examples,)
                     ).fetchall()
