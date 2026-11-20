@@ -44,7 +44,7 @@ def _db():
     return connect_database(DB_PATH, isolation_level=None)
 
 
-@transactional_connection_initializer(_db)
+@transactional_connection_initializer(lambda: _db())
 def initialize_currency_schema(c):
     schema_sql = """
     CREATE TABLE IF NOT EXISTS fx_exchange_rates(
