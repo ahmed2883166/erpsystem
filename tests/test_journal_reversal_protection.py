@@ -181,6 +181,30 @@ class JournalReversalProtectionTests(unittest.TestCase):
             )
             self.assertEqual(linked_operational_source(conn, 2), "payroll_reversals")
 
+    def test_journal_posting_idempotency_key_does_not_block_manual_reversal(self):
+        with self._database() as conn:
+            conn.execute("""
+                CREATE TABLE journal_posting_keys(
+                    id INTEGER PRIMARY KEY, journal_entry_id INTEGER,
+                    posting_key TEXT UNIQUE
+                )
+            """)
+            conn.execute(
+                "INSERT INTO journal_posting_keys(journal_entry_id,posting_key) VALUES(1,'manual:1')"
+            )
+            self.assertIsNone(linked_operational_source(conn, 1))
+            conn.commit()
+
+        response = self.client.post(
+            "/journal/1/reverse",
+            data={"reversal_date": "2026-01-05", "reversal_reason": "عكس قيد يدوي مرجعي"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self._database() as conn:
+            self.assertIsNotNone(conn.execute(
+                "SELECT id FROM journal_entries WHERE reference='REV-1' AND status='posted'"
+            ).fetchone())
+
     def test_generic_reversal_blocks_module_owned_reversal_journal(self):
         with self._database() as conn:
             conn.execute("""
