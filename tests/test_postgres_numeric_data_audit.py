@@ -100,6 +100,27 @@ class PostgreSQLNumericDataAuditTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_empty_numeric_candidate_is_safe_and_partial_schema_is_audited(self):
+        connection = sqlite3.connect(":memory:")
+        try:
+            connection.execute("CREATE TABLE sample(amount TEXT)")
+            report = audit_numeric_candidates(connection, {
+                "tables": [{
+                    "name": "sample",
+                    "columns": [{"name": "amount", "type": "TEXT", "pk": 0}],
+                    "foreign_keys": [],
+                    "indexes": [],
+                }],
+                "views": [],
+                "triggers": [],
+                "indexes": [],
+            })
+            self.assertTrue(report["safe_for_numeric_migration"])
+            self.assertEqual(report["status_counts"], {"no_source_data": 1})
+            self.assertEqual(report["override_audited_column_count"], 0)
+        finally:
+            connection.close()
+
     def test_postgres_numeric_digit_limit_is_enforced(self):
         connection = sqlite3.connect(":memory:")
         try:
