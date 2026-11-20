@@ -34,6 +34,16 @@ CORE_SCHEMA_SQL = """
         journal_entry_id INTEGER NOT NULL UNIQUE REFERENCES journal_entries(id),
         created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
+        id INTEGER PRIMARY KEY,
+        record_type TEXT NOT NULL,
+        reference TEXT NOT NULL,
+        entity_key TEXT NOT NULL,
+        journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+        source_file TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(record_type, reference, entity_key)
+    );
     CREATE TABLE IF NOT EXISTS audit_log (
         id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
         details TEXT, created_at TEXT NOT NULL
