@@ -10,6 +10,11 @@ import postgres_app_pool
 class FakeRawConnection:
     def __init__(self):
         self.rollback_calls = 0
+        self.execute_calls = []
+
+    def execute(self, statement, params=None):
+        self.execute_calls.append((statement, params))
+        return self
 
     def rollback(self):
         self.rollback_calls += 1
