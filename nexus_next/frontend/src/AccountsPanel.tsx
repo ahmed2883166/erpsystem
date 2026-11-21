@@ -64,6 +64,8 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<AccountImportPreview | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  const [roleSelections, setRoleSelections] = useState<Record<string, number>>({});
+  const [savingRole, setSavingRole] = useState<string | null>(null);
 
   const loadMeta = async () => {
     if (!companyId) { setRoles([]); setTemplate(null); return; }
@@ -154,6 +156,25 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     } finally { setBusy(false); }
   };
 
+
+  const saveRoleMapping = async (role: string) => {
+    if (!companyId || savingRole) return;
+    const accountId = roleSelections[role];
+    const account = accounts.find(item => item.id === accountId);
+    if (!account || account.is_group || !account.allow_posting || !account.is_active) {
+      setError("اختر حسابًا تفصيليًا نشطًا وقابلًا للترحيل."); return;
+    }
+    const current = roles.find(item => item.role === role);
+    setSavingRole(role); setError(""); setNotice("");
+    try {
+      if (current) await accountRoleApi.update(current.id, { account: accountId });
+      else await accountRoleApi.create({ company: companyId, role, account: accountId });
+      await loadMeta();
+      setNotice(`تم حفظ ربط «${roleNames[role] || role}» بالحساب ${account.code} - ${account.name_ar}.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ ربط الحساب.");
+    } finally { setSavingRole(null); }
+  };
 
   const previewWorkbook = async () => {
     if (!companyId || !importFile || importBusy) return;
@@ -254,6 +275,33 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
         {importPreview.errors.length === 0 && <div className="success-banner">الفحص سليم. لم يتم حفظ أي بيانات بعد؛ اضغط اعتماد الاستيراد لإضافة الحسابات الجديدة.</div>}
       </div>}
     </div>
+
+    <section className="account-role-manager">
+      <div className="account-role-manager-heading">
+        <div><h3>إدارة ربط الأدوار المحاسبية</h3><p>اختَر الحساب الفعلي لكل وظيفة محاسبية. تغيير الربط لا يغيّر أكواد الحسابات أو القيود السابقة.</p></div>
+        <span>{roles.length} / {Object.keys(roleNames).length} مربوط</span>
+      </div>
+      <div className="account-role-manager-grid">
+        {Object.entries(roleNames).map(([role, label]) => {
+          const current = roles.find(item => item.role === role);
+          const selected = roleSelections[role] ?? current?.account ?? 0;
+          const eligible = accounts.filter(item => item.is_active && !item.is_group && item.allow_posting);
+          const selectedAccount = accounts.find(item => item.id === selected);
+          const changed = Boolean(selected && selected !== current?.account);
+          return <div className="account-role-manager-row" key={role}>
+            <div className="account-role-manager-label"><strong>{label}</strong><small>{current ? `مرتبط حاليًا: ${current.account_code}` : "غير مربوط بعد"}</small></div>
+            <select value={selected || ""} onChange={event => setRoleSelections(previous => ({...previous, [role]: Number(event.target.value)}))}>
+              <option value="">اختر حسابًا تفصيليًا</option>
+              {eligible.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name_ar}</option>)}
+            </select>
+            <button type="button" className="subtle-button" disabled={!selected || !changed || savingRole !== null || !selectedAccount} onClick={() => void saveRoleMapping(role)}>
+              {savingRole === role ? "جارٍ الحفظ…" : current ? "تغيير الربط" : "ربط الحساب"}
+            </button>
+          </div>;
+        })}
+      </div>
+      <small className="account-role-manager-footnote">لا يمكن ربط حساب من شركة أخرى أو حساب تجميعي أو موقوف. لا يتم إنشاء ربط مكرر للدور نفسه.</small>
+    </section>
 
     <div className="account-tree-toolbar">
       <div className="account-tree-toolbar-title"><div><h3>الشجرة المحاسبية</h3><p>افتح المجموعات للوصول إلى الحسابات التفصيلية والأدوار المرتبطة بها.</p></div><span>{visibleIds.size.toLocaleString("ar-EG")} ظاهر</span></div>
