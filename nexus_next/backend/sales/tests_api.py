@@ -98,6 +98,12 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(updated.data["notes"], "بعد التعديل")
         self.assertEqual(updated.data["line_items"][0]["quantity"], "2.0000")
         movement_id = StockMovement.objects.get(sales_delivery__pk=delivery_id).pk
+        # حذف المستندات محصور في مدير الشركة وفق صلاحيات دورة المبيعات.
+        admin_user = get_user_model().objects.create_user(username="sales-draft-admin", password="test-password")
+        CompanyMembership.objects.create(
+            user=admin_user, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin_user)
         deleted = self.client.delete(f"/api/sales-documents/deliveries/{delivery_id}/")
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(StockMovement.objects.filter(pk=movement_id).exists())
