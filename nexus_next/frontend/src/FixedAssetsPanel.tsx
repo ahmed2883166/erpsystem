@@ -1,3 +1,7 @@
+/*
+ * الأصول الثابتة: تسجيل الأصول وحساب جداول الإهلاك وعرض سجل الحركة والتقارير.
+ * تشمل إجراءات الاستبعاد أو البيع وربط الحسابات المحاسبية والخزينة.
+ */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport } from "./api";
 
