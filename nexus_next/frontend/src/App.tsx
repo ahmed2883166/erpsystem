@@ -8,9 +8,10 @@ const InventoryPanel = lazy(() => import("./InventoryPanel"));
 const TreasuryPanel = lazy(() => import("./TreasuryPanel"));
 const FixedAssetsPanel = lazy(() => import("./FixedAssetsPanel"));
 const AuditPanel = lazy(() => import("./AuditPanel"));
+const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup" | "audit";
+type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup" | "audit" | "approvals";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
@@ -42,6 +43,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
   { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
+  { id: "approvals", label: "الموافقات وحدود الخصم", icon: "✓", group: "الإدارة" },
 ];
 const modules = [
   { title: "المحاسبة العامة", detail: "القيود، دليل الحسابات، مراكز التكلفة", icon: "◈", tone: "blue", section: "accounts" as Section },
@@ -676,6 +678,7 @@ export default function App() {
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
           {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
           {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
+          {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "setup" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section></>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
