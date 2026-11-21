@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment
 
-from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
+from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest
 from hr.services import calculate_component, money, salary_for_date
 
 
@@ -150,6 +150,23 @@ class EmployeePayrollReportApiTests(TestCase):
             {"BASIC", "BONUS", "ER-SHARE"},
         )
         self.assertEqual(len(employee["periods"]), 1)
+
+    def test_manager_can_reject_pending_leave_request(self):
+        leave = LeaveRequest.objects.create(
+            employee=self.employee, kind=LeaveRequest.Kind.ANNUAL,
+            start_date=date(2026, 4, 1), end_date=date(2026, 4, 2),
+            days=Decimal("2"),
+        )
+        manager = User.objects.create_user(username="hr_leave_manager", password="test-password")
+        CompanyMembership.objects.create(
+            user=manager, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(manager)
+        response = self.client.post(f"/api/hr/leave-requests/{leave.pk}/reject/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        leave.refresh_from_db()
+        self.assertEqual(leave.status, LeaveRequest.Status.REJECTED)
+        self.assertEqual(leave.approved_by_id, manager.pk)
 
     def test_employee_pay_report_respects_period_and_rejects_invalid_dates(self):
         outside = self.client.get(
