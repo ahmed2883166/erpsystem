@@ -48,7 +48,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "hr", label: "الموارد البشرية والمرتبات", icon: "♙", group: "الموارد البشرية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "tax", label: "الضرائب والإقرارات", icon: "%", group: "التقارير" },
-  { id: "backup", label: "النسخ الاحتياطي والتصفير", icon: "▣", group: "الإدارة" },
+  { id: "backup", label: "النسخ الاحتياطي", icon: "▣", group: "الإدارة" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
   { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
   { id: "approvals", label: "الموافقات وحدود الخصم", icon: "✓", group: "الإدارة" },
