@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from companies.models import Branch, Company, CompanyMembership, Currency
-from .models import Product, ProductCategory, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockMovement, UnitOfMeasure, Warehouse
 
 
 class InventoryApiTests(APITestCase):
@@ -90,3 +90,74 @@ class InventoryApiTests(APITestCase):
             "purchase_price": "0", "sale_price": "0", "min_stock": "0"
         }, format="json")
         self.assertEqual(response.status_code, 403, response.data)
+
+
+    def _warehouse(self, code):
+        return Warehouse.objects.create(company=self.company, branch=self.branch, code=code, name_ar=code)
+
+    def _movement(self, number, movement_type, destination=None, source=None, quantity="5", cost="10"):
+        return self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk,
+            "movement_number": number,
+            "movement_type": movement_type,
+            "movement_date": "2026-11-21",
+            "source_warehouse": source.pk if source else None,
+            "destination_warehouse": destination.pk if destination else None,
+            "lines": [{
+                "product": self.product.pk,
+                "quantity": quantity,
+                "unit_cost": cost,
+            }],
+        }, format="json")
+
+    def test_receipt_posts_and_updates_weighted_average_balance(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="STK-1", name_ar="صنف رصيد")
+        warehouse = self._warehouse("ST-01")
+        created = self._movement("RCV-001", "receipt", destination=warehouse, quantity="4", cost="12.5")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        self.assertEqual(str(balance.quantity), "4.0000")
+        self.assertEqual(str(balance.inventory_value), "50.0000")
+        self.assertEqual(balance.average_cost, 12.5)
+        self.assertEqual(posted.data["status"], StockMovement.Status.POSTED)
+
+    def test_issue_cannot_make_stock_negative_and_is_atomic(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="STK-2", name_ar="صنف صرف")
+        warehouse = self._warehouse("ST-02")
+        created = self._movement("ISS-001", "issue", source=warehouse, quantity="1")
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=warehouse).exists())
+        self.assertEqual(StockMovement.objects.get(pk=created.data["id"]).status, StockMovement.Status.DRAFT)
+
+    def test_transfer_moves_quantity_and_value_between_warehouses(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="STK-3", name_ar="صنف تحويل")
+        source = self._warehouse("ST-03")
+        destination = self._warehouse("ST-04")
+        receipt = self._movement("RCV-003", "receipt", destination=source, quantity="10", cost="7")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code, 200)
+        transfer = self._movement("TRF-001", "transfer", destination=destination, source=source, quantity="3")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        posted = self.client.post(f"/api/inventory/movements/{transfer.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=source)
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination)
+        self.assertEqual(str(source_balance.quantity), "7.0000")
+        self.assertEqual(str(destination_balance.quantity), "3.0000")
+        self.assertEqual(str(destination_balance.inventory_value), "21.0000")
+
+    def test_posted_movement_cannot_be_posted_twice(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="STK-4", name_ar="صنف تكرار")
+        warehouse = self._warehouse("ST-05")
+        created = self._movement("RCV-004", "receipt", destination=warehouse, quantity="2", cost="3")
+        self.assertEqual(created.status_code, 201, created.data)
+        first = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        second = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 400, second.data)
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        self.assertEqual(str(balance.quantity), "2.0000")
