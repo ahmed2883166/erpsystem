@@ -103,12 +103,18 @@ class TaxCodeViewSet(AccountingViewSet):
         company = serializer.validated_data.get("company", serializer.instance.company)
         self._validate_scope(serializer.validated_data)
         self._require_write_role(company.pk)
+        instance = serializer.instance
+        is_used = instance.sales_invoice_lines.exists() or instance.purchase_invoice_lines.exists()
+        if is_used and set(serializer.validated_data) - {"is_active"}:
+            raise ValidationError("لا يمكن تغيير نسبة أو تصنيف أو فترة كود ضريبي مستخدم في فواتير؛ أنشئ إصدارًا جديدًا بتاريخ سريان جديد.")
         serializer.save()
 
     def perform_destroy(self, instance):
         self._require_write_role(instance.company_id, delete=True)
         if instance.is_active:
             raise ValidationError("عطّل كود الضريبة بدل حذفه للحفاظ على أثر الفواتير.")
+        if instance.sales_invoice_lines.exists() or instance.purchase_invoice_lines.exists():
+            raise ValidationError("لا يمكن حذف كود ضريبي مرتبط بفواتير؛ اتركه معطلًا للحفاظ على السجل.")
         instance.delete()
 
 
