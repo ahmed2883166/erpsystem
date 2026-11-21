@@ -465,6 +465,7 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(revised.data["approval_status"], "pending")
         self.assertEqual(revised.data["discount_total"], "16.0000")
         self.assertEqual(SalesInvoiceApproval.objects.filter(invoice_id=invoice.data["id"]).count(), 2)
+        first.refresh_from_db()
         second = SalesInvoiceApproval.objects.order_by("-requested_at", "-pk").first()
         self.assertEqual(first.status, SalesInvoiceApproval.Status.REJECTED)
         self.assertEqual(second.status, SalesInvoiceApproval.Status.PENDING)
