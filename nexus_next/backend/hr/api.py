@@ -6,13 +6,13 @@ from rest_framework.permissions import IsAuthenticated
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_companies, can_access_company, has_company_role
 from .models import (
-    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory,
+    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
     PayrollRuleSet,
 )
 from .serializers import (
     AttendanceRecordSerializer, DepartmentSerializer, EmployeeComponentSerializer,
-    EmployeeLoanSerializer, EmployeeSerializer, JobPositionSerializer,
+    EmployeeLoanSerializer, EmployeeSerializer, JobPositionSerializer, LoanInstallmentSerializer,
     LeaveRequestSerializer, EmployeeSalaryHistorySerializer, PayrollComponentSerializer, PayrollCycleSerializer,
     PayrollResultSerializer, PayrollRuleSetSerializer,
 )
@@ -233,3 +233,28 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         cycle = self.get_object()
         rows = cycle.results.select_related("employee").prefetch_related("lines")
         return response.Response(PayrollResultSerializer(rows, many=True).data)
+
+class LoanInstallmentViewSet(viewsets.ModelViewSet):
+    queryset = LoanInstallment.objects.select_related("loan", "loan__employee", "loan__employee__company").all()
+    serializer_class = LoanInstallmentSerializer
+    permission_classes = (IsAuthenticated,)
+    http_method_names = ("get", "post", "head", "options")
+    filterset_fields = ("loan", "loan__employee", "loan__employee__company", "due_date", "status")
+
+    def get_queryset(self):
+        qs = self.queryset
+        if not self.request.user.is_superuser:
+            qs = qs.filter(loan__employee__company__in=accessible_companies(self.request.user))
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            qs = qs.filter(loan__employee__company_id=company_id)
+        return qs
+
+    def perform_create(self, serializer):
+        loan = serializer.validated_data["loan"]
+        if not can_access_company(self.request.user, loan.employee.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+        if not has_company_role(self.request.user, loan.employee.company_id, ("admin", "accountant")):
+            raise PermissionDenied("لا تملك صلاحية إنشاء جدول أقساط السلفة.")
+        serializer.save()
+
