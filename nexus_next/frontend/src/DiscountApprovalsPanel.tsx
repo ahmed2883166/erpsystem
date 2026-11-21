@@ -11,6 +11,7 @@ const statusLabel: Record<SalesInvoiceApproval["status"], string> = {
   pending: "بانتظار الموافقة", approved: "تمت الموافقة", rejected: "مرفوض", superseded: "استبدل بطلب أحدث",
 };
 
+// شاشة سياسات الخصم وطلبات اعتماد الخصومات والموافقات المالية.
 export default function DiscountApprovalsPanel({ companyId }: Props) {
   const [policy, setPolicy] = useState<DiscountApprovalPolicy | null>(null);
   const [canManage, setCanManage] = useState(false);
@@ -24,7 +25,8 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const refresh = async () => {
+  // تحميل سياسة الخصم الحالية وطلبات الموافقة وصلاحيات الإدارة.
+const refresh = async () => {
     if (!companyId) { setPolicy(null); setRequests([]); return; }
     setBusy(true); setError("");
     try {
@@ -54,7 +56,8 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
   };
   useEffect(() => { void refresh(); }, [companyId]);
 
-  const savePolicy = async (event: FormEvent) => {
+  // حفظ حدود الخصم وإعدادات الموافقة الخاصة بالشركة.
+const savePolicy = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId) return;
     setBusy(true); setError(""); setNotice("");
@@ -74,7 +77,8 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
     } finally { setBusy(false); }
   };
 
-  const decideFinancial = async (row: FinancialApprovalRequest, decision: "approve" | "reject") => {
+  // اعتماد أو رفض طلب الموافقة المالية المحدد.
+const decideFinancial = async (row: FinancialApprovalRequest, decision: "approve" | "reject") => {
     let note = "";
     if (decision === "reject") {
       const entered = window.prompt("اكتب سبب رفض طلب الموافقة المالية:");
@@ -95,7 +99,8 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
     } finally { setBusy(false); }
   };
 
-  const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject") => {
+  // اعتماد أو رفض طلب تجاوز حد الخصم على فاتورة البيع.
+const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject") => {
     let note = "";
     if (decision === "reject") {
       const entered = window.prompt("اكتب سبب رفض طلب الموافقة:");
