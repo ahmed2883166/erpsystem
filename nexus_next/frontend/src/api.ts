@@ -163,7 +163,16 @@ export type VATReturnReport = {
   output_tax: string; input_tax: string; net_tax_payable: string;
   report_kind: "internal_vat_reconciliation"; note: string;
 };
+export type TaxCode = {
+  id: number; company: number; company_name: string; country: "EG" | "SA"; code: string; name_ar: string;
+  category: "standard" | "zero_rated" | "exempt" | "out_of_scope" | "reverse_charge";
+  rate: string; effective_from: string; effective_to: string | null;
+  input_tax_recoverable: boolean; is_active: boolean; created_at: string;
+};
 export const api = {
+  taxCodes: (companyId: number) => request<TaxCode[]>(`/api/accounting/tax-codes/?company=${companyId}&ordering=code`),
+  createTaxCode: async (payload: Partial<TaxCode>) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>("/api/accounting/tax-codes/", { method: "POST", body: JSON.stringify(payload) }); },
+  deactivateTaxCode: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>(`/api/accounting/tax-codes/${id}/`, { method: "PATCH", body: JSON.stringify({ is_active: false }) }); },
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
   fiscalYears: (id: number) => request<FiscalYear[]>("/api/setup/fiscal-years/?company=" + id),
