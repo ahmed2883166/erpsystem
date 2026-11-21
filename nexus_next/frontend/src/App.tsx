@@ -24,6 +24,7 @@ const panelFallback = <section className="work-panel"><div className="table-empt
 type Section = "overview" | "journals" | "accounts" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
+// تجهيز ملف CSV للتنزيل مع تنسيق القيم وحماية النصوص من كسر الأعمدة.
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
   const safe = (value: string | number) => {
     const text = String(value ?? "");
@@ -71,6 +72,7 @@ const modules = [
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
 const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
 
+// شاشة إعداد أكواد الضرائب: تحميل الأكواد وإضافة كود أو تعطيله للشركة.
 function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null; country: "EG" | "SA" | undefined }) {
   const [items, setItems] = useState<TaxCode[]>([]);
   const [code, setCode] = useState("");
@@ -141,6 +143,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
   </section>;
 }
 
+// شاشة الإقرار الضريبي: تجميع بيانات الفترة والفرع وعرض ملخص ضريبة القيمة المضافة.
 function VATReturnPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(new Date().getFullYear() + "-01-01");
@@ -201,6 +204,7 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
   </div>;
 }
 
+// تقرير التدفقات النقدية: تحميل وعرض حركة النقد للفترة المختارة.
 function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
@@ -240,6 +244,7 @@ function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
 }
 
 
+// تقرير التدفقات النقدية بالطريقة غير المباشرة مع تسوية صافي الربح إلى النقد.
 function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
@@ -297,6 +302,7 @@ function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }
 }
 
 
+// شاشة القوائم المالية: الميزانية وقائمة الدخل والتفاصيل وروابط الأستاذ والقيود.
 function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
@@ -405,6 +411,7 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
 }
 
 
+// شاشة الأستاذ العام وحقوق الملكية: عرض الحركات والتغيرات المرتبطة بالحسابات.
 function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
@@ -467,6 +474,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
   </div>;
 }
 
+// التطبيق الرئيسي: إدارة حالة الجلسة والشركة والفرع والتنقل وعمليات القيود.
 export default function App() {
   const [active, setActive] = useState<Section>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -545,7 +553,8 @@ export default function App() {
   const debitTotal = journalLines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
   const creditTotal = journalLines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
   const journalDifference = debitTotal - creditTotal;
-  const validateDraft = () => {
+  // التحقق من اكتمال مسودة القيد وتوازن أطرافه قبل السماح بالحفظ أو الترحيل.
+const validateDraft = () => {
     setJournalError("");
     if (!companyId || !draft.branch || !draft.fiscal_year) { setJournalError("حدد الشركة والفرع والسنة المالية."); return; }
     const selectedYear = fiscalYears.find((year) => year.id === Number(draft.fiscal_year));
@@ -555,7 +564,8 @@ export default function App() {
     if (Math.abs(journalDifference) > 0.00005) { setJournalError("القيد غير متوازن. يجب أن يتساوى إجمالي المدين والدائن."); return; }
     return true;
   };
-  const saveDraft = async () => {
+  // حفظ القيد كمسودة عبر واجهة الخادم ثم تحديث بيانات الشاشة.
+const saveDraft = async () => {
     if (!validateDraft()) return;
     const targetCompanyId = companyId;
     if (targetCompanyId === null) return;
@@ -568,7 +578,8 @@ export default function App() {
     } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر حفظ القيد."); }
     finally { setSaving(false); }
   };
-  const postDraft = async (entry: Journal) => {
+  // طلب ترحيل القيد المحدد وتحديث قائمة القيود بعد استجابة الخادم.
+const postDraft = async (entry: Journal) => {
     if (!window.confirm("تأكيد ترحيل القيد " + entry.entry_number + "؟ لن يمكن تعديله بعد الترحيل.")) return;
     setJournalError(""); setPostingId(entry.id);
     try { await api.postJournal(entry.id); if (companyId) setJournals(await api.journals(companyId)); setSelectedJournal(null); }
