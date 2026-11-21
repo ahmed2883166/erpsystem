@@ -159,6 +159,190 @@ class JournalEntryViewSet(AccountingViewSet):
             "difference": debit_sum - credit_sum,
         })
 
+
+    @decorators.action(detail=False, methods=("get",), url_path="indirect-cash-flow")
+    def indirect_cash_flow(self, request):
+        from decimal import Decimal
+        from django.db.models import Sum
+        from assets.models import AssetDepreciation, FixedAsset
+        from treasury.models import TreasuryAccount, TreasuryTransaction
+
+        company_raw = request.query_params.get("company")
+        date_from_raw = request.query_params.get("date_from")
+        date_to_raw = request.query_params.get("date_to")
+        if not company_raw or not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض قائمة التدفقات النقدية."})
+        company_id = int(company_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        date_from = parse_date(date_from_raw or "")
+        date_to = parse_date(date_to_raw or "")
+        if not date_from or not date_to:
+            raise ValidationError({"date_from": "حدد تاريخ البداية والنهاية بصيغة YYYY-MM-DD."})
+        if date_from > date_to:
+            raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
+        branch_raw = request.query_params.get("branch")
+        branch_id = None
+        if branch_raw:
+            if not branch_raw.isdigit():
+                raise ValidationError({"branch": "رقم الفرع غير صحيح."})
+            branch_id = int(branch_raw)
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+
+        entries = JournalEntry.objects.filter(
+            company_id=company_id, status=JournalEntry.Status.POSTED,
+            entry_date__gte=date_from, entry_date__lte=date_to,
+        )
+        if branch_id:
+            entries = entries.filter(branch_id=branch_id)
+        period_lines = __import__("accounting.models", fromlist=["JournalLine"]).JournalLine.objects.filter(entry__in=entries)
+
+        revenue_totals = period_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
+            credit=Sum("credit"), debit=Sum("debit")
+        )
+        expense_totals = period_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
+            debit=Sum("debit"), credit=Sum("credit")
+        )
+        net_profit = (
+            (revenue_totals["credit"] or Decimal("0")) - (revenue_totals["debit"] or Decimal("0"))
+            - (expense_totals["debit"] or Decimal("0")) + (expense_totals["credit"] or Decimal("0"))
+        )
+
+        role_codes = (
+            AccountRole.Role.ACCOUNTS_RECEIVABLE, AccountRole.Role.INVENTORY,
+            AccountRole.Role.VAT_INPUT, AccountRole.Role.ACCOUNTS_PAYABLE,
+            AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, AccountRole.Role.VAT_OUTPUT,
+        )
+        role_accounts = {
+            item.role: item.account
+            for item in AccountRole.objects.filter(company_id=company_id, role__in=role_codes).select_related("account")
+        }
+
+        def account_balance(account, cutoff, inclusive=False):
+            qs = account.journal_lines.filter(
+                entry__status=JournalEntry.Status.POSTED,
+                entry__company_id=company_id,
+                entry__entry_date__lte=cutoff if inclusive else cutoff,
+            )
+            if not inclusive:
+                qs = qs.filter(entry__entry_date__lt=cutoff)
+            if branch_id:
+                qs = qs.filter(entry__branch_id=branch_id)
+            totals = qs.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+            debit = totals["debit"] or Decimal("0")
+            credit = totals["credit"] or Decimal("0")
+            return debit - credit if account.nature == ChartOfAccount.Nature.ASSET else credit - debit
+
+        working_capital = []
+        operating_adjustments = Decimal("0")
+        missing_roles = []
+        for role in role_codes:
+            account = role_accounts.get(role)
+            if not account:
+                missing_roles.append(role)
+                continue
+            opening = account_balance(account, date_from, inclusive=False)
+            closing = account_balance(account, date_to, inclusive=True)
+            movement = closing - opening
+            is_current_asset = role in (
+                AccountRole.Role.ACCOUNTS_RECEIVABLE, AccountRole.Role.INVENTORY, AccountRole.Role.VAT_INPUT
+            )
+            adjustment = -movement if is_current_asset else movement
+            operating_adjustments += adjustment
+            working_capital.append({
+                "role": role, "account_code": account.code, "account_name": account.name_ar,
+                "opening_balance": opening, "closing_balance": closing,
+                "change": movement, "cash_flow_adjustment": adjustment,
+            })
+
+        depreciation_qs = AssetDepreciation.objects.filter(
+            asset__company_id=company_id, period_date__gte=date_from, period_date__lte=date_to,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        )
+        if branch_id:
+            depreciation_qs = depreciation_qs.filter(asset__branch_id=branch_id)
+        depreciation_addback = depreciation_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+
+        disposals = FixedAsset.objects.filter(
+            company_id=company_id, status=FixedAsset.Status.DISPOSED,
+            disposed_at__gte=date_from, disposed_at__lte=date_to,
+            disposal_journal__status=JournalEntry.Status.POSTED,
+        ).select_related("disposal_journal")
+        if branch_id:
+            disposals = disposals.filter(branch_id=branch_id)
+        disposal_ids = list(disposals.values_list("disposal_journal_id", flat=True))
+        disposal_lines = __import__("accounting.models", fromlist=["JournalLine"]).JournalLine.objects.filter(
+            entry_id__in=disposal_ids
+        )
+        disposal_gain = (
+            (disposal_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(v=Sum("credit"))["v"] or Decimal("0"))
+            - (disposal_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(v=Sum("debit"))["v"] or Decimal("0"))
+        )
+        disposal_loss = (
+            (disposal_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(v=Sum("debit"))["v"] or Decimal("0"))
+            - (disposal_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(v=Sum("credit"))["v"] or Decimal("0"))
+        )
+        non_cash_adjustments = depreciation_addback + disposal_loss - disposal_gain
+        operating_cash_flow = net_profit + operating_adjustments + non_cash_adjustments
+
+        treasury_rows = TreasuryTransaction.objects.filter(
+            company_id=company_id, status=TreasuryTransaction.Status.POSTED,
+            transaction_date__gte=date_from, transaction_date__lte=date_to,
+        ).exclude(kind=TreasuryTransaction.Kind.TRANSFER)
+        if branch_id:
+            treasury_rows = treasury_rows.filter(branch_id=branch_id)
+        investing_rows = treasury_rows.filter(cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING)
+        financing_rows = treasury_rows.filter(cash_flow_category=TreasuryTransaction.CashFlowCategory.FINANCING)
+
+        def cash_category_total(queryset):
+            receipts = queryset.filter(kind=TreasuryTransaction.Kind.RECEIPT).aggregate(v=Sum("amount"))["v"] or Decimal("0")
+            payments = queryset.filter(kind=TreasuryTransaction.Kind.PAYMENT).aggregate(v=Sum("amount"))["v"] or Decimal("0")
+            return receipts - payments
+
+        investing_cash_flow = cash_category_total(investing_rows)
+        financing_cash_flow = cash_category_total(financing_rows)
+        net_change = operating_cash_flow + investing_cash_flow + financing_cash_flow
+
+        treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
+        if branch_id:
+            from django.db.models import Q
+            treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch_id=branch_id))
+        cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
+        cash_lines = __import__("accounting.models", fromlist=["JournalLine"]).JournalLine.objects.filter(
+            account_id__in=cash_account_ids, entry__status=JournalEntry.Status.POSTED,
+            entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
+        )
+        if branch_id:
+            cash_lines = cash_lines.filter(entry__branch_id=branch_id)
+        cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        ledger_cash_change = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+
+        return response.Response({
+            "company": company_id, "branch": branch_id, "date_from": date_from, "date_to": date_to,
+            "net_profit": net_profit,
+            "non_cash_adjustments": {
+                "depreciation": depreciation_addback, "disposal_loss": disposal_loss,
+                "disposal_gain": disposal_gain, "net": non_cash_adjustments,
+            },
+            "working_capital": working_capital,
+            "missing_account_roles": missing_roles,
+            "operating_adjustments": operating_adjustments,
+            "operating_cash_flow": operating_cash_flow,
+            "investing_cash_flow": investing_cash_flow,
+            "financing_cash_flow": financing_cash_flow,
+            "net_change_in_cash": net_change,
+            "ledger_cash_change": ledger_cash_change,
+            "reconciliation_difference": ledger_cash_change - net_change,
+            "investing_transactions": list(investing_rows.values(
+                "id", "transaction_date", "document_number", "description", "kind", "amount"
+            ).order_by("transaction_date", "id")),
+            "financing_transactions": list(financing_rows.values(
+                "id", "transaction_date", "document_number", "description", "kind", "amount"
+            ).order_by("transaction_date", "id")),
+            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة وضريبة المخرجات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
+        })
+
     @decorators.action(detail=True, methods=("get",))
     def totals(self, request, pk=None):
         entry = self.get_object()
