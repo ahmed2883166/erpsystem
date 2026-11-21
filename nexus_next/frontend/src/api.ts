@@ -50,7 +50,8 @@ export const purchasingApi = {
   createInvoice: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseInvoice>("/api/purchasing/invoices/", { method: "POST", body: JSON.stringify(payload) }); },
   postInvoice: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseInvoice>(`/api/purchasing/invoices/${id}/post/`, { method: "POST" }); },
 };
-\nexport const api = {
+
+export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
   fiscalYears: (id: number) => request<FiscalYear[]>("/api/setup/fiscal-years/?company=" + id),
