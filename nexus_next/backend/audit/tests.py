@@ -1,6 +1,9 @@
 import json
 
 from django.contrib.auth import get_user_model
+from django.contrib.admin.models import LogEntry
+from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
+from django.contrib.contenttypes.models import ContentType
 from django.test import RequestFactory, TestCase
 from django.db import connection, DatabaseError, transaction
 from django.db.models.deletion import ProtectedError
@@ -202,3 +205,76 @@ class AuditEventApiTests(TestCase):
         response = self.client.get("/api/audit/events/?limit=9999")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
+
+
+class AuthenticationAndAdminAuditSignalTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="signal-audit-user", password="test-password"
+        )
+        self.factory = RequestFactory()
+
+    def test_successful_login_is_audited(self):
+        request = self.factory.post("/login/")
+        user_logged_in.send(
+            sender=get_user_model(), request=request, user=self.user
+        )
+        event = AuditEvent.objects.get(resource="authentication.login")
+        self.assertEqual(event.actor, self.user)
+        self.assertTrue(event.succeeded)
+        self.assertEqual(event.status_code, 200)
+        self.assertEqual(event.http_method, "AUTH")
+        self.assertEqual(event.metadata, {"event": "login"})
+
+    def test_logout_is_audited(self):
+        request = self.factory.post("/logout/")
+        user_logged_out.send(
+            sender=get_user_model(), request=request, user=self.user
+        )
+        event = AuditEvent.objects.get(resource="authentication.logout")
+        self.assertEqual(event.actor, self.user)
+        self.assertTrue(event.succeeded)
+        self.assertEqual(event.status_code, 200)
+
+    def test_failed_login_is_audited_without_credentials(self):
+        request = self.factory.post("/login/")
+        user_login_failed.send(
+            sender=get_user_model(),
+            credentials={"username": "private-user", "password": "private-password"},
+            request=request,
+        )
+        event = AuditEvent.objects.get(resource="authentication.login_failed")
+        self.assertIsNone(event.actor)
+        self.assertFalse(event.succeeded)
+        self.assertEqual(event.status_code, 401)
+        self.assertEqual(event.object_id, "")
+        self.assertEqual(event.metadata, {"event": "login_failed"})
+        self.assertNotIn("private-user", str(event.metadata))
+        self.assertNotIn("private-password", str(event.metadata))
+
+    def test_django_admin_add_change_and_delete_are_audited(self):
+        content_type = ContentType.objects.get_for_model(get_user_model())
+        for flag, expected in (
+            (LogEntry.ADDITION, AuditEvent.Action.CREATE),
+            (LogEntry.CHANGE, AuditEvent.Action.UPDATE),
+            (LogEntry.DELETION, AuditEvent.Action.DELETE),
+        ):
+            with self.subTest(flag=flag):
+                LogEntry.objects.create(
+                    user=self.user,
+                    content_type=content_type,
+                    object_id=str(self.user.pk),
+                    object_repr="Signal audit user",
+                    action_flag=flag,
+                    change_message="changed",
+                )
+                event = AuditEvent.objects.get(
+                    resource="django_admin.accounts.user",
+                    action=expected,
+                )
+                self.assertEqual(event.actor, self.user)
+                self.assertEqual(event.object_id, str(self.user.pk))
+                self.assertEqual(event.http_method, "ADMIN")
+                self.assertTrue(event.succeeded)
+                self.assertEqual(event.metadata["event"], "admin_change")
+
