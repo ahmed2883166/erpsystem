@@ -2,6 +2,7 @@ import json
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
+from django.db import connection, DatabaseError, transaction
 from django.http import HttpResponse, JsonResponse
 from rest_framework.test import APIClient
 
@@ -117,6 +118,25 @@ class AuditTrailMiddlewareTests(TestCase):
         with self.assertRaises(TypeError):
             AuditEvent.objects.filter(pk=event.pk).delete()
         self.assertEqual(AuditEvent.objects.get(pk=event.pk).resource, "test")
+
+
+    def test_postgresql_trigger_blocks_raw_sql_mutation(self):
+        event = AuditEvent.objects.create(
+            actor=self.user, company=self.company, action="create",
+            resource="immutable-test", http_method="POST", status_code=201, succeeded=True,
+        )
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE audit_auditevent SET resource = %s WHERE id = %s",
+                        ["tampered", event.pk],
+                    )
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM audit_auditevent WHERE id = %s", [event.pk])
+        self.assertEqual(AuditEvent.objects.get(pk=event.pk).resource, "immutable-test")
 
 
 class AuditEventApiTests(TestCase):
