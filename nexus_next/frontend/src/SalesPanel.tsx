@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, inventoryApi, salesApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse } from "./api";
+import { api, inventoryApi, salesApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse, type CustomerAging } from "./api";
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
@@ -7,13 +7,15 @@ type InvoiceDraftLine = { delivery_line: number; product_name: string; quantity:
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
 export default function SalesPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"deliveries" | "invoices" | "receipts">("deliveries");
+  const [tab, setTab] = useState<"deliveries" | "invoices" | "receipts" | "aging">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [deliveries, setDeliveries] = useState<SalesDelivery[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
+  const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
+  const [aging, setAging] = useState<CustomerAging | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -95,6 +97,14 @@ export default function SalesPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند القبض."); }
     finally { setBusy(false); }
   };
+  const loadAging = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try { setAging(await salesApi.customerAging(companyId, agingAsOf)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أعمار مديونية العملاء."); }
+    finally { setBusy(false); }
+  };
+
   const post = async (action: () => Promise<unknown>) => {
     setBusy(true); setError("");
     try { await action(); await refresh(); }
@@ -110,8 +120,27 @@ export default function SalesPanel({ companyId }: Props) {
       <button type="button" className={tab === "deliveries" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("deliveries"); setShowForm(false); }}>أذون التسليم <b>{deliveries.length}</b></button>
       <button type="button" className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); }}>فواتير المبيعات <b>{invoices.length}</b></button>
       <button type="button" className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); }}>سندات القبض <b>{receipts.length}</b></button>
+      <button type="button" className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار مديونية العملاء</button>
     </div>
-    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : receipts).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy} onClick={() => setShowForm(v => !v)}>{showForm ? "إغلاق النموذج" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : "سند قبض جديد"}</button></div>
+    {tab === "aging" && <div className="inventory-form">
+      <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={e => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={() => void loadAging()}>{busy ? "جارٍ التحميل…" : "عرض أعمار المديونية"}</button></div>
+      {aging && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>غير مستحق</span><strong>{money(aging.totals.not_due)}</strong></div>
+          <div><span>1–30 يوم</span><strong>{money(aging.totals["1_30"])}</strong></div>
+          <div><span>31–60 يوم</span><strong>{money(aging.totals["31_60"])}</strong></div>
+          <div><span>61–90 يوم</span><strong>{money(aging.totals["61_90"])}</strong></div>
+          <div><span>أكثر من 90 يوم</span><strong>{money(aging.totals.over_90)}</strong></div>
+          <div><span>إجمالي المستحق</span><strong>{money(aging.totals.total_due)}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>كود العميل</th><th>العميل</th><th>غير مستحق</th><th>1–30</th><th>31–60</th><th>61–90</th><th>أكثر من 90</th><th>الإجمالي</th></tr></thead>
+          <tbody>{aging.customers.map(row => <tr key={row.customer}><td className="code-cell">{row.customer_code}</td><td>{row.customer_name}<details className="aging-invoice-details"><summary>تفاصيل الفواتير ({row.invoices.length})</summary><div className="aging-invoice-list">{row.invoices.map(invoice => <div key={invoice.invoice}><span>{invoice.invoice_number} · استحقاق {invoice.due_date}</span><strong>{money(invoice.balance_due)}</strong></div>)}</div></details></td><td>{money(row.not_due)}</td><td>{money(row["1_30"])}</td><td>{money(row["31_60"])}</td><td>{money(row["61_90"])}</td><td>{money(row.over_90)}</td><td><strong>{money(row.total_due)}</strong></td></tr>)}</tbody>
+        </table>{aging.customers.length === 0 && <div className="table-empty">لا توجد أرصدة مستحقة على العملاء في تاريخ التقرير.</div>}</div>
+        <p className="inventory-report-note">يعتمد التقرير على الفواتير المرحلة فقط، ويخصم سندات القبض المرحلة حتى تاريخ التقرير. تاريخ الاستحقاق = تاريخ الفاتورة + أجل السداد المسجل للعميل.</p>
+      </div>}
+    </div>}
+    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : receipts).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => setShowForm(v => !v)}>{showForm ? "إغلاق النموذج" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : "التقرير"}</button></div>
     {showForm && tab === "deliveries" && <form className="inventory-form" onSubmit={createDelivery}>
       <label>العميل<select required value={deliveryForm.customer} onChange={e => setDeliveryForm({...deliveryForm, customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(c => c.is_active).map(c => <option key={c.id} value={c.id}>{c.code} · {c.name_ar}</option>)}</select></label>
       <label>مخزن الصرف<select required value={deliveryForm.warehouse} onChange={e => setDeliveryForm({...deliveryForm, warehouse:e.target.value})}><option value="">اختر المخزن</option>{warehouses.filter(w => w.is_active).map(w => <option key={w.id} value={w.id}>{w.code} · {w.name_ar}</option>)}</select></label>
