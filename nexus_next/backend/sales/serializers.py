@@ -124,7 +124,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesInvoice
         fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number",
-                  "invoice_number", "invoice_date", "status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
+                  "invoice_number", "invoice_date", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "created_at", "posted_at")
         read_only_fields = ("status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
@@ -142,7 +142,12 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     def get_approval_status(self, obj):
         limit = obj.discount_approval_limit
         lines = list(obj.lines.all())
-        if limit is None or not any(line.discount_percent > limit for line in lines):
+        discount_exceeded = limit is not None and any(line.discount_percent > limit for line in lines)
+        amount_exceeded = (
+            obj.invoice_approval_limit is not None
+            and obj.grand_total > obj.invoice_approval_limit
+        )
+        if not discount_exceeded and not amount_exceeded:
             return "not_required"
         attempts = list(obj.approval_requests.all())
         approval = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
@@ -152,6 +157,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         if (
             approval.requested_discount_total != obj.discount_total
             or approval.requested_max_discount_percent != max_discount
+            or approval.requested_invoice_limit != obj.invoice_approval_limit
             or approval.requested_lines_snapshot != invoice_discount_snapshot(obj)
         ):
             return "pending"
@@ -216,18 +222,29 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         update_fields = ["net_total", "discount_total", "tax_total", "grand_total"]
         invoice.save(update_fields=update_fields)
 
-        if lines_changed and invoice.discount_approval_limit is not None:
+        if lines_changed and (
+            invoice.discount_approval_limit is not None or invoice.invoice_approval_limit is not None
+        ):
             for old_request in invoice.approval_requests.filter(status=SalesInvoiceApproval.Status.PENDING):
                 old_request.status = SalesInvoiceApproval.Status.SUPERSEDED
                 old_request.decision_note = "تم تعديل الفاتورة؛ أُنشئ طلب أحدث عند الحاجة."
                 old_request.save()
             max_discount = max((line.discount_percent for line in invoice_lines), default=Decimal("0"))
-            if max_discount > invoice.discount_approval_limit:
+            discount_exceeded = (
+                invoice.discount_approval_limit is not None
+                and max_discount > invoice.discount_approval_limit
+            )
+            amount_exceeded = (
+                invoice.invoice_approval_limit is not None
+                and invoice.grand_total > invoice.invoice_approval_limit
+            )
+            if discount_exceeded or amount_exceeded:
                 SalesInvoiceApproval.objects.create(
                     company=invoice.company,
                     invoice=invoice,
                     requested_by=self.context["request"].user,
-                    requested_limit=invoice.discount_approval_limit,
+                    requested_limit=invoice.discount_approval_limit or Decimal("0"),
+                    requested_invoice_limit=invoice.invoice_approval_limit,
                     requested_discount_total=invoice.discount_total,
                     requested_max_discount_percent=max_discount,
                     requested_lines_snapshot=invoice_discount_snapshot(invoice),
@@ -241,7 +258,8 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
         if policy:
             invoice.discount_approval_limit = policy.max_discount_percent
-            invoice.save(update_fields=("discount_approval_limit",))
+            invoice.invoice_approval_limit = policy.max_sales_invoice_amount
+            invoice.save(update_fields=("discount_approval_limit", "invoice_approval_limit"))
         for line in lines:
             SalesInvoiceLine.objects.create(invoice=invoice, **line)
         self._recalculate_invoice(invoice, lines_changed=True)
