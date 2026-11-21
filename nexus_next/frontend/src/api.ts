@@ -294,7 +294,25 @@ export const accountRoleApi = {
 
 
 export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null }[]; created_at: string };
-export type SalesInvoice = { id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+export type SalesInvoice = { id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; status: "draft" | "posted"; net_total: string; discount_total: string; discount_approval_limit: string | null; approval_status: "not_required" | "pending" | "approved" | "rejected"; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; tax_rate: string; discount_percent: string; discount_amount: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+
+export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string; created_at: string; updated_at: string };
+export type SalesInvoiceApproval = {
+  id: number; company: number; invoice: number; invoice_number: string; customer_name: string;
+  invoice_date: string; invoice_total: string; requested_by: number; requested_by_name: string;
+  requested_limit: string; status: "pending" | "approved" | "rejected";
+  decided_by: number | null; decided_by_name: string | null; decision_note: string;
+  requested_at: string; decided_at: string | null;
+};
+export const approvalsApi = {
+  policies: (companyId: number) => request<DiscountApprovalPolicy[]>(`/api/approvals/discount-policies/?company=${companyId}`),
+  createPolicy: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<DiscountApprovalPolicy>("/api/approvals/discount-policies/", {method:"POST",body:JSON.stringify(payload)}); },
+  updatePolicy: async (id: number, payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<DiscountApprovalPolicy>(`/api/approvals/discount-policies/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
+  requests: (companyId: number) => request<SalesInvoiceApproval[]>(`/api/approvals/requests/?company=${companyId}&ordering=-requested_at`),
+  approve: async (id: number, note = "") => { await request<{detail:string}>("/api/csrf/"); return request<SalesInvoiceApproval>(`/api/approvals/requests/${id}/approve/`, {method:"POST",body:JSON.stringify({note})}); },
+  reject: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<SalesInvoiceApproval>(`/api/approvals/requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
+};
+
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
