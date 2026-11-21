@@ -185,30 +185,30 @@ class CompanyIsolationApiTests(TestCase):
 
 
     def test_trial_balance_is_limited_to_assigned_branches(self):
-        main = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي")
-        east = Branch.objects.create(company=self.company, code="EAST", name_ar="الشرقي")
+        main = Branch.objects.create(company=self.company_a, code="MAIN", name_ar="الرئيسي")
+        east = Branch.objects.create(company=self.company_a, code="EAST", name_ar="الشرقي")
         year = FiscalYear.objects.create(
-            company=self.company, name="2027",
+            company=self.company_a, name="2027",
             start_date=date(2027, 1, 1), end_date=date(2027, 12, 31),
         )
         capital = ChartOfAccount.objects.create(
-            company=self.company, code="3001", name_ar="رأس المال", nature="equity"
+            company=self.company_a, code="3001", name_ar="رأس المال", nature="equity"
         )
         for number, branch in (("MAIN-1", main), ("EAST-1", east)):
             entry = JournalEntry.objects.create(
-                company=self.company, branch=branch, fiscal_year=year,
+                company=self.company_a, branch=branch, fiscal_year=year,
                 entry_number=number, entry_date=date(2027, 1, 2), description="قيد فرعي",
             )
-            JournalLine.objects.create(entry=entry, account=self.account, debit=Decimal("100"))
+            JournalLine.objects.create(entry=entry, account=self.account_a, debit=Decimal("100"))
             JournalLine.objects.create(entry=entry, account=capital, credit=Decimal("100"))
             post_journal(entry.pk)
         user = User.objects.create_user(username="branch_reader", password="test-password")
         user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
-        membership = CompanyMembership.objects.create(user=user, company=self.company)
+        membership = CompanyMembership.objects.create(user=user, company=self.company_a)
         membership.branches.add(main)
         self.client.force_authenticate(user=user)
         response = self.client.get(
-            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}"
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company_a.pk}"
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["debit_total"], Decimal("100.0000"))
