@@ -29,6 +29,16 @@ class CompanyMembershipAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__display_name", "company__code", "company__name_ar")
     autocomplete_fields = ("user", "company")
     filter_horizontal = ("branches",)
+    readonly_fields = ("user", "company", "role", "all_branches", "branches", "is_active", "created_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(FiscalYear)
