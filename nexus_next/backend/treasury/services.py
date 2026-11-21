@@ -17,6 +17,12 @@ def post_treasury_transaction(transaction_id, user=None):
     ).get(pk=transaction_id)
     if doc.status != TreasuryTransaction.Status.DRAFT:
         raise ValidationError("لا يمكن ترحيل إلا مستند خزينة مسودة.")
+    from approvals.models import FinancialApprovalRequest
+    from approvals.services import require_financial_approval
+    try:
+        require_financial_approval(FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT, doc)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
     if doc.fiscal_year.status != FiscalYear.Status.OPEN:
         raise ValidationError("السنة المالية مغلقة.")
     if not (doc.fiscal_year.start_date <= doc.transaction_date <= doc.fiscal_year.end_date):
