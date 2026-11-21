@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport } from "./api";
+import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport } from "./api";
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
@@ -112,6 +112,67 @@ function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }
       <h3>التعديلات غير النقدية</h3>
       <div className="asset-cashflow-totals"><span>الإهلاك: {money(report.non_cash_adjustments.depreciation)}</span><span>خسائر الاستبعاد: {money(report.non_cash_adjustments.disposal_loss)}</span><span>أرباح الاستبعاد: {money(report.non_cash_adjustments.disposal_gain)}</span><b>صافي التعديلات: {money(report.non_cash_adjustments.net)}</b></div>
     </>}
+  </div>;
+}
+
+
+function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
+  const today = new Date().toISOString().slice(0,10);
+  const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [to, setTo] = useState(today);
+  const [balance, setBalance] = useState<BalanceSheetReport|null>(null);
+  const [income, setIncome] = useState<IncomeStatementReport|null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try {
+      const [balanceData, incomeData] = await Promise.all([
+        api.balanceSheet(companyId, to), api.incomeStatement(companyId, from, to),
+      ]);
+      setBalance(balanceData); setIncome(incomeData);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل القوائم المالية."); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { void load(); }, [companyId]);
+  const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+  const rows = (items: {account_id:number|null;code:string;name_ar:string;balance:string}[]) => items.map(item=><tr key={item.account_id ?? item.code}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.balance)}</td></tr>);
+  const incomeRows = (items: {account_id:number;code:string;name_ar:string;amount:string}[]) => items.map(item=><tr key={item.account_id}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.amount)}</td></tr>);
+  return <div className="asset-reports">
+    <div className="work-panel-head"><div><h2>القوائم المالية</h2><p>الميزانية العمومية وقائمة الدخل من القيود المرحلة فقط</p></div><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القوائم"}</button></div>
+    <div className="asset-report-filters">
+      <label>من تاريخ قائمة الدخل<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
+      <label>إلى تاريخ / تاريخ الميزانية<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+    </div>
+    {error && <div className="error-banner">{error}</div>}
+    {balance && income && <>
+      <h3>الميزانية العمومية حتى {balance.as_of}</h3>
+      <div className="asset-cashflow-totals">
+        <span>إجمالي الأصول: {money(balance.total_assets)}</span>
+        <span>إجمالي الالتزامات: {money(balance.total_liabilities)}</span>
+        <span>حقوق الملكية: {money(balance.total_equity)}</span>
+        <b>فرق الميزانية: {money(balance.difference)}</b>
+      </div>
+      {[["الأصول",balance.assets],["الالتزامات",balance.liabilities],["حقوق الملكية",balance.equity]].map(([label,items])=><div key={label as string}>
+        <h3>{label as string}</h3>
+        <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody>{rows(items as BalanceSheetReport["assets"])}</tbody></table></div>
+      </div>)}
+      <h3>قائمة الدخل من {income.date_from} إلى {income.date_to}</h3>
+      <div className="asset-cashflow-totals">
+        <span>الإيرادات: {money(income.revenue_total)}</span>
+        <span>تكلفة المبيعات: {money(income.cost_of_sales_total)}</span>
+        <span>مجمل الربح: {money(income.gross_profit)}</span>
+        <span>المصروفات الأخرى: {money(income.expenses_total)}</span>
+        <b>صافي الربح: {money(income.net_profit)}</b>
+      </div>
+      {[["الإيرادات",income.revenues],["تكلفة المبيعات",income.cost_of_sales],["المصروفات التشغيلية والأخرى",income.operating_and_other_expenses]].map(([label,items])=><div key={label as string}>
+        <h3>{label as string}</h3>
+        <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>القيمة</th></tr></thead><tbody>{incomeRows(items as IncomeStatementReport["revenues"])}</tbody></table></div>
+      </div>)}
+      <p className="asset-report-note">{income.note}</p>
+    </>}
+    {!balance && !busy && !error && <div className="table-empty">اختر الفترة ثم حدّث القوائم المالية.</div>}
   </div>;
 }
 
@@ -323,7 +384,7 @@ export default function App() {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
-            <CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
+            <FinancialStatementsPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
           {active === "customers" && <CustomersPanel companyId={companyId} />}
           {active === "sales-workflow" && <SalesPanel companyId={companyId} />}
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
