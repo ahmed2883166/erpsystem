@@ -92,6 +92,12 @@ def post_purchase_invoice(invoice_id, user):
     invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice_id)
     if invoice.status != PurchaseInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المورد مرحلة بالفعل.")
+    from approvals.models import FinancialApprovalRequest
+    from approvals.services import require_financial_approval
+    try:
+        require_financial_approval(FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, invoice)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
     receipt = invoice.receipt
     if receipt.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن الاستلام.")
