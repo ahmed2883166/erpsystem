@@ -243,7 +243,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                     company=invoice.company,
                     invoice=invoice,
                     requested_by=self.context["request"].user,
-                    requested_limit=invoice.discount_approval_limit or Decimal("0"),
+                    requested_limit=invoice.discount_approval_limit,
                     requested_invoice_limit=invoice.invoice_approval_limit,
                     requested_discount_total=invoice.discount_total,
                     requested_max_discount_percent=max_discount,
