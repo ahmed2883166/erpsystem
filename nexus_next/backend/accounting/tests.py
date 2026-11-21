@@ -361,3 +361,32 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(equity_response.data["opening_equity"], Decimal("100.0000"))
         self.assertEqual(equity_response.data["period_net_profit"], Decimal("150.0000"))
         self.assertEqual(equity_response.data["closing_equity"], Decimal("250.0000"))
+
+
+class TrialBalanceClosingFilterTests(TestCase):
+    def test_closing_entries_can_be_excluded_from_trial_balance(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(code="TB-CLOSE", name_ar="شركة ميزان", country="EG",
+            activity="commercial", base_currency=currency)
+        branch = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي")
+        year = FiscalYear.objects.create(company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
+        capital = ChartOfAccount.objects.create(company=company, code="3000", name_ar="حقوق الملكية", nature="equity")
+        closing = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="CLOSE-1", entry_date=date(2026, 12, 31), description="قيد إقفال",
+            source_type=JournalEntry.Source.CLOSING)
+        JournalLine.objects.create(entry=closing, account=cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=closing, account=capital, credit=Decimal("100"))
+        post_journal(closing.pk)
+        user = User.objects.create_user(username="tb_closing_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}")
+        excluded = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&exclude_closing=true")
+        self.assertEqual(included.status_code, 200)
+        self.assertEqual(excluded.status_code, 200)
+        self.assertEqual(included.data["debit_total"], Decimal("100.0000"))
+        self.assertEqual(excluded.data["debit_total"], Decimal("0.0000"))
