@@ -242,6 +242,8 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
+  const [trialBalanceFrom, setTrialBalanceFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [trialBalanceTo, setTrialBalanceTo] = useState(new Date().toISOString().slice(0,10));
   const [customerAging, setCustomerAging] = useState<CustomerAging | null>(null);
   const [supplierAging, setSupplierAging] = useState<SupplierAging | null>(null);
   const [agingLoading, setAgingLoading] = useState(false);
@@ -349,11 +351,11 @@ export default function App() {
     if (active !== "reports" || !companyId) return;
     let cancelled = false;
     setLoading(true);
-    api.trialBalance(companyId).then((result) => { if (!cancelled) setTrialBalance(result); })
+    api.trialBalance(companyId, trialBalanceFrom, trialBalanceTo).then((result) => { if (!cancelled) setTrialBalance(result); })
       .catch((reason: Error) => { if (!cancelled) setError(reason.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [active, companyId]);
+  }, [active, companyId, trialBalanceFrom, trialBalanceTo]);
 
   return (
     <div className="app-shell" dir="rtl">
@@ -435,6 +437,10 @@ export default function App() {
               {!loading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div></section>}
 
           {active === "reports" && <section className="work-panel"><div className="work-panel-head"><div><h2>ميزان المراجعة</h2><p>أرصدة الحسابات من القيود المرحلة فقط — للشركة المحددة</p></div><span className="coming-soon">{trialBalance?.accounts.length ?? 0} حساب</span></div>
+            <div className="asset-report-filters">
+              <label>من تاريخ<input type="date" value={trialBalanceFrom} onChange={e=>setTrialBalanceFrom(e.target.value)}/></label>
+              <label>إلى تاريخ<input type="date" value={trialBalanceTo} onChange={e=>setTrialBalanceTo(e.target.value)}/></label>
+            </div>
             {trialBalance && <><div className="metrics-grid report-metrics">
               <article className="metric-card"><div className="metric-top">إجمالي المدين</div><strong className="metric-value">{Number(trialBalance.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></article>
               <article className="metric-card"><div className="metric-top">إجمالي الدائن</div><strong className="metric-value">{Number(trialBalance.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></article>
