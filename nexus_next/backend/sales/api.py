@@ -51,6 +51,10 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("لا يمكن تعديل إذن التسليم بعد إنشائه؛ أنشئ إذنًا جديدًا قبل الترحيل.")
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         delivery = self.get_object()
@@ -131,6 +135,10 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, data["company"].pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("تعديل سند القبض غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
     def perform_update(self, serializer):
         self._check_write(serializer.instance.company_id)
