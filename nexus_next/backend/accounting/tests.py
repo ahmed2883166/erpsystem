@@ -49,6 +49,29 @@ class PostingEngineTests(TestCase):
         with self.assertRaises(ValidationError):
             post_journal(entry.pk)
 
+    def test_posted_entry_and_lines_are_immutable(self):
+        entry = self.make_entry()
+        post_journal(entry.pk)
+        entry.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            entry.description = "تعديل غير مسموح"
+            entry.save()
+        line = entry.lines.first()
+        with self.assertRaises(ValidationError):
+            line.description = "تعديل غير مسموح"
+            line.save()
+
+    def test_reversal_must_exactly_mirror_original(self):
+        original = self.make_entry()
+        post_journal(original.pk)
+        reversal = JournalEntry.objects.create(company=self.company, branch=self.branch,
+            fiscal_year=self.year, entry_number="JV-REV-001", entry_date=date(2026, 1, 3),
+            description="عكس قيد", reversal_of=original)
+        JournalLine.objects.create(entry=reversal, account=self.cash, credit=Decimal("99"))
+        JournalLine.objects.create(entry=reversal, account=self.capital, debit=Decimal("99"))
+        with self.assertRaises(ValidationError):
+            post_journal(reversal.pk)
+
     def test_account_from_another_company_is_rejected(self):
         other_currency = Currency.objects.create(code="SAR", name_ar="ريال سعودي")
         other_company = Company.objects.create(code="OTH", name_ar="شركة أخرى", country="SA",
