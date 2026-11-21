@@ -172,8 +172,8 @@ jobs:
           2. Install Python 3.11 or newer and enable the Python launcher.
           3. Run setup_windows.bat and wait for the read-only readiness check to pass.
           4. Run run_local.bat to start the internal demo on this PC at http://127.0.0.1:5055.
-          5. On first start, the application creates a fresh local database under data and generates
-             a one-time admin password in data/.nexus_initial_admin_password.
+          5. On first start, the application creates a fresh local database under test_data and generates
+             a one-time admin password in test_data/.nexus_initial_admin_password.
           6. Read that password locally, sign in as admin, and change it immediately.
 
           IMPORTANT SAFETY LIMITS:
