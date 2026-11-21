@@ -153,6 +153,12 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
     queryset = EmployeeLoan.objects.select_related("employee", "employee__company").all()
     serializer_class = EmployeeLoanSerializer
     filterset_fields = ("employee", "employee__company", "status")
+    http_method_names = ("get", "post", "head", "options")
+
+    def perform_create(self, serializer):
+        employee = serializer.validated_data["employee"]
+        self.check_employee_write(employee)
+        serializer.save(outstanding_balance=serializer.validated_data["principal"])
 
 
 class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
