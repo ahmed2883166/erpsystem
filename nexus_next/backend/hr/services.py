@@ -462,8 +462,29 @@ def complete_payroll_payment(cycle_id, actor=None):
     if not postings or any(not item.payment_treasury_transaction_id for item in postings):
         raise ValidationError("مستندات الصرف غير مكتملة لكل الفروع.")
     completed = []
+    payroll_payable = get_account_for_role(cycle.company, "payroll_payable")
     for posting in postings:
-        document = post_treasury_transaction(posting.payment_treasury_transaction_id, actor)
+        document = TreasuryTransaction.objects.select_for_update().select_related(
+            "source_account", "counter_account", "branch", "fiscal_year"
+        ).get(pk=posting.payment_treasury_transaction_id)
+        branch_results = cycle.results.filter(employee__branch_id=posting.branch_id)
+        expected_amount = money(sum((row.net_pay for row in branch_results), Decimal("0")))
+        if (
+            document.company_id != cycle.company_id
+            or document.branch_id != posting.branch_id
+            or document.kind != TreasuryTransaction.Kind.PAYMENT
+            or document.status != TreasuryTransaction.Status.DRAFT
+            or document.amount != expected_amount
+            or document.counter_account_id != payroll_payable.pk
+            or not document.source_account.is_active
+            or document.source_account.company_id != cycle.company_id
+            or (document.source_account.branch_id and document.source_account.branch_id != posting.branch_id)
+            or document.source_account.currency_code not in set(
+                branch_results.values_list("employee__currency__code", flat=True).distinct()
+            )
+        ):
+            raise ValidationError("بيانات مستند صرف المرتبات لا تطابق صافي استحقاق الفرع أو حساب الخزينة المعتمد؛ ألغِ الإعداد وأعده.")
+        document = post_treasury_transaction(document.pk, actor)
         posting.payment_journal_entry = document.journal_entry
         posting.save(update_fields=("payment_journal_entry",))
         branch_results = cycle.results.filter(employee__branch_id=posting.branch_id).prefetch_related("lines")
