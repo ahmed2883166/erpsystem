@@ -17,6 +17,9 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [periodDate, setPeriodDate] = useState(today.slice(0, 7) + "-28");
+  const [disposalDate, setDisposalDate] = useState(today);
+  const [disposalProceeds, setDisposalProceeds] = useState("0");
+  const [disposalCashAccount, setDisposalCashAccount] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [schedule, setSchedule] = useState<AssetSchedule | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,6 +82,18 @@ export default function FixedAssetsPanel({ companyId }: Props) {
     try { setSchedule(await fixedAssetsApi.schedule(asset.id)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل سجل الإهلاك."); }
   };
+  const dispose = async (asset: FixedAsset) => {
+    if (!form.fiscal_year || !disposalCashAccount) { setError("حدد السنة المالية وحساب البنك أو الخزينة."); return; }
+    if (!window.confirm("تأكيد بيع / استبعاد الأصل؟ سيتم ترحيل الإهلاك حتى التاريخ وقيد الاستبعاد.")) return;
+    setSaving(true); setError("");
+    try {
+      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount), Number(form.fiscal_year));
+      await refresh();
+      setSchedule(await fixedAssetsApi.schedule(asset.id));
+      setError("تم الاستبعاد. رقم القيد: " + result.disposal_journal + " · " + (Number(result.gain) > 0 ? "ربح " + result.gain : Number(result.loss) > 0 ? "خسارة " + result.loss : "دون ربح أو خسارة"));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر استبعاد الأصل."); }
+    finally { setSaving(false); }
+  };
 
   if (!companyId) return <section className="work-panel"><p>اختر شركة لعرض الأصول الثابتة.</p></section>;
   return <section className="work-panel assets-panel">
@@ -105,11 +120,20 @@ export default function FixedAssetsPanel({ companyId }: Props) {
     </form>
     <div className="table-toolbar"><strong>سجل الأصول</strong><span className="module-count">{loading ? "جارٍ التحميل…" : assets.length + " أصل"}</span></div>
     <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الأصل</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة الدفترية</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
-      {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}</td><td>{Number(a.original_cost).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td>{Number(a.accumulated_depreciation).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td>{Number(a.net_book_value).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td><span className="status-pill posted">{a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك</button></td></tr>)}
+      {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}</td><td>{Number(a.original_cost).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td>{Number(a.accumulated_depreciation).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td>{Number(a.net_book_value).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td><span className="status-pill posted">{a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك / التصرف</button></td></tr>)}
     </tbody></table>{!assets.length && !loading && <div className="table-empty">لا توجد أصول مسجلة حتى الآن.</div>}</div>
     {selected && schedule && <div className="asset-schedule"><div className="work-panel-head"><div><h2>سجل إهلاك الأصل</h2><p>صافي القيمة الدفترية: {Number(schedule.net_book_value).toLocaleString("ar-EG",{maximumFractionDigits:2})}</p></div><button className="subtle-button" onClick={()=>{setSelected(null);setSchedule(null);}}>إغلاق</button></div>
-      <div className="asset-depreciation-action"><label>تاريخ الإهلاك<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label><button className="primary-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void depreciate(a);}}>تسجيل إهلاك الفترة</button></div>
-      <div className="data-table-wrap"><table><thead><tr><th>تاريخ الفترة</th><th>قيمة الإهلاك</th><th>رقم القيد</th></tr></thead><tbody>{schedule.rows.map(row=><tr key={row.id}><td>{row.period_date}</td><td>{Number(row.amount).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td><td>{row.journal_entry}</td></tr>)}</tbody></table></div>
+      {assets.find(x=>x.id===selected)?.status === "active" && <div className="asset-depreciation-action"><label>تاريخ الإهلاك<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label><button className="primary-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void depreciate(a);}}>تسجيل إهلاك الفترة</button></div>}
+      <div className="data-table-wrap"><table><thead><tr><th>تاريخ الفترة</th><th>قيمة الإهلاك</th><th>النوع</th><th>رقم القيد</th></tr></thead><tbody>{schedule.rows.map(row=><tr key={row.id}><td>{row.period_date}</td><td>{Number(row.amount).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td><td>{row.is_partial_period ? "حتى تاريخ الاستبعاد" : "شهري"}</td><td>{row.journal_entry}</td></tr>)}</tbody></table></div>
+      {assets.find(x=>x.id===selected)?.status === "active" && <div className="asset-disposal-form">
+        <strong>بيع الأصل أو استبعاده</strong>
+        <div className="asset-disposal-fields">
+          <label>تاريخ البيع / الاستبعاد<input type="date" value={disposalDate} onChange={e=>setDisposalDate(e.target.value)}/></label>
+          <label>قيمة المتحصلات<input type="number" min="0" step="0.0001" value={disposalProceeds} onChange={e=>setDisposalProceeds(e.target.value)}/></label>
+          <label>حساب البنك / الخزينة<select value={disposalCashAccount} onChange={e=>setDisposalCashAccount(e.target.value)}><option value="">اختر الحساب</option>{assetAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+        </div>
+        <button className="danger-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void dispose(a);}}>{saving ? "جارٍ الترحيل…" : "تأكيد البيع / الاستبعاد"}</button>
+      </div>}
     </div>}
   </section>;
 }
