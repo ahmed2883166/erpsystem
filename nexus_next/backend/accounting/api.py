@@ -380,32 +380,35 @@ class JournalEntryViewSet(AccountingViewSet):
             if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             visible_branches = visible_branches.filter(pk=int(branch_raw))
-        equity_accounts = ChartOfAccount.objects.filter(
-            company_id=company_id, nature=ChartOfAccount.Nature.EQUITY
-        ).order_by("code")
+        opening_filter = (
+            Q(entry__entry_date__lt=date_from)
+            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        )
+        movement_filter = (
+            Q(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to)
+            & ~Q(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
+        )
+        grouped_equity = JournalLine.objects.filter(
+            account__company_id=company_id, account__nature=ChartOfAccount.Nature.EQUITY,
+            entry__status=JournalEntry.Status.POSTED, entry__company_id=company_id,
+            entry__branch__in=visible_branches,
+        ).values("account_id", "account__code", "account__name_ar").annotate(
+            opening_debit=Sum("debit", filter=opening_filter),
+            opening_credit=Sum("credit", filter=opening_filter),
+            movement_debit=Sum("debit", filter=movement_filter),
+            movement_credit=Sum("credit", filter=movement_filter),
+        ).order_by("account__code")
         account_rows = []
         opening_total = Decimal("0")
         movement_total = Decimal("0")
-        for account in equity_accounts:
-            base = account.journal_lines.filter(
-                entry__status=JournalEntry.Status.POSTED,
-                entry__company_id=company_id, entry__branch__in=visible_branches,
-            )
-            opening = base.filter(
-                Q(entry__entry_date__lt=date_from)
-                | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
-            ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-            opening_balance = (opening["credit"] or Decimal("0")) - (opening["debit"] or Decimal("0"))
-            movement = base.filter(
-                entry__entry_date__gte=date_from, entry__entry_date__lte=date_to
-            ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING)).aggregate(
-                debit=Sum("debit"), credit=Sum("credit")
-            )
-            period_movement = (movement["credit"] or Decimal("0")) - (movement["debit"] or Decimal("0"))
+        for item in grouped_equity:
+            opening_balance = (item["opening_credit"] or Decimal("0")) - (item["opening_debit"] or Decimal("0"))
+            period_movement = (item["movement_credit"] or Decimal("0")) - (item["movement_debit"] or Decimal("0"))
             if opening_balance or period_movement:
                 account_rows.append({
-                    "account_id": account.pk, "code": account.code, "name_ar": account.name_ar,
-                    "opening_balance": opening_balance, "period_movement": period_movement,
+                    "account_id": item["account_id"], "code": item["account__code"],
+                    "name_ar": item["account__name_ar"], "opening_balance": opening_balance,
+                    "period_movement": period_movement,
                     "closing_balance_before_profit": opening_balance + period_movement,
                 })
             opening_total += opening_balance
