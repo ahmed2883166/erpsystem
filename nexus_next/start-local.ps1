@@ -18,14 +18,36 @@ $Backend = Join-Path $Root "backend"
 $Frontend = Join-Path $Root "frontend"
 Push-Location $Root
 try {
-  docker compose -f compose.yaml up -d db
-  if ($LASTEXITCODE -ne 0) { throw "تعذر تشغيل PostgreSQL. تأكد أن Docker Desktop يعمل." }
+  $ComposeEnv = Join-Path $Root ".env"
+  if (-not (Test-Path $ComposeEnv)) {
+    $DatabaseSecret = "nexus-db-" + [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
+    @(
+      "POSTGRES_DB=nexus_dev",
+      "POSTGRES_USER=nexus_app",
+      "POSTGRES_PASSWORD=$DatabaseSecret",
+      "POSTGRES_PORT=5432"
+    ) | Set-Content -LiteralPath $ComposeEnv -Encoding ASCII
+  }
+  $ComposeEnvText = Get-Content -LiteralPath $ComposeEnv -Raw
+  $PasswordMatch = [regex]::Match($ComposeEnvText, "(?m)^POSTGRES_PASSWORD=(.+)$")
+  if (-not $PasswordMatch.Success) {
+    $DatabaseSecret = "nexus-db-" + [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
+    Add-Content -LiteralPath $ComposeEnv -Value "POSTGRES_PASSWORD=$DatabaseSecret" -Encoding ASCII
+  } else {
+    $DatabaseSecret = $PasswordMatch.Groups[1].Value.Trim()
+  }
+
   $EnvFile = Join-Path $Backend ".env"
   if (-not (Test-Path $EnvFile)) {
     Copy-Item (Join-Path $Backend ".env.example") $EnvFile
     $LocalSecret = "nexus-local-" + [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
-    (Get-Content $EnvFile -Raw).Replace("replace-this-for-local-development", $LocalSecret) | Set-Content $EnvFile -NoNewline
+    $BackendEnvText = (Get-Content $EnvFile -Raw).Replace("replace-this-for-local-development", $LocalSecret)
+    $BackendEnvText = $BackendEnvText.Replace("POSTGRES_PASSWORD=nexus_local_only", "POSTGRES_PASSWORD=$DatabaseSecret")
+    Set-Content -LiteralPath $EnvFile -Value $BackendEnvText -NoNewline
   }
+
+  docker compose -f compose.yaml up -d db
+  if ($LASTEXITCODE -ne 0) { throw "تعذر تشغيل PostgreSQL. تأكد أن Docker Desktop يعمل." }
   $DatabaseReady = $false
   for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
     docker compose -f compose.yaml exec -T db pg_isready *> $null
