@@ -66,6 +66,7 @@ const natureFilters = [
   { value: "expense", label: "التكاليف والمصروفات" },
 ];
 
+// شاشة دليل الحسابات: بناء العرض الشجري وإدارة الحسابات وربط الأدوار والاستيراد.
 export default function AccountsPanel({ companyId, companyName, activity, accounts, onRefresh }: Props) {
   const [roles, setRoles] = useState<AccountRole[]>([]);
   const [template, setTemplate] = useState<AccountTemplateInfo | null>(null);
@@ -82,7 +83,8 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
   const [roleSelections, setRoleSelections] = useState<Record<string, number>>({});
   const [savingRole, setSavingRole] = useState<string | null>(null);
 
-  const loadMeta = async () => {
+  // تحميل بيانات القوالب والأدوار اللازمة لإعداد دليل الحسابات.
+const loadMeta = async () => {
     if (!companyId) { setRoles([]); setTemplate(null); return; }
     const [roleRows, templateInfo] = await Promise.all([
       accountRoleApi.list(companyId),
@@ -146,13 +148,15 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
   const detailCount = accounts.filter(item => !item.is_group).length;
   const activeCount = accounts.filter(item => item.is_active).length;
 
-  const toggle = (id: number) => setExpanded(current => {
+  // فتح أو طي فرع من شجرة الحسابات مع الاحتفاظ بحالة بقية الفروع.
+const toggle = (id: number) => setExpanded(current => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
 
-  const applyTemplate = async () => {
+  // تطبيق قالب دليل الحسابات الملائم لنشاط الشركة عبر واجهة الخادم.
+const applyTemplate = async () => {
     if (!companyId || busy) return;
     const confirmed = window.confirm(
       "سيتم إضافة الحسابات والأدوار المحاسبية الناقصة وفق نشاط الشركة. لن يتم تعديل أو حذف أي حساب أو رصيد أو ربط قائم. هل تريد المتابعة؟"
@@ -173,7 +177,8 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
   };
 
 
-  const saveRoleMapping = async (role: string) => {
+  // حفظ ربط الدور المحاسبي بالحساب المحدد لاستخدامه في الترحيل والتقارير.
+const saveRoleMapping = async (role: string) => {
     if (!companyId || savingRole) return;
     const accountId = roleSelections[role];
     const account = accounts.find(item => item.id === accountId);
@@ -192,7 +197,8 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     } finally { setSavingRole(null); }
   };
 
-  const previewWorkbook = async () => {
+  // معاينة ملف استيراد دليل الحسابات والتحقق من البيانات قبل اعتمادها.
+const previewWorkbook = async () => {
     if (!companyId || !importFile || importBusy) return;
     setImportBusy(true); setError(""); setNotice(""); setImportPreview(null);
     try {
@@ -203,7 +209,8 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     } finally { setImportBusy(false); }
   };
 
-  const commitWorkbook = async () => {
+  // اعتماد بيانات الاستيراد بعد مراجعة المعاينة ونتائج التحقق.
+const commitWorkbook = async () => {
     if (!companyId || !importFile || !importPreview || importPreview.errors.length || importBusy) return;
     if (!window.confirm("سيتم إضافة الحسابات الجديدة فقط. الحسابات المطابقة سيتم تخطيها، ولن يتم تعديل أو حذف أي حساب موجود. هل تعتمد الاستيراد؟")) return;
     setImportBusy(true); setError(""); setNotice("");
@@ -218,7 +225,8 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     } finally { setImportBusy(false); }
   };
 
-  const renderNode = (item: Account, depth = 0): ReactNode => {
+  // رسم عقدة الحساب وأبنائها مع مراعاة مستوى التداخل وحالة التوسيع.
+const renderNode = (item: Account, depth = 0): ReactNode => {
     if (!visibleIds.has(item.id)) return null;
     const children = (childrenByParent.get(item.id) || []).filter(child => visibleIds.has(child.id));
     const hasChildren = children.length > 0;
