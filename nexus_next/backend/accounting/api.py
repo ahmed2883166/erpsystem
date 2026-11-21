@@ -7,10 +7,22 @@ from rest_framework.exceptions import ValidationError
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
 from .services import post_journal
+from companies.access import scope_company_queryset, user_can_access_company
+from rest_framework.exceptions import PermissionDenied
 
 
 class AccountingViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.DjangoModelPermissions,)
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        return scope_company_queryset(queryset, self.request.user)
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data.get("company")
+        if company and not user_can_access_company(self.request.user, company.pk):
+            raise PermissionDenied("ليس لديك صلاحية الوصول إلى الشركة المحددة.")
+        serializer.save()
 
 
 class ChartOfAccountViewSet(AccountingViewSet):
@@ -62,6 +74,8 @@ class JournalEntryViewSet(AccountingViewSet):
         company_id = request.query_params.get("company")
         if not company_id or not company_id.isdigit():
             raise ValidationError({"company": "حدد الشركة لعرض ميزان المراجعة."})
+        if not user_can_access_company(request.user, int(company_id)):
+            raise PermissionDenied("ليس لديك صلاحية الوصول إلى الشركة المحددة.")
         date_from = request.query_params.get("date_from")
         date_to = request.query_params.get("date_to")
         if date_from and not parse_date(date_from):
