@@ -20,10 +20,12 @@ CENT = Decimal("0.01")
 
 
 def money(value):
+    """تحويل القيمة إلى مبلغ عشري آمن للاستخدام في الحسابات المالية."""
     return Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
 def salary_for_date(employee, target_date):
+    """استخراج الراتب الأساسي الساري للموظف في التاريخ المحدد."""
     history = employee.salary_history.filter(effective_date__lte=target_date).order_by("-effective_date", "-id").first()
     if history:
         return history.new_salary
@@ -32,6 +34,7 @@ def salary_for_date(employee, target_date):
 
 
 def _config_decimal(section, key):
+    """قراءة قيمة عشرية من إعدادات المرتبات مع معالجة القيمة الافتراضية."""
     if key not in section or section[key] in (None, ""):
         raise ValidationError(f"إعداد القاعدة القانونية ({key}) غير مكتمل.")
     try:
@@ -44,6 +47,7 @@ def calculate_component(
     component, assigned_value, basic_salary, payable_days, overtime_hours,
     daily_divisor, friday_days, rule_configuration=None, taxable_base=None, insurance_base=None,
 ):
+    """احتساب قيمة عنصر المرتب وفق نوعه وقواعده ومدخلاته."""
     value = assigned_value if assigned_value is not None else component.default_value
     rule_configuration = rule_configuration or {}
     taxable_base = taxable_base if taxable_base is not None else basic_salary
@@ -108,6 +112,7 @@ def calculate_component(
 
 @transaction.atomic
 def calculate_payroll_cycle(cycle_id, actor=None):
+    """احتساب دورة المرتبات ومكوناتها واستقطاعاتها للموظفين المشمولين."""
     cycle = PayrollCycle.objects.select_for_update().select_related("company", "rule_set").get(pk=cycle_id)
     if cycle.status not in (PayrollCycle.Status.DRAFT, PayrollCycle.Status.CALCULATED, PayrollCycle.Status.REVIEW):
         raise ValidationError("لا يمكن إعادة احتساب دورة معتمدة أو مرحلة أو مصروفة.")
@@ -185,6 +190,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         rule_configuration = cycle.rule_set.configuration if cycle.rule_set_id else {}
 
         def safe_component_amount(*args):
+            """تنفيذ مسؤولية الدالة safe_component_amount ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             try:
                 return calculate_component(*args)
             except (InvalidOperation, TypeError, ValueError, KeyError, IndexError) as exc:
@@ -286,6 +292,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
 
 @transaction.atomic
 def post_payroll_cycle(cycle_id, actor=None):
+    """ترحيل مستحقات دورة المرتبات إلى القيود والحسابات المرتبطة."""
     cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
     if cycle.status != PayrollCycle.Status.APPROVED:
         raise ValidationError("يجب اعتماد دورة المرتبات قبل الترحيل المحاسبي.")
@@ -309,6 +316,7 @@ def post_payroll_cycle(cycle_id, actor=None):
     posted = []
 
     def validate_account(account, nature, description):
+        """التحقق من صلاحية الحساب وطبيعته قبل استخدامه في قيد المرتبات."""
         if not account or account.company_id != cycle.company_id or not account.is_active or account.is_group or not account.allow_posting:
             raise ValidationError(f"الحساب المرتبط بـ {description} غير صالح للترحيل.")
         if account.nature != nature:
@@ -332,6 +340,7 @@ def post_payroll_cycle(cycle_id, actor=None):
         line_count = 0
 
         def add_line(account, debit, credit, description, cost_center=None):
+            """تنفيذ مسؤولية الدالة add_line ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             nonlocal line_count
             debit = money(debit)
             credit = money(credit)
@@ -404,6 +413,7 @@ def post_payroll_cycle(cycle_id, actor=None):
 
 @transaction.atomic
 def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
+    """إعداد دفعة صرف المرتبات وربطها بحساب الخزينة المحدد."""
     cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
     if cycle.status != PayrollCycle.Status.POSTED:
         raise ValidationError("يجب ترحيل استحقاق المرتبات محاسبيًا قبل إعداد الصرف.")
@@ -469,6 +479,7 @@ def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
 
 @transaction.atomic
 def complete_payroll_payment(cycle_id, actor=None):
+    """إتمام صرف دفعة المرتبات وتسجيل أثر السداد."""
     cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
     if cycle.status != PayrollCycle.Status.PAYMENT_PENDING:
         raise ValidationError("يجب إعداد مستندات الصرف أولًا.")
@@ -531,5 +542,6 @@ def complete_payroll_payment(cycle_id, actor=None):
 
 
 def models_q_end(start_date):
+    """إنشاء شرط استعلام يضم السجلات التي يبدأ تاريخها قبل نهاية الفترة."""
     from django.db.models import Q
     return Q(effective_to__isnull=True) | Q(effective_to__gte=start_date)
