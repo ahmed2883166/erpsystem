@@ -160,6 +160,120 @@ class JournalEntryViewSet(AccountingViewSet):
         })
 
 
+
+    @decorators.action(detail=False, methods=("get",), url_path="balance-sheet")
+    def balance_sheet(self, request):
+        from decimal import Decimal
+        company_raw = request.query_params.get("company")
+        as_of = parse_date(request.query_params.get("as_of") or "")
+        if not company_raw or not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض الميزانية."})
+        company_id = int(company_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not as_of:
+            raise ValidationError({"as_of": "حدد تاريخ الميزانية بصيغة YYYY-MM-DD."})
+        branch_raw = request.query_params.get("branch")
+        visible_branches = accessible_branches(request.user, company_id)
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            visible_branches = visible_branches.filter(pk=int(branch_raw))
+        posted_filter = Q(
+            journal_lines__entry__status=JournalEntry.Status.POSTED,
+            journal_lines__entry__entry_date__lte=as_of,
+            journal_lines__entry__branch__in=visible_branches,
+        )
+        accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
+            debit_total=Sum("journal_lines__debit", filter=posted_filter),
+            credit_total=Sum("journal_lines__credit", filter=posted_filter),
+        ).order_by("nature", "code")
+        sections = {key: [] for key in ("asset", "liability", "equity")}
+        totals = {key: Decimal("0") for key in sections}
+        for account in accounts:
+            debit = account.debit_total or Decimal("0")
+            credit = account.credit_total or Decimal("0")
+            balance = debit - credit if account.nature == ChartOfAccount.Nature.ASSET else credit - debit
+            if account.nature not in sections or balance == 0:
+                continue
+            sections[account.nature].append({
+                "account_id": account.pk, "code": account.code, "name_ar": account.name_ar,
+                "debit_total": debit, "credit_total": credit, "balance": balance,
+            })
+            totals[account.nature] += balance
+        return response.Response({
+            "company": company_id, "as_of": as_of,
+            "assets": sections["asset"], "liabilities": sections["liability"], "equity": sections["equity"],
+            "total_assets": totals["asset"], "total_liabilities": totals["liability"],
+            "total_equity": totals["equity"],
+            "liabilities_and_equity": totals["liability"] + totals["equity"],
+            "difference": totals["asset"] - totals["liability"] - totals["equity"],
+        })
+
+    @decorators.action(detail=False, methods=("get",), url_path="income-statement")
+    def income_statement(self, request):
+        from decimal import Decimal
+        company_raw = request.query_params.get("company")
+        date_from = parse_date(request.query_params.get("date_from") or "")
+        date_to = parse_date(request.query_params.get("date_to") or "")
+        if not company_raw or not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض قائمة الدخل."})
+        company_id = int(company_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not date_from or not date_to:
+            raise ValidationError({"date_from": "حدد تاريخ البداية والنهاية بصيغة YYYY-MM-DD."})
+        if date_from > date_to:
+            raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
+        visible_branches = accessible_branches(request.user, company_id)
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            visible_branches = visible_branches.filter(pk=int(branch_raw))
+        entries = JournalEntry.objects.filter(
+            company_id=company_id, status=JournalEntry.Status.POSTED,
+            entry_date__gte=date_from, entry_date__lte=date_to,
+            branch__in=visible_branches,
+        ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
+        grouped = JournalLine.objects.filter(
+            entry__in=entries, account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE)
+        ).values("account_id", "account__code", "account__name_ar", "account__nature").annotate(
+            debit=Sum("debit"), credit=Sum("credit")
+        ).order_by("account__code")
+        cogs_role = AccountRole.objects.filter(
+            company_id=company_id, role=AccountRole.Role.COGS
+        ).values_list("account_id", flat=True).first()
+        revenue_rows, cogs_rows, expense_rows = [], [], []
+        revenue_total = Decimal("0")
+        cogs_total = Decimal("0")
+        expense_total = Decimal("0")
+        for row in grouped:
+            debit = row["debit"] or Decimal("0")
+            credit = row["credit"] or Decimal("0")
+            if row["account__nature"] == ChartOfAccount.Nature.REVENUE:
+                amount = credit - debit
+                if amount:
+                    revenue_rows.append({"account_id": row["account_id"], "code": row["account__code"], "name_ar": row["account__name_ar"], "amount": amount})
+                    revenue_total += amount
+            else:
+                amount = debit - credit
+                if amount:
+                    item = {"account_id": row["account_id"], "code": row["account__code"], "name_ar": row["account__name_ar"], "amount": amount}
+                    if row["account_id"] == cogs_role:
+                        cogs_rows.append(item); cogs_total += amount
+                    else:
+                        expense_rows.append(item); expense_total += amount
+        gross_profit = revenue_total - cogs_total
+        net_profit = gross_profit - expense_total
+        return response.Response({
+            "company": company_id, "date_from": date_from, "date_to": date_to,
+            "revenues": revenue_rows, "cost_of_sales": cogs_rows, "operating_and_other_expenses": expense_rows,
+            "revenue_total": revenue_total, "cost_of_sales_total": cogs_total,
+            "gross_profit": gross_profit, "expenses_total": expense_total, "net_profit": net_profit,
+            "note": "يُفصل حساب تكلفة المبيعات عند ربطه بدور تكلفة المبيعات في إعدادات أدوار الحسابات؛ بقية حسابات المصروفات تظهر ضمن المصروفات التشغيلية والأخرى.",
+        })
+
     @decorators.action(detail=False, methods=("get",), url_path="indirect-cash-flow")
     def indirect_cash_flow(self, request):
         from decimal import Decimal
