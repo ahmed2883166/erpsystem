@@ -325,6 +325,6 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <div className="data-table-wrap"><table><thead><tr><th>الموظف</th>{dynamicPayrollColumns.map(column=><th key={column.code}>{column.name}</th>)}<th>الاستحقاقات الظاهرة</th><th>الاستقطاعات الظاهرة</th><th>صافي الموظف</th><th>تكلفة الشركة</th><th>تفاصيل</th></tr></thead><tbody>{results.map(r=><tr key={r.id}><td>{r.employee_code} — {r.employee_name}</td>{dynamicPayrollColumns.map(column=><td key={column.code}>{money(r.lines.filter(line=>line.code===column.code).reduce((sum,line)=>sum+Number(line.amount),0))}</td>)}<td>{money(r.displayed_earnings_total)}</td><td>{money(r.displayed_deductions_total)}</td><td><strong>{money(r.net_pay)}</strong></td><td>{money(r.company_cost)}</td><td><details><summary>عرض البنود</summary><ul>{r.lines.filter(line=>line.kind!=="employer_share").map((line,i)=><li key={i}>{line.name}: {money(line.amount)} {line.display_only?"(للعرض فقط)":""}</li>)}</ul></details></td></tr>)}</tbody></table>{!results.length&&<div className="table-empty">لا توجد نتائج لهذه الدورة.</div>}</div>
       </>}
     </>}
-    <p className="asset-report-note">تنبيه: نسب الضرائب والتأمينات والترحيل المحاسبي والصرف البنكي لم تُفعّل بعد. لا تعتمد دورة فعلية قبل اكتمالها واختبارها.</p>
+    <p className="asset-report-note">ملاحظة تشغيلية: الترحيل المحاسبي والصرف يمران بمراحل اعتماد منفصلة. يجب ربط حسابات الاستقطاعات وحصة صاحب العمل، وإدخال القواعد القانونية المعتمدة قبل احتساب دورة فعلية. لا يتم تحديث أقساط السلف إلا بعد نجاح صرف مستندات الخزينة.</p>
   </section>;
 }
