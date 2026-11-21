@@ -1,8 +1,8 @@
-"""Isolated PostgreSQL connection primitives for the staged NEXUS migration.
+"""PostgreSQL connection pool and driver primitives used by NEXUS runtime.
 
-These primitives are deliberately not wired into the Flask application. SQLite
-remains the only runtime database until schema, SQL, transaction, and
-backup/restore behavior have been migrated and verified.
+The Flask application selects these connections only when PostgreSQL is
+explicitly configured and its runtime approval flag is present. SQLite remains
+available for legacy installations and isolated compatibility tests.
 """
 from contextlib import contextmanager
 import math
