@@ -1,5 +1,5 @@
 from rest_framework import viewsets
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_companies, can_access_company, has_company_role
