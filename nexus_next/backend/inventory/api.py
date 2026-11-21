@@ -247,7 +247,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = StockBalanceSerializer
     permission_classes = (CompanyRolePermission,)
     queryset = StockBalance.objects.select_related("product", "warehouse", "warehouse__company")
-    filterset_fields = ("warehouse", "product", "warehouse__company")
+    filterset_fields = ("warehouse", "product", "warehouse__company", "location", "expiry_date")
     search_fields = ("product__code", "product__name_ar", "warehouse__name_ar")
     ordering_fields = ("product__code", "warehouse__code", "quantity", "inventory_value")
 
