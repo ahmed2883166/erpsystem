@@ -302,3 +302,18 @@ class InventoryApiTests(APITestCase):
             self.assertEqual(sum((line.debit for line in lines), 0), 16)
             self.assertEqual(sum((line.credit for line in lines), 0), 16)
             self.assertIn("2300", {line.account.code for line in lines})
+
+
+    def test_closed_fiscal_year_rolls_back_stock_and_journal_posting(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-LOCK", name_ar="منع الترحيل")
+        warehouse = self._warehouse("GL-LOCK-WH")
+        self.fiscal_year.status = FiscalYear.Status.CLOSED
+        self.fiscal_year.save(update_fields=("status",))
+        created = self._movement("GL-LOCK-R1", "receipt", destination=warehouse, quantity="2", cost="9")
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=warehouse).exists())
+        self.assertFalse(StockMovementJournalLink.objects.filter(movement_id=created.data["id"]).exists())
+        self.assertFalse(JournalEntry.objects.filter(company=self.company).exists())
+        self.assertEqual(StockMovement.objects.get(pk=created.data["id"]).status, StockMovement.Status.DRAFT)
