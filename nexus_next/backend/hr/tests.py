@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment
 
-from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment
+from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet
 from hr.services import calculate_component, money, salary_for_date
 
 
@@ -217,7 +217,7 @@ class EmployeePayrollReportApiTests(TestCase):
             "is_active": True,
         }, format="json")
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertFalse(self.company.payroll_rule_sets.filter(name="قواعد غير صالحة").exists())
+        self.assertFalse(PayrollRuleSet.objects.filter(company=self.company, name="قواعد غير صالحة").exists())
 
     def test_employee_pay_report_respects_period_and_rejects_invalid_dates(self):
         outside = self.client.get(
