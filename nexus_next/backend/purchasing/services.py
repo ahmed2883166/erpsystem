@@ -178,8 +178,10 @@ def post_supplier_payment(payment_id, user):
     if payment.payment_account_id:
         from treasury.models import TreasuryAccount
         expected_kind = TreasuryAccount.Kind.CASH if payment.method == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
-        if not TreasuryAccount.objects.filter(company=payment.company, account=payment_account, kind=expected_kind, is_active=True).exists():
-            raise ValidationError("حساب الخزينة المختار غير نشط أو لا يطابق طريقة الصرف.")
+        treasury_account = TreasuryAccount.objects.filter(company=payment.company, account=payment_account, kind=expected_kind, is_active=True).first()
+        if (not treasury_account or (treasury_account.branch_id and treasury_account.branch_id != branch.pk)
+                or treasury_account.currency_code != payment.company.base_currency.code):
+            raise ValidationError("حساب الخزينة المختار غير نشط أو لا يطابق فرع الفاتورة أو عملة الشركة أو طريقة الصرف.")
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
