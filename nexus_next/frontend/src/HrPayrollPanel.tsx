@@ -10,7 +10,7 @@ const cycleLabels: Record<string, string> = {
   approved: "معتمدة", posted: "مرحّلة", paid: "تم الصرف",
 };
 
-export default function HrPayrollPanel({ companyId }: { companyId: number | null }) {
+export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyId: number | null; baseCurrencyId?: number }) {
   const [tab, setTab] = useState<"employees" | "payroll">("employees");
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
   const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);
@@ -34,7 +34,7 @@ export default function HrPayrollPanel({ companyId }: { companyId: number | null
       setEmployees(employeeRows); setCycles(cycleRows);
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
-      setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(currencyRows.find(x=>x.code==="EGP")?.id||currencyRows[0]?.id||"")}));
+      setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(baseCurrencyId||currencyRows[0]?.id||"")}));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات الموارد البشرية."); }
     finally { setBusy(false); }
   };
