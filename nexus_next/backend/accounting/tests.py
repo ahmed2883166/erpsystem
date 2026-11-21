@@ -247,6 +247,7 @@ class IndirectCashFlowApiTests(TestCase):
         company = Company.objects.create(code="CF", name_ar="شركة التدفقات", country="EG",
             activity="commercial", base_currency=currency)
         branch = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        second_branch = Branch.objects.create(company=company, code="SEC", name_ar="الفرع الثاني")
         year = FiscalYear.objects.create(company=company, name="2026",
             start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
         cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
@@ -325,6 +326,13 @@ class FinancialStatementsApiTests(TestCase):
         JournalLine.objects.create(entry=operations, account=expense, debit=Decimal("50"))
         JournalLine.objects.create(entry=operations, account=cash, credit=Decimal("50"))
         post_journal(operations.pk)
+        second_operations = JournalEntry.objects.create(company=company, branch=second_branch, fiscal_year=year,
+            entry_number="OPS-FS-2", entry_date=date(2026, 1, 3), description="تشغيل الفرع الثاني")
+        JournalLine.objects.create(entry=second_operations, account=cash, debit=Decimal("50"))
+        JournalLine.objects.create(entry=second_operations, account=revenue, credit=Decimal("50"))
+        JournalLine.objects.create(entry=second_operations, account=expense, debit=Decimal("50"))
+        JournalLine.objects.create(entry=second_operations, account=cash, credit=Decimal("50"))
+        post_journal(second_operations.pk)
 
         user = User.objects.create_user(username="financial_reader", password="test-password")
         user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
@@ -349,6 +357,14 @@ class FinancialStatementsApiTests(TestCase):
             f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
             "&date_from=2026-01-01&date_to=2026-01-31"
         )
+        branch_income_response = client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={company.pk}&branch={branch.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        branch_ledger_response = client.get(
+            f"/api/accounting/journal-entries/general-ledger/?company={company.pk}&branch={branch.pk}"
+            f"&account={cash.pk}&date_from=2026-01-01&date_to=2026-01-31"
+        )
         self.assertEqual(balance_response.status_code, 200)
         self.assertEqual(income_response.status_code, 200)
         self.assertEqual(ledger_response.status_code, 200)
@@ -356,11 +372,16 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(journal_detail_response.data["entry_number"], "OPS-FS")
         self.assertEqual(len(journal_detail_response.data["lines"]), 2)
         self.assertEqual(equity_response.status_code, 200)
+        self.assertEqual(branch_income_response.status_code, 200)
+        self.assertEqual(branch_ledger_response.status_code, 200)
+        self.assertEqual(branch_income_response.data["revenue_total"], Decimal("200.0000"))
+        self.assertEqual(branch_income_response.data["expenses_total"], Decimal("50.0000"))
+        self.assertEqual(branch_ledger_response.data["closing_balance"], Decimal("250.0000"))
         self.assertEqual(balance_response.data["total_assets"], Decimal("250.0000"))
         self.assertEqual(balance_response.data["total_equity"], Decimal("250.0000"))
         self.assertEqual(balance_response.data["difference"], Decimal("0.0000"))
-        self.assertEqual(income_response.data["revenue_total"], Decimal("200.0000"))
-        self.assertEqual(income_response.data["expenses_total"], Decimal("50.0000"))
+        self.assertEqual(income_response.data["revenue_total"], Decimal("250.0000"))
+        self.assertEqual(income_response.data["expenses_total"], Decimal("100.0000"))
         self.assertEqual(income_response.data["net_profit"], Decimal("150.0000"))
         self.assertEqual(ledger_response.data["opening_balance"], Decimal("100.0000"))
         self.assertEqual(ledger_response.data["closing_balance"], Decimal("250.0000"))
