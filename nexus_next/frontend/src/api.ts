@@ -241,7 +241,7 @@ export type FixedAsset = {
   acquisition_date: string; depreciation_start_date: string; original_cost: string; salvage_value: string;
   useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
-  acquisition_counter_account: number; disposal_gain_loss_account: number; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
+  acquisition_counter_account: number; disposal_gain_loss_account: number; disposal_loss_account: number | null; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
   status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null; disposal_journal: number | null; disposal_treasury_transaction: number | null;
   accumulated_depreciation: string; net_book_value: string; created_at: string;
 };
