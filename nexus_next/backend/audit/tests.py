@@ -2,7 +2,7 @@ import json
 
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from rest_framework.test import APIClient
 
 from companies.models import Branch, Company, CompanyMembership, Currency
@@ -67,6 +67,25 @@ class AuditTrailMiddlewareTests(TestCase):
         request.user = self.user
         middleware(request)
         self.assertEqual(AuditEvent.objects.count(), 0)
+
+
+    def test_delete_keeps_company_scope_after_target_row_is_removed(self):
+        branch = self.branch
+
+        def delete_target(_request):
+            branch.delete()
+            return HttpResponse(status=204)
+
+        middleware = AuditTrailMiddleware(delete_target)
+        request = self.factory.delete(f"/api/setup/branches/{branch.pk}/")
+        request.user = self.user
+        middleware(request)
+
+        event = AuditEvent.objects.get()
+        self.assertEqual(event.action, AuditEvent.Action.DELETE)
+        self.assertEqual(event.company_id, self.company.pk)
+        self.assertIsNone(event.branch_id)
+        self.assertEqual(event.object_id, str(branch.pk))
 
     def test_audit_events_cannot_be_changed_or_deleted(self):
         event = AuditEvent.objects.create(
