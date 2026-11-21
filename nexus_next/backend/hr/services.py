@@ -3,7 +3,11 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q, Sum\n\nfrom accounting.models import JournalEntry, JournalLine\nfrom accounting.services import get_account_for_role, post_journal\nfrom companies.models import FiscalYear
+from django.db.models import Q, Sum
+
+from accounting.models import JournalEntry, JournalLine
+from accounting.services import get_account_for_role, post_journal
+from companies.models import FiscalYear
 
 from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
@@ -316,7 +320,8 @@ def post_payroll_cycle(cycle_id, actor=None):
             credit = money(credit)
             if debit <= 0 and credit <= 0:
                 return
-            expected_nature = "expense" if debit > 0 and credit == 0 else (account.nature if account else "liability")\n            validate_account(account, expected_nature, description)
+            expected_nature = "expense" if debit > 0 and credit == 0 else (account.nature if account else "liability")
+            validate_account(account, expected_nature, description)
             if cost_center and cost_center.company_id != cycle.company_id:
                 raise ValidationError("مركز تكلفة المرتبات لا يتبع نفس الشركة.")
             JournalLine.objects.create(
