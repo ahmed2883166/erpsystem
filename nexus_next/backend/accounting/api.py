@@ -5,7 +5,9 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
-from companies.models import FiscalYear
+from companies.models import Company, FiscalYear
+from purchasing.models import PurchaseInvoiceLine
+from sales.models import SalesInvoiceLine
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
 from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
@@ -617,6 +619,92 @@ class JournalEntryViewSet(AccountingViewSet):
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
             "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة وضريبة المخرجات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
+        })
+
+    @decorators.action(detail=False, methods=("get",), url_path="vat-return")
+    def vat_return(self, request):
+        from decimal import Decimal
+
+        company_id = request.query_params.get("company")
+        date_from = parse_date(request.query_params.get("date_from", ""))
+        date_to = parse_date(request.query_params.get("date_to", ""))
+        branch_id = request.query_params.get("branch")
+        if not company_id or not company_id.isdigit():
+            raise ValidationError({"company": "حدد الشركة."})
+        if not date_from or not date_to or date_to < date_from:
+            raise ValidationError({"date_from": "حدد تاريخ بداية ونهاية صحيحين."})
+        if not can_access_company(request.user, int(company_id)):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+        company = Company.objects.select_related("base_currency").get(pk=company_id)
+        if company.country not in (Company.Country.EGYPT, Company.Country.SAUDI_ARABIA):
+            raise ValidationError({"company": "تقرير ضريبة القيمة المضافة متاح لمصر والسعودية فقط."})
+
+        visible_branches = accessible_branches(request.user, company.pk)
+        if request.user.is_superuser:
+            visible_branches = company.branches.all()
+        if branch_id:
+            if not branch_id.isdigit() or not can_access_branch(request.user, int(branch_id), company.pk):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            visible_branches = visible_branches.filter(pk=branch_id)
+        branch_ids = list(visible_branches.values_list("pk", flat=True))
+
+        sales_rows = list(SalesInvoiceLine.objects.filter(
+            invoice__company_id=company.pk,
+            invoice__status="posted",
+            invoice__invoice_date__gte=date_from,
+            invoice__invoice_date__lte=date_to,
+            invoice__journal_entry__status=JournalEntry.Status.POSTED,
+            invoice__journal_entry__branch_id__in=branch_ids,
+        ).values("tax_rate").annotate(
+            taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
+            gross_amount=Sum("total_amount"),
+        ).order_by("tax_rate"))
+
+        purchase_rows = list(PurchaseInvoiceLine.objects.filter(
+            invoice__company_id=company.pk,
+            invoice__status="posted",
+            invoice__invoice_date__gte=date_from,
+            invoice__invoice_date__lte=date_to,
+            invoice__journal_entry__status=JournalEntry.Status.POSTED,
+            invoice__journal_entry__branch_id__in=branch_ids,
+        ).values("tax_rate").annotate(
+            taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
+            gross_amount=Sum("total_amount"),
+        ).order_by("tax_rate"))
+
+        def summarize(rows):
+            normalized = [{
+                "tax_rate": str(row["tax_rate"]),
+                "taxable_base": str(row["taxable_base"] or Decimal("0")),
+                "tax_amount": str(row["tax_amount"] or Decimal("0")),
+                "gross_amount": str(row["gross_amount"] or Decimal("0")),
+            } for row in rows]
+            return {
+                "taxable_base": str(sum((Decimal(row["taxable_base"]) for row in normalized), Decimal("0"))),
+                "tax_amount": str(sum((Decimal(row["tax_amount"]) for row in normalized), Decimal("0"))),
+                "gross_amount": str(sum((Decimal(row["gross_amount"]) for row in normalized), Decimal("0"))),
+                "by_rate": normalized,
+            }
+
+        sales = summarize(sales_rows)
+        purchases = summarize(purchase_rows)
+        output_tax = Decimal(sales["tax_amount"])
+        input_tax = Decimal(purchases["tax_amount"])
+        return response.Response({
+            "company": company.pk,
+            "country": company.country,
+            "currency": company.base_currency.code,
+            "date_from": date_from,
+            "date_to": date_to,
+            "branch": int(branch_id) if branch_id else None,
+            "scope_branch_ids": branch_ids,
+            "sales": sales,
+            "purchases": purchases,
+            "output_tax": str(output_tax),
+            "input_tax": str(input_tax),
+            "net_tax_payable": str(output_tax - input_tax),
+            "report_kind": "internal_vat_reconciliation",
+            "note": "تقرير داخلي للمراجعة والتجهيز؛ لا يمثل إقرارًا رسميًا ولا يرسل بيانات إلى مصلحة الضرائب المصرية أو هيئة الزكاة والضريبة والجمارك.",
         })
 
     @decorators.action(detail=True, methods=("get",))
