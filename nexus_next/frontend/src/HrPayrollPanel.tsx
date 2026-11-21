@@ -15,7 +15,10 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
   const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);
   const [components, setComponents] = useState<HrPayrollComponent[]>([]);
-  const [attendance, setAttendance] = useState<HrAttendance[]>([]);\n  const [employeeComponents, setEmployeeComponents] = useState<HrEmployeeComponent[]>([]);\n  const [leaveRequests, setLeaveRequests] = useState<HrLeaveRequest[]>([]);\n  const [loans, setLoans] = useState<HrEmployeeLoan[]>([]);
+  const [attendance, setAttendance] = useState<HrAttendance[]>([]);
+  const [employeeComponents, setEmployeeComponents] = useState<HrEmployeeComponent[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<HrLeaveRequest[]>([]);
+  const [loans, setLoans] = useState<HrEmployeeLoan[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [results, setResults] = useState<HrPayrollResult[]>([]);
@@ -26,7 +29,11 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
   const [employeeDraft, setEmployeeDraft] = useState({code:"",full_name_ar:"",branch:"",currency:"",hire_date:new Date().toISOString().slice(0,10),basic_salary:"0"});
   const [componentDraft, setComponentDraft] = useState({code:"",name_ar:"",kind:"earning" as HrPayrollComponent["kind"],method:"fixed" as HrPayrollComponent["method"],default_value:"0"});
   const [attendanceDraft, setAttendanceDraft] = useState({employee:"",work_date:new Date().toISOString().slice(0,10),status:"present" as HrAttendance["status"],worked_hours:"8",overtime_hours:"0",friday_worked:false,late_minutes:"0"});
-  const [assignmentDraft, setAssignmentDraft] = useState({employee:"",component:"",value:"",effective_from:new Date().toISOString().slice(0,10),effective_to:""});\n  const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});\n  const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),principal:"0",installment_count:"1",installment_amount:"0",notes:""});\n  const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),new_salary:"0",change_type:"annual_raise",reason:""});\n  const [cycleDraft, setCycleDraft] = useState({period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
+  const [assignmentDraft, setAssignmentDraft] = useState({employee:"",component:"",value:"",effective_from:new Date().toISOString().slice(0,10),effective_to:""});
+  const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
+  const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),principal:"0",installment_count:"1",installment_amount:"0",notes:""});
+  const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),new_salary:"0",change_type:"annual_raise",reason:""});
+  const [cycleDraft, setCycleDraft] = useState({period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
 
   const load = async () => {
     if (!companyId) return;
@@ -151,7 +158,9 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
     <div className="hr-tabs" role="tablist" style={{display:"flex",gap:8,margin:"18px 0"}}>
       <button type="button" className={tab==="employees"?"primary-button":"subtle-button"} onClick={()=>setTab("employees")}>ملفات الموظفين</button>
       <button type="button" className={tab==="components"?"primary-button":"subtle-button"} onClick={()=>setTab("components")}>عناصر المرتب</button>
-      <button type="button" className={tab==="attendance"?"primary-button":"subtle-button"} onClick={()=>setTab("attendance")}>الحضور</button>\n      <button type="button" className={tab==="assignments"?"primary-button":"subtle-button"} onClick={()=>setTab("assignments")}>عناصر الموظفين</button>\n      <button type="button" className={tab==="leaveLoans"?"primary-button":"subtle-button"} onClick={()=>setTab("leaveLoans")}>الإجازات والسلف</button>
+      <button type="button" className={tab==="attendance"?"primary-button":"subtle-button"} onClick={()=>setTab("attendance")}>الحضور</button>
+      <button type="button" className={tab==="assignments"?"primary-button":"subtle-button"} onClick={()=>setTab("assignments")}>عناصر الموظفين</button>
+      <button type="button" className={tab==="leaveLoans"?"primary-button":"subtle-button"} onClick={()=>setTab("leaveLoans")}>الإجازات والسلف</button>
       <button type="button" className={tab==="payroll"?"primary-button":"subtle-button"} onClick={()=>setTab("payroll")}>دورات المرتبات</button>
       <button type="button" className="subtle-button" onClick={()=>void load()} disabled={busy}>تحديث البيانات</button>
     </div>
@@ -190,7 +199,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
         <label>الحالة<select value={attendanceDraft.status} onChange={e=>setAttendanceDraft({...attendanceDraft,status:e.target.value as HrAttendance["status"]})}><option value="present">حضور</option><option value="absent">غياب</option><option value="leave">إجازة</option><option value="unpaid_leave">إجازة بدون راتب</option><option value="holiday">عطلة</option></select></label>
         <label>ساعات العمل<input type="number" min="0" step="0.25" value={attendanceDraft.worked_hours} onChange={e=>setAttendanceDraft({...attendanceDraft,worked_hours:e.target.value})}/></label>
         <label>ساعات إضافية<input type="number" min="0" step="0.25" value={attendanceDraft.overtime_hours} onChange={e=>setAttendanceDraft({...attendanceDraft,overtime_hours:e.target.value})}/></label>
-        <label>دقائق التأخير<input type="number" min="0" step="1" value={attendanceDraft.late_minutes} onChange={e=>setAttendanceDraft({...attendanceDraft,late_minutes:e.target.value})}/></label>\n        <label className="checkbox-filter"><input type="checkbox" checked={attendanceDraft.friday_worked} onChange={e=>setAttendanceDraft({...attendanceDraft,friday_worked:e.target.checked})}/> عمل يوم الجمعة</label>
+        <label>دقائق التأخير<input type="number" min="0" step="1" value={attendanceDraft.late_minutes} onChange={e=>setAttendanceDraft({...attendanceDraft,late_minutes:e.target.value})}/></label>
+        <label className="checkbox-filter"><input type="checkbox" checked={attendanceDraft.friday_worked} onChange={e=>setAttendanceDraft({...attendanceDraft,friday_worked:e.target.checked})}/> عمل يوم الجمعة</label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>تسجيل الحضور</button></div>
       </form>
       <div className="section-heading" style={{marginTop:24}}><div><h2>سجل الحضور</h2><p>ساعات العمل والإضافي والتأخير</p></div><span className="module-count">{attendance.length} سجل</span></div>
