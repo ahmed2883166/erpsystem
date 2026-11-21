@@ -45,7 +45,7 @@ jobs:
           cache-dependency-path: nexus_next/backend/requirements.txt
       - run: python -m pip install -r requirements.txt
       - run: python manage.py check
-      - run: python manage.py makemigrations --check --dry-run accounts companies accounting customers inventory suppliers purchasing sales treasury assets
+      - run: python manage.py makemigrations --check --dry-run accounts companies accounting customers inventory suppliers purchasing sales treasury assets audit
       - run: python manage.py migrate --noinput
       - run: python manage.py test
 
