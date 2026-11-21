@@ -150,3 +150,57 @@ class PurchaseInvoiceLine(models.Model):
         if self.invoice.status == PurchaseInvoice.Status.POSTED:
             raise ValidationError("لا يمكن حذف سطور فاتورة مورد مرحلة.")
         return super().delete(*args, **kwargs)
+
+
+class SupplierPayment(models.Model):
+    class Method(models.TextChoices):
+        CASH = "cash", "نقدي"
+        BANK = "bank", "تحويل بنكي"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_payments")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="payments")
+    invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="payments")
+    payment_number = models.CharField(max_length=40)
+    payment_date = models.DateField()
+    method = models.CharField(max_length=8, choices=Method.choices, default=Method.BANK)
+    amount = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    reference = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payment")
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_supplier_payments")
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-payment_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "payment_number"), name="uq_supplier_payment_company_no"),
+        ]
+        indexes = [models.Index(fields=("company", "status", "payment_date"), name="pur_payment_co_status_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.invoice_id and (
+            self.invoice.company_id != self.company_id or self.invoice.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"invoice": "الفاتورة لا تتبع المورد والشركة المحددين."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
+            raise ValidationError("سند صرف المورد المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.POSTED:
+            raise ValidationError("لا يمكن حذف سند صرف مورد مرحّل.")
+        return super().delete(*args, **kwargs)
