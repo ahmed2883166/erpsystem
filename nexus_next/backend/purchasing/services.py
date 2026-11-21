@@ -170,6 +170,9 @@ def post_supplier_payment(payment_id, user):
         remaining = max(Decimal("0"), invoice.grand_total - paid_before)
         raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
 
+    receipt = invoice.receipt
+    branch, year = _branch_and_year(receipt, payment.payment_date)
+
     payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
     payment_account = payment.payment_account or _account(payment.company, cash_role)
@@ -185,8 +188,6 @@ def post_supplier_payment(payment_id, user):
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
-    receipt = invoice.receipt
-    branch, year = _branch_and_year(receipt, payment.payment_date)
     entry = JournalEntry.objects.create(
         company=payment.company, branch=branch, fiscal_year=year,
         entry_number=f"PUR-PAY-{payment.pk}", entry_date=payment.payment_date,
