@@ -169,7 +169,7 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(matched.status_code, 403, matched.data)
         summary = self.client.get(f"/api/treasury/reconciliations/{recon.data['id']}/summary/")
         self.assertEqual(summary.status_code, 200, summary.data)
-        self.assertEqual(summary.data["book_balance"], "0")
+        self.assertEqual(summary.data["book_balance"], "0.0000")
         self.assertEqual(summary.data["outstanding_transactions"], [])
 
     def test_bank_statement_csv_import_creates_lines_without_overwriting(self):
