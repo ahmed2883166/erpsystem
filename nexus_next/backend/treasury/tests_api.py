@@ -2,11 +2,12 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
 from accounting.models import ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction
+from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -133,3 +134,38 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(mismatch.status_code, 400)
         finalize = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/reconcile/", {}, format="json")
         self.assertEqual(finalize.status_code, 400)
+
+
+    def test_bank_statement_csv_import_creates_lines_without_overwriting(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "CSV-001",
+            "statement_date": "2026-03-31", "opening_balance": "100.0000", "closing_balance": "75.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        csv_file = SimpleUploadedFile(
+            "statement.csv",
+            b"date,amount,description,reference\\n2026-03-02,50.00,Deposit,D-1\\n2026-03-03,-75.00,Withdrawal,W-1\\n",
+            content_type="text/csv",
+        )
+        imported = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": csv_file}, format="multipart")
+        self.assertEqual(imported.status_code, 201, imported.data)
+        self.assertEqual(imported.data["imported"], 2)
+        self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
+        second = SimpleUploadedFile("again.csv", b"date,amount\\n2026-03-04,1\\n", content_type="text/csv")
+        rejected = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": second}, format="multipart")
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
+
+    def test_bank_statement_csv_import_rejects_invalid_rows_atomically(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "CSV-002",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "10.0000",
+        }, format="json")
+        csv_file = SimpleUploadedFile(
+            "invalid.csv",
+            b"date,amount\\n2026-03-02,10.00\\nnot-a-date,5.00\\n",
+            content_type="text/csv",
+        )
+        imported = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": csv_file}, format="multipart")
+        self.assertEqual(imported.status_code, 400)
+        self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 0)
