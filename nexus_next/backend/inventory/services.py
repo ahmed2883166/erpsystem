@@ -19,25 +19,35 @@ def post_stock_movement(movement_id, user):
 
     for line in lines:
         product = line.product
-        if product.company_id != movement.company_id or product.product_type != "goods":
+        if product.company_id != movement.company_id or product.product_type != Product.ProductType.GOODS:
             raise ValidationError("الحركة تحتوي على صنف غير مخزني أو تابع لشركة أخرى.")
-        if movement.movement_type == StockMovement.MovementType.RECEIPT:
-            warehouse_ids = [movement.destination_warehouse_id]
-        elif movement.movement_type == StockMovement.MovementType.ISSUE:
-            warehouse_ids = [movement.source_warehouse_id]
-        elif movement.movement_type == StockMovement.MovementType.TRANSFER:
-            warehouse_ids = sorted([movement.source_warehouse_id, movement.destination_warehouse_id])
-        elif line.adjustment_direction == StockMovementLine.AdjustmentDirection.IN:
-            warehouse_ids = [movement.destination_warehouse_id]
-        else:
-            warehouse_ids = [movement.source_warehouse_id]
+        if product.track_expiry and not line.expiry_date:
+            raise ValidationError(f"تاريخ الصلاحية مطلوب للصنف {product.code}.")
 
-        for warehouse_id in warehouse_ids:
-            StockBalance.objects.get_or_create(product=product, warehouse_id=warehouse_id)
-        locked = StockBalance.objects.select_for_update().filter(
-            product=product, warehouse_id__in=warehouse_ids
-        ).order_by("warehouse_id")
-        balances = {balance.warehouse_id: balance for balance in locked}
+        source_key = (movement.source_warehouse_id, line.source_location_id, line.expiry_date)
+        destination_key = (movement.destination_warehouse_id, line.destination_location_id, line.expiry_date)
+        if movement.movement_type == StockMovement.MovementType.RECEIPT:
+            balance_keys = [destination_key]
+        elif movement.movement_type == StockMovement.MovementType.ISSUE:
+            balance_keys = [source_key]
+        elif movement.movement_type == StockMovement.MovementType.TRANSFER:
+            balance_keys = [source_key, destination_key]
+        elif line.adjustment_direction == StockMovementLine.AdjustmentDirection.IN:
+            balance_keys = [destination_key]
+        else:
+            balance_keys = [source_key]
+
+        def key_order(key):
+            return (key[0] or 0, key[1] or 0, key[2].isoformat() if key[2] else "")
+
+        balance_ids = []
+        for warehouse_id, location_id, expiry_date in sorted(set(balance_keys), key=key_order):
+            balance, _ = StockBalance.objects.get_or_create(
+                product=product, warehouse_id=warehouse_id, location_id=location_id, expiry_date=expiry_date
+            )
+            balance_ids.append(balance.pk)
+        locked = StockBalance.objects.select_for_update().filter(pk__in=balance_ids).order_by("id")
+        balances = {(b.warehouse_id, b.location_id, b.expiry_date): b for b in locked}
 
         def receive(balance, quantity, unit_cost, source_line):
             amount = (quantity * unit_cost).quantize(Decimal("0.0001"))
@@ -49,7 +59,8 @@ def post_stock_movement(movement_id, user):
             balance.save(update_fields=("quantity", "inventory_value", "average_cost", "updated_at"))
             if product.costing_method == Product.CostingMethod.FIFO:
                 StockCostLayer.objects.create(
-                    product=product, warehouse=balance.warehouse, source_line=source_line,
+                    product=product, warehouse=balance.warehouse, location=balance.location,
+                    expiry_date=balance.expiry_date, source_line=source_line,
                     quantity_remaining=quantity, unit_cost=unit_cost,
                 )
 
@@ -62,7 +73,8 @@ def post_stock_movement(movement_id, user):
             if product.costing_method == Product.CostingMethod.FIFO:
                 remaining = quantity
                 layers = StockCostLayer.objects.select_for_update().filter(
-                    product=product, warehouse=balance.warehouse, quantity_remaining__gt=0
+                    product=product, warehouse=balance.warehouse, location=balance.location,
+                    expiry_date=balance.expiry_date, quantity_remaining__gt=0,
                 ).order_by("created_at", "id")
                 for layer in layers:
                     if remaining <= 0:
@@ -94,22 +106,22 @@ def post_stock_movement(movement_id, user):
             return cost_parts
 
         if movement.movement_type == StockMovement.MovementType.RECEIPT:
-            receive(balances[movement.destination_warehouse_id], line.quantity, line.unit_cost, line)
+            receive(balances[destination_key], line.quantity, line.unit_cost, line)
         elif movement.movement_type == StockMovement.MovementType.ISSUE:
-            cost_parts = issue(balances[movement.source_warehouse_id], line.quantity)
+            cost_parts = issue(balances[source_key], line.quantity)
             line.unit_cost = sum((qty * cost for qty, cost in cost_parts), Decimal("0")) / line.quantity
             line.save(update_fields=("unit_cost",))
         elif movement.movement_type == StockMovement.MovementType.TRANSFER:
-            cost_parts = issue(balances[movement.source_warehouse_id], line.quantity)
+            cost_parts = issue(balances[source_key], line.quantity)
             for qty, cost in cost_parts:
-                receive(balances[movement.destination_warehouse_id], qty, cost, line)
+                receive(balances[destination_key], qty, cost, line)
             line.unit_cost = sum((qty * cost for qty, cost in cost_parts), Decimal("0")) / line.quantity
             line.save(update_fields=("unit_cost",))
         elif movement.movement_type == StockMovement.MovementType.ADJUSTMENT:
             if line.adjustment_direction == StockMovementLine.AdjustmentDirection.IN:
-                receive(balances[movement.destination_warehouse_id], line.quantity, line.unit_cost, line)
+                receive(balances[destination_key], line.quantity, line.unit_cost, line)
             else:
-                cost_parts = issue(balances[movement.source_warehouse_id], line.quantity)
+                cost_parts = issue(balances[source_key], line.quantity)
                 line.unit_cost = sum((qty * cost for qty, cost in cost_parts), Decimal("0")) / line.quantity
                 line.save(update_fields=("unit_cost",))
 
