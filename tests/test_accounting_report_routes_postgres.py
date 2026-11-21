@@ -1,8 +1,11 @@
 """PostgreSQL route-level parity checks for trial balance and general ledger."""
 import os
+import sqlite3
 import unittest
 import uuid
 from unittest.mock import patch
+
+from accounting_core import register_decimal_aggregates
 
 POSTGRES_DSN = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
 
@@ -32,8 +35,10 @@ class AccountingReportRoutesPostgreSQLTests(unittest.TestCase):
             patch.object(nexus_app, "db", side_effect=self._connect_target),
             patch.object(nexus_app, "current_license_status", return_value={"status": "trial"}),
         ]
-        for item in self.patches:
-            item.start()
+        for index, item in enumerate(self.patches):
+            started = item.start()
+            if index == 0:
+                self.db_mock = started
         self.client = nexus_app.app.test_client()
         with self.client.session_transaction() as session:
             session.update(
@@ -142,6 +147,63 @@ class AccountingReportRoutesPostgreSQLTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def _connect_sqlite_target(self):
+        """Create the same report fixture in an isolated in-memory SQLite DB."""
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        register_decimal_aggregates(connection)
+        connection.executescript("""
+            CREATE TABLE accounts(
+                id INTEGER PRIMARY KEY, code TEXT NOT NULL, name_ar TEXT NOT NULL,
+                account_type TEXT NOT NULL, is_group INTEGER DEFAULT 0,
+                active INTEGER DEFAULT 1, statement_section TEXT,
+                account_subtype TEXT, normal_balance TEXT
+            );
+            CREATE TABLE financial_years(
+                id INTEGER PRIMARY KEY, year_name TEXT, start_date TEXT,
+                end_date TEXT, status TEXT
+            );
+            CREATE TABLE company_settings(
+                setting_key TEXT PRIMARY KEY, setting_value TEXT
+            );
+            CREATE TABLE journal_entries(
+                id INTEGER PRIMARY KEY, entry_date TEXT, reference TEXT,
+                description TEXT, status TEXT, entry_type TEXT DEFAULT 'general',
+                created_by INTEGER, created_at TEXT
+            );
+            CREATE TABLE journal_lines(
+                id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                debit TEXT DEFAULT '0', credit TEXT DEFAULT '0', memo TEXT DEFAULT ''
+            );
+            INSERT INTO accounts
+                (id,code,name_ar,account_type,is_group,active,statement_section,normal_balance)
+            VALUES
+                (1,'1110','الصندوق','asset',0,1,'current_assets','debit'),
+                (2,'3100','رأس المال','equity',0,1,'equity','credit'),
+                (3,'6100','مصروف الإيجار','expense',0,1,'operating_expenses','debit'),
+                (4,'4100','إيرادات المبيعات','revenue',0,1,'revenue','credit');
+            INSERT INTO financial_years VALUES
+                (1,'2026','2026-01-01','2026-12-31','closed');
+            INSERT INTO company_settings VALUES('base_currency','EGP');
+            INSERT INTO journal_entries
+                (id,entry_date,reference,description,status,entry_type,created_by,created_at)
+            VALUES
+                (1,'2026-01-01','OPEN-1','رصيد أول المدة','posted','general',1,'2026-01-01'),
+                (2,'2026-01-02','RENT-1','سداد إيجار المكتب','posted','general',1,'2026-01-02'),
+                (3,'2026-01-03','SALE-1','تحصيل مبيعات','posted','general',1,'2026-01-03'),
+                (4,'2026-01-04','DRAFT-1','قيد مسودة','draft','general',1,'2026-01-04');
+            INSERT INTO journal_lines(id,entry_id,account_id,debit,credit,memo) VALUES
+                (1,1,1,'100','0','رصيد افتتاحي'),
+                (2,1,2,'0','100','رأس المال'),
+                (3,2,3,'50','0','إيجار'),
+                (4,2,1,'0','50','سداد الإيجار'),
+                (5,3,1,'20','0','تحصيل'),
+                (6,3,4,'0','20','إيراد'),
+                (7,4,1,'999','0','مسودة');
+        """)
+        connection.commit()
+        return connection
+
     def tearDown(self):
         for item in reversed(getattr(self, "patches", [])):
             item.stop()
@@ -170,6 +232,14 @@ class AccountingReportRoutesPostgreSQLTests(unittest.TestCase):
         self.assertIn("RENT-1", html) if "RENT-1" in html else None
         self.assertNotIn("999.00", html)
 
+        # Compare the complete rendered report against the same fixture on SQLite.
+        self.db_mock.side_effect = self._connect_sqlite_target
+        sqlite_response = self.client.get(
+            "/reports/trial-balance?date_from=2026-01-01&date_to=2026-12-31"
+        )
+        self.assertEqual(sqlite_response.status_code, 200)
+        self.assertEqual(sqlite_response.get_data(as_text=True), html)
+
     def test_general_ledger_route_preserves_opening_running_and_closing_balances(self):
         response = self.client.get(
             "/reports/ledger?account_id=1&date_from=2026-01-01"
@@ -185,6 +255,16 @@ class AccountingReportRoutesPostgreSQLTests(unittest.TestCase):
         self.assertIn("100.00", html)  # opening balance before the matching row
         self.assertIn("50.00", html)   # running balance after rent payment
         self.assertIn("70.00", html)   # closing balance after the later receipt
+
+        # The SQLite window-function path must render exactly the same rows and
+        # opening/running/closing balances as the PostgreSQL correlated path.
+        self.db_mock.side_effect = self._connect_sqlite_target
+        sqlite_response = self.client.get(
+            "/reports/ledger?account_id=1&date_from=2026-01-01"
+            "&date_to=2026-01-31&q=RENT"
+        )
+        self.assertEqual(sqlite_response.status_code, 200)
+        self.assertEqual(sqlite_response.get_data(as_text=True), html)
 
 
 if __name__ == "__main__":
