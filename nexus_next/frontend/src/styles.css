@@ -1,0 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
+:root{font-family:'Cairo',Tahoma,sans-serif;color:#e8edf5;background:#0b1220;font-synthesis:none;text-rendering:optimizeLegibility}
+*{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh;background:radial-gradient(ellipse at 80% 0%,#1b3150 0,transparent 42%),#0b1220}
+.shell{min-height:100vh;display:flex;flex-direction:column;padding:28px clamp(20px,6vw,88px)}
+.topbar{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #26364a;padding-bottom:22px}
+.brand{display:flex;align-items:center;gap:12px}.brand-mark{display:grid;place-items:center;width:42px;height:42px;border-radius:13px;background:#2563eb;font-size:23px;font-weight:800}.brand strong{display:block;letter-spacing:2px;font-size:17px}.brand small{display:block;color:#93a4ba;font-size:11px}
+.environment{border:1px solid #33465f;border-radius:99px;padding:6px 13px;color:#a9bbd2;font-size:12px}
+.welcome{width:min(760px,100%);margin:auto 0;padding:90px 0}.eyebrow{color:#72a7ff;font-weight:700;font-size:13px}.welcome h1{font-size:clamp(32px,6vw,58px);line-height:1.25;margin:12px 0}.subtitle{color:#9eacc0;font-size:17px}.status{display:inline-flex;align-items:center;gap:9px;margin-top:30px;padding:10px 15px;border:1px solid #294b47;border-radius:10px;color:#9ce4c4;background:#102a2a;font-size:13px}.status span{width:8px;height:8px;border-radius:50%;background:#39c58a}
+footer{border-top:1px solid #26364a;padding-top:18px;color:#71839a;font-size:12px}
