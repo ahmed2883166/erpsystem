@@ -119,7 +119,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
 
     asset = FixedAsset.objects.select_for_update().select_related(
         "company", "branch", "asset_account", "accumulated_depreciation_account",
-        "depreciation_expense_account", "disposal_gain_loss_account"
+        "depreciation_expense_account", "disposal_gain_loss_account", "disposal_loss_account"
     ).get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("الأصل غير نشط أو لم يتم إثبات اقتنائه.")
@@ -175,10 +175,16 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     net_book_value = asset.original_cost - accumulated
     gain = max(Decimal("0"), proceeds - net_book_value)
     loss = max(Decimal("0"), net_book_value - proceeds)
-    gain_loss_account = asset.disposal_gain_loss_account
-    expected_nature = "revenue" if gain > 0 else "expense" if loss > 0 else None
-    if expected_nature and gain_loss_account.nature != expected_nature:
-        raise ValidationError("طبيعة حساب أرباح/خسائر الاستبعاد لا تتوافق مع نتيجة البيع؛ راجع ربط الحساب.")
+    gain_account = asset.disposal_gain_loss_account
+    loss_account = asset.disposal_loss_account
+    if gain > 0 and gain_account.nature != "revenue":
+        raise ValidationError("حساب أرباح الاستبعاد يجب أن يكون من طبيعة الإيرادات.")
+    if loss > 0:
+        if loss_account is None and gain_account.nature == "expense":
+            loss_account = gain_account
+        if loss_account is None or loss_account.nature != "expense":
+            raise ValidationError("حدد حساب خسائر الاستبعاد من طبيعة المصروفات.")
+    settlement_counter = gain_account if gain > 0 else loss_account if loss > 0 else asset.asset_account
 
     lines = [
         {"account": asset.accumulated_depreciation_account, "debit": accumulated, "credit": 0, "description": f"إقفال مجمع إهلاك {asset.name_ar}"},
@@ -187,9 +193,9 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     if proceeds > 0:
         lines.insert(0, {"account": cash_account, "debit": proceeds, "credit": 0, "description": f"متحصلات استبعاد {asset.name_ar}"})
     if gain > 0:
-        lines.append({"account": gain_loss_account, "debit": 0, "credit": gain, "description": f"ربح استبعاد {asset.name_ar}"})
+        lines.append({"account": gain_account, "debit": 0, "credit": gain, "description": f"ربح استبعاد {asset.name_ar}"})
     elif loss > 0:
-        lines.append({"account": gain_loss_account, "debit": loss, "credit": 0, "description": f"خسارة استبعاد {asset.name_ar}"})
+        lines.append({"account": loss_account, "debit": loss, "credit": 0, "description": f"خسارة استبعاد {asset.name_ar}"})
 
     entry = _post_entry(
         asset, year, f"FA-DISP-{asset.pk}", disposal_date,
