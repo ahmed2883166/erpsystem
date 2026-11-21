@@ -44,8 +44,11 @@ class TreasuryWorkflowTests(APITestCase):
         AccountRole.objects.create(
             company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
         )
+        opening_bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك افتتاحي", nature=ChartOfAccount.Nature.ASSET,
+        )
         created = self.client.post("/api/treasury/accounts/", {
-            "company": self.company.pk, "branch": self.branch.pk, "account": self.bank_gl.pk,
+            "company": self.company.pk, "branch": self.branch.pk, "account": opening_bank_gl.pk,
             "kind": "bank", "code": "BANK-OPEN", "name_ar": "بنك برصيد افتتاحي",
             "currency_code": "EGP", "opening_balance": "50000",
         }, format="json")
@@ -54,7 +57,7 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertIsNotNone(created.data["opening_journal_entry"])
         entry = JournalEntry.objects.get(pk=created.data["opening_journal_entry"])
         self.assertEqual(entry.source_type, JournalEntry.Source.OPENING)
-        self.assertEqual(entry.lines.get(account=self.bank_gl).debit, Decimal("50000.0000"))
+        self.assertEqual(entry.lines.get(account=opening_bank_gl).debit, Decimal("50000.0000"))
         self.assertEqual(entry.lines.get(account=retained).credit, Decimal("50000.0000"))
 
         payment = self.client.post("/api/treasury/transactions/", {
