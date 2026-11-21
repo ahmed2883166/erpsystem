@@ -22,7 +22,7 @@ def salary_for_date(employee, target_date):
     return first.previous_salary if first else employee.basic_salary
 
 
-def calculate_component(component, assigned_value, basic_salary, payable_days, overtime_hours):
+def calculate_component(component, assigned_value, basic_salary, payable_days, overtime_hours, daily_divisor, friday_days):
     value = assigned_value if assigned_value is not None else component.default_value
     if component.method == component.Method.FIXED:
         amount = value
@@ -32,6 +32,8 @@ def calculate_component(component, assigned_value, basic_salary, payable_days, o
         amount = value * payable_days
     elif component.method == component.Method.PER_HOUR:
         amount = value * overtime_hours
+    elif component.method == component.Method.FRIDAY_DOUBLE_DAY:
+        amount = basic_salary / daily_divisor * Decimal("2") * friday_days
     else:
         amount = value
     return money(amount)
@@ -73,12 +75,13 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         basic_amount = money(effective_basic_salary * payable_days / daily_divisor)
         earnings = basic_amount
         overtime_hours = attendance.aggregate(total=Sum("overtime_hours"))["total"] or Decimal("0")
+        friday_days = Decimal(attendance.filter(friday_worked=True).count())
         deductions = Decimal("0")
         employer_share = Decimal("0")
         lines = [("BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
         for assignment in assignments:
             component = assignment.component
-            amount = calculate_component(component, assignment.value, effective_basic_salary, payable_days, overtime_hours)
+            amount = calculate_component(component, assignment.value, effective_basic_salary, payable_days, overtime_hours, daily_divisor, friday_days)
             if component.kind == component.Kind.EARNING:
                 earnings += amount
             elif component.kind == component.Kind.DEDUCTION:
