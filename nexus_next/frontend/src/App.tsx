@@ -1,5 +1,5 @@
 /*
- * نقطة تجميع واجهة NEXUS: إدارة الشركة والفرع والسنة المالية والتنقل بين الوحدات.
+ * نقطة تجميع واجهة Admrail ERP v2: إدارة الشركة والفرع والسنة المالية والتنقل بين الوحدات.
  * يحمل الشاشات الكبيرة عند الحاجة، ويربط مكونات المبيعات والمشتريات والتقارير والحسابات.
  */
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
@@ -656,7 +656,7 @@ const postDraft = async (entry: Journal) => {
     <div className="app-shell" dir="rtl">
       {sidebarOpen && <button className="mobile-scrim" aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <div className="brand-lockup"><div className="brand-symbol">N</div><div><strong>NEXUS</strong><span>ENTERPRISE PLATFORM</span></div>
+        <div className="brand-lockup"><div className="brand-symbol">N</div><div><strong>ADMRAIL</strong><span>ENTERPRISE PLATFORM</span></div>
           <button className="sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="إغلاق القائمة">×</button></div>
         <div className="workspace"><div className="workspace-avatar">NX</div><div><strong>مساحة العمل</strong><small>{selectedCompany?.name_ar || "اختر الشركة"}</small></div>
           <select aria-label="الشركة" value={companyId ?? ""} onChange={(event) => setCompanyId(Number(event.target.value) || null)}>
@@ -669,17 +669,17 @@ const postDraft = async (entry: Journal) => {
           </div>)}
         </nav>
         <div className="sidebar-bottom"><a className="admin-link" href="/admin/" target="_blank" rel="noreferrer">فتح لوحة إدارة النظام ↗</a>
-          <div className="user-profile"><div className="user-avatar">N</div><div><strong>NEXUS ERP</strong><small>منصة إدارة الأعمال</small></div><span>•••</span></div></div>
+          <div className="user-profile"><div className="user-avatar">N</div><div><strong>Admrail ERP v2</strong><small>منصة إدارة الأعمال</small></div><span>•••</span></div></div>
       </aside>
       <main className="main-area">
         <header className="topbar"><div className="topbar-start"><button className="menu-toggle" onClick={() => setSidebarOpen(true)} aria-label="فتح القائمة">☰</button>
-          <div className="breadcrumb"><span>NEXUS</span><b>/</b>{current?.label}</div></div>
+          <div className="breadcrumb"><span>Admrail ERP v2</span><b>/</b>{current?.label}</div></div>
           <div className="topbar-actions"><div className="period-select"><span className="period-dot" /> {selectedCompany?.name_ar || "لا توجد شركة"} <span>⌄</span></div>
             <button className="icon-button" aria-label="البحث" onClick={() => document.getElementById("global-search")?.focus()}>⌕</button>
             <a className="admin-shortcut" href="/admin/" target="_blank" rel="noreferrer">الإدارة</a>
             <button type="button" className="subtle-button" onClick={() => void logoutCurrentUser()}>تسجيل الخروج</button></div></header>
         <div className="page-content">
-          <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
+          <section className="welcome-row"><div><p className="eyebrow">{today} · Admrail ERP v2</p><h1>{active === "overview" ? "أهلاً بك في Admrail ERP v2" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
             {companyId !== null && active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
 
@@ -788,7 +788,7 @@ const postDraft = async (entry: Journal) => {
 <div className="review-totals"><div><span>إجمالي المدين</span><strong>{selectedJournal.lines.reduce((sum, line) => sum + Number(line.debit), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>إجمالي الدائن</span><strong>{selectedJournal.lines.reduce((sum, line) => sum + Number(line.credit), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>الفرق</span><strong>{(selectedJournal.lines.reduce((sum, line) => sum + Number(line.debit), 0) - selectedJournal.lines.reduce((sum, line) => sum + Number(line.credit), 0)).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong><small>{selectedCompany?.base_currency_code || ""}</small></div></div>
 <div className="form-actions"><button type="button" className="subtle-button" onClick={() => setSelectedJournal(null)}>إغلاق</button><button type="button" className="primary-button" disabled={postingId === selectedJournal.id} onClick={() => postDraft(selectedJournal)}>{postingId === selectedJournal.id ? "جارٍ الترحيل…" : "اعتماد وترحيل القيد"}</button></div>
 </section></div>}
-          <footer className="page-footer"><span>© 2026 NEXUS ERP</span><span><i /> واجهة التطوير المحلية</span><span>الإصدار التأسيسي 0.1.0</span></footer>
+          <footer className="page-footer"><span>© 2026 Admrail ERP v2</span><span><i /> واجهة التطوير المحلية</span><span>الإصدار التأسيسي 0.1.0</span></footer>
         </div>
       </main>
     </div>
