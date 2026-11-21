@@ -5,8 +5,9 @@ import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
 import SalesPanel from "./SalesPanel";
 import InventoryPanel from "./InventoryPanel";
+import TreasuryPanel from "./TreasuryPanel";
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "setup";
+type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "setup";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
   { id: "overview", label: "نظرة عامة", icon: "◫", group: "الرئيسية" },
@@ -17,6 +18,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "suppliers", label: "الموردون", icon: "♧", group: "المشتريات" },
   { id: "purchasing", label: "دورة المشتريات", icon: "↙", group: "المشتريات" },
   { id: "inventory", label: "المخزون والمستودعات", icon: "▦", group: "المخزون" },
+  { id: "treasury", label: "الخزينة والبنوك", icon: "¤", group: "المالية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
 ];
@@ -245,6 +247,7 @@ export default function App() {
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
           {active === "purchasing" && <PurchasingPanel companyId={companyId} />}
           {active === "inventory" && <InventoryPanel companyId={companyId} />}
+          {active === "treasury" && <TreasuryPanel companyId={companyId} />}
           {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
