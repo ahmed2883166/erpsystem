@@ -109,8 +109,6 @@ class TaxCodeViewSet(AccountingViewSet):
         self._require_write_role(instance.company_id, delete=True)
         if instance.is_active:
             raise ValidationError("عطّل كود الضريبة بدل حذفه للحفاظ على أثر الفواتير.")
-        if instance.invoice_lines.exists():
-            raise ValidationError("لا يمكن حذف كود ضريبي مستخدم في فواتير.")
         instance.delete()
 
 
