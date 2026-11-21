@@ -36,6 +36,7 @@ export default function App() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>([]);
   const [saving, setSaving] = useState(false);
+  const [postingId, setPostingId] = useState<number | null>(null);
   const [journalError, setJournalError] = useState("");
   const [draft, setDraft] = useState({ branch: "", fiscal_year: "", entry_number: "", entry_date: new Date().toISOString().slice(0, 10), description: "", debit: "", credit: "", amount: "" });
   const current = useMemo(() => navigation.find((item) => item.id === active), [active]);
@@ -80,6 +81,13 @@ export default function App() {
       setDraft((old) => ({ ...old, entry_number: "", description: "", debit: "", credit: "", amount: "" }));
     } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر حفظ القيد."); }
     finally { setSaving(false); }
+  };
+  const postDraft = async (entry: Journal) => {
+    if (!window.confirm("تأكيد ترحيل القيد " + entry.entry_number + "؟ لن يمكن تعديله بعد الترحيل.")) return;
+    setJournalError(""); setPostingId(entry.id);
+    try { await api.postJournal(entry.id); if (companyId) setJournals(await api.journals(companyId)); }
+    catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر ترحيل القيد."); }
+    finally { setPostingId(null); }
   };
   const filteredAccounts = useMemo(() => accounts.filter((account) =>
     `${account.code} ${account.name_ar}`.toLowerCase().includes(search.toLowerCase())), [accounts, search]);
@@ -144,7 +152,7 @@ export default function App() {
             <div className="modules-grid">{modules.map((module) => <button className="module-card" key={module.title} onClick={() => setActive(module.section)}>
               <i className={`module-icon ${module.tone}`}>{module.icon}</i><div><strong>{module.title}</strong><small>{module.detail}</small></div><span className="module-arrow">←</span></button>)}</div>
             <section className="activity-panel"><div className="activity-title"><div><h2>أحدث قيود اليومية</h2><p>آخر خمس حركات مسجلة</p></div><button className="subtle-button" onClick={() => setActive("journals")}>عرض الكل ←</button></div>
-              {journals.slice(0, 5).length ? <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الحالة</th></tr></thead><tbody>{journals.slice(0, 5).map((entry) => <tr key={entry.id}><td>{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td></tr>)}</tbody></table></div>
+              {journals.slice(0, 5).length ? <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الحالة</th></tr></thead><tbody>{journals.slice(0, 5).map((entry) => <tr key={entry.id}><td>{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td><td>{entry.status === "draft" ? <button className="subtle-button" disabled={postingId === entry.id} onClick={() => postDraft(entry)}>{postingId === entry.id ? "جارٍ الترحيل…" : "ترحيل"}</button> : "—"}</td></tr>)}</tbody></table></div>
                 : <div className="empty-state"><div className="empty-graphic">◷</div><strong>{loading ? "جارٍ تحميل القيود" : "لا توجد قيود حتى الآن"}</strong><p>ستظهر القيود هنا بمجرد تسجيلها في الشركة المختارة.</p></div>}</section>
           </>}
 
@@ -157,7 +165,7 @@ export default function App() {
 
           {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
             <div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
-            <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th></tr></thead>
+            <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead>
               <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td></tr>)}</tbody></table>
               {!loading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div></section>}
 
