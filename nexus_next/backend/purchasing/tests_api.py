@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
+from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
@@ -349,3 +350,81 @@ class PurchasingWorkflowTests(APITestCase):
             "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
         self.assertEqual(response.status_code, 400)
+
+
+    def test_purchase_invoice_over_limit_requires_manager_approval_of_exact_snapshot(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_purchase_invoice_amount=Decimal("200"),
+            created_by=self.user, updated_by=self.user,
+        )
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-APPROVAL-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        request = FinancialApprovalRequest.objects.get(
+            purchase_invoice_id=invoice.data["id"]
+        )
+        self.assertEqual(request.requested_amount, Decimal("228.0000"))
+        self.assertEqual(request.requested_limit, Decimal("200.0000"))
+        blocked = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+        manager = get_user_model().objects.create_user(username="purchase-approval-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/financial-requests/{request.pk}/approve/",
+            {"note": "اعتماد فاتورة مشتريات"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+    def test_supplier_payment_over_limit_requires_manager_approval_before_posting(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_payment_amount=Decimal("50"),
+            created_by=self.user, updated_by=self.user,
+        )
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PAY-APPROVAL", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "payment_number": "PAY-APPROVAL", "payment_date": "2026-03-15",
+            "method": "bank", "amount": "60",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        request = FinancialApprovalRequest.objects.get(supplier_payment_id=payment.data["id"])
+        blocked = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        manager = get_user_model().objects.create_user(username="payment-approval-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/financial-requests/{request.pk}/approve/",
+            {"note": "اعتماد سند صرف"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
