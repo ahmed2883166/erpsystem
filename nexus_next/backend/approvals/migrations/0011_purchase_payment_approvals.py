@@ -5,8 +5,8 @@ import django.core.validators
 class Migration(migrations.Migration):
     dependencies = [
         ("approvals", "0010_approval_policy_options"),
-        ("purchasing", "0001_initial"),
-        ("treasury", "0001_initial"),
+        ("purchasing", "0004_purchaseinvoice_taxcode"),
+        ("treasury", "0003_cash_flow_category"),
     ]
 
     operations = [
