@@ -262,6 +262,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
 
     class Meta:
         model = SupplierPayment
