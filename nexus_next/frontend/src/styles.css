@@ -275,3 +275,24 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .audit-panel .data-table-wrap {
   overflow-x: auto;
 }
+
+
+.access-branch-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 180px;
+}
+.access-branch-editor label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
