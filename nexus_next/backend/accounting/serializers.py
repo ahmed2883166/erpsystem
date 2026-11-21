@@ -31,6 +31,18 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
 
 class AccountRoleSerializer(serializers.ModelSerializer):
     account_code = serializers.CharField(source="account.code", read_only=True)
+    ROLE_NATURES = {
+        "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
+        "inventory": {"asset"}, "vat_input": {"asset"},
+        "accounts_payable": {"liability"}, "vat_output": {"liability"}, "vat_payable": {"liability"},
+        "employee_insurance_payable": {"liability"}, "employer_insurance_payable": {"liability"},
+        "payroll_payable": {"liability"}, "goods_received_not_invoiced": {"liability"},
+        "inter_branch_clearing": {"liability"},
+        "sales": {"revenue"}, "sales_returns": {"revenue"}, "inventory_adjustment_gain": {"revenue"},
+        "cogs": {"expense"}, "operating_expense": {"expense"}, "payroll_expense": {"expense"},
+        "employer_insurance_expense": {"expense"}, "inventory_adjustment_loss": {"expense"},
+        "retained_earnings": {"equity"},
+    }
     class Meta:
         model = AccountRole
         fields = ("id", "company", "role", "account", "account_code")
@@ -46,6 +58,10 @@ class AccountRoleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"account": "الحساب لا يتبع نفس الشركة."})
         if account and (account.is_group or not account.allow_posting or not account.is_active):
             raise serializers.ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا قابلًا للترحيل."})
+        role = attrs.get("role", getattr(self.instance, "role", None))
+        expected_natures = self.ROLE_NATURES.get(role)
+        if account and expected_natures and account.nature not in expected_natures:
+            raise serializers.ValidationError({"account": "طبيعة الحساب لا تتوافق مع الدور المحاسبي المختار."})
         return attrs
 
 
