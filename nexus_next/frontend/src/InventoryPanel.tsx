@@ -60,12 +60,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     const rows = balances.filter((balance) => balance.warehouse === warehouse.id);
     return { warehouse, quantity: rows.reduce((sum, row) => sum + Number(row.quantity), 0), value: rows.reduce((sum, row) => sum + Number(row.inventory_value), 0), products: new Set(rows.map((row) => row.product)).size };
   }).filter((row) => row.products > 0), [warehouses, balances]);
-  const productBalances = useMemo(() => products.filter((product) => product.product_type === "goods").map((product) => {
-    const rows = balances.filter((balance) => balance.product === product.id);
-    const quantity = rows.reduce((sum, row) => sum + Number(row.quantity), 0);
-    return { product, quantity, value: rows.reduce((sum, row) => sum + Number(row.inventory_value), 0) };
-  }), [products, balances]);
-  const reorderAlerts = warehouses.flatMap((warehouse) => products.filter((product) => product.product_type === "goods" && product.is_active).map((product) => {
+  const reorderAlerts = warehouses.filter((warehouse) => warehouse.is_active).flatMap((warehouse) => products.filter((product) => product.product_type === "goods" && product.is_active).map((product) => {
     const setting = warehouseSettings.find((item) => item.product === product.id && item.warehouse === warehouse.id && item.is_active);
     const threshold = setting ? Number(setting.min_stock) : Number(product.min_stock);
     const quantity = balances.filter((balance) => balance.product === product.id && balance.warehouse === warehouse.id).reduce((sum, balance) => sum + Number(balance.quantity), 0);
@@ -209,7 +204,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
         <div className="metrics-grid inventory-report-metrics">
           <article className="metric-card"><div className="metric-top">قيمة المخزون</div><strong className="metric-value">{totalInventoryValue.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong><small>حسب تكلفة الأرصدة الحالية</small></article>
           <article className="metric-card"><div className="metric-top">إجمالي الكميات</div><strong className="metric-value">{totalInventoryQuantity.toLocaleString("ar-EG", { maximumFractionDigits: 3 })}</strong><small>مجموع أرصدة جميع المخازن</small></article>
-          <article className="metric-card"><div className="metric-top">أصناف عند حد الطلب</div><strong className="metric-value">{reorderAlerts.length.toLocaleString("ar-EG")}</strong><small>وفق حد إعادة الطلب المحدد على الصنف</small></article>
+          <article className="metric-card"><div className="metric-top">أصناف عند حد الطلب</div><strong className="metric-value">{reorderAlerts.length.toLocaleString("ar-EG")}</strong><small>وفق حد كل صنف داخل كل مخزن</small></article>
           <article className="metric-card"><div className="metric-top">تنبيهات الصلاحية</div><strong className="metric-value">{expiryAlerts.length.toLocaleString("ar-EG")}</strong><small>منتهية أو خلال 30 يوماً</small></article>
         </div>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تقييم المخزون حسب المخزن</h3><p>قيمة وكمية الأرصدة الحالية</p></div></div>
