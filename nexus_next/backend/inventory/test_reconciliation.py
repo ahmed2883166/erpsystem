@@ -13,7 +13,7 @@ from .models import Product, StockBalance, UnitOfMeasure, Warehouse
 class InventoryReconciliationBranchScopeTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
-        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري", decimal_places=2)
         cls.company = Company.objects.create(
             code="INV-RECON", name_ar="شركة مطابقة المخزون", country="EG",
             activity="commercial", base_currency=currency,
