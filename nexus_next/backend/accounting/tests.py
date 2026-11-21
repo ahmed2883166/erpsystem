@@ -102,6 +102,31 @@ class AccountingApiTests(TestCase):
         response = self.client.get("/api/accounting/accounts/")
         self.assertEqual(response.status_code, 403)
 
+    def test_trial_balance_uses_posted_entries_only(self):
+        branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        year = FiscalYear.objects.create(company=self.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        credit_account = ChartOfAccount.objects.create(company=self.company, code="3000",
+            name_ar="رأس المال", nature="equity")
+        entry = JournalEntry.objects.create(company=self.company, branch=branch, fiscal_year=year,
+            entry_number="TB-001", entry_date=date(2026, 2, 1), description="قيد مرحل")
+        JournalLine.objects.create(entry=entry, account=self.account, debit=Decimal("125.00"))
+        JournalLine.objects.create(entry=entry, account=credit_account, credit=Decimal("125.00"))
+        post_journal(entry.pk)
+        draft = JournalEntry.objects.create(company=self.company, branch=branch, fiscal_year=year,
+            entry_number="TB-002", entry_date=date(2026, 2, 2), description="مسودة")
+        JournalLine.objects.create(entry=draft, account=self.account, debit=Decimal("50.00"))
+        JournalLine.objects.create(entry=draft, account=credit_account, credit=Decimal("50.00"))
+        user = User.objects.create_user(username="reporter", password="test-password")
+        permission = Permission.objects.get(codename="view_journalentry")
+        user.user_permissions.add(permission)
+        self.client.force_authenticate(user=user)
+        response = self.client.get(f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["debit_total"], Decimal("125.0000"))
+        self.assertEqual(response.data["credit_total"], Decimal("125.0000"))
+        self.assertEqual(response.data["difference"], Decimal("0.0000"))
+
     def test_authenticated_user_can_read_accounts(self):
         user = User.objects.create_user(username="reader", password="test-password")
         permission = Permission.objects.get(codename="view_chartofaccount")
