@@ -1,7 +1,7 @@
 import json
 
 from django.contrib.auth import get_user_model
-from django.contrib.admin.models import LogEntry
+from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.contrib.contenttypes.models import ContentType
 from django.test import RequestFactory, TestCase
@@ -267,7 +267,7 @@ class AuthenticationAndAdminAuditSignalTests(TestCase):
             content_type=content_type,
             object_id=str(branch.pk),
             object_repr="فرع الإدارة",
-            action_flag=LogEntry.ActionFlag.CHANGE,
+            action_flag=CHANGE,
             change_message="changed",
         )
         event = AuditEvent.objects.get(
@@ -280,9 +280,9 @@ class AuthenticationAndAdminAuditSignalTests(TestCase):
     def test_django_admin_add_change_and_delete_are_audited(self):
         content_type = ContentType.objects.get_for_model(get_user_model())
         for flag, expected in (
-            (LogEntry.ActionFlag.ADDITION, AuditEvent.Action.CREATE),
-            (LogEntry.ActionFlag.CHANGE, AuditEvent.Action.UPDATE),
-            (LogEntry.ActionFlag.DELETION, AuditEvent.Action.DELETE),
+            (ADDITION, AuditEvent.Action.CREATE),
+            (CHANGE, AuditEvent.Action.UPDATE),
+            (DELETION, AuditEvent.Action.DELETE),
         ):
             with self.subTest(flag=flag):
                 LogEntry.objects.create(
