@@ -125,6 +125,23 @@ class TaxCode(models.Model):
         if self.category == self.Category.STANDARD and self.rate <= 0:
             raise ValidationError({"rate": "أدخل نسبة موجبة للفئة القياسية."})
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.filter(pk=self.pk).first()
+            if old and (old.sales_invoice_lines.exists() or old.purchase_invoice_lines.exists()):
+                protected = (
+                    "company_id", "country", "code", "name_ar", "category", "rate",
+                    "effective_from", "effective_to", "input_tax_recoverable",
+                )
+                if any(getattr(old, field) != getattr(self, field) for field in protected):
+                    raise ValidationError("كود الضريبة مستخدم في فواتير؛ لا يمكن تغيير بياناته التاريخية. أنشئ إصدارًا جديدًا.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.sales_invoice_lines.exists() or self.purchase_invoice_lines.exists():
+            raise ValidationError("لا يمكن حذف كود ضريبي مرتبط بفواتير؛ عطّله فقط.")
+        return super().delete(*args, **kwargs)
+
 
 class CostCenter(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="cost_centers")
