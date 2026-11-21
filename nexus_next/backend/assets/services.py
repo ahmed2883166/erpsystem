@@ -26,7 +26,9 @@ def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines
 
 @transaction.atomic
 def acquire_asset(asset_id, fiscal_year_id, user=None):
-    asset = FixedAsset.objects.select_for_update().get(pk=asset_id)
+    asset = FixedAsset.objects.select_for_update().select_related(
+        "company", "branch", "asset_account", "acquisition_counter_account"
+    ).get(pk=asset_id)
     if asset.acquisition_journal_id:
         raise ValidationError("تم تسجيل قيد اقتناء الأصل بالفعل.")
     try:
@@ -35,31 +37,53 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
         raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
     if not (year.start_date <= asset.acquisition_date <= year.end_date):
         raise ValidationError("تاريخ الاقتناء خارج السنة المالية المفتوحة.")
-    entry = _post_entry(asset, year, f"FA-ACQ-{asset.pk}", asset.acquisition_date,
-        f"إثبات اقتناء الأصل: {asset.name_ar}", [
-            {"account": asset.asset_account, "debit": asset.original_cost, "credit": 0, "description": asset.name_ar},
-            {"account": asset.acquisition_counter_account, "debit": 0, "credit": asset.original_cost, "description": asset.name_ar},
-        ], user)
+
     from treasury.models import TreasuryAccount, TreasuryTransaction
     treasury_account = TreasuryAccount.objects.filter(
         company=asset.company, account=asset.acquisition_counter_account, is_active=True
     ).first()
-    treasury_doc = None
     if treasury_account:
         if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
             raise ValidationError("حساب الخزينة المرتبط بمقابل الاقتناء لا يتبع فرع الأصل.")
-        treasury_doc = TreasuryTransaction.objects.create(
-            company=asset.company, branch=asset.branch, fiscal_year=year,
-            source_account=treasury_account, counter_account=asset.asset_account,
-            kind=TreasuryTransaction.Kind.PAYMENT, status=TreasuryTransaction.Status.POSTED,
-            document_number=f"FA-ACQ-{asset.pk}", transaction_date=asset.acquisition_date,
-            amount=asset.original_cost, description=f"سداد تكلفة اقتناء الأصل: {asset.name_ar}",
-            cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
-            journal_entry=entry, created_by=user, posted_at=timezone.now(),
-        )
+        if asset.acquisition_treasury_transaction_id:
+            treasury_doc = TreasuryTransaction.objects.select_for_update().get(
+                pk=asset.acquisition_treasury_transaction_id
+            )
+        else:
+            treasury_doc = TreasuryTransaction.objects.create(
+                company=asset.company, branch=asset.branch, fiscal_year=year,
+                source_account=treasury_account, counter_account=asset.asset_account,
+                kind=TreasuryTransaction.Kind.PAYMENT,
+                document_number=f"FA-ACQ-{asset.pk}", transaction_date=asset.acquisition_date,
+                amount=asset.original_cost, description=f"سداد تكلفة اقتناء الأصل: {asset.name_ar}",
+                cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
+                created_by=user,
+            )
+            asset.acquisition_treasury_transaction = treasury_doc
+            asset.save(update_fields=("acquisition_treasury_transaction",))
+            from approvals.models import FinancialApprovalRequest
+            from approvals.services import refresh_financial_approval
+            approval = refresh_financial_approval(
+                FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT, treasury_doc, user
+            )
+            if approval:
+                return asset
+
+        from treasury.services import post_treasury_transaction
+        treasury_doc = post_treasury_transaction(treasury_doc.pk, user)
+        asset.acquisition_journal = treasury_doc.journal_entry
+        asset.save(update_fields=("acquisition_journal",))
+        return asset
+
+    entry = _post_entry(
+        asset, year, f"FA-ACQ-{asset.pk}", asset.acquisition_date,
+        f"إثبات اقتناء الأصل: {asset.name_ar}", [
+            {"account": asset.asset_account, "debit": asset.original_cost, "credit": 0, "description": asset.name_ar},
+            {"account": asset.acquisition_counter_account, "debit": 0, "credit": asset.original_cost, "description": asset.name_ar},
+        ], user,
+    )
     asset.acquisition_journal = entry
-    asset.acquisition_treasury_transaction = treasury_doc
-    asset.save(update_fields=("acquisition_journal", "acquisition_treasury_transaction"))
+    asset.save(update_fields=("acquisition_journal",))
     return asset
 
 
