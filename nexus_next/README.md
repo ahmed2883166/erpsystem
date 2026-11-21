@@ -1,6 +1,6 @@
-# NEXUS ERP — Next Generation
+# Admrail ERP v2 ERP — Next Generation
 
-This directory contains the new, independent NEXUS ERP implementation.
+This directory contains the new, independent Admrail ERP v2 ERP implementation.
 
 ## Technology
 - Backend: Python 3.12+, Django 5.2 LTS, Django REST Framework
