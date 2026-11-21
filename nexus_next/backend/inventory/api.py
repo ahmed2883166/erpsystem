@@ -196,6 +196,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def _check_warehouse(self, warehouse, company_id):
+        if not warehouse.is_active:
+            raise PermissionDenied("لا يمكن استخدام مخزن موقوف.")
         if warehouse.company_id != company_id:
             raise PermissionDenied("المخزن لا يتبع الشركة المحددة.")
         if not can_access_company(self.request.user, company_id):
