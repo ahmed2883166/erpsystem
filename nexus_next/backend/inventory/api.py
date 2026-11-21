@@ -7,6 +7,9 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.response import Response
+from rest_framework.decorators import action
+from rest_framework import status
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
@@ -172,3 +175,80 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         self._check_write(instance.warehouse)
         instance.is_active = False
         instance.save(update_fields=("is_active",))
+
+
+class StockMovementViewSet(viewsets.ModelViewSet):
+    serializer_class = StockMovementSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = StockMovement.objects.select_related(
+        "company", "source_warehouse", "destination_warehouse", "created_by", "posted_by"
+    ).prefetch_related("lines__product")
+    filterset_fields = ("company", "movement_type", "status", "movement_date")
+    search_fields = ("movement_number", "notes", "lines__product__code", "lines__product__name_ar")
+    ordering_fields = ("movement_date", "movement_number", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        queryset = self.queryset.filter(company__in=companies)
+        if self.request.user.is_superuser:
+            return queryset
+        branches = accessible_branches(self.request.user)
+        return queryset.filter(
+            Q(source_warehouse__isnull=True) | Q(source_warehouse__branch__isnull=True) | Q(source_warehouse__branch__in=branches),
+            Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch__isnull=True) | Q(destination_warehouse__branch__in=branches),
+        ).distinct()
+
+    def create(self, request, *args, **kwargs):
+        company_id = request.data.get("company")
+        if company_id not in (None, ""):
+            try:
+                CompanyScopedViewSet._check_company_write(self, int(company_id))
+            except (TypeError, ValueError):
+                pass
+        return super().create(request, *args, **kwargs)
+
+    def _check_warehouse(self, warehouse, company_id):
+        if warehouse.company_id != company_id:
+            raise PermissionDenied("المخزن لا يتبع الشركة المحددة.")
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+        if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
+            raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
+        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        CompanyScopedViewSet._check_company_write(self, company.pk)
+        for key in ("source_warehouse", "destination_warehouse"):
+            warehouse = serializer.validated_data.get(key)
+            if warehouse:
+                self._check_warehouse(warehouse, company.pk)
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        movement = serializer.instance
+        if movement.status != StockMovement.Status.DRAFT:
+            raise PermissionDenied("لا يمكن تعديل حركة مرحلة.")
+        CompanyScopedViewSet._check_company_write(self, movement.company_id)
+        for key in ("source_warehouse", "destination_warehouse"):
+            warehouse = serializer.validated_data.get(key, getattr(movement, key))
+            if warehouse:
+                self._check_warehouse(warehouse, movement.company_id)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.status != StockMovement.Status.DRAFT:
+            raise PermissionDenied("لا يمكن حذف حركة مرحلة.")
+        if not has_company_role(self.request.user, instance.company_id, ("admin",)):
+            raise PermissionDenied("حذف المسودات متاح لمدير الشركة فقط.")
+        instance.delete()
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        from .services import post_stock_movement
+        movement = self.get_object()
+        self._check_warehouse(movement.source_warehouse, movement.company_id) if movement.source_warehouse else None
+        self._check_warehouse(movement.destination_warehouse, movement.company_id) if movement.destination_warehouse else None
+        movement = post_stock_movement(movement.pk, request.user)
+        return Response(self.get_serializer(movement).data, status=status.HTTP_200_OK)
