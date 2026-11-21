@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type StockBalance, type StockMovement, type Warehouse } from "./api";
 
-type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "accounting";
+type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "accounting";
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
   const [tab, setTab] = useState<Tab>("products");
   const [products, setProducts] = useState<Product[]>([]);
@@ -43,6 +43,22 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   };
   useEffect(() => { void refresh(); }, [companyId]);
   const filteredProducts = useMemo(() => products.filter((p) => `${p.code} ${p.barcode} ${p.name_ar}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
+  const warehouseValuation = useMemo(() => warehouses.map((warehouse) => {
+    const rows = balances.filter((balance) => balance.warehouse === warehouse.id);
+    return { warehouse, quantity: rows.reduce((sum, row) => sum + Number(row.quantity), 0), value: rows.reduce((sum, row) => sum + Number(row.inventory_value), 0), products: new Set(rows.map((row) => row.product)).size };
+  }).filter((row) => row.products > 0), [warehouses, balances]);
+  const productBalances = useMemo(() => products.filter((product) => product.product_type === "goods").map((product) => {
+    const rows = balances.filter((balance) => balance.product === product.id);
+    const quantity = rows.reduce((sum, row) => sum + Number(row.quantity), 0);
+    return { product, quantity, value: rows.reduce((sum, row) => sum + Number(row.inventory_value), 0) };
+  }), [products, balances]);
+  const reorderAlerts = productBalances.filter((row) => Number(row.product.min_stock) > 0 && row.quantity <= Number(row.product.min_stock));
+  const expiryAlerts = balances.filter((row) => row.expiry_date && Number(row.quantity) > 0).map((row) => {
+    const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
+    return { ...row, days };
+  }).filter((row) => row.days <= 30).sort((a, b) => a.days - b.days);
+  const totalInventoryValue = balances.reduce((sum, row) => sum + Number(row.inventory_value), 0);
+  const totalInventoryQuantity = balances.reduce((sum, row) => sum + Number(row.quantity), 0);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setBusy(true); setError("");
@@ -89,11 +105,12 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     { id: "locations", label: "مواقع التخزين", count: locations.length },
     { id: "movements", label: "حركات المخزون", count: movements.length },
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
+    { id: "reports", label: "تقارير المخزون", count: warehouseValuation.length + expiryAlerts.length + reorderAlerts.length },
     { id: "accounting", label: "ربط الحسابات", count: roleAssignments.length },
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
   return <section className="work-panel inventory-panel">
-    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات.</p></div>{tab !== "balances" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
+    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات.</p></div>{tab !== "balances" && tab !== "reports" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
     <div className="inventory-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab(item.id); setShowForm(false); setSearch(""); }}>{item.label}<b>{item.count}</b></button>)}</div>
     {error && <div className="error-banner">{error}</div>}
     {showForm && <form className="inventory-form" onSubmit={submit}>
@@ -153,6 +170,24 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
       {tab === "movements" && <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>قيود اليومية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{m.lines.reduce((sum, line) => sum + Number(line.cost_amount || 0), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{m.journal_entries.length ? m.journal_entries.map((entry) => entry.entry_number).join("، ") : "—"}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>}
       {tab === "accounting" && <table><thead><tr><th>الدور المحاسبي</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>{[{ role: "inventory", label: "حساب المخزون" }, { role: "goods_received_not_invoiced", label: "بضاعة مستلمة غير مفوترة" }, { role: "cogs", label: "تكلفة المبيعات" }, { role: "inventory_adjustment_gain", label: "أرباح تسوية المخزون" }, { role: "inventory_adjustment_loss", label: "خسائر تسوية المخزون" }, { role: "inter_branch_clearing", label: "تسوية بين الفروع" }].map((item) => { const assigned = roleAssignments.find((x) => x.role === item.role); const account = accounts.find((x) => x.id === assigned?.account); return <tr key={item.role}><td>{item.label}</td><td>{assigned ? `${account?.code || assigned.account_code} - ${account?.name_ar || ""}` : "غير مربوط"}</td><td>{assigned ? "مربوط" : "مطلوب"}</td></tr>; })}</tbody></table>}
       {tab === "balances" && <table><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>موقع التخزين</th><th>الصلاحية</th><th>الرصيد</th><th>متوسط التكلفة</th><th>قيمة المخزون</th></tr></thead><tbody>{balances.filter((b) => `${b.product_code} ${b.product_name} ${b.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((b) => <tr key={b.id}><td className="code-cell">{b.product_code}</td><td>{b.product_name}</td><td>{b.warehouse_name}</td><td>{b.location_name || "عام"}</td><td>{b.expiry_date || "—"}</td><td>{Number(b.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.average_cost).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}</tbody></table>}
+      {tab === "reports" && <div className="inventory-reports">
+        <div className="metrics-grid inventory-report-metrics">
+          <article className="metric-card"><div className="metric-top">قيمة المخزون</div><strong className="metric-value">{totalInventoryValue.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong><small>حسب تكلفة الأرصدة الحالية</small></article>
+          <article className="metric-card"><div className="metric-top">إجمالي الكميات</div><strong className="metric-value">{totalInventoryQuantity.toLocaleString("ar-EG", { maximumFractionDigits: 3 })}</strong><small>مجموع أرصدة جميع المخازن</small></article>
+          <article className="metric-card"><div className="metric-top">أصناف عند حد الطلب</div><strong className="metric-value">{reorderAlerts.length.toLocaleString("ar-EG")}</strong><small>وفق حد إعادة الطلب المحدد على الصنف</small></article>
+          <article className="metric-card"><div className="metric-top">تنبيهات الصلاحية</div><strong className="metric-value">{expiryAlerts.length.toLocaleString("ar-EG")}</strong><small>منتهية أو خلال 30 يوماً</small></article>
+        </div>
+        <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تقييم المخزون حسب المخزن</h3><p>قيمة وكمية الأرصدة الحالية</p></div></div>
+          <div className="data-table-wrap"><table><thead><tr><th>المخزن</th><th>عدد الأصناف</th><th>إجمالي الكمية</th><th>قيمة المخزون</th></tr></thead><tbody>{warehouseValuation.filter((row) => row.warehouse.name_ar.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.warehouse.id}><td>{row.warehouse.name_ar}</td><td>{row.products}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{row.value.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!warehouseValuation.length && <tr><td colSpan={4}>لا توجد أرصدة مخزنية حالياً.</td></tr>}</tbody></table></div>
+        </section>
+        <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>أصناف وصلت إلى حد إعادة الطلب</h3><p>مقارنة الرصيد المجمع للصنف بحد إعادة الطلب المسجل عليه</p></div></div>
+          <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>الرصيد الحالي</th><th>حد إعادة الطلب</th><th>قيمة المخزون</th></tr></thead><tbody>{reorderAlerts.filter((row) => `${row.product.code} ${row.product.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.product.id}><td className="code-cell">{row.product.code}</td><td>{row.product.name_ar}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.product.min_stock).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{row.value.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!reorderAlerts.length && <tr><td colSpan={5}>لا توجد أصناف عند حد إعادة الطلب.</td></tr>}</tbody></table></div>
+        </section>
+        <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تنبيهات الصلاحية</h3><p>الأصناف المنتهية أو التي تنتهي خلال 30 يوماً</p></div></div>
+          <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الموقع</th><th>تاريخ الصلاحية</th><th>الأيام المتبقية</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{expiryAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_name}</td><td>{row.location_name || "عام"}</td><td>{row.expiry_date}</td><td><span className={row.days < 0 ? "status-pill reversed" : "status-pill draft"}>{row.days < 0 ? `منتهي منذ ${Math.abs(row.days)} يوم` : row.days === 0 ? "ينتهي اليوم" : `${row.days} يوم`}</span></td><td>{Number(row.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!expiryAlerts.length && <tr><td colSpan={7}>لا توجد تنبيهات صلاحية خلال الفترة المحددة.</td></tr>}</tbody></table></div>
+        </section>
+        <p className="inventory-report-note">ملاحظة: حد إعادة الطلب الحالي مُعرّف على مستوى الصنف ويُقارن بإجمالي رصيده في الشركة. إعداد حد مستقل لكل مخزن وتسوية المخزون مع دفتر الأستاذ سيُستكملان في المرحلة التالية.</p>
+      </div>}
     </div>
   </section>;
 }
