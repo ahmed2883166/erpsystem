@@ -25,7 +25,7 @@ class CurrencyViewSet(viewsets.ModelViewSet):
 
 class CompanyViewSet(viewsets.ModelViewSet):
     serializer_class = CompanySerializer
-    permission_classes = (ReadOnlyOrAdmin,)
+    permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
         return accessible_companies(self.request.user).select_related("base_currency")
