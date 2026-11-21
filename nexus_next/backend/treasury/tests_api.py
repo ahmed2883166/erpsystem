@@ -292,3 +292,32 @@ class TreasuryWorkflowTests(APITestCase):
             f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json"
         )
         self.assertEqual(posted.status_code, 200, posted.data)
+
+
+    def test_editing_high_value_payment_replaces_old_approval_snapshot(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_payment_amount=Decimal("100"),
+            created_by=self.user, updated_by=self.user,
+        )
+        seed = self._create(kind="receipt", document_number="TR-SNAPSHOT-SEED")
+        self.assertEqual(seed.status_code, 201, seed.data)
+        self.assertEqual(self.client.post(
+            f"/api/treasury/transactions/{seed.data['id']}/post/", {}, format="json"
+        ).status_code, 200)
+        payment = self._create(
+            kind="payment", document_number="TR-SNAPSHOT-PAY", amount="150",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        old_request = FinancialApprovalRequest.objects.get(treasury_transaction_id=payment.data["id"])
+        revised = self.client.patch(
+            f"/api/treasury/transactions/{payment.data['id']}/",
+            {"amount": "160.0000"}, format="json",
+        )
+        self.assertEqual(revised.status_code, 200, revised.data)
+        old_request.refresh_from_db()
+        self.assertEqual(old_request.status, FinancialApprovalRequest.Status.SUPERSEDED)
+        current = FinancialApprovalRequest.objects.filter(
+            treasury_transaction_id=payment.data["id"],
+            status=FinancialApprovalRequest.Status.PENDING,
+        ).get()
+        self.assertEqual(current.requested_amount, Decimal("160.0000"))
