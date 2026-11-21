@@ -4,7 +4,7 @@ import { approvalsApi, type DiscountApprovalPolicy, type SalesInvoiceApproval } 
 type Props = { companyId: number | null };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 const statusLabel: Record<SalesInvoiceApproval["status"], string> = {
-  pending: "بانتظار الموافقة", approved: "تمت الموافقة", rejected: "مرفوض",
+  pending: "بانتظار الموافقة", approved: "تمت الموافقة", rejected: "مرفوض", superseded: "استبدل بطلب أحدث",
 };
 
 export default function DiscountApprovalsPanel({ companyId }: Props) {
