@@ -699,10 +699,13 @@ class JournalEntryViewSet(AccountingViewSet):
             invoice__invoice_date__lte=date_to,
             invoice__journal_entry__status=JournalEntry.Status.POSTED,
             invoice__journal_entry__branch_id__in=branch_ids,
-        ).values("tax_rate").annotate(
+        ).values(
+            "tax_rate", "tax_code_id", "tax_code__code", "tax_code__name_ar",
+            "tax_code__category",
+        ).annotate(
             taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
             gross_amount=Sum("total_amount"),
-        ).order_by("tax_rate"))
+        ).order_by("tax_code__code", "tax_rate"))
 
         purchase_rows = list(PurchaseInvoiceLine.objects.filter(
             invoice__company_id=company.pk,
@@ -711,29 +714,82 @@ class JournalEntryViewSet(AccountingViewSet):
             invoice__invoice_date__lte=date_to,
             invoice__journal_entry__status=JournalEntry.Status.POSTED,
             invoice__journal_entry__branch_id__in=branch_ids,
-        ).values("tax_rate").annotate(
+        ).values(
+            "tax_rate", "tax_code_id", "tax_code__code", "tax_code__name_ar",
+            "tax_code__category", "tax_code__input_tax_recoverable",
+        ).annotate(
             taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
             gross_amount=Sum("total_amount"),
-        ).order_by("tax_rate"))
+        ).order_by("tax_code__code", "tax_rate"))
 
-        def summarize(rows):
-            normalized = [{
-                "tax_rate": str(row["tax_rate"]),
-                "taxable_base": str(row["taxable_base"] or Decimal("0")),
-                "tax_amount": str(row["tax_amount"] or Decimal("0")),
-                "gross_amount": str(row["gross_amount"] or Decimal("0")),
-            } for row in rows]
+        def summarize(rows, purchases=False):
+            normalized = []
+            by_category = {}
+            by_rate = {}
+            taxable_base = Decimal("0")
+            tax_amount = Decimal("0")
+            gross_amount = Decimal("0")
+            recoverable_tax = Decimal("0")
+            for row in rows:
+                base = row["taxable_base"] or Decimal("0")
+                tax = row["tax_amount"] or Decimal("0")
+                gross = row["gross_amount"] or Decimal("0")
+                category = row.get("tax_code__category") or "legacy_unclassified"
+                code = row.get("tax_code__code")
+                recoverable = (not purchases or row.get("tax_code_id") is None
+                               or row.get("tax_code__input_tax_recoverable", True))
+                normalized.append({
+                    "tax_code_id": row.get("tax_code_id"),
+                    "tax_code": code,
+                    "tax_name": row.get("tax_code__name_ar"),
+                    "category": category,
+                    "tax_rate": str(row["tax_rate"]),
+                    "taxable_base": str(base),
+                    "tax_amount": str(tax),
+                    "recoverable_tax_amount": str(tax if recoverable else Decimal("0")),
+                    "gross_amount": str(gross),
+                })
+                taxable_base += base
+                tax_amount += tax
+                gross_amount += gross
+                if recoverable:
+                    recoverable_tax += tax
+                category_row = by_category.setdefault(category, {
+                    "taxable_base": Decimal("0"), "tax_amount": Decimal("0"),
+                    "gross_amount": Decimal("0"), "recoverable_tax_amount": Decimal("0"),
+                })
+                category_row["taxable_base"] += base
+                category_row["tax_amount"] += tax
+                category_row["gross_amount"] += gross
+                if recoverable:
+                    category_row["recoverable_tax_amount"] += tax
+                rate_key = str(row["tax_rate"])
+                rate_row = by_rate.setdefault(rate_key, {
+                    "taxable_base": Decimal("0"), "tax_amount": Decimal("0"),
+                    "gross_amount": Decimal("0"),
+                })
+                rate_row["taxable_base"] += base
+                rate_row["tax_amount"] += tax
+                rate_row["gross_amount"] += gross
+
+            def strings(values):
+                return {key: str(value) for key, value in values.items()}
+
             return {
-                "taxable_base": str(sum((Decimal(row["taxable_base"]) for row in normalized), Decimal("0"))),
-                "tax_amount": str(sum((Decimal(row["tax_amount"]) for row in normalized), Decimal("0"))),
-                "gross_amount": str(sum((Decimal(row["gross_amount"]) for row in normalized), Decimal("0"))),
-                "by_rate": normalized,
+                "taxable_base": str(taxable_base),
+                "tax_amount": str(tax_amount),
+                "recoverable_tax_amount": str(recoverable_tax),
+                "gross_amount": str(gross_amount),
+                "by_rate": [{"tax_rate": rate, **strings(values)} for rate, values in by_rate.items()],
+                "by_category": [{"category": category, **strings(values)}
+                                for category, values in by_category.items()],
+                "by_code": normalized,
             }
 
         sales = summarize(sales_rows)
-        purchases = summarize(purchase_rows)
+        purchases = summarize(purchase_rows, purchases=True)
         output_tax = Decimal(sales["tax_amount"])
-        input_tax = Decimal(purchases["tax_amount"])
+        input_tax = Decimal(purchases["recoverable_tax_amount"])
         return response.Response({
             "company": company.pk,
             "country": company.country,
