@@ -3226,7 +3226,9 @@ def ledger():
                     (account_id, date_from)).fetchone()
                 base_opening = Decimal(str(opening_row["balance"] or "0"))
 
-            if hasattr(connection, "create_window_function"):
+            # Keep filtered ledger searches on the correlated path so the displayed
+            # rows and the filtered count share the exact same WHERE predicates.
+            if hasattr(connection, "create_window_function") and not search_query:
                 # Compute chronological balances once using exact Decimal math,
                 # then filter the rendered rows outside the CTE.
                 outer_where = " AND ".join(search_conditions) if search_conditions else "1=1"

@@ -1,5 +1,6 @@
 """PostgreSQL integration coverage for profitability reports and exact money totals."""
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
@@ -109,6 +110,70 @@ class ProfitabilityPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(product["revenue"], Decimal("80"))
                     self.assertEqual(product["cogs"], Decimal("27"))
                     self.assertEqual(product["gross_profit"], Decimal("53"))
+
+                    from accounting_core import register_decimal_aggregates
+                    sqlite_conn = sqlite3.connect(":memory:")
+                    sqlite_conn.row_factory = sqlite3.Row
+                    register_decimal_aggregates(sqlite_conn)
+                    try:
+                        sqlite_conn.executescript("""
+                            CREATE TABLE accounts(
+                                id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,
+                                account_type TEXT,is_group INTEGER,statement_section TEXT
+                            );
+                            CREATE TABLE journal_entries(
+                                id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,entry_type TEXT
+                            );
+                            CREATE TABLE journal_lines(
+                                id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
+                                debit TEXT,credit TEXT,branch_id INTEGER,cost_center_id INTEGER
+                            );
+                            CREATE TABLE branches(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                            CREATE TABLE cost_centers(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                            CREATE TABLE management_account_roles(account_id INTEGER,role TEXT);
+                            CREATE TABLE stock_warehouses(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                            CREATE TABLE stock_products(id INTEGER PRIMARY KEY,sku TEXT,name_ar TEXT);
+                            CREATE TABLE sales_invoices(
+                                id INTEGER PRIMARY KEY,invoice_date TEXT,status TEXT,
+                                warehouse_id INTEGER,subtotal TEXT,discount_amount TEXT
+                            );
+                            CREATE TABLE sales_invoice_lines(
+                                id INTEGER PRIMARY KEY,invoice_id INTEGER,cost_total TEXT,
+                                product_id INTEGER,description TEXT,quantity TEXT,line_total TEXT
+                            );
+                            CREATE TABLE sales_credit_notes(
+                                id INTEGER PRIMARY KEY,invoice_id INTEGER,credit_date TEXT,
+                                status TEXT,subtotal TEXT
+                            );
+                            CREATE TABLE sales_credit_note_lines(
+                                id INTEGER PRIMARY KEY,credit_note_id INTEGER,cost_total TEXT,
+                                product_id INTEGER,description TEXT,quantity TEXT,line_total TEXT
+                            );
+                            INSERT INTO accounts VALUES
+                                (1,'4100','إيرادات','revenue',0,'revenue'),
+                                (2,'5100','تكلفة المبيعات','expense',0,'direct_costs'),
+                                (3,'6100','مصروفات تشغيل','expense',0,'operating_expenses');
+                            INSERT INTO branches VALUES(1,'B1','فرع أول');
+                            INSERT INTO cost_centers VALUES(1,'CC1','نشاط التجارة');
+                            INSERT INTO management_account_roles VALUES(2,'direct_cost');
+                            INSERT INTO stock_warehouses VALUES(1,'W1','مخزن رئيسي');
+                            INSERT INTO stock_products VALUES(1,'P1','منتج أول');
+                            INSERT INTO journal_entries VALUES(1,'2026-11-10','posted','general');
+                            INSERT INTO journal_lines VALUES
+                                (1,1,1,'0','0.10',1,1),(2,1,1,'0','0.20',1,1),
+                                (3,1,2,'0.05','0',1,1),(4,1,3,'0.02','0',1,1);
+                            INSERT INTO sales_invoices VALUES(1,'2026-11-10','posted',1,'100','10');
+                            INSERT INTO sales_invoice_lines VALUES(1,1,'30',1,'منتج أول','2','100');
+                            INSERT INTO sales_credit_notes VALUES(1,1,'2026-11-15','posted','10');
+                            INSERT INTO sales_credit_note_lines VALUES(1,1,'3',1,'منتج أول','1','10');
+                        """)
+                        sqlite_report = build_profitability_report(
+                            sqlite_conn, "2026-11-01", "2026-11-30"
+                        )
+                        for key in ("branches", "cost_centers", "warehouses", "products", "availability"):
+                            self.assertEqual(report[key], sqlite_report[key], key)
+                    finally:
+                        sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")

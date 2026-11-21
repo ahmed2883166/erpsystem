@@ -339,6 +339,40 @@ class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(report["total"], Decimal("50"))
             self.assertEqual(report["monthly_rows"][0]["month"], "2026-11")
             self.assertEqual(report["monthly_rows"][0]["amount"], Decimal("50"))
+
+            sqlite_conn = sqlite3.connect(":memory:")
+            sqlite_conn.row_factory = sqlite3.Row
+            register_decimal_aggregates(sqlite_conn)
+            try:
+                sqlite_conn.executescript("""
+                    CREATE TABLE accounts(
+                        id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,
+                        account_type TEXT,is_group INTEGER,active INTEGER
+                    );
+                    CREATE TABLE journal_entries(
+                        id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,entry_type TEXT
+                    );
+                    CREATE TABLE journal_lines(
+                        id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
+                        debit TEXT,credit TEXT,branch_id INTEGER,cost_center_id INTEGER,
+                        project_id INTEGER,customer_id INTEGER,salesperson_id INTEGER,supplier_id INTEGER
+                    );
+                    CREATE TABLE branches(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                    CREATE TABLE cost_centers(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                    CREATE TABLE projects(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                    CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                    CREATE TABLE salespersons(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                    CREATE TABLE suppliers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                    INSERT INTO accounts VALUES(1,'6100','Rent','expense',0,1);
+                    INSERT INTO journal_entries VALUES(1,'2026-11-05','posted','general');
+                    INSERT INTO journal_lines VALUES(1,1,1,'55','5',NULL,NULL,NULL,NULL,NULL,NULL);
+                """)
+                sqlite_report = build_expense_analysis(
+                    sqlite_conn, "2026-11-01", "2026-11-30"
+                )
+                self.assertEqual(report, sqlite_report)
+            finally:
+                sqlite_conn.close()
         finally:
             connection.rollback()
             connection.execute("SET search_path TO public")
