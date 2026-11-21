@@ -24,6 +24,7 @@ ACCOUNT_ROLE_NATURES = {
 
 
 def get_account_for_role(company, role):
+    """إرجاع الحساب التفصيلي النشط المرتبط بدور محاسبي داخل الشركة."""
     from .models import AccountRole
 
     assignment = AccountRole.objects.select_related("account").filter(company=company, role=role).first()
@@ -41,6 +42,7 @@ def get_account_for_role(company, role):
 
 @transaction.atomic
 def post_journal(entry_id: int) -> JournalEntry:
+    """ترحيل القيد اليومي بعد التحقق من توازنه وصلاحية حساباته."""
     entry = JournalEntry.objects.select_for_update().select_related(
         "company", "branch", "fiscal_year"
     ).get(pk=entry_id)
