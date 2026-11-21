@@ -152,3 +152,11 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .inventory-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px}
 @media(max-width:760px){.inventory-form-row{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-form-row label:first-child{grid-column:1/-1}}
 @media(max-width:460px){.inventory-form-row{grid-template-columns:1fr}.inventory-form-row label:first-child{grid-column:auto}.inventory-form-actions{flex-direction:column}.inventory-form-actions button{width:100%}}
+
+/* Receivables and payables overview */
+.receivables-payables-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:24px}
+.aging-metric-card{width:100%;text-align:right;cursor:pointer;transition:border-color .18s,box-shadow .18s,transform .18s}
+.aging-metric-card:hover{border-color:#8eb7e7;box-shadow:0 8px 22px #233b5a12;transform:translateY(-2px)}
+.aging-metric-card:focus-visible{outline:2px solid #438bd2;outline-offset:3px}
+.aging-buckets{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid #edf0f5;margin-top:12px;padding-top:10px;color:#8390a2;font-size:9px}
+@media(max-width:680px){.receivables-payables-grid{grid-template-columns:1fr}.aging-buckets{font-size:10px}}
