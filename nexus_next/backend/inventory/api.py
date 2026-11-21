@@ -627,8 +627,16 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
         gl_balance = (gl_totals["debit"] or Decimal("0")) - (gl_totals["credit"] or Decimal("0"))
         difference = gl_balance - stock_value
+        currency = Company.objects.select_related("base_currency").get(pk=company_id).base_currency
+        # Reconciliation tolerates at most half of the smallest currency unit.
+        # The raw difference is still returned so reviewers can inspect rounding.
+        rounding_tolerance = Decimal("1").scaleb(-(currency.decimal_places + 1))
+        is_reconciled = abs(difference) <= rounding_tolerance
         return Response({
             "company": company_id,
+            "currency": currency.code,
+            "currency_decimal_places": currency.decimal_places,
+            "rounding_tolerance": str(rounding_tolerance),
             "branch": selected_branch.pk if selected_branch else None,
             "branch_code": selected_branch.code if selected_branch else "",
             "branch_name": selected_branch.name_ar if selected_branch else "",
@@ -640,6 +648,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "stock_value": str(stock_value),
             "gl_balance": str(gl_balance),
             "difference": str(difference),
-            "is_reconciled": difference == 0,
+            "is_reconciled": is_reconciled,
+            "reconciliation_status": "matched" if is_reconciled else "difference",
             "basis": "current_stock_snapshot_vs_posted_inventory_account_balance",
         })
