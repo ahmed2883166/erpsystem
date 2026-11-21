@@ -180,14 +180,14 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(recon.status_code, 201, recon.data)
         csv_file = SimpleUploadedFile(
             "statement.csv",
-            b"date,amount,description,reference\\n2026-03-02,50.00,Deposit,D-1\\n2026-03-03,-75.00,Withdrawal,W-1\\n",
+            b"date,amount,description,reference\n2026-03-02,50.00,Deposit,D-1\n2026-03-03,-75.00,Withdrawal,W-1\n",
             content_type="text/csv",
         )
         imported = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": csv_file}, format="multipart")
         self.assertEqual(imported.status_code, 201, imported.data)
         self.assertEqual(imported.data["imported"], 2)
         self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
-        second = SimpleUploadedFile("again.csv", b"date,amount\\n2026-03-04,1\\n", content_type="text/csv")
+        second = SimpleUploadedFile("again.csv", b"date,amount\n2026-03-04,1\n", content_type="text/csv")
         rejected = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": second}, format="multipart")
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
@@ -199,7 +199,7 @@ class TreasuryWorkflowTests(APITestCase):
         }, format="json")
         csv_file = SimpleUploadedFile(
             "invalid.csv",
-            b"date,amount\\n2026-03-02,10.00\\nnot-a-date,5.00\\n",
+            b"date,amount\n2026-03-02,10.00\nnot-a-date,5.00\n",
             content_type="text/csv",
         )
         imported = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": csv_file}, format="multipart")
