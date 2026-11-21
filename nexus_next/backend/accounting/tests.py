@@ -385,6 +385,37 @@ class CompanyIsolationApiTests(TestCase):
         self.assertEqual(response.data["debit_total"], Decimal("100.0000"))
         self.assertEqual(response.data["credit_total"], Decimal("100.0000"))
 
+    def test_trial_balance_branch_filter_returns_only_selected_branch(self):
+        main = Branch.objects.create(company=self.company_a, code="TB-MAIN", name_ar="الرئيسي")
+        east = Branch.objects.create(company=self.company_a, code="TB-EAST", name_ar="الشرقي")
+        year = FiscalYear.objects.create(
+            company=self.company_a, name="2028",
+            start_date=date(2028, 1, 1), end_date=date(2028, 12, 31),
+        )
+        capital = ChartOfAccount.objects.create(
+            company=self.company_a, code="3002", name_ar="رأس المال", nature="equity"
+        )
+        for number, branch in (("TB-MAIN-1", main), ("TB-EAST-1", east)):
+            entry = JournalEntry.objects.create(
+                company=self.company_a, branch=branch, fiscal_year=year,
+                entry_number=number, entry_date=date(2028, 1, 2), description="قيد فرعي",
+            )
+            JournalLine.objects.create(entry=entry, account=self.account_a, debit=Decimal("100"))
+            JournalLine.objects.create(entry=entry, account=capital, credit=Decimal("100"))
+            post_journal(entry.pk)
+        user = User.objects.create_user(username="tb_branch_filter", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=self.company_a, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get(
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company_a.pk}&branch={east.pk}"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["debit_total"], Decimal("100.0000"))
+        self.assertEqual(response.data["credit_total"], Decimal("100.0000"))
+
 
 class IndirectCashFlowApiTests(TestCase):
     def test_indirect_cash_flow_reconciles_to_cash_ledger_and_uses_opening_balances(self):
