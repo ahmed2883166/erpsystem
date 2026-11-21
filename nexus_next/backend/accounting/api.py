@@ -8,9 +8,9 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from companies.models import Company, FiscalYear
 from purchasing.models import PurchaseInvoiceLine
 from sales.models import SalesInvoiceLine
-from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
+from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 from .permissions import CompanyRolePermission
-from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
+from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer, TaxCodeSerializer
 from .services import post_journal
 
 
@@ -72,6 +72,46 @@ class CostCenterViewSet(AccountingViewSet):
     queryset = CostCenter.objects.select_related("company", "parent").all()
     filterset_fields = ("company", "is_active")
     search_fields = ("code", "name_ar")
+
+
+class TaxCodeViewSet(AccountingViewSet):
+    serializer_class = TaxCodeSerializer
+    queryset = TaxCode.objects.select_related("company").all()
+    filterset_fields = ("company", "country", "category", "is_active")
+    search_fields = ("code", "name_ar")
+    ordering_fields = ("code", "rate", "effective_from")
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        as_of = self.request.query_params.get("as_of")
+        if as_of:
+            tax_date = parse_date(as_of)
+            if not tax_date:
+                raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+            qs = qs.filter(effective_from__lte=tax_date).filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=tax_date)
+            )
+        return qs.filter(is_active=True) if self.request.query_params.get("active_only") == "true" else qs
+
+    def perform_create(self, serializer):
+        self._validate_scope(serializer.validated_data)
+        company = serializer.validated_data["company"]
+        self._require_write_role(company.pk)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        self._validate_scope(serializer.validated_data)
+        self._require_write_role(company.pk)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._require_write_role(instance.company_id, delete=True)
+        if instance.is_active:
+            raise ValidationError("عطّل كود الضريبة بدل حذفه للحفاظ على أثر الفواتير.")
+        if instance.invoice_lines.exists():
+            raise ValidationError("لا يمكن حذف كود ضريبي مستخدم في فواتير.")
+        instance.delete()
 
 
 class JournalEntryViewSet(AccountingViewSet):
