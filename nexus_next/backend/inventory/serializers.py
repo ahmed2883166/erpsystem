@@ -1,6 +1,7 @@
+from django.db import transaction
 from rest_framework import serializers
 
-from .models import Product, ProductCategory, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -97,3 +98,80 @@ class StorageLocationSerializer(serializers.ModelSerializer):
         if self.instance and parent and parent.pk == self.instance.pk:
             raise serializers.ValidationError({"parent": "لا يمكن ربط الموقع بنفسه."})
         return attrs
+
+
+
+class StockMovementLineSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+
+    class Meta:
+        model = StockMovementLine
+        fields = ("id", "product", "product_code", "product_name", "quantity", "unit_cost", "adjustment_direction")
+        read_only_fields = ("id",)
+
+    def validate(self, attrs):
+        product = attrs.get("product")
+        movement = self.context.get("movement")
+        if product and product.product_type != Product.ProductType.GOODS:
+            raise serializers.ValidationError({"product": "لا يمكن تسجيل حركة مخزنية على خدمة."})
+        if product and movement and product.company_id != movement.company_id:
+            raise serializers.ValidationError({"product": "الصنف لا يتبع شركة الحركة."})
+        return attrs
+
+
+class StockMovementSerializer(serializers.ModelSerializer):
+    lines = StockMovementLineSerializer(many=True)
+    source_warehouse_name = serializers.CharField(source="source_warehouse.name_ar", read_only=True)
+    destination_warehouse_name = serializers.CharField(source="destination_warehouse.name_ar", read_only=True)
+
+    class Meta:
+        model = StockMovement
+        fields = (
+            "id", "company", "movement_number", "movement_type", "movement_date",
+            "source_warehouse", "source_warehouse_name", "destination_warehouse",
+            "destination_warehouse_name", "status", "notes", "lines", "created_at",
+            "posted_at",
+        )
+        read_only_fields = ("status", "created_at", "posted_at")
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        movement_type = attrs.get("movement_type", getattr(self.instance, "movement_type", None))
+        source = attrs.get("source_warehouse", getattr(self.instance, "source_warehouse", None))
+        destination = attrs.get("destination_warehouse", getattr(self.instance, "destination_warehouse", None))
+        lines = attrs.get("lines", [])
+        if self.instance and self.instance.status == StockMovement.Status.POSTED:
+            raise serializers.ValidationError("لا يمكن تعديل حركة مرحلة.")
+        if not lines and not self.instance:
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        for warehouse in (source, destination):
+            if warehouse and company and warehouse.company_id != company.pk:
+                raise serializers.ValidationError("المخزن لا يتبع الشركة المحددة.")
+        if movement_type == StockMovement.MovementType.RECEIPT and not destination:
+            raise serializers.ValidationError({"destination_warehouse": "حدد مخزن الاستلام."})
+        if movement_type == StockMovement.MovementType.ISSUE and not source:
+            raise serializers.ValidationError({"source_warehouse": "حدد مخزن الصرف."})
+        if movement_type == StockMovement.MovementType.TRANSFER:
+            if not source or not destination or source.pk == destination.pk:
+                raise serializers.ValidationError("التحويل يتطلب مخزنين مختلفين.")
+        if movement_type == StockMovement.MovementType.ADJUSTMENT and bool(source) == bool(destination):
+            raise serializers.ValidationError("التسوية تتطلب مخزنًا واحدًا فقط.")
+        for line in lines:
+            product = line["product"]
+            if company and product.company_id != company.pk:
+                raise serializers.ValidationError({"lines": "يوجد صنف لا يتبع الشركة المحددة."})
+            if product.product_type != Product.ProductType.GOODS:
+                raise serializers.ValidationError({"lines": "الخدمات لا تقبل حركات مخزنية."})
+            if movement_type == StockMovement.MovementType.ADJUSTMENT and not line.get("adjustment_direction"):
+                raise serializers.ValidationError({"lines": "حدد الزيادة أو العجز لكل صنف في التسوية."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lines = validated_data.pop("lines")
+        movement = StockMovement.objects.create(**validated_data)
+        StockMovementLine.objects.bulk_create([
+            StockMovementLine(movement=movement, **line) for line in lines
+        ])
+        return movement
