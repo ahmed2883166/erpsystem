@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult } from "./api";
+import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance } from "./api";
 
 const statusLabels: Record<string, string> = {
   active: "نشط", leave: "إجازة", unpaid_leave: "إجازة بدون راتب",
@@ -11,9 +11,11 @@ const cycleLabels: Record<string, string> = {
 };
 
 export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyId: number | null; baseCurrencyId?: number }) {
-  const [tab, setTab] = useState<"employees" | "payroll">("employees");
+  const [tab, setTab] = useState<"employees" | "components" | "attendance" | "payroll">("employees");
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
   const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);
+  const [components, setComponents] = useState<HrPayrollComponent[]>([]);
+  const [attendance, setAttendance] = useState<HrAttendance[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [results, setResults] = useState<HrPayrollResult[]>([]);
@@ -22,16 +24,18 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [employeeDraft, setEmployeeDraft] = useState({code:"",full_name_ar:"",branch:"",currency:"",hire_date:new Date().toISOString().slice(0,10),basic_salary:"0"});
+  const [componentDraft, setComponentDraft] = useState({code:"",name_ar:"",kind:"earning" as HrPayrollComponent["kind"],method:"fixed" as HrPayrollComponent["method"],default_value:"0"});
+  const [attendanceDraft, setAttendanceDraft] = useState({employee:"",work_date:new Date().toISOString().slice(0,10),status:"present" as HrAttendance["status"],worked_hours:"8",overtime_hours:"0",late_minutes:"0"});
   const [cycleDraft, setCycleDraft] = useState({period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
 
   const load = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [employeeRows, cycleRows, branchRows, currencyRows] = await Promise.all([
-        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(),
+      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows] = await Promise.all([
+        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId),
       ]);
-      setEmployees(employeeRows); setCycles(cycleRows);
+      setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows);
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
       setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(baseCurrencyId||currencyRows[0]?.id||"")}));
@@ -49,6 +53,25 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
       setNotice("تم حفظ ملف الموظف."); await load();
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ الموظف."); }
     finally { setBusy(false); }
+  };
+  const submitComponent = async (event:FormEvent) => {
+    event.preventDefault();if(!companyId)return;
+    setBusy(true);setError("");setNotice("");
+    try {
+      await hrApi.createPayrollComponent({...componentDraft,company:companyId,expense_account:null,payable_account:null,affects_taxable_base:false,affects_insurance_base:false,requires_approval:false,is_active:true});
+      setComponentDraft({code:"",name_ar:"",kind:"earning",method:"fixed",default_value:"0"});
+      setNotice("تم حفظ عنصر المرتب. اربط الحسابات المحاسبية قبل تفعيل الترحيل.");await load();
+    } catch(reason){setError(reason instanceof Error?reason.message:"تعذر حفظ عنصر المرتب.");}
+    finally{setBusy(false);}
+  };
+  const submitAttendance = async (event:FormEvent) => {
+    event.preventDefault();if(!attendanceDraft.employee)return;
+    setBusy(true);setError("");setNotice("");
+    try {
+      await hrApi.createAttendance({...attendanceDraft,employee:Number(attendanceDraft.employee),worked_hours:attendanceDraft.worked_hours,overtime_hours:attendanceDraft.overtime_hours,late_minutes:Number(attendanceDraft.late_minutes)});
+      setNotice("تم تسجيل الحضور.");await load();
+    } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل الحضور.");}
+    finally{setBusy(false);}
   };
   const submitCycle = async (event:FormEvent) => {
     event.preventDefault();if(!companyId)return;
@@ -82,6 +105,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
     <div className="work-panel-head"><div><h2>الموارد البشرية والمرتبات</h2><p>إدارة الموظفين وعناصر الأجر ودورات المرتبات — تشغيل هجين بإدخال يدوي واحتساب تلقائي</p></div><span className="coming-soon">مرحلة التأسيس</span></div>
     <div className="hr-tabs" role="tablist" style={{display:"flex",gap:8,margin:"18px 0"}}>
       <button type="button" className={tab==="employees"?"primary-button":"subtle-button"} onClick={()=>setTab("employees")}>ملفات الموظفين</button>
+      <button type="button" className={tab==="components"?"primary-button":"subtle-button"} onClick={()=>setTab("components")}>عناصر المرتب</button>
+      <button type="button" className={tab==="attendance"?"primary-button":"subtle-button"} onClick={()=>setTab("attendance")}>الحضور</button>
       <button type="button" className={tab==="payroll"?"primary-button":"subtle-button"} onClick={()=>setTab("payroll")}>دورات المرتبات</button>
       <button type="button" className="subtle-button" onClick={()=>void load()} disabled={busy}>تحديث البيانات</button>
     </div>
@@ -100,6 +125,31 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
       <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الموظف</th><th>الفرع</th><th>تاريخ التعيين</th><th>الأساسي</th><th>الحالة</th></tr></thead><tbody>
         {employees.map(e=><tr key={e.id}><td className="code-cell">{e.code}</td><td>{e.full_name_ar}</td><td>{e.branch_name}</td><td>{e.hire_date}</td><td>{money(e.basic_salary)} {e.currency_code}</td><td><span className="status-pill">{statusLabels[e.status]||e.status}</span></td></tr>)}
       </tbody></table>{!employees.length&&<div className="table-empty">{busy?"جارٍ التحميل…":"لا يوجد موظفون مسجلون."}</div>}</div>
+    </>}
+    {tab==="components"&&<>
+      <form className="journal-form" onSubmit={submitComponent}>
+        <label>كود العنصر<input required maxLength={32} value={componentDraft.code} onChange={e=>setComponentDraft({...componentDraft,code:e.target.value})}/></label>
+        <label>اسم العنصر<input required value={componentDraft.name_ar} onChange={e=>setComponentDraft({...componentDraft,name_ar:e.target.value})}/></label>
+        <label>نوع العنصر<select value={componentDraft.kind} onChange={e=>setComponentDraft({...componentDraft,kind:e.target.value as HrPayrollComponent["kind"]})}><option value="earning">استحقاق</option><option value="deduction">استقطاع موظف</option><option value="employer_share">حصة صاحب العمل</option></select></label>
+        <label>طريقة الحساب<select value={componentDraft.method} onChange={e=>setComponentDraft({...componentDraft,method:e.target.value as HrPayrollComponent["method"]})}><option value="fixed">مبلغ ثابت</option><option value="percent_basic">نسبة من الأساسي</option><option value="per_day">حسب الأيام</option><option value="per_hour">حسب الساعات</option><option value="manual">إدخال يدوي</option></select></label>
+        <label>القيمة الافتراضية<input type="number" min="0" step="0.0001" value={componentDraft.default_value} onChange={e=>setComponentDraft({...componentDraft,default_value:e.target.value})}/></label>
+        <div className="form-actions form-wide"><button className="primary-button" disabled={busy}>حفظ عنصر المرتب</button></div>
+      </form>
+      <div className="section-heading" style={{marginTop:24}}><div><h2>عناصر المرتب المعرفة</h2><p>استحقاقات واستقطاعات الموظف وحصة صاحب العمل</p></div><span className="module-count">{components.length} عنصر</span></div>
+      <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم العنصر</th><th>النوع</th><th>طريقة الحساب</th><th>القيمة الافتراضية</th></tr></thead><tbody>{components.map(x=><tr key={x.id}><td>{x.code}</td><td>{x.name_ar}</td><td>{x.kind==="earning"?"استحقاق":x.kind==="deduction"?"استقطاع موظف":"حصة صاحب العمل"}</td><td>{x.method}</td><td>{money(x.default_value)}</td></tr>)}</tbody></table>{!components.length&&<div className="table-empty">لا توجد عناصر مرتبات معرفة.</div>}</div>
+    </>}
+    {tab==="attendance"&&<>
+      <form className="journal-form" onSubmit={submitAttendance}>
+        <label>الموظف<select required value={attendanceDraft.employee} onChange={e=>setAttendanceDraft({...attendanceDraft,employee:e.target.value})}><option value="">اختر الموظف</option>{employees.map(e=><option key={e.id} value={e.id}>{e.code} — {e.full_name_ar}</option>)}</select></label>
+        <label>التاريخ<input required type="date" value={attendanceDraft.work_date} onChange={e=>setAttendanceDraft({...attendanceDraft,work_date:e.target.value})}/></label>
+        <label>الحالة<select value={attendanceDraft.status} onChange={e=>setAttendanceDraft({...attendanceDraft,status:e.target.value as HrAttendance["status"]})}><option value="present">حضور</option><option value="absent">غياب</option><option value="leave">إجازة</option><option value="unpaid_leave">إجازة بدون راتب</option><option value="holiday">عطلة</option></select></label>
+        <label>ساعات العمل<input type="number" min="0" step="0.25" value={attendanceDraft.worked_hours} onChange={e=>setAttendanceDraft({...attendanceDraft,worked_hours:e.target.value})}/></label>
+        <label>ساعات إضافية<input type="number" min="0" step="0.25" value={attendanceDraft.overtime_hours} onChange={e=>setAttendanceDraft({...attendanceDraft,overtime_hours:e.target.value})}/></label>
+        <label>دقائق التأخير<input type="number" min="0" step="1" value={attendanceDraft.late_minutes} onChange={e=>setAttendanceDraft({...attendanceDraft,late_minutes:e.target.value})}/></label>
+        <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>تسجيل الحضور</button></div>
+      </form>
+      <div className="section-heading" style={{marginTop:24}}><div><h2>سجل الحضور</h2><p>ساعات العمل والإضافي والتأخير</p></div><span className="module-count">{attendance.length} سجل</span></div>
+      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>الكود</th><th>الموظف</th><th>الحالة</th><th>ساعات العمل</th><th>إضافي</th><th>تأخير</th></tr></thead><tbody>{attendance.map(x=><tr key={x.id}><td>{x.work_date}</td><td>{x.employee_code}</td><td>{x.employee_name}</td><td>{x.status}</td><td>{money(x.worked_hours)}</td><td>{money(x.overtime_hours)}</td><td>{x.late_minutes}</td></tr>)}</tbody></table>{!attendance.length&&<div className="table-empty">لا توجد سجلات حضور.</div>}</div>
     </>}
     {tab==="payroll"&&<>
       <form className="journal-form" onSubmit={submitCycle}>
