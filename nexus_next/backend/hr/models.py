@@ -255,6 +255,46 @@ class EmployeeLoan(models.Model):
             raise ValidationError("رصيد السلفة المتبقي غير صحيح.")
 
 
+class EmployeeSalaryHistory(models.Model):
+    class ChangeType(models.TextChoices):
+        ANNUAL_RAISE = "annual_raise", "زيادة سنوية"
+        PROMOTION = "promotion", "ترقية"
+        ADJUSTMENT = "adjustment", "تعديل"
+
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="salary_history")
+    effective_date = models.DateField()
+    previous_salary = models.DecimalField(max_digits=18, decimal_places=4)
+    new_salary = models.DecimalField(max_digits=18, decimal_places=4)
+    change_type = models.CharField(max_length=16, choices=ChangeType.choices, default=ChangeType.ADJUSTMENT)
+    reason = models.TextField(blank=True)
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-effective_date", "-id")
+        constraints = [models.CheckConstraint(condition=Q(new_salary__gte=0) & Q(previous_salary__gte=0), name="ck_hr_salary_nonnegative")]
+
+
+class LoanInstallment(models.Model):
+    class Status(models.TextChoices):
+        DUE = "due", "مستحق"
+        PAID = "paid", "مسدد"
+        PARTIAL = "partial", "مسدد جزئيًا"
+        WAIVED = "waived", "معفى"
+
+    loan = models.ForeignKey(EmployeeLoan, on_delete=models.PROTECT, related_name="installments")
+    due_date = models.DateField()
+    amount = models.DecimalField(max_digits=18, decimal_places=4)
+    paid_amount = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    paid_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DUE)
+    payroll_cycle = models.ForeignKey("hr.PayrollCycle", null=True, blank=True, on_delete=models.PROTECT, related_name="loan_installments")
+
+    class Meta:
+        ordering = ("due_date", "id")
+        constraints = [models.UniqueConstraint(fields=("loan", "due_date"), name="uq_hr_loan_installment_date"), models.CheckConstraint(condition=Q(amount__gt=0) & Q(paid_amount__gte=0) & Q(paid_amount__lte=models.F("amount")), name="ck_hr_loan_installment_amount")]
+
+
 class PayrollRuleSet(CompanyScopedModel):
     country = models.CharField(max_length=2, choices=(("EG", "مصر"), ("SA", "السعودية")))
     name = models.CharField(max_length=120)
