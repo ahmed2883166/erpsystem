@@ -24,6 +24,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [locationForm, setLocationForm] = useState({ warehouse: "", code: "", name_ar: "", location_type: "area", parent: "" });
   const [roleForm, setRoleForm] = useState({ role: "inventory", account: "" });
   const [stockForm, setStockForm] = useState({ movement_number: "", movement_type: "receipt", movement_date: new Date().toISOString().slice(0, 10), source_warehouse: "", destination_warehouse: "", source_location: "", destination_location: "", expiry_date: "", product: "", quantity: "1", unit_cost: "0", adjustment_direction: "in", notes: "" });
+  const [stockLines, setStockLines] = useState([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
 
   const refresh = async () => {
     if (!companyId) return;
@@ -33,7 +34,9 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
       setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar);
       setRoleForm((old) => ({ ...old, account: String(ar.find((item) => item.role === old.role)?.account || "") }));
       setLocationForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || "") }));
-      setStockForm((old) => ({ ...old, source_warehouse: old.source_warehouse || String(w[0]?.id || ""), destination_warehouse: old.destination_warehouse || String(w[0]?.id || ""), product: old.product || String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "") }));
+      const defaultProduct = String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "");
+      setStockForm((old) => ({ ...old, source_warehouse: old.source_warehouse || String(w.find((item) => item.is_active)?.id || ""), destination_warehouse: old.destination_warehouse || String(w.find((item) => item.is_active)?.id || "") }));
+      setStockLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? defaultProduct : "") })));
       setForm((old) => ({ ...old, unit: old.unit || String(u[0]?.id || ""), category: old.category || String(c[0]?.id || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المخزون."); }
     finally { setBusy(false); }
@@ -69,8 +72,10 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
         const type = stockForm.movement_type;
         const sourceId = type === "receipt" || (type === "adjustment" && stockForm.adjustment_direction === "in") ? null : Number(stockForm.source_warehouse);
         const destinationId = type === "issue" || (type === "adjustment" && stockForm.adjustment_direction === "out") ? null : Number(stockForm.destination_warehouse);
-        await stockApi.createMovement({ company: companyId, movement_number: stockForm.movement_number, movement_type: type, movement_date: stockForm.movement_date, source_warehouse: sourceId, destination_warehouse: destinationId, notes: stockForm.notes, lines: [{ product: Number(stockForm.product), quantity: stockForm.quantity, unit_cost: stockForm.unit_cost, source_location: sourceId && stockForm.source_location ? Number(stockForm.source_location) : null, destination_location: destinationId && stockForm.destination_location ? Number(stockForm.destination_location) : null, expiry_date: stockForm.expiry_date || null, adjustment_direction: type === "adjustment" ? stockForm.adjustment_direction : "" }] });
-        setStockForm((old) => ({ ...old, movement_number: "", quantity: "1", unit_cost: "0", notes: "" }));
+        if (!stockLines.length || stockLines.some((line) => !line.product || Number(line.quantity) <= 0)) throw new Error("أضف صنفاً واحداً على الأقل وتأكد من اختيار الصنف والكمية الصحيحة لكل سطر.");
+        await stockApi.createMovement({ company: companyId, movement_number: stockForm.movement_number, movement_type: type, movement_date: stockForm.movement_date, source_warehouse: sourceId, destination_warehouse: destinationId, notes: stockForm.notes, lines: stockLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_cost: line.unit_cost || "0", source_location: sourceId && stockForm.source_location ? Number(stockForm.source_location) : null, destination_location: destinationId && stockForm.destination_location ? Number(stockForm.destination_location) : null, expiry_date: line.expiry_date || null, adjustment_direction: type === "adjustment" ? stockForm.adjustment_direction : "" })) });
+        setStockForm((old) => ({ ...old, movement_number: "", notes: "" }));
+        setStockLines([{ product: String(products.find((item) => item.product_type === "goods" && item.is_active)?.id || ""), quantity: "1", unit_cost: "0", expiry_date: "" }]);
       }
       setShowForm(false); await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ البيانات."); }
@@ -119,11 +124,21 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
         {(stockForm.movement_type === "receipt" || stockForm.movement_type === "transfer" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <label>مخزن الوجهة<select required value={stockForm.destination_warehouse} onChange={(e) => setStockForm({ ...stockForm, destination_warehouse: e.target.value, destination_location: "" })}>{warehouses.map((w) => <option key={w.id} value={w.id}>{w.name_ar}</option>)}</select></label>}
         {(stockForm.movement_type === "receipt" || stockForm.movement_type === "transfer" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <label>موقع الاستلام<select value={stockForm.destination_location} onChange={(e) => setStockForm({ ...stockForm, destination_location: e.target.value })}><option value="">الموقع العام للمخزن</option>{locations.filter((x) => x.is_active && String(x.warehouse) === stockForm.destination_warehouse).map((x) => <option key={x.id} value={x.id}>{x.name_ar}</option>)}</select></label>}
         {stockForm.movement_type === "adjustment" && <label>اتجاه التسوية<select value={stockForm.adjustment_direction} onChange={(e) => setStockForm({ ...stockForm, adjustment_direction: e.target.value, source_location: "", destination_location: "" })}><option value="in">زيادة جرد</option><option value="out">عجز جرد</option></select></label>}
-        <label>الصنف<select required value={stockForm.product} onChange={(e) => setStockForm({ ...stockForm, product: e.target.value, expiry_date: "" })}>{products.filter((p) => p.product_type === "goods" && p.is_active).map((p) => <option key={p.id} value={p.id}>{p.code} - {p.name_ar}</option>)}</select></label>
-        <label>الكمية<input required type="number" min="0.0001" step="0.0001" value={stockForm.quantity} onChange={(e) => setStockForm({ ...stockForm, quantity: e.target.value })} /></label>
-        {products.find((p) => String(p.id) === stockForm.product)?.track_expiry && <label>تاريخ الصلاحية<input required type="date" value={stockForm.expiry_date} onChange={(e) => setStockForm({ ...stockForm, expiry_date: e.target.value })} /></label>}
-
-        {(stockForm.movement_type === "receipt" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <label>تكلفة الوحدة<input type="number" min="0" step="0.0001" value={stockForm.unit_cost} onChange={(e) => setStockForm({ ...stockForm, unit_cost: e.target.value })} /></label>}
+        <div className="inventory-wide inventory-line-editor">
+          <div className="inventory-line-heading"><strong>أصناف الحركة</strong><button type="button" className="add-line-button" onClick={() => setStockLines((rows) => [...rows, { product: "", quantity: "1", unit_cost: "0", expiry_date: "" }])}>＋ إضافة صنف</button></div>
+          <div className="data-table-wrap"><table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الصلاحية</th>{(stockForm.movement_type === "receipt" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <th>تكلفة الوحدة</th>}<th>إجراء</th></tr></thead><tbody>
+            {stockLines.map((line, index) => {
+              const selectedProduct = products.find((item) => String(item.id) === line.product);
+              return <tr key={index}><td>{index + 1}</td>
+                <td><select required aria-label={`الصنف ${index + 1}`} value={line.product} onChange={(event) => setStockLines((rows) => rows.map((item, i) => i === index ? { ...item, product: event.target.value, expiry_date: "" } : item))}><option value="">اختر الصنف</option>{products.filter((item) => item.product_type === "goods" && item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></td>
+                <td><input required aria-label={`الكمية ${index + 1}`} type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={(event) => setStockLines((rows) => rows.map((item, i) => i === index ? { ...item, quantity: event.target.value } : item))} /></td>
+                <td>{selectedProduct?.track_expiry ? <input required aria-label={`تاريخ الصلاحية ${index + 1}`} type="date" value={line.expiry_date} onChange={(event) => setStockLines((rows) => rows.map((item, i) => i === index ? { ...item, expiry_date: event.target.value } : item))} /> : "—"}</td>
+                {(stockForm.movement_type === "receipt" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <td><input aria-label={`تكلفة الوحدة ${index + 1}`} type="number" min="0" step="0.0001" value={line.unit_cost} onChange={(event) => setStockLines((rows) => rows.map((item, i) => i === index ? { ...item, unit_cost: event.target.value } : item))} /></td>}
+                <td><button type="button" className="remove-line-button" disabled={stockLines.length === 1} onClick={() => setStockLines((rows) => rows.filter((_, i) => i !== index))}>×</button></td></tr>;
+            })}
+          </tbody></table></div>
+          <small>يمكن إضافة عدة أصناف في نفس الحركة. يتم تحديد موقع المخزن على مستوى الحركة، وتاريخ الصلاحية وتكلفة الوحدة لكل صنف على حدة.</small>
+        </div>
         <label className="inventory-wide">ملاحظات<textarea value={stockForm.notes} onChange={(e) => setStockForm({ ...stockForm, notes: e.target.value })} /></label>
       </>}
       <div className="inventory-actions"><button className="primary-button" disabled={busy} type="submit">{busy ? "جارٍ الحفظ…" : "حفظ"}</button><button className="subtle-button" type="button" onClick={() => setShowForm(false)}>إلغاء</button></div>
