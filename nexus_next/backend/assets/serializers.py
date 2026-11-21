@@ -49,4 +49,4 @@ class FixedAssetSerializer(serializers.ModelSerializer):
 class AssetDepreciationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetDepreciation
-        fields = ("id", "asset", "period_date", "amount", "journal_entry", "created_at")
+        fields = ("id", "asset", "period_date", "amount", "is_partial_period", "journal_entry", "created_at")
