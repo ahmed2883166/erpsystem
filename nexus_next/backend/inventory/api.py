@@ -1,20 +1,13 @@
-from decimal import Decimal
-
-from django.db import transaction
 from django.db.models import Q
-from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
-from rest_framework.decorators import action
-from rest_framework import status
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 
-from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockMovement, StorageLocation, UnitOfMeasure, Warehouse
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseSerializer,
@@ -170,11 +163,6 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         warehouse = serializer.validated_data.get("warehouse", serializer.instance.warehouse)
         self._check_write(warehouse)
         serializer.save()
-
-    def perform_destroy(self, instance):
-        self._check_write(instance.warehouse)
-        instance.is_active = False
-        instance.save(update_fields=("is_active",))
 
 
 class StockMovementViewSet(viewsets.ModelViewSet):
