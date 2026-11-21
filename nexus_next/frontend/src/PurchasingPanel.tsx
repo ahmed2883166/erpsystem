@@ -1,18 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseReceipt, type Supplier, type SupplierPayment, type Warehouse } from "./api";
+import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseReceipt, type Supplier, type SupplierPayment, type SupplierStatement, type Warehouse } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"receipts" | "invoices" | "payments">("receipts");
+  const [tab, setTab] = useState<"receipts" | "invoices" | "payments" | "statement">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
+  const [statementSupplier, setStatementSupplier] = useState("");
+  const [statementFrom, setStatementFrom] = useState("");
+  const [statementTo, setStatementTo] = useState("");
+  const [statement, setStatement] = useState<SupplierStatement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -46,6 +50,17 @@ export default function PurchasingPanel({ companyId }: Props) {
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
+
+  const loadStatement = async () => {
+    if (!companyId || !statementSupplier) { setError("اختر المورد لعرض كشف حسابه."); return; }
+    if (statementFrom && statementTo && statementFrom > statementTo) { setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."); return; }
+    setBusy(true); setError("");
+    try {
+      const result = await purchasingApi.supplierStatement(companyId, Number(statementSupplier), statementFrom, statementTo);
+      setStatement(result);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف حساب المورد."); }
+    finally { setBusy(false); }
+  };
 
   const saveReceipt = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
@@ -116,9 +131,9 @@ export default function PurchasingPanel({ companyId }: Props) {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : "＋ سند صرف جديد"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button></div>
+    <div className="inventory-tabs"><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button></div>
     {error && <div className="error-banner">{error}</div>}
     {showForm && tab === "receipts" && <form className="inventory-form" onSubmit={(event) => void saveReceipt(event)}>
       <label>المورد<select required value={receiptForm.supplier} onChange={(e) => setReceiptForm({ ...receiptForm, supplier: e.target.value })}><option value="">اختر المورد</option>{suppliers.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
@@ -155,6 +170,16 @@ export default function PurchasingPanel({ companyId }: Props) {
       <label>مرجع التحويل/الإيصال<input value={paymentForm.reference} onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ سند الصرف كمسودة"}</button></div>
     </form>}
+    {tab === "statement" && <div className="inventory-form">
+      <label>المورد<select value={statementSupplier} onChange={(e) => { setStatementSupplier(e.target.value); setStatement(null); }}><option value="">اختر المورد</option>{suppliers.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+      <label>من تاريخ<input type="date" value={statementFrom} onChange={(e) => setStatementFrom(e.target.value)} /></label>
+      <label>إلى تاريخ<input type="date" value={statementTo} onChange={(e) => setStatementTo(e.target.value)} /></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy || !statementSupplier} onClick={() => void loadStatement()}>{busy ? "جارٍ التحميل…" : "عرض كشف الحساب"}</button></div>
+      {statement && <div className="inventory-wide">
+        <div className="stock-card-summary"><div><span>المورد</span><strong>{statement.supplier_name}</strong></div><div><span>الرصيد الافتتاحي</span><strong>{money(statement.opening_balance)}</strong></div><div><span>الرصيد الختامي</span><strong>{money(statement.closing_balance)}</strong></div></div>
+        <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>نوع المستند</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statement.rows.map((row, index) => <tr key={row.document_type + row.document_number + index}><td>{row.date}</td><td>{row.document_type === "invoice" ? "فاتورة مورد" : "سداد"}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table>{statement.rows.length === 0 && <div className="table-empty">لا توجد حركة خلال الفترة المحددة.</div>}</div>
+      </div>}
+    </div>}
     <div className="customer-toolbar"><div className="customer-count">{tab === "receipts" ? "عدد أذون الاستلام" : tab === "invoices" ? "عدد فواتير الموردين" : "عدد سندات الصرف"} <strong>{(tab === "receipts" ? receipts : tab === "invoices" ? invoices : payments).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو المورد…" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="subtle-button" type="button" onClick={() => void refresh()} disabled={busy}>{busy ? "تحديث…" : "تحديث"}</button></div>
     {tab === "receipts" && <div className="data-table-wrap"><table><thead><tr><th>رقم الإذن</th><th>المورد</th><th>المخزن</th><th>التاريخ</th><th>مرجع المورد</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{filteredReceipts.map((x) => <tr key={x.id}><td className="code-cell">{x.receipt_number}</td><td>{x.supplier_name}</td><td>{x.warehouse_name}</td><td>{x.receipt_date}</td><td>{x.supplier_delivery_ref || "—"}</td><td>{x.movement_status === "posted" ? "مرحّل" : "مسودة"}</td><td>{x.movement_status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postReceipt(x.id)}>ترحيل الاستلام</button> : "تم تحديث المخزون"}</td></tr>)}</tbody></table>{!busy && filteredReceipts.length === 0 && <div className="table-empty">لا توجد أذون استلام مطابقة.</div>}</div>}
     {tab === "invoices" && <div className="data-table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>المورد</th><th>إذن الاستلام</th><th>التاريخ</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredInvoices.map((x) => <tr key={x.id}><td className="code-cell">{x.invoice_number}</td><td>{x.supplier_name}</td><td>{x.receipt_number}</td><td>{x.invoice_date}</td><td>{money(x.net_total)}</td><td>{money(x.tax_total)}</td><td>{money(x.grand_total)}</td><td>{money(x.paid_total)}</td><td>{money(x.balance_due)}</td><td>{x.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{x.journal_number || "—"}</td><td>{x.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postInvoice(x.id)}>ترحيل الفاتورة</button> : "تم الترحيل"}</td></tr>)}</tbody></table>{!busy && filteredInvoices.length === 0 && <div className="table-empty">لا توجد فواتير موردين مطابقة.</div>}</div>}
