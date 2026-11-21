@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport } from "./api";
-import CustomersPanel from "./CustomersPanel";
-import SuppliersPanel from "./SuppliersPanel";
-import PurchasingPanel from "./PurchasingPanel";
-import SalesPanel from "./SalesPanel";
-import InventoryPanel from "./InventoryPanel";
-import TreasuryPanel from "./TreasuryPanel";
-import FixedAssetsPanel from "./FixedAssetsPanel";
+const CustomersPanel = lazy(() => import("./CustomersPanel"));
+const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
+const PurchasingPanel = lazy(() => import("./PurchasingPanel"));
+const SalesPanel = lazy(() => import("./SalesPanel"));
+const InventoryPanel = lazy(() => import("./InventoryPanel"));
+const TreasuryPanel = lazy(() => import("./TreasuryPanel"));
+const FixedAssetsPanel = lazy(() => import("./FixedAssetsPanel"));
+const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
@@ -451,13 +452,13 @@ export default function App() {
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
             <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
-          {active === "customers" && <CustomersPanel companyId={companyId} />}
-          {active === "sales-workflow" && <SalesPanel companyId={companyId} />}
-          {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
-          {active === "purchasing" && <PurchasingPanel companyId={companyId} />}
-          {active === "inventory" && <InventoryPanel companyId={companyId} />}
-          {active === "treasury" && companyId !== null && <TreasuryPanel companyId={companyId} />}
-          {active === "fixed-assets" && <FixedAssetsPanel companyId={companyId} />}
+          {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}
+          {active === "sales-workflow" && <Suspense fallback={panelFallback}><SalesPanel companyId={companyId} /></Suspense>}
+          {active === "suppliers" && <Suspense fallback={panelFallback}><SuppliersPanel companyId={companyId} /></Suspense>}
+          {active === "purchasing" && <Suspense fallback={panelFallback}><PurchasingPanel companyId={companyId} /></Suspense>}
+          {active === "inventory" && <Suspense fallback={panelFallback}><InventoryPanel companyId={companyId} /></Suspense>}
+          {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
+          {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
           {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
