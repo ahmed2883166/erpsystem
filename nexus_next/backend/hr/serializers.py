@@ -86,6 +86,12 @@ class PayrollComponentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"kind": "التأمينات والضريبة الخاصة بالموظف يجب أن تكون استقطاعًا."})
         if method == PayrollComponent.Method.EMPLOYER_INSURANCE and kind != PayrollComponent.Kind.EMPLOYER_SHARE:
             raise serializers.ValidationError({"kind": "تأمينات صاحب العمل يجب أن تكون من نوع حصة صاحب العمل."})
+        if kind == PayrollComponent.Kind.DEDUCTION and method not in (
+            PayrollComponent.Method.EMPLOYEE_INSURANCE, PayrollComponent.Method.PROGRESSIVE_TAX
+        ) and not payable:
+            raise serializers.ValidationError({"payable_account": "اربط حساب الالتزام بهذا الاستقطاع قبل استخدامه."})
+        if kind == PayrollComponent.Kind.EMPLOYER_SHARE and method != PayrollComponent.Method.EMPLOYER_INSURANCE and (not expense or not payable):
+            raise serializers.ValidationError("حصة صاحب العمل المخصصة تحتاج حساب مصروف وحساب التزام.")
         return attrs
 
 
@@ -142,8 +148,10 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
         account = attrs.get("receivable_account", getattr(self.instance, "receivable_account", None))
         if account and employee and account.company_id != employee.company_id:
             raise serializers.ValidationError({"receivable_account": "حساب السلفة يجب أن يتبع نفس الشركة."})
-        if account and account.nature != "asset":
-            raise serializers.ValidationError({"receivable_account": "اختر حساب أصل لذمم الموظفين."})
+        if not account:
+            raise serializers.ValidationError({"receivable_account": "يجب تحديد حساب أصل لذمم الموظفين قبل إنشاء السلفة."})
+        if account.nature != "asset" or not account.is_active or account.is_group or not account.allow_posting:
+            raise serializers.ValidationError({"receivable_account": "اختر حساب أصل تفصيليًا نشطًا وقابلًا للترحيل."})
         return attrs
 
 
