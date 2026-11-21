@@ -111,8 +111,9 @@ class WarehouseViewSet(CompanyScopedViewSet):
         if self.request.user.is_superuser:
             return self.queryset.filter(company__in=companies)
         branches = accessible_branches(self.request.user)
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
         return self.queryset.filter(company__in=companies).filter(
-            Q(branch__isnull=True) | Q(branch__in=branches)
+            Q(branch__in=branches) | Q(branch__isnull=True, company_id__in=default_company_ids)
         )
 
     def _check_related_scope(self, data):
@@ -122,6 +123,10 @@ class WarehouseViewSet(CompanyScopedViewSet):
             self.request.user, branch.pk, company.pk if company else None
         ):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        if company and branch is None and not self.request.user.is_superuser:
+            default_branch = _default_branch(company.pk)
+            if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
+                raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
 
 
 class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
@@ -138,7 +143,11 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
         if self.request.user.is_superuser:
             return queryset
         branches = accessible_branches(self.request.user)
-        return queryset.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches))
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
+        return queryset.filter(
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, warehouse__company_id__in=default_company_ids)
+        )
 
     def _check_write(self, company_id):
         if not can_access_company(self.request.user, company_id):
@@ -176,8 +185,10 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         if self.request.user.is_superuser:
             return self.queryset.filter(warehouse__company__in=companies)
         branches = accessible_branches(self.request.user)
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
         return self.queryset.filter(warehouse__company__in=companies).filter(
-            Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches)
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, warehouse__company_id__in=default_company_ids)
         )
 
     def create(self, request, *args, **kwargs):
@@ -198,8 +209,8 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, warehouse.company_id, ("admin", "accountant")):
             raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
-        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, warehouse.company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if not _can_access_warehouse(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
 
     def perform_create(self, serializer):
         warehouse = serializer.validated_data["warehouse"]
@@ -228,9 +239,12 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         if self.request.user.is_superuser:
             return queryset
         branches = accessible_branches(self.request.user)
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
         return queryset.filter(
-            Q(source_warehouse__isnull=True) | Q(source_warehouse__branch__isnull=True) | Q(source_warehouse__branch__in=branches),
-            Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch__isnull=True) | Q(destination_warehouse__branch__in=branches),
+            Q(source_warehouse__isnull=True) | Q(source_warehouse__branch__in=branches)
+            | Q(source_warehouse__branch__isnull=True, source_warehouse__company_id__in=default_company_ids),
+            Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch__in=branches)
+            | Q(destination_warehouse__branch__isnull=True, destination_warehouse__company_id__in=default_company_ids),
         ).distinct()
 
     def create(self, request, *args, **kwargs):
@@ -251,8 +265,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
-        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if not _can_access_warehouse(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
 
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
@@ -299,7 +313,10 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         warehouse_query = Warehouse.objects.filter(pk=warehouse_id, company_id=product.company_id, is_active=True)
         if not request.user.is_superuser:
             branches = accessible_branches(request.user)
-            warehouse_query = warehouse_query.filter(Q(branch__isnull=True) | Q(branch__in=branches))
+            default_company_ids = _default_branch_company_ids(request.user, companies)
+            warehouse_query = warehouse_query.filter(
+                Q(branch__in=branches) | Q(branch__isnull=True, company_id__in=default_company_ids)
+            )
         warehouse = warehouse_query.first()
         if warehouse is None:
             raise NotFound("المخزن غير موجود أو غير متاح.")
@@ -384,6 +401,28 @@ class StockMovementViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         from .services import post_stock_movement
+
+def _default_branch(company_id):
+    return Branch.objects.filter(company_id=company_id, is_active=True).order_by("-is_head_office", "code").first()
+
+
+def _can_access_warehouse(user, warehouse):
+    if warehouse.branch_id:
+        return can_access_branch(user, warehouse.branch_id, warehouse.company_id)
+    default_branch = _default_branch(warehouse.company_id)
+    return bool(default_branch and can_access_branch(user, default_branch.pk, warehouse.company_id))
+
+
+def _default_branch_company_ids(user, companies):
+    if user.is_superuser:
+        return list(companies.values_list("id", flat=True))
+    allowed = []
+    for company_id in companies.values_list("id", flat=True):
+        default_branch = _default_branch(company_id)
+        if default_branch and can_access_branch(user, default_branch.pk, company_id):
+            allowed.append(company_id)
+    return allowed
+
         movement = self.get_object()
         self._check_warehouse(movement.source_warehouse, movement.company_id) if movement.source_warehouse else None
         self._check_warehouse(movement.destination_warehouse, movement.company_id) if movement.destination_warehouse else None
@@ -406,8 +445,10 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.is_superuser:
             return queryset
         branches = accessible_branches(self.request.user)
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
         return queryset.filter(
-            Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches)
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, warehouse__company_id__in=default_company_ids)
         )
 
     @action(detail=False, methods=("get",), url_path="valuation-integrity")
