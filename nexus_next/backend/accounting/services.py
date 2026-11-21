@@ -11,7 +11,7 @@ from .models import JournalEntry, JournalLine
 @transaction.atomic
 def post_journal(entry_id: int) -> JournalEntry:
     entry = JournalEntry.objects.select_for_update().select_related(
-        "company", "branch", "fiscal_year", "reversal_of"
+        "company", "branch", "fiscal_year"
     ).get(pk=entry_id)
 
     if entry.status != JournalEntry.Status.DRAFT:
