@@ -1,4 +1,4 @@
-# NEXUS ERP — Windows Trial
+# Admrail ERP v2 ERP — Windows Trial
 
 This is a local development/trial package, not a production installer. It starts the new Django + React application with a dedicated PostgreSQL 16 database. It does not read, import, or modify the legacy Flask/SQLite application or its data.
 
@@ -12,7 +12,7 @@ This is a local development/trial package, not a production installer. It starts
 
 ## Start
 
-1. Extract the ZIP to a normal writable folder, for example `D:\NEXUS-Trial`.
+1. Extract the ZIP to a normal writable folder, for example `D:\Admrail ERP v2-Trial`.
 2. Open PowerShell in the extracted `nexus_next` folder.
 3. Run:
 
