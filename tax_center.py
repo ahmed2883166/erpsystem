@@ -71,6 +71,7 @@ def initialize_tax_schema(conn):
         country_code TEXT NOT NULL,
         document_kind TEXT NOT NULL,
         document_id INTEGER NOT NULL,
+        tax_period TEXT NOT NULL DEFAULT '',
         mechanism_code TEXT NOT NULL,
         tax_type TEXT,
         taxable_base TEXT NOT NULL DEFAULT '0',
@@ -95,7 +96,7 @@ def initialize_tax_schema(conn):
         CHECK(status IN ('pending','posted','void'))
     )""")
     execute_compat(conn, """CREATE INDEX IF NOT EXISTS idx_tax_mechanisms_period_lookup
-        ON tax_document_mechanisms(country_code,document_kind,status,created_at)""")
+        ON tax_document_mechanisms(country_code,tax_period,document_kind,status)""")
 
 
 def _authorized(fn):
