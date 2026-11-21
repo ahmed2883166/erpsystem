@@ -1,10 +1,11 @@
+from django.db.models import Q
 from django.utils.dateparse import parse_date
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from companies.access import accessible_branches, accessible_companies
+from companies.access import accessible_branches
 from companies.models import CompanyMembership
 from .models import AuditEvent
 
@@ -21,11 +22,9 @@ class AuditEventListView(APIView):
                 company__is_active=True,
             )
             company_ids = memberships.values_list("company_id", flat=True)
-            qs = qs.filter(company_id__in=company_ids)
-            qs = qs.filter(
-                branch__isnull=True
-            ) | qs.filter(branch__in=accessible_branches(request.user))
-            qs = qs.order_by("-created_at", "-pk")
+            qs = qs.filter(company_id__in=company_ids).filter(
+                Q(branch__isnull=True) | Q(branch__in=accessible_branches(request.user))
+            ).order_by("-created_at", "-pk")
 
         company_raw = request.query_params.get("company")
         if company_raw:
