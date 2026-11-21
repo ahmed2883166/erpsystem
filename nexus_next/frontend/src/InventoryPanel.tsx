@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
+// شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
   const [tab, setTab] = useState<Tab>("products");
   const [products, setProducts] = useState<Product[]>([]);
@@ -45,7 +46,8 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [stockForm, setStockForm] = useState({ movement_number: "", movement_type: "receipt", movement_date: new Date().toISOString().slice(0, 10), source_warehouse: "", destination_warehouse: "", source_location: "", destination_location: "", expiry_date: "", product: "", quantity: "1", unit_cost: "0", adjustment_direction: "in", notes: "" });
   const [stockLines, setStockLines] = useState([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
 
-  const refresh = async () => {
+  // تحديث قوائم الأصناف والمخازن والوحدات والأرصدة وفق الشركة الحالية.
+const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -64,21 +66,24 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     finally { setBusy(false); }
   };
   useEffect(() => { void refresh(); }, [companyId]);
-  const loadStockCard = async () => {
+  // تحميل كارت الصنف وحركاته التفصيلية للفلاتر المحددة.
+const loadStockCard = async () => {
     if (!stockCardForm.product || !stockCardForm.warehouse) { setStockCardError("اختر الصنف والمخزن أولاً."); return; }
     setStockCardBusy(true); setStockCardError("");
     try { setStockCard(await stockApi.stockCard(Number(stockCardForm.product), Number(stockCardForm.warehouse), stockCardForm.date_from, stockCardForm.date_to)); }
     catch (reason) { setStockCard(null); setStockCardError(reason instanceof Error ? reason.message : "تعذر تحميل بطاقة الصنف."); }
     finally { setStockCardBusy(false); }
   };
-  const loadReconciliation = async () => {
+  // تحميل تقرير مطابقة أرصدة المخزون مع أرصدة الحسابات.
+const loadReconciliation = async () => {
     if (!companyId) return;
     setReconciling(true); setReconciliationError("");
     try { setReconciliation(await stockApi.reconciliation(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
     catch (reason) { setReconciliation(null); setReconciliationError(reason instanceof Error ? reason.message : "تعذرت مطابقة المخزون مع دفتر الأستاذ."); }
     finally { setReconciling(false); }
   };
-  const loadValuationIntegrity = async () => {
+  // تحميل فحص سلامة تقييم المخزون واكتشاف الفروق أو الحركات المعلقة.
+const loadValuationIntegrity = async () => {
     if (!companyId) return;
     setValuationIntegrityBusy(true); setValuationIntegrityError("");
     try { setValuationIntegrity(await stockApi.valuationIntegrity(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
@@ -123,7 +128,8 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   }).filter((row) => row.days <= 30).sort((a, b) => a.days - b.days);
   const totalInventoryValue = balances.reduce((sum, row) => sum + Number(row.inventory_value), 0);
   const totalInventoryQuantity = balances.reduce((sum, row) => sum + Number(row.quantity), 0);
-  const submit = async (event: React.FormEvent) => {
+  // حفظ العملية الحالية في تبويب المخزون ثم إعادة تحميل البيانات المرتبطة.
+const submit = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setBusy(true); setError("");
     try {
