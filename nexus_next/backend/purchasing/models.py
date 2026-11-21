@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
+from accounting.models import TaxCode
 from companies.models import Company
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 from suppliers.models import Supplier
@@ -117,6 +118,7 @@ class PurchaseInvoiceLine(models.Model):
     receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_line")
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
@@ -125,6 +127,16 @@ class PurchaseInvoiceLine(models.Model):
         ordering = ("id",)
 
     def calculate(self):
+        if self.tax_code_id:
+            code = self.tax_code
+            if (not code.is_active or code.company_id != self.invoice.company_id
+                    or code.country != self.invoice.company.country
+                    or not code.input_tax_recoverable
+                    or code.category == TaxCode.Category.REVERSE_CHARGE
+                    or code.effective_from > self.invoice.invoice_date
+                    or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
+                raise ValidationError({"tax_code": "كود الضريبة غير صالح أو غير قابل للخصم لهذه الشركة أو تاريخ الفاتورة."})
+            self.tax_rate = code.rate
         quantity = self.receipt_line.quantity
         self.net_amount = (quantity * self.unit_price).quantize(Decimal("0.0001"))
         self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
