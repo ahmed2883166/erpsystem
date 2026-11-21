@@ -399,7 +399,10 @@ def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
     postings = list(cycle.postings.select_related("branch").order_by("branch__code"))
     if not postings or any(item.payment_treasury_transaction_id for item in postings):
         raise ValidationError("لا توجد قيود مرتبات جاهزة للصرف أو تم إعداد الصرف من قبل.")
-    treasury_account = TreasuryAccount.objects.select_related("account", "branch").select_for_update().get(pk=treasury_account_id)
+    try:
+        treasury_account = TreasuryAccount.objects.select_related("account", "branch").select_for_update().get(pk=treasury_account_id)
+    except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حساب الخزينة المحدد غير موجود أو أن رقمه غير صالح.")
     if treasury_account.company_id != cycle.company_id or not treasury_account.is_active:
         raise ValidationError("حساب الخزينة غير نشط أو لا يتبع الشركة.")
     validate_account = treasury_account.account
