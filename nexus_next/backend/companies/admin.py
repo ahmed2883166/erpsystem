@@ -30,6 +30,14 @@ class CompanyAdmin(admin.ModelAdmin):
     inlines = (BranchInline,)
 
 
+@admin.register(CompanyMembership)
+class CompanyMembershipAdmin(admin.ModelAdmin):
+    list_display = ("user", "company", "role", "all_branches", "is_active")
+    list_filter = ("company", "role", "all_branches", "is_active")
+    search_fields = ("user__username", "company__code", "company__name_ar")
+    filter_horizontal = ("branches",)
+
+
 @admin.register(FiscalYear)
 class FiscalYearAdmin(admin.ModelAdmin):
     list_display = ("company", "name", "start_date", "end_date", "status")
