@@ -1,5 +1,6 @@
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Q
 from rest_framework import serializers
 
 from .models import (
@@ -107,8 +108,32 @@ class EmployeeComponentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
         component = attrs.get("component", getattr(self.instance, "component", None))
+        start = attrs.get("effective_from", getattr(self.instance, "effective_from", None))
+        end = attrs.get("effective_to", getattr(self.instance, "effective_to", None))
+        value = attrs.get("value", getattr(self.instance, "value", None))
         if employee and component and employee.company_id != component.company_id:
             raise serializers.ValidationError("عنصر المرتب والموظف يجب أن يتبعا نفس الشركة.")
+        if component and not component.is_active:
+            raise serializers.ValidationError({"component": "لا يمكن ربط عنصر مرتبات موقوف."})
+        if start and end and end < start:
+            raise serializers.ValidationError({"effective_to": "تاريخ انتهاء السريان يسبق تاريخ بدايته."})
+        if value is not None and value < 0:
+            raise serializers.ValidationError({"value": "قيمة عنصر المرتبات لا يمكن أن تكون سالبة."})
+        if employee and component and start:
+            overlapping = EmployeeComponent.objects.filter(
+                employee=employee, component=component, is_active=True,
+            )
+            if self.instance:
+                overlapping = overlapping.exclude(pk=self.instance.pk)
+            overlapping = overlapping.filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=start)
+            )
+            if end:
+                overlapping = overlapping.filter(effective_from__lte=end)
+            if overlapping.exists():
+                raise serializers.ValidationError(
+                    {"effective_from": "توجد فترة سريان متداخلة لنفس عنصر المرتبات على هذا الموظف."}
+                )
         return attrs
 
 
