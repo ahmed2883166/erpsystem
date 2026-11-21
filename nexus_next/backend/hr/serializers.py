@@ -235,6 +235,22 @@ class EmployeeSalaryHistorySerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("previous_salary", "changed_by", "created_at")
 
+    def validate(self, attrs):
+        employee = attrs.get("employee", getattr(self.instance, "employee", None))
+        effective_date = attrs.get("effective_date", getattr(self.instance, "effective_date", None))
+        new_salary = attrs.get("new_salary", getattr(self.instance, "new_salary", None))
+        if employee and effective_date and effective_date < employee.hire_date:
+            raise serializers.ValidationError({"effective_date": "تاريخ سريان الراتب لا يمكن أن يسبق تاريخ التعيين."})
+        if new_salary is not None and new_salary < 0:
+            raise serializers.ValidationError({"new_salary": "الراتب الجديد لا يمكن أن يكون سالبًا."})
+        if employee and effective_date:
+            existing = EmployeeSalaryHistory.objects.filter(employee=employee, effective_date=effective_date)
+            if self.instance:
+                existing = existing.exclude(pk=self.instance.pk)
+            if existing.exists():
+                raise serializers.ValidationError({"effective_date": "يوجد تغيير راتب مسجل بالفعل في هذا التاريخ."})
+        return attrs
+
 class LoanInstallmentSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="loan.employee.full_name_ar", read_only=True)
     loan_reference = serializers.CharField(source="loan.reference", read_only=True)
