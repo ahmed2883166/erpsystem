@@ -2,9 +2,9 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.utils import timezone
+from django.db.models import Q, Sum
 
-from .models import Employee, EmployeeComponent, PayrollCycle, PayrollResult, PayrollResultLine
+from .models import AttendanceRecord, Employee, EmployeeComponent, PayrollCycle, PayrollResult, PayrollResultLine
 
 
 CENT = Decimal("0.01")
@@ -39,30 +39,44 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         hire_date__lte=cycle.period_end,
         status__in=(Employee.Status.ACTIVE, Employee.Status.LEAVE, Employee.Status.UNPAID_LEAVE),
     ).exclude(termination_date__lt=cycle.period_start).select_related("currency", "branch", "department")
+    PayrollResultLine.objects.filter(result__cycle=cycle).delete()
     cycle.results.all().delete()
     totals = {"earnings": Decimal("0"), "employee_deductions": Decimal("0"), "employer_share": Decimal("0"), "net": Decimal("0"), "company_cost": Decimal("0")}
     for employee in employees:
         assignments = EmployeeComponent.objects.filter(
             employee=employee, is_active=True, effective_from__lte=cycle.period_end
         ).filter(models_q_end(cycle.period_start)).select_related("component")
-        payable_days = Decimal((cycle.period_end - cycle.period_start).days + 1)
-        if employee.status == Employee.Status.UNPAID_LEAVE:
+        employment_start = max(cycle.period_start, employee.hire_date)
+        employment_end = min(cycle.period_end, employee.termination_date or cycle.period_end)
+        calendar_days = Decimal(max(0, (employment_end - employment_start).days + 1))
+        attendance = AttendanceRecord.objects.filter(employee=employee, work_date__range=(employment_start, employment_end))
+        attendance_count = attendance.count()
+        if attendance_count:
+            payable_days = calendar_days - attendance.filter(status__in=(AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.UNPAID_LEAVE)).count()
+        elif employee.status == Employee.Status.UNPAID_LEAVE:
             payable_days = Decimal("0")
-        earnings = Decimal("0")
+        else:
+            payable_days = calendar_days
+        payable_days = min(payable_days, Decimal("30"))
+        daily_divisor = Decimal(str((cycle.rule_set.configuration if cycle.rule_set_id else {}).get("monthly_daily_divisor", 30)))
+        if daily_divisor <= 0:
+            raise ValidationError("مقسم الراتب اليومي يجب أن يكون أكبر من صفر.")
+        basic_amount = money(employee.basic_salary * payable_days / daily_divisor)
+        earnings = basic_amount
+        overtime_hours = attendance.aggregate(total=Sum("overtime_hours"))["total"] or Decimal("0")
         deductions = Decimal("0")
         employer_share = Decimal("0")
-        snapshots = []
-        lines = []
+        lines = [("BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
         for assignment in assignments:
             component = assignment.component
-            amount = calculate_component(component, assignment.value, employee.basic_salary, payable_days, Decimal("0"))
+            amount = calculate_component(component, assignment.value, employee.basic_salary, payable_days, overtime_hours)
             if component.kind == component.Kind.EARNING:
                 earnings += amount
             elif component.kind == component.Kind.DEDUCTION:
                 deductions += amount
             else:
                 employer_share += amount
-            lines.append((component, amount, False, {"method": component.method, "assigned_value": str(assignment.value)}))
+            lines.append((component.code, component.name_ar, component.kind, amount, False, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
         result = PayrollResult.objects.create(
             cycle=cycle, employee=employee, basic_salary_snapshot=employee.basic_salary,
             earnings_total=money(earnings), employee_deductions_total=money(deductions),
@@ -77,10 +91,9 @@ def calculate_payroll_cycle(cycle_id, actor=None):
                 "basic_salary": str(employee.basic_salary), "payable_days": str(payable_days),
             },
         )
-        for component, amount, display_only, snapshot in lines:
+        for code, name, kind, amount, display_only, snapshot in lines:
             PayrollResultLine.objects.create(
-                result=result, component=component, code_snapshot=component.code,
-                name_snapshot=component.name_ar, kind_snapshot=component.kind,
+                result=result, code_snapshot=code, name_snapshot=name, kind_snapshot=kind,
                 amount=amount, display_only=display_only, calculation_snapshot=snapshot,
             )
         if employer_share:
