@@ -6,7 +6,7 @@ from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, Currency, FiscalYear
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from .models import ChartOfAccount, JournalEntry, JournalLine
 from .services import post_journal
 
@@ -131,7 +131,39 @@ class AccountingApiTests(TestCase):
         user = User.objects.create_user(username="reader", password="test-password")
         permission = Permission.objects.get(codename="view_chartofaccount")
         user.user_permissions.add(permission)
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer")
         self.client.force_authenticate(user=user)
         response = self.client.get("/api/accounting/accounts/?company=" + str(self.company.pk))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
+
+
+class CompanyIsolationApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company_a = Company.objects.create(
+            code="A", name_ar="شركة أ", country="EG", activity="commercial", base_currency=self.currency
+        )
+        self.company_b = Company.objects.create(
+            code="B", name_ar="شركة ب", country="EG", activity="service", base_currency=self.currency
+        )
+        self.account_a = ChartOfAccount.objects.create(
+            company=self.company_a, code="1000", name_ar="نقدية أ", nature="asset"
+        )
+        self.account_b = ChartOfAccount.objects.create(
+            company=self.company_b, code="1000", name_ar="نقدية ب", nature="asset"
+        )
+        self.user = User.objects.create_user(username="tenant_reader", password="test-password")
+        self.user.user_permissions.add(Permission.objects.get(codename="view_chartofaccount"))
+        CompanyMembership.objects.create(user=self.user, company=self.company_a, role="viewer")
+        self.client.force_authenticate(user=self.user)
+
+    def test_account_list_is_scoped_to_membership(self):
+        response = self.client.get("/api/accounting/accounts/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data], [self.account_a.pk])
+
+    def test_account_from_unassigned_company_is_not_retrievable(self):
+        response = self.client.get(f"/api/accounting/accounts/{self.account_b.pk}/")
+        self.assertEqual(response.status_code, 404)
