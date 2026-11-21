@@ -31,7 +31,7 @@ class SalesInvoiceApprovalSerializer(serializers.ModelSerializer):
         fields = (
             "id", "company", "invoice", "invoice_number", "customer_name", "invoice_date",
             "invoice_total", "requested_by", "requested_by_name", "requested_limit",
-            "requested_discount_total", "requested_max_discount_percent",
+            "requested_discount_total", "requested_max_discount_percent", "requested_lines_snapshot",
             "status", "decided_by", "decided_by_name", "decision_note",
             "requested_at", "decided_at",
         )
