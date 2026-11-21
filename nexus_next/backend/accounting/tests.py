@@ -812,3 +812,14 @@ class AccountExcelImportTests(TestCase):
             f"/api/accounting/account-roles/{role.pk}/", {"account": role_account.pk}, format="json",
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_account_role_rejects_wrong_account_nature(self):
+        cash = ChartOfAccount.objects.create(company=self.company, code="1110", name_ar="الصندوق", nature="asset")
+        wrong = ChartOfAccount.objects.create(company=self.company, code="4110", name_ar="المبيعات", nature="revenue")
+        role = AccountRole.objects.create(company=self.company, role="cash", account=cash)
+        response = self.client.patch(
+            f"/api/accounting/account-roles/{role.pk}/", {"account": wrong.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        role.refresh_from_db()
+        self.assertEqual(role.account_id, cash.pk)
