@@ -1,3 +1,7 @@
+/*
+ * إدارة الموردين: البحث وعرض بيانات الموردين وإنشاءها وتعديلها.
+ * تشمل بيانات التعريف والاتصال والحد الائتماني وشروط السداد.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { api, type Supplier } from "./api";
 
