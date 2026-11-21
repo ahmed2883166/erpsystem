@@ -37,3 +37,18 @@ The restore script refuses an existing target database. It never drops or overwr
 - Backup files contain sensitive accounting and company data. Restrict Windows folder permissions and use BitLocker or another approved at-rest encryption method.
 - Keep another protected copy on a separate physical device.
 - A successful archive listing is not proof of a successful restore. Run and document a restore test on the target Windows machine before production use.
+
+
+## Controlled operational reset
+
+The **النسخ الاحتياطي** workspace provides a reset preview and an operational-data reset action. The reset is restricted to a Django superuser and requires all of the following:
+
+- A successful backup recorded within the previous 24 hours, with its archive still present and at least 1 KiB in size.
+- The superuser's current password.
+- The exact confirmation phrase `تصفير الحركات` plus a separate browser confirmation.
+
+The reset removes journal entries and lines, sales and purchase transactions, stock movements and balances, treasury transactions and reconciliations, fixed-asset register/depreciation records, attendance, leave, employee loans, payroll cycles/results, and transaction approval requests.
+
+It deliberately preserves company and branch setup, users and permissions, chart of accounts, cost centers, tax codes, customers, suppliers, product catalog, warehouses and locations, employee master records and HR configuration, system settings, backup history, and immutable audit history. Fixed-asset records are cleared because their acquisition and depreciation journals are cleared too.
+
+All deletions run in one database transaction. If a protected relationship prevents deletion, the transaction is rolled back. The reset is never allowed to run without a recent verified backup.
