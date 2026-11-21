@@ -30,6 +30,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [payReportFrom, setPayReportFrom] = useState(new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10));
   const [payReportTo, setPayReportTo] = useState(new Date().toISOString().slice(0,10));
   const [selectedCycle, setSelectedCycle] = useState<number | null>(null);
+  const [selectedPayslip, setSelectedPayslip] = useState<HrPayrollResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -394,7 +395,20 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
 
       {selectedCycle&&<><div className="section-heading" style={{marginTop:24}}><div><h2>نتائج الدورة رقم {selectedCycle}</h2><p>حصة صاحب العمل ظاهرة في جانبي الكشف كتسوية عرضية لا تؤثر على صافي الموظف</p></div></div>
         <div className="metrics-grid report-metrics"><article className="metric-card"><div className="metric-top">صافي المستحقات</div><strong className="metric-value">{money(totals.net)}</strong></article><article className="metric-card"><div className="metric-top">حصة صاحب العمل</div><strong className="metric-value">{money(totals.employer)}</strong></article><article className="metric-card"><div className="metric-top">تكلفة الشركة</div><strong className="metric-value">{money(totals.cost)}</strong></article></div>
-        <div className="data-table-wrap"><table><thead><tr><th>الموظف</th>{dynamicPayrollColumns.map(column=><th key={column.code}>{column.name}</th>)}<th>الاستحقاقات الظاهرة</th><th>الاستقطاعات الظاهرة</th><th>صافي الموظف</th><th>تكلفة الشركة</th><th>تفاصيل</th></tr></thead><tbody>{results.map(r=><tr key={r.id}><td>{r.employee_code} — {r.employee_name}</td>{dynamicPayrollColumns.map(column=><td key={column.code}>{money(r.lines.filter(line=>line.code===column.code).reduce((sum,line)=>sum+Number(line.amount),0))}</td>)}<td>{money(r.displayed_earnings_total)}</td><td>{money(r.displayed_deductions_total)}</td><td><strong>{money(r.net_pay)}</strong></td><td>{money(r.company_cost)}</td><td><details><summary>عرض البنود</summary><ul>{r.lines.filter(line=>line.kind!=="employer_share").map((line,i)=><li key={i}>{line.name}: {money(line.amount)} {line.display_only?"(للعرض فقط)":""}</li>)}</ul></details></td></tr>)}</tbody></table>{!results.length&&<div className="table-empty">لا توجد نتائج لهذه الدورة.</div>}</div>
+        <div className="data-table-wrap"><table><thead><tr><th>الموظف</th>{dynamicPayrollColumns.map(column=><th key={column.code}>{column.name}</th>)}<th>الاستحقاقات الظاهرة</th><th>الاستقطاعات الظاهرة</th><th>صافي الموظف</th><th>تكلفة الشركة</th><th>تفاصيل</th></tr></thead><tbody>{results.map(r=><tr key={r.id}><td>{r.employee_code} — {r.employee_name}</td>{dynamicPayrollColumns.map(column=><td key={column.code}>{money(r.lines.filter(line=>line.code===column.code).reduce((sum,line)=>sum+Number(line.amount),0))}</td>)}<td>{money(r.displayed_earnings_total)}</td><td>{money(r.displayed_deductions_total)}</td><td><strong>{money(r.net_pay)}</strong></td><td>{money(r.company_cost)}</td><td><button type="button" className="text-action-button" onClick={()=>setSelectedPayslip(r)}>قسيمة المرتب</button></td></tr>)}</tbody></table>{!results.length&&<div className="table-empty">لا توجد نتائج لهذه الدورة.</div>}</div>
+
+      {selectedPayslip && selectedCycle && <section className="report-drilldown payroll-slip" style={{marginTop:20}}>
+        <div className="work-panel-head"><div><h3>قسيمة مرتب: {selectedPayslip.employee_name}</h3><p>كود الموظف: {selectedPayslip.employee_code} · دورة رقم {selectedCycle} · {cycles.find(c=>c.id===selectedCycle)?.period_start||""} — {cycles.find(c=>c.id===selectedCycle)?.period_end||""}</p></div>
+          <div className="report-actions"><button type="button" className="subtle-button" onClick={()=>{const target=document.querySelector(".payroll-slip");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}>طباعة القسيمة / PDF</button><button type="button" className="subtle-button" onClick={()=>setSelectedPayslip(null)}>إغلاق</button></div>
+        </div>
+        <div className="asset-cashflow-totals"><span>الراتب الأساسي: {money(selectedPayslip.basic_salary_snapshot)}</span><span>حصة صاحب العمل: {money(selectedPayslip.employer_share_total)}</span><b>صافي المستحق: {money(selectedPayslip.net_pay)}</b></div>
+        <div className="data-table-wrap"><table><thead><tr><th>البند</th><th>النوع</th><th>القيمة</th></tr></thead><tbody>
+          {selectedPayslip.lines.filter(line=>line.code!=="EMPLOYER_SHARE_DISPLAY"&&line.code!=="EMPLOYER_SHARE_OFFSET").map((line,index)=><tr key={index}><td>{line.name}</td><td>{line.kind==="earning"?"استحقاق":line.kind==="deduction"?"استقطاع":line.kind==="employer_share"?"حصة صاحب العمل":"بند"}</td><td>{money(line.amount)}</td></tr>)}
+        </tbody></table></div>
+        <div className="asset-cashflow-totals"><span>إجمالي الاستحقاقات الظاهرة: {money(selectedPayslip.displayed_earnings_total)}</span><span>إجمالي الاستقطاعات الظاهرة: {money(selectedPayslip.displayed_deductions_total)}</span><b>صافي المرتب: {money(selectedPayslip.net_pay)}</b><span>إجمالي تكلفة الشركة: {money(selectedPayslip.company_cost)}</span></div>
+        <p className="asset-report-note">تظهر حصة صاحب العمل ضمن جانبي القسيمة للشفافية، ولا تؤثر على صافي الموظف. القيم المعروضة محفوظة كلقطة تاريخية لدورة المرتبات.</p>
+      </section>}
+
       </>}
     </>}
     <p className="asset-report-note">ملاحظة تشغيلية: الترحيل المحاسبي والصرف يمران بمراحل اعتماد منفصلة. يجب ربط حسابات الاستقطاعات وحصة صاحب العمل، وإدخال القواعد القانونية المعتمدة قبل احتساب دورة فعلية. لا يتم تحديث أقساط السلف إلا بعد نجاح صرف مستندات الخزينة.</p>
