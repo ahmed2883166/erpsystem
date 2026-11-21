@@ -237,10 +237,12 @@ class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
         effective_date = serializer.validated_data["effective_date"]
         with transaction.atomic():
             locked = Employee.objects.select_for_update().get(pk=employee.pk)
+            if EmployeeSalaryHistory.objects.filter(employee=locked, effective_date=effective_date).exists():
+                raise ValidationError({"effective_date": "يوجد تغيير راتب مسجل بالفعل في هذا التاريخ."})
             previous = salary_for_date(locked, effective_date - timedelta(days=1))
-            history = serializer.save(previous_salary=previous, changed_by=self.request.user)
+            serializer.save(previous_salary=previous, changed_by=self.request.user)
             if effective_date <= timezone.localdate():
-                locked.basic_salary = history.new_salary
+                locked.basic_salary = salary_for_date(locked, timezone.localdate())
                 locked.save(update_fields=("basic_salary", "updated_at"))
 
 
