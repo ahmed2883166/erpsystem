@@ -85,6 +85,47 @@ class AccountRole(models.Model):
             raise ValidationError({"account": "يجب ربط الدور بحساب تفصيلي قابل للترحيل."})
 
 
+class TaxCode(models.Model):
+    class Category(models.TextChoices):
+        STANDARD = "standard", "خاضع بالنسبة القياسية"
+        ZERO_RATED = "zero_rated", "نسبة صفرية"
+        EXEMPT = "exempt", "معفى"
+        OUT_OF_SCOPE = "out_of_scope", "خارج النطاق"
+        REVERSE_CHARGE = "reverse_charge", "احتساب عكسي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="tax_codes")
+    country = models.CharField(max_length=2, choices=Company.Country.choices)
+    code = models.CharField(max_length=32)
+    name_ar = models.CharField(max_length=160)
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.STANDARD)
+    rate = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    input_tax_recoverable = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("code", "effective_from")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "code", "effective_from"), name="uq_tax_code_company_start"),
+            models.CheckConstraint(condition=Q(rate__gte=0) & Q(rate__lte=100), name="ck_tax_code_rate_range"),
+            models.CheckConstraint(condition=Q(effective_to__isnull=True) | Q(effective_to__gte=models.F("effective_from")), name="ck_tax_code_effective_dates"),
+        ]
+        indexes = [models.Index(fields=("company", "country", "is_active"), name="acct_tax_company_active_idx")]
+
+    def clean(self):
+        super().clean()
+        if self.company_id and self.country != self.company.country:
+            raise ValidationError({"country": "بلد الضريبة يجب أن يطابق بلد الشركة."})
+        if self.effective_from and self.effective_to and self.effective_to < self.effective_from:
+            raise ValidationError({"effective_to": "تاريخ انتهاء الضريبة يجب ألا يسبق تاريخ بدايتها."})
+        if self.category in (self.Category.ZERO_RATED, self.Category.EXEMPT, self.Category.OUT_OF_SCOPE) and self.rate != 0:
+            raise ValidationError({"rate": "هذه الفئة يجب أن تكون بنسبة صفر."})
+        if self.category == self.Category.STANDARD and self.rate <= 0:
+            raise ValidationError({"rate": "أدخل نسبة موجبة للفئة القياسية."})
+
+
 class CostCenter(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="cost_centers")
     code = models.CharField(max_length=32)
