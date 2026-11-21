@@ -267,7 +267,7 @@ class AuthenticationAndAdminAuditSignalTests(TestCase):
             content_type=content_type,
             object_id=str(branch.pk),
             object_repr="فرع الإدارة",
-            action_flag=LogEntry.CHANGE,
+            action_flag=LogEntry.ActionFlag.CHANGE,
             change_message="changed",
         )
         event = AuditEvent.objects.get(
@@ -280,9 +280,9 @@ class AuthenticationAndAdminAuditSignalTests(TestCase):
     def test_django_admin_add_change_and_delete_are_audited(self):
         content_type = ContentType.objects.get_for_model(get_user_model())
         for flag, expected in (
-            (LogEntry.ADDITION, AuditEvent.Action.CREATE),
-            (LogEntry.CHANGE, AuditEvent.Action.UPDATE),
-            (LogEntry.DELETION, AuditEvent.Action.DELETE),
+            (LogEntry.ActionFlag.ADDITION, AuditEvent.Action.CREATE),
+            (LogEntry.ActionFlag.CHANGE, AuditEvent.Action.UPDATE),
+            (LogEntry.ActionFlag.DELETION, AuditEvent.Action.DELETE),
         ):
             with self.subTest(flag=flag):
                 LogEntry.objects.create(
