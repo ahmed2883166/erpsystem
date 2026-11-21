@@ -3,15 +3,17 @@ import { api, type Account, type Branch, type Company, type FiscalYear, type Jou
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
+import SalesPanel from "./SalesPanel";
 import InventoryPanel from "./InventoryPanel";
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "suppliers" | "purchasing" | "inventory" | "setup";
+type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "setup";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
   { id: "overview", label: "نظرة عامة", icon: "◫", group: "الرئيسية" },
   { id: "journals", label: "قيود اليومية", icon: "⇄", group: "المحاسبة" },
   { id: "accounts", label: "دليل الحسابات", icon: "☷", group: "المحاسبة" },
   { id: "customers", label: "العملاء", icon: "♙", group: "المبيعات" },
+  { id: "sales-workflow", label: "دورة المبيعات", icon: "↗", group: "المبيعات" },
   { id: "suppliers", label: "الموردون", icon: "♧", group: "المشتريات" },
   { id: "purchasing", label: "دورة المشتريات", icon: "↙", group: "المشتريات" },
   { id: "inventory", label: "المخزون والمستودعات", icon: "▦", group: "المخزون" },
@@ -20,7 +22,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
 ];
 const modules = [
   { title: "المحاسبة العامة", detail: "القيود، دليل الحسابات، مراكز التكلفة", icon: "◈", tone: "blue", section: "accounts" as Section },
-  { title: "المبيعات والعملاء", detail: "دورة البيع والتحصيل والأرصدة", icon: "↗", tone: "violet", section: "customers" as Section },
+  { title: "المبيعات والعملاء", detail: "تسليم مخزني وفواتير وتحصيل وأرصدة", icon: "↗", tone: "violet", section: "sales-workflow" as Section },
   { title: "المشتريات والموردون", detail: "الموردون وأذون الاستلام وفواتير الموردين", icon: "↙", tone: "cyan", section: "purchasing" as Section },
   { title: "المخزون والمستودعات", detail: "الأصناف والمجموعات ووحدات القياس والمخازن", icon: "▦", tone: "amber", section: "inventory" as Section },
   { title: "المرتبات والموارد البشرية", detail: "الموظفون والاستحقاقات والحضور", icon: "♙", tone: "green", section: "setup" as Section },
@@ -204,6 +206,7 @@ export default function App() {
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}</section>}
           {active === "customers" && <CustomersPanel companyId={companyId} />}
+          {active === "sales-workflow" && <SalesPanel companyId={companyId} />}
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
           {active === "purchasing" && <PurchasingPanel companyId={companyId} />}
           {active === "inventory" && <InventoryPanel companyId={companyId} />}
