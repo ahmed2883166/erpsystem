@@ -53,6 +53,62 @@ const natureNames: Record<string, string> = { asset: "أصول", liability: "ا�
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
 const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
 
+function VATReturnPanel({ companyId }: { companyId: number | null }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(new Date().getFullYear() + "-01-01");
+  const [to, setTo] = useState(today);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
+  const [report, setReport] = useState<Awaited<ReturnType<typeof api.vatReturn>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try { setReport(await api.vatReturn(companyId, from, to, branchId ? Number(branchId) : undefined)); }
+    catch (reason) { setReport(null); setError(reason instanceof Error ? reason.message : "تعذر تحميل تقرير ضريبة القيمة المضافة."); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => {
+    if (!companyId) { setBranches([]); setBranchId(""); setReport(null); return; }
+    api.branches(companyId).then(setBranches).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
+  }, [companyId]);
+  useEffect(() => { if (companyId && from && to && from <= to) void load(); }, [companyId, branchId]);
+  const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 });
+  const rows = report ? [
+    ...report.sales.by_rate.map(row => ["مبيعات", row.tax_rate, row.taxable_base, row.tax_amount, row.gross_amount]),
+    ...report.purchases.by_rate.map(row => ["مشتريات", row.tax_rate, row.taxable_base, row.tax_amount, row.gross_amount]),
+  ] : [];
+  return <div className="asset-reports">
+    <div className="work-panel-head"><div><h2>تسوية ضريبة القيمة المضافة</h2><p>مراجعة ضريبة المبيعات والمشتريات حسب نسبة الضريبة والفترة والفرع</p></div><div className="report-actions">
+      <button type="button" className="subtle-button" disabled={!report} onClick={() => report && downloadCsv(`vat-reconciliation-${report.date_from}-${report.date_to}.csv`, ["النوع", "نسبة الضريبة %", "الوعاء", "قيمة الضريبة", "الإجمالي"], rows)}>تصدير CSV (Excel)</button>
+      <button type="button" className="subtle-button" onClick={(event) => { const target = event.currentTarget.closest(".asset-reports"); if (target) { target.classList.add("print-active"); window.print(); target.classList.remove("print-active"); } }}>طباعة / PDF</button>
+      <button type="button" className="primary-button" disabled={busy || !companyId || !from || !to || from > to} onClick={() => void load()}>{busy ? "جارٍ الفحص…" : "تحديث التقرير"}</button>
+    </div></div>
+    <div className="asset-report-filters">
+      <label>من تاريخ<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
+      <label>إلى تاريخ<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
+      <label>الفرع<select value={branchId} onChange={e => setBranchId(e.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map(item => <option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label>
+    </div>
+    {error && <div className="error-banner">{error}</div>}
+    {report && <>
+      <div className="asset-cashflow-totals">
+        <span>مبيعات خاضعة: {money(report.sales.taxable_base)} {report.currency}</span>
+        <span>ضريبة المخرجات: {money(report.output_tax)} {report.currency}</span>
+        <span>مشتريات خاضعة: {money(report.purchases.taxable_base)} {report.currency}</span>
+        <span>ضريبة المدخلات: {money(report.input_tax)} {report.currency}</span>
+        <b>صافي الضريبة المستحقة: {money(report.net_tax_payable)} {report.currency}</b>
+      </div>
+      <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>النسبة</th><th>الوعاء الضريبي</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
+        {report.sales.by_rate.map(row => <tr key={`s-${row.tax_rate}`}><td>مبيعات</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>{money(row.gross_amount)}</td></tr>)}
+        {report.purchases.by_rate.map(row => <tr key={`p-${row.tax_rate}`}><td>مشتريات</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>{money(row.gross_amount)}</td></tr>)}
+        {!rows.length && <tr><td colSpan={5}>لا توجد فواتير ضريبية مرحلة في الفترة المحددة.</td></tr>}
+      </tbody></table></div>
+      <p className="asset-report-note">{report.note}</p>
+    </>}
+  </div>;
+}
+
 function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
@@ -535,7 +591,7 @@ export default function App() {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
-            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
+            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><VATReturnPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
           {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}
           {active === "sales-workflow" && <Suspense fallback={panelFallback}><SalesPanel companyId={companyId} /></Suspense>}
           {active === "suppliers" && <Suspense fallback={panelFallback}><SuppliersPanel companyId={companyId} /></Suspense>}
