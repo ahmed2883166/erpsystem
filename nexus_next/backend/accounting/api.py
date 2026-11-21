@@ -4,6 +4,7 @@ from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import ValidationError
 
+from companies.access import accessible_branches, accessible_companies, can_access_company, can_access_branch
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
 from .services import post_journal
@@ -13,6 +14,37 @@ from rest_framework.exceptions import PermissionDenied
 
 class AccountingViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.DjangoModelPermissions,)
+
+    def get_queryset(self):
+        if self.request.user.is_superuser:
+            return self.queryset
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def _check_company_access(self, data):
+        company = data.get("company")
+        if company and not can_access_company(self.request.user, company.pk):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_company_access(data)
+        branch = data.get("branch")
+        company = data.get("company")
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk if company else None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        data = serializer.validated_data
+        self._check_company_access(data)
+        branch = data.get("branch")
+        company = data.get("company")
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk if company else None):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        serializer.save()
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -55,6 +87,12 @@ class JournalEntryViewSet(AccountingViewSet):
     search_fields = ("entry_number", "description")
     ordering_fields = ("entry_date", "entry_number", "created_at")
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.user.is_superuser:
+            return qs
+        return qs.filter(branch__in=accessible_branches(self.request.user))
+
     def perform_update(self, serializer):
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
@@ -77,6 +115,9 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError({"company": "حدد الشركة لعرض ميزان المراجعة."})
         if not user_can_access_company(request.user, int(company_id)):
             raise PermissionDenied("ليس لديك صلاحية الوصول إلى الشركة المحددة.")
+        if not can_access_company(request.user, int(company_id)):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         date_from = request.query_params.get("date_from")
         date_to = request.query_params.get("date_to")
         if date_from and not parse_date(date_from):
