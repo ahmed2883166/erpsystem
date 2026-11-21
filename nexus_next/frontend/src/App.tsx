@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, salesApi, purchasingApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging } from "./api";
+import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport } from "./api";
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
@@ -35,6 +35,36 @@ const modules = [
 const natureNames: Record<string, string> = { asset: "أصول", liability: "التزامات", equity: "حقوق ملكية", revenue: "إيرادات", expense: "مصروفات" };
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
 const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
+
+function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
+  const today = new Date().toISOString().slice(0,10);
+  const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [to, setTo] = useState(today);
+  const [report, setReport] = useState<CashFlowReport|null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try { setReport(await treasuryApi.cashFlow(companyId, from, to)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل التدفقات النقدية."); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { void load(); }, [companyId]);
+  return <div className="asset-reports">
+    <div className="work-panel-head"><div><h2>التدفقات النقدية حسب النشاط</h2><p>الحركات النقدية المرحلة، مع فصل الأنشطة التشغيلية والاستثمارية والتمويلية</p></div><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث التقرير"}</button></div>
+    <div className="asset-report-filters">
+      <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
+      <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+    </div>
+    {error && <div className="error-banner">{error}</div>}
+    {report && <>
+      <div className="asset-cashflow-totals">{report.categories.map(item=><span key={item.category}>{item.label}: صافي {Number(item.net).toLocaleString("ar-EG",{maximumFractionDigits:2})} · داخل {Number(item.inflows).toLocaleString("ar-EG",{maximumFractionDigits:2})} · خارج {Number(item.outflows).toLocaleString("ar-EG",{maximumFractionDigits:2})}</span>)}<b>صافي التدفق: {Number(report.net_cash_flow).toLocaleString("ar-EG",{maximumFractionDigits:2})}</b></div>
+      <p className="asset-report-note">{report.note}</p>
+      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>المستند</th><th>البيان</th><th>الفرع</th><th>النشاط</th><th>القيمة</th><th>القيد</th></tr></thead><tbody>{report.rows.map(row=><tr key={row.id}><td>{row.date}</td><td>{row.document_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{row.category==="investing"?"استثماري":row.category==="financing"?"تمويلي":"تشغيلي"}</td><td>{Number(row.signed_amount).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td>{row.journal_entry||"—"}</td></tr>)}</tbody></table>{!report.rows.length&&<div className="table-empty">لا توجد حركات نقدية مرحلة في الفترة المحددة.</div>}</div>
+    </>}
+  </div>;
+}
 
 export default function App() {
   const [active, setActive] = useState<Section>("overview");
