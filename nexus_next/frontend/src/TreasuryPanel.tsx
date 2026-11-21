@@ -9,6 +9,7 @@ type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (v: string | number) => Number(v || 0).toLocaleString("ar-EG", {maximumFractionDigits:2});
 
+// شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
   const [tab,setTab]=useState<"transactions"|"accounts"|"reconciliation">("transactions");
   const [accounts,setAccounts]=useState<TreasuryAccount[]>([]);
@@ -39,32 +40,43 @@ export default function TreasuryPanel({companyId}: Props) {
   useEffect(()=>{void load();},[load]);
   const refreshSummary=useCallback(async(id:string)=>{if(!id){setSummary(null);return;}try{setSummary(await bankReconciliationApi.summary(Number(id)));}catch(e){setError((e as Error).message||"تعذر تحميل التسوية.");}},[]);
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
-  const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+  // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
+const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
     await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code});
     setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP"});await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ الحساب.");}finally{setBusy(false);}};
-  const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+  // تسجيل مستند حركة نقدية أو بنكية حسب نوع العملية المختار.
+const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
     await treasuryApi.createTransaction({company:companyId,branch:Number(doc.branch),fiscal_year:Number(doc.fiscal_year),source_account:Number(doc.source_account),destination_account:doc.kind==="transfer"?Number(doc.destination_account):null,counter_account:doc.kind==="transfer"?null:Number(doc.counter_account),kind:doc.kind,document_number:doc.document_number,transaction_date:doc.transaction_date,amount:doc.amount,description:doc.description,reference:doc.reference});
     setDoc(old=>({...old,document_number:"",amount:"",description:"",reference:""}));await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ المستند.");}finally{setBusy(false);}};
-  const post=async(id:number)=>{setBusy(true);setError("");try{await treasuryApi.postTransaction(id);await load();}catch(e){setError((e as Error).message||"تعذر الترحيل.");}finally{setBusy(false);}};
-  const createRecon=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+  // ترحيل حركة الخزينة المحددة ثم تحديث الأرصدة والحركات.
+const post=async(id:number)=>{setBusy(true);setError("");try{await treasuryApi.postTransaction(id);await load();}catch(e){setError((e as Error).message||"تعذر الترحيل.");}finally{setBusy(false);}};
+  // إنشاء جلسة تسوية بنكية مرتبطة بحساب البنك وتاريخ كشف الحساب.
+const createRecon=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
     const created=await bankReconciliationApi.create({company:companyId,bank_account:Number(rec.bank_account),statement_number:rec.statement_number,statement_date:rec.statement_date,opening_balance:rec.opening_balance,closing_balance:rec.closing_balance});
     await load();setSelectedRecon(String(created.id));setRec(old=>({...old,statement_number:""}));await refreshSummary(String(created.id));
   }catch(e){setError((e as Error).message||"تعذر إنشاء التسوية.");}finally{setBusy(false);}};
-  const addLine=async(e:React.FormEvent)=>{e.preventDefault();if(!selectedRecon)return;setBusy(true);setError("");try{
+  // إضافة سطر من كشف البنك إلى جلسة التسوية الحالية.
+const addLine=async(e:React.FormEvent)=>{e.preventDefault();if(!selectedRecon)return;setBusy(true);setError("");try{
     await bankReconciliationApi.addLine(Number(selectedRecon),{line_number:Number(line.line_number),transaction_date:line.transaction_date,description:line.description,reference:line.reference,amount:line.amount});
     setLine(old=>({...old,line_number:String(Number(old.line_number)+1),description:"",reference:"",amount:""}));await refreshSummary(selectedRecon);await load();
   }catch(e){setError((e as Error).message||"تعذر إضافة سطر الكشف.");}finally{setBusy(false);}};
-  const importCsv=async()=>{if(!selectedRecon||!csvFile)return;setBusy(true);setError("");try{const result=await importBankStatementCsv(Number(selectedRecon),csvFile);setCsvFile(null);setError(result.message);await refreshSummary(selectedRecon);await load();}catch(e){setError((e as Error).message||"تعذر استيراد كشف البنك.");}finally{setBusy(false);}};
-  const match=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.match(Number(selectedRecon),lineId,Number(matchIds[lineId]));await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذرت المطابقة.");}finally{setBusy(false);}};
-  const unmatch=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.unmatch(Number(selectedRecon),lineId);await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر فك المطابقة.");}finally{setBusy(false);}};
-  const finalize=async()=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.reconcile(Number(selectedRecon));await load();await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر اعتماد التسوية.");}finally{setBusy(false);}};
+  // استيراد ملف كشف البنك CSV وتحميل سطوره إلى التسوية المختارة.
+const importCsv=async()=>{if(!selectedRecon||!csvFile)return;setBusy(true);setError("");try{const result=await importBankStatementCsv(Number(selectedRecon),csvFile);setCsvFile(null);setError(result.message);await refreshSummary(selectedRecon);await load();}catch(e){setError((e as Error).message||"تعذر استيراد كشف البنك.");}finally{setBusy(false);}};
+  // مطابقة سطر كشف البنك مع حركة خزينة مسجلة.
+const match=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.match(Number(selectedRecon),lineId,Number(matchIds[lineId]));await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذرت المطابقة.");}finally{setBusy(false);}};
+  // إلغاء المطابقة الحالية لسطر كشف البنك.
+const unmatch=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.unmatch(Number(selectedRecon),lineId);await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر فك المطابقة.");}finally{setBusy(false);}};
+  // اعتماد التسوية البنكية بعد استكمال المطابقات والتحقق من الفروق.
+const finalize=async()=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.reconcile(Number(selectedRecon));await load();await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر اعتماد التسوية.");}finally{setBusy(false);}};
   const active=accounts.filter(a=>a.is_active);
   const bankAccounts=active.filter(a=>a.kind==="bank");
-  const balance=(id:number)=>transactions.filter(t=>t.status==="posted").reduce((n,t)=>n+(t.source_account===id?(t.kind==="receipt"?Number(t.amount):-Number(t.amount)):t.kind==="transfer"&&t.destination_account===id?Number(t.amount):0),Number(accounts.find(a=>a.id===id)?.opening_balance||0));
+  // حساب الرصيد الجاري لحساب الخزينة من الرصيد الافتتاحي والحركات المرحلة.
+const balance=(id:number)=>transactions.filter(t=>t.status==="posted").reduce((n,t)=>n+(t.source_account===id?(t.kind==="receipt"?Number(t.amount):-Number(t.amount)):t.kind==="transfer"&&t.destination_account===id?Number(t.amount):0),Number(accounts.find(a=>a.id===id)?.opening_balance||0));
   const currentRecon=reconciliations.find(r=>String(r.id)===selectedRecon);
-  const eligible=(lineAmount:string)=>transactions.filter(t=>t.status==="posted"&&currentRecon&&t.transaction_date<=currentRecon.statement_date&&((t.source_account===currentRecon.bank_account&&((t.kind==="receipt"?1:-1)*Number(t.amount)===Number(lineAmount)))||(t.kind==="transfer"&&t.destination_account===currentRecon.bank_account&&Number(t.amount)===Number(lineAmount))));
+  // تحديد الحركات المرحلة المرشحة لمطابقة مبلغ سطر كشف البنك.
+const eligible=(lineAmount:string)=>transactions.filter(t=>t.status==="posted"&&currentRecon&&t.transaction_date<=currentRecon.statement_date&&((t.source_account===currentRecon.bank_account&&((t.kind==="receipt"?1:-1)*Number(t.amount)===Number(lineAmount)))||(t.kind==="transfer"&&t.destination_account===currentRecon.bank_account&&Number(t.amount)===Number(lineAmount))));
   return <section className="work-panel treasury-panel">
     <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
     {error&&<div className="error-banner">{error}</div>}
