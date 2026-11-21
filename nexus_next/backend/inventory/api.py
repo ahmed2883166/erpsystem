@@ -469,6 +469,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             warehouse__company_id=company_id,
         ).filter(warehouse_scope).values(
             "product_id", "warehouse_id", "location_id", "expiry_date",
+            "product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar",
         ).annotate(
             quantity=Sum("quantity_remaining"),
             value=Sum(F("quantity_remaining") * F("unit_cost")),
@@ -487,16 +488,17 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             balance_value = balance.get("inventory_value", Decimal("0")) or Decimal("0")
             layer_quantity = layer.get("quantity", Decimal("0")) or Decimal("0")
             layer_value = layer.get("value", Decimal("0")) or Decimal("0")
+            layer_value = layer_value.quantize(Decimal("0.0001"))
             quantity_difference = balance_quantity - layer_quantity
             value_difference = balance_value - layer_value
             if abs(quantity_difference) > Decimal("0.0001") or abs(value_difference) > Decimal("0.0001"):
                 mismatches.append({
                     "product": key[0],
-                    "product_code": balance.get("product__code") or Product.objects.get(pk=key[0]).code,
-                    "product_name": balance.get("product__name_ar") or Product.objects.get(pk=key[0]).name_ar,
+                    "product_code": balance.get("product__code") or layer.get("product__code", ""),
+                    "product_name": balance.get("product__name_ar") or layer.get("product__name_ar", ""),
                     "warehouse": key[1],
-                    "warehouse_code": balance.get("warehouse__code") or Warehouse.objects.get(pk=key[1]).code,
-                    "warehouse_name": balance.get("warehouse__name_ar") or Warehouse.objects.get(pk=key[1]).name_ar,
+                    "warehouse_code": balance.get("warehouse__code") or layer.get("warehouse__code", ""),
+                    "warehouse_name": balance.get("warehouse__name_ar") or layer.get("warehouse__name_ar", ""),
                     "location": key[2],
                     "expiry_date": key[3].isoformat() if key[3] else None,
                     "balance_quantity": str(balance_quantity),
