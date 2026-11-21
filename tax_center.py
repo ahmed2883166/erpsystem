@@ -402,7 +402,7 @@ def save_pending_special_tax_mechanism(conn, document_kind, document_id, mechani
         if country != "SA":
             raise ValueError("الاحتساب العكسي غير متاح للملف الضريبي المصري؛ هو متاح للسعودية فقط.")
         if kind != "purchase":
-            raise ValueError("الاحتساب العكسي متاح للمشتريات فقط.")
+            raise ValueError("الاحتساب العكسي متاح لفواتير المشتريات فقط.")
         result = calculate_saudi_reverse_charge(
             country, taxable_base, tax_rate, deductible_percent
         )
