@@ -166,7 +166,7 @@ export default function SalesPanel({ companyId }: Props) {
         <label>سعر الوحدة<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))} /></label>
         <label>كود الضريبة<select value={line.tax_code} onChange={e => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,tax_code:e.target.value,tax_rate:selected?.rate || "0"}:x)); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}%</option>)}</select></label>
         {!line.tax_code && <label>الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))} /></label>}
-        <label>خصم %<input required type="number" min="0" max="100" step="0.0001" value={line.discount_percent} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,discount_percent:e.target.value}:x))} /></label>}
+        <label>خصم %<input required type="number" min="0" max="100" step="0.0001" value={line.discount_percent} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,discount_percent:e.target.value}:x))} /></label>
       </div>)}
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceForm.delivery || !invoiceLines.length}>{busy ? "جارٍ الحفظ…" : "حفظ الفاتورة كمسودة"}</button></div>
     </form>}
