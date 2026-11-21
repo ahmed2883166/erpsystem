@@ -102,6 +102,34 @@ class AccountingApiTests(TestCase):
         response = self.client.get("/api/accounting/accounts/")
         self.assertEqual(response.status_code, 403)
 
+    def test_vat_return_reports_internal_period_and_company_scope(self):
+        branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        user = User.objects.create_user(username="vat_reporter", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=user)
+        response = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["country"], "EG")
+        self.assertEqual(response.data["currency"], "EGP")
+        self.assertEqual(response.data["scope_branch_ids"], [branch.pk])
+        self.assertEqual(response.data["output_tax"], "0")
+        self.assertEqual(response.data["input_tax"], "0")
+        self.assertEqual(response.data["net_tax_payable"], "0")
+        self.assertEqual(response.data["report_kind"], "internal_vat_reconciliation")
+
+    def test_vat_return_requires_valid_date_range(self):
+        user = User.objects.create_user(username="vat_dates", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=user)
+        response = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-02-01&date_to=2026-01-01"
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_trial_balance_uses_posted_entries_only(self):
         branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
         year = FiscalYear.objects.create(company=self.company, name="2026",
