@@ -252,6 +252,31 @@ class AuthenticationAndAdminAuditSignalTests(TestCase):
         self.assertNotIn("private-user", str(event.metadata))
         self.assertNotIn("private-password", str(event.metadata))
 
+    def test_django_admin_audit_is_scoped_to_company_and_branch(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه")
+        company = Company.objects.create(
+            code="ADMIN-SCOPE", name_ar="شركة الإدارة", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="ADM", name_ar="فرع الإدارة"
+        )
+        content_type = ContentType.objects.get_for_model(Branch)
+        LogEntry.objects.create(
+            user=self.user,
+            content_type=content_type,
+            object_id=str(branch.pk),
+            object_repr="فرع الإدارة",
+            action_flag=LogEntry.CHANGE,
+            change_message="changed",
+        )
+        event = AuditEvent.objects.get(
+            resource="django_admin.companies.branch",
+            object_id=str(branch.pk),
+        )
+        self.assertEqual(event.company, company)
+        self.assertEqual(event.branch, branch)
+
     def test_django_admin_add_change_and_delete_are_audited(self):
         content_type = ContentType.objects.get_for_model(get_user_model())
         for flag, expected in (
