@@ -1,4 +1,7 @@
-from decimal import Decimal
+import csv
+import io
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
@@ -132,6 +135,73 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         if instance.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("لا يمكن حذف تسوية معتمدة.")
         instance.delete()
+
+    @decorators.action(detail=True, methods=("post",))
+    def import_csv(self, request, pk=None):
+        recon = self.get_object()
+        self._write(recon.company_id)
+        if recon.status != BankReconciliation.Status.DRAFT:
+            raise ValidationError("لا يمكن استيراد كشف إلى تسوية معتمدة.")
+        if recon.bank_account.branch_id and not can_access_branch(request.user, recon.bank_account.branch_id, recon.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        upload = request.FILES.get("file")
+        if not upload:
+            raise ValidationError({"file": "اختر ملف CSV أولًا."})
+        if upload.size > 5 * 1024 * 1024:
+            raise ValidationError({"file": "الحد الأقصى لحجم الملف 5 ميجابايت."})
+        try:
+            raw = upload.read().decode("utf-8-sig")
+            dialect = csv.Sniffer().sniff(raw[:4096], delimiters=",;\t")
+            reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
+        except (UnicodeDecodeError, csv.Error):
+            raise ValidationError({"file": "تعذر قراءة الملف. احفظه بصيغة CSV UTF-8."})
+        if not reader.fieldnames:
+            raise ValidationError({"file": "الملف فارغ أو لا يحتوي على عناوين أعمدة."})
+        headers = {str(h).strip().lower(): h for h in reader.fieldnames if h}
+        date_key = next((headers[k] for k in ("date", "transaction_date", "التاريخ") if k in headers), None)
+        amount_key = next((headers[k] for k in ("amount", "value", "المبلغ", "القيمة") if k in headers), None)
+        desc_key = next((headers[k] for k in ("description", "details", "البيان", "الوصف") if k in headers), None)
+        ref_key = next((headers[k] for k in ("reference", "ref", "المرجع") if k in headers), None)
+        if not date_key or not amount_key:
+            raise ValidationError({"file": "يجب أن يحتوي الملف على عمودي date و amount على الأقل؛ ويمكن إضافة description و reference."})
+        parsed = []
+        errors = []
+        for row_no, row in enumerate(reader, start=2):
+            if not any(str(v or "").strip() for v in row.values()):
+                continue
+            if len(parsed) >= 5000:
+                raise ValidationError({"file": "الحد الأقصى 5000 حركة في الملف الواحد."})
+            try:
+                raw_date = str(row.get(date_key, "")).strip()
+                try:
+                    movement_date = date.fromisoformat(raw_date)
+                except ValueError:
+                    movement_date = datetime.strptime(raw_date, "%d/%m/%Y").date()
+                amount = Decimal(str(row.get(amount_key, "")).strip().replace(",", ""))
+                if amount == 0 or not amount.is_finite():
+                    raise ValueError("المبلغ يجب ألا يساوي صفرًا.")
+                if movement_date > recon.statement_date:
+                    raise ValueError("تاريخ الحركة بعد تاريخ كشف البنك.")
+                parsed.append({
+                    "reconciliation": recon,
+                    "line_number": len(parsed) + 1,
+                    "transaction_date": movement_date,
+                    "amount": amount,
+                    "description": str(row.get(desc_key, "") if desc_key else "").strip()[:500],
+                    "reference": str(row.get(ref_key, "") if ref_key else "").strip()[:120],
+                })
+            except (ValueError, InvalidOperation, TypeError):
+                errors.append(f"السطر {row_no}: تاريخ أو مبلغ غير صحيح.")
+        if errors:
+            raise ValidationError({"file": errors[:20]})
+        if not parsed:
+            raise ValidationError({"file": "لم يتم العثور على حركات صالحة للاستيراد."})
+        with transaction.atomic():
+            locked = BankReconciliation.objects.select_for_update().get(pk=recon.pk)
+            if locked.status != BankReconciliation.Status.DRAFT or locked.lines.exists():
+                raise ValidationError("الاستيراد متاح لتسوية مسودة فارغة فقط؛ لا يمكن الكتابة فوق حركات موجودة.")
+            BankStatementLine.objects.bulk_create([BankStatementLine(**item) for item in parsed])
+        return response.Response({"imported": len(parsed), "message": f"تم استيراد {len(parsed)} حركة دون تعديل أي حركات سابقة."}, status=status.HTTP_201_CREATED)
 
     @decorators.action(detail=True, methods=("post",))
     def add_line(self, request, pk=None):
