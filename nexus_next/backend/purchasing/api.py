@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Q
@@ -181,6 +182,68 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             "date_from": date_from.isoformat() if date_from else None,
             "date_to": date_to.isoformat() if date_to else None,
             "opening_balance": str(opening), "closing_balance": str(balance), "rows": rows,
+        })
+
+    @action(detail=False, methods=("get",), url_path="supplier-aging")
+    def supplier_aging(self, request):
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض أعمار المديونية."})
+        as_of_raw = request.query_params.get("as_of")
+        as_of = parse_date(as_of_raw) if as_of_raw else None
+        if as_of_raw and not as_of:
+            raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if not as_of:
+            from django.utils import timezone
+            as_of = timezone.localdate()
+
+        invoices = self.get_queryset().filter(
+            company_id=company_id, status=PurchaseInvoice.Status.POSTED, invoice_date__lte=as_of
+        ).select_related("supplier").prefetch_related("payments")
+        suppliers = {}
+        for invoice in invoices:
+            paid = sum(
+                (payment.amount for payment in invoice.payments.all()
+                 if payment.status == SupplierPayment.Status.POSTED),
+                Decimal("0"),
+            )
+            balance_due = invoice.grand_total - paid
+            if balance_due <= 0:
+                continue
+            due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
+            overdue_days = max((as_of - due_date).days, 0)
+            bucket = (
+                "not_due" if overdue_days == 0 else
+                "1_30" if overdue_days <= 30 else
+                "31_60" if overdue_days <= 60 else
+                "61_90" if overdue_days <= 90 else "over_90"
+            )
+            supplier = suppliers.setdefault(invoice.supplier_id, {
+                "supplier": invoice.supplier_id, "supplier_code": invoice.supplier.code,
+                "supplier_name": invoice.supplier.name_ar, "not_due": Decimal("0"),
+                "1_30": Decimal("0"), "31_60": Decimal("0"), "61_90": Decimal("0"),
+                "over_90": Decimal("0"), "total_due": Decimal("0"), "invoices": [],
+            })
+            supplier[bucket] += balance_due
+            supplier["total_due"] += balance_due
+            supplier["invoices"].append({
+                "invoice_number": invoice.invoice_number,
+                "invoice_date": invoice.invoice_date.isoformat(),
+                "due_date": due_date.isoformat(),
+                "overdue_days": overdue_days,
+                "bucket": bucket, "balance_due": str(balance_due),
+            })
+        rows = []
+        totals = {key: Decimal("0") for key in ("not_due", "1_30", "31_60", "61_90", "over_90", "total_due")}
+        for supplier in sorted(suppliers.values(), key=lambda item: item["supplier_name"]):
+            for key in totals:
+                totals[key] += supplier[key]
+                supplier[key] = str(supplier[key])
+            rows.append(supplier)
+        return Response({
+            "company": company_id, "as_of": as_of.isoformat(),
+            "totals": {key: str(value) for key, value in totals.items()}, "suppliers": rows,
         })
 
     @action(detail=True, methods=("post",))
