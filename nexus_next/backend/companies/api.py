@@ -12,6 +12,11 @@ class ReadOnlyOrAdmin(permissions.BasePermission):
         return bool(request.user and request.user.is_staff)
 
 
+class CompanyAdminOrReadOnly(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+
 class CurrencyViewSet(viewsets.ModelViewSet):
     queryset = Currency.objects.all()
     serializer_class = CurrencySerializer
@@ -26,6 +31,9 @@ class CompanyViewSet(viewsets.ModelViewSet):
         return accessible_companies(self.request.user).select_related("base_currency")
 
     def perform_create(self, serializer):
+        if not self.request.user.is_staff:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("إنشاء شركة جديدة يتطلب صلاحية مسؤول النظام.")
         company = serializer.save()
         CompanyMembership.objects.get_or_create(
             user=self.request.user, company=company,
@@ -47,7 +55,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
 class BranchViewSet(viewsets.ModelViewSet):
     serializer_class = BranchSerializer
-    permission_classes = (ReadOnlyOrAdmin,)
+    permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
         return accessible_branches(self.request.user).select_related("company")
@@ -78,7 +86,7 @@ class BranchViewSet(viewsets.ModelViewSet):
 
 class FiscalYearViewSet(viewsets.ModelViewSet):
     serializer_class = FiscalYearSerializer
-    permission_classes = (ReadOnlyOrAdmin,)
+    permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
         return FiscalYear.objects.filter(
