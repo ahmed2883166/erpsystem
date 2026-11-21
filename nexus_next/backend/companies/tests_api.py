@@ -196,3 +196,28 @@ class CompanySetupApiTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 400, response.data)
 
+
+    def test_company_admin_can_search_unassigned_active_users(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        target = get_user_model().objects.create_user(
+            username="candidate-user", password="test-password", display_name="مستخدم جديد"
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.get(
+            f"/api/setup/memberships/users/?company={self.company.pk}&search=candidate"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([row["id"] for row in response.data], [target.pk])
+
+    def test_current_membership_endpoint_returns_role_without_exposing_other_users(self):
+        membership = CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="accountant", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.get(f"/api/setup/memberships/current/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["id"], membership.pk)
+        self.assertEqual(response.data["role"], "accountant")
+
