@@ -57,7 +57,6 @@ const modules = [
   { title: "المرتبات والموارد البشرية", detail: "الموظفون والاستحقاقات والحضور", icon: "♙", tone: "green", section: "setup" as Section },
   { title: "الأصول الثابتة", detail: "تسجيل الأصول والإهلاك وربط القيود", icon: "▣", tone: "rose", section: "fixed-assets" as Section },
 ];
-const natureNames: Record<string, string> = { asset: "أصول", liability: "التزامات", equity: "حقوق ملكية", revenue: "إيرادات", expense: "مصروفات" };
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
 const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
 
@@ -565,8 +564,6 @@ export default function App() {
     catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر ترحيل القيد."); }
     finally { setPostingId(null); }
   };
-  const filteredAccounts = useMemo(() => accounts.filter((account) =>
-    `${account.code} ${account.name_ar}`.toLowerCase().includes(search.toLowerCase())), [accounts, search]);
   const filteredJournals = useMemo(() => journals.filter((entry) =>
     `${entry.entry_number} ${entry.description}`.toLowerCase().includes(search.toLowerCase())), [journals, search]);
   const selectedCompany = companies.find((company) => company.id === companyId);
