@@ -15,6 +15,7 @@ MONEY = Decimal("0.0001")
 
 
 def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines, user=None):
+    """إنشاء وترحيل قيد محاسبي مرتبط بحركة الأصل الثابت."""
     entry = JournalEntry.objects.create(
         company=asset.company, branch=asset.branch, fiscal_year=fiscal_year,
         entry_number=entry_number, entry_date=entry_date, description=description,
@@ -26,6 +27,7 @@ def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines
 
 @transaction.atomic
 def acquire_asset(asset_id, fiscal_year_id, user=None):
+    """إثبات اقتناء الأصل وتكلفته في الحسابات والسنة المالية المحددة."""
     asset = FixedAsset.objects.select_for_update().select_related(
         "company", "branch", "asset_account", "acquisition_counter_account"
     ).get(pk=asset_id)
@@ -89,6 +91,7 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
 
 @transaction.atomic
 def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
+    """احتساب وترحيل إهلاك الأصل عن الفترة حتى تاريخها المحدد."""
     if isinstance(period_date, str):
         period_date = dateparse.parse_date(period_date)
     if not period_date:
@@ -128,6 +131,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
 
 @transaction.atomic
 def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None):
+    """إثبات بيع الأصل أو استبعاده ومعالجة النقدية ومجمع الإهلاك والربح أو الخسارة."""
     from treasury.models import TreasuryAccount, TreasuryTransaction
 
     if isinstance(disposal_date, str):
