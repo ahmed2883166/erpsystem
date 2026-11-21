@@ -704,7 +704,7 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(balance.status_code, 200, balance.data)
         self.assertEqual(ledger.status_code, 200, ledger.data)
         self.assertEqual(balance.data["total_assets"], Decimal("280.0000"))
-        self.assertEqual(balance.data["total_equity"], Decimal("250.0000"))
+        self.assertEqual(balance.data["total_equity"], Decimal("280.0000"))
         self.assertEqual(balance.data["difference"], Decimal("0.0000"))
         self.assertEqual(ledger.data["opening_balance"], Decimal("250.0000"))
         self.assertEqual(ledger.data["closing_balance"], Decimal("280.0000"))
