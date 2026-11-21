@@ -8,7 +8,7 @@ $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 $Tag = Get-Date -Format "yyyyMMdd_HHmmss"
-$PackageName = "NEXUS-ERP-Trial-$Tag"
+$PackageName = "Admrail-ERP-v2-Trial-$Tag"
 $Stage = Join-Path ([System.IO.Path]::GetTempPath()) $PackageName
 $ZipPath = Join-Path $OutputDirectory "$PackageName.zip"
 
