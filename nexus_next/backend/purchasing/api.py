@@ -148,7 +148,12 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         self._check_write(invoice.company_id)
         if invoice.status != PurchaseInvoice.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل فاتورة مورد مرحلة.")
-        raise ValidationError("تعديل الفاتورة غير متاح حاليًا؛ أنشئ فاتورة مسودة جديدة.")
+        receipt = invoice.receipt
+        if receipt.warehouse.branch_id and not can_access_branch(
+            self.request.user, receipt.warehouse.branch_id, invoice.company_id
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        serializer.save()
 
     @action(detail=False, methods=("get",), url_path="supplier-statement")
     def supplier_statement(self, request):
