@@ -6,6 +6,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
 class FixedAssetWorkflowTests(APITestCase):
@@ -21,6 +22,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.accum_gl = self._account("1590", "مجمع الإهلاك", "asset")
         self.expense_gl = self._account("6100", "مصروف الإهلاك", "expense")
         self.cash_gl = self._account("1100", "البنك", "asset")
+        self.bank = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=self.cash_gl, kind=TreasuryAccount.Kind.BANK, code="BANK-FA", name_ar="بنك الأصول")
         self.gain_loss_gl = self._account("7100", "أرباح وخسائر بيع أصول", "revenue")
 
     def _account(self, code, name, nature):
@@ -84,7 +86,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(monthly.status_code, 201, monthly.data)
         disposed = self.client.post(f"/api/assets/fixed-assets/{asset_id}/dispose/", {
             "disposal_date": "2026-03-10", "proceeds": "120000.0000",
-            "cash_account": self.cash_gl.pk, "fiscal_year": self.year.pk,
+            "treasury_account": self.bank.pk, "fiscal_year": self.year.pk,
         }, format="json")
         self.assertEqual(disposed.status_code, 201, disposed.data)
         self.assertEqual(disposed.data["accumulated_depreciation"], "4000.0000")
@@ -100,6 +102,10 @@ class FixedAssetWorkflowTests(APITestCase):
         disposal_entry = JournalEntry.objects.get(pk=disposed.data["disposal_journal"])
         self.assertEqual(disposal_entry.status, JournalEntry.Status.POSTED)
         self.assertEqual(disposal_entry.lines.get(account=self.asset_gl).credit, Decimal("120000.0000"))
+        treasury_doc = TreasuryTransaction.objects.get(pk=disposed.data["treasury_transaction"])
+        self.assertEqual(treasury_doc.status, TreasuryTransaction.Status.POSTED)
+        self.assertEqual(treasury_doc.journal_entry_id, disposal_entry.pk)
+        self.assertEqual(treasury_doc.source_account_id, self.bank.pk)
 
     def test_disposal_rejects_wrong_nature_gain_loss_account_without_partial_commit(self):
         created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
