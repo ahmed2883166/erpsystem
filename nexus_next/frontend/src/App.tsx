@@ -88,10 +88,12 @@ export default function App() {
   };
   const saveDraft = async () => {
     if (!validateDraft()) return;
+    const targetCompanyId = companyId;
+    if (targetCompanyId === null) return;
     setSaving(true);
     try {
       await api.createJournal({ company: companyId, branch: Number(draft.branch), fiscal_year: Number(draft.fiscal_year), entry_number: draft.entry_number, entry_date: draft.entry_date, description: draft.description, source_type: "manual", lines: journalLines.map((line) => ({ account: Number(line.account), debit: line.debit || "0", credit: line.credit || "0", description: line.description || draft.description })) });
-      const rows = await api.journals(companyId); setJournals(rows); setJournalModal(false); setReviewingJournal(false);
+      const rows = await api.journals(targetCompanyId); setJournals(rows); setJournalModal(false); setReviewingJournal(false);
       setDraft((old) => ({ ...old, entry_number: "", description: "" }));
       setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]);
     } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر حفظ القيد."); }
