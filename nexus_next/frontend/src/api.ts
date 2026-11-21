@@ -18,6 +18,7 @@ export type Customer = {
   email: string; address: string; credit_limit: string; payment_terms_days: number;
   notes: string; is_active: boolean; created_at: string; updated_at: string;
 };
+export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
 function csrfToken(): string { const item = document.cookie.split("; ").find((part) => part.startsWith("csrftoken=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
@@ -49,6 +50,8 @@ export const api = {
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
   trialBalance: (companyId: number) => request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?company=${companyId}`),
   customers: (companyId: number) => request<Customer[]>(`/api/sales/customers/?company=${companyId}&ordering=name_ar`),
+  suppliers: (companyId: number) => request<Supplier[]>(`/api/purchases/suppliers/?company=${companyId}&ordering=name_ar`),
+  createSupplier: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Supplier>("/api/purchases/suppliers/", { method: "POST", body: JSON.stringify(payload) }); },
   createCustomer: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Customer>("/api/sales/customers/", { method: "POST", body: JSON.stringify(payload) }); },
 };
 
