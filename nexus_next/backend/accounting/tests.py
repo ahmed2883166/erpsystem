@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
@@ -103,6 +104,8 @@ class AccountingApiTests(TestCase):
 
     def test_authenticated_user_can_read_accounts(self):
         user = User.objects.create_user(username="reader", password="test-password")
+        permission = Permission.objects.get(codename="view_chartofaccount")
+        user.user_permissions.add(permission)
         self.client.force_authenticate(user=user)
         response = self.client.get("/api/accounting/accounts/?company=" + str(self.company.pk))
         self.assertEqual(response.status_code, 200)
