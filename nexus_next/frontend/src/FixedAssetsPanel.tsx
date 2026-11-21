@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, fixedAssetsApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule } from "./api";
+import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount } from "./api";
 
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
@@ -13,6 +13,7 @@ const emptyForm = {
 export default function FixedAssetsPanel({ companyId }: Props) {
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [form, setForm] = useState(emptyForm);
@@ -35,8 +36,9 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   };
   useEffect(() => {
     if (!companyId) return;
-    Promise.all([api.accounts(companyId), api.branches(companyId), api.fiscalYears(companyId)]).then(([a,b,y]) => {
+    Promise.all([api.accounts(companyId), api.branches(companyId), api.fiscalYears(companyId), treasuryApi.accounts(companyId)]).then(([a,b,y,t]) => {
       setAccounts(a.filter(x => x.is_active && !x.is_group && x.allow_posting));
+      setTreasuryAccounts(t.filter(x => x.is_active));
       setBranches(b.filter(x => x.is_active && x.company === companyId));
       setYears(y.filter(x => x.company === companyId && x.status === "open"));
       setForm(old => ({...old, branch: String(b.find(x => x.is_active && x.company === companyId)?.id || ""), fiscal_year: String(y.find(x => x.company === companyId && x.status === "open")?.id || "")}));
@@ -83,11 +85,11 @@ export default function FixedAssetsPanel({ companyId }: Props) {
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل سجل الإهلاك."); }
   };
   const dispose = async (asset: FixedAsset) => {
-    if (!form.fiscal_year || !disposalCashAccount) { setError("حدد السنة المالية وحساب البنك أو الخزينة."); return; }
+    if (!form.fiscal_year || (Number(disposalProceeds) > 0 && !disposalCashAccount)) { setError("حدد السنة المالية وحساب البنك أو الخزينة عند وجود متحصلات."); return; }
     if (!window.confirm("تأكيد بيع / استبعاد الأصل؟ سيتم ترحيل الإهلاك حتى التاريخ وقيد الاستبعاد.")) return;
     setSaving(true); setError("");
     try {
-      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount), Number(form.fiscal_year));
+      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year));
       await refresh();
       setSchedule(await fixedAssetsApi.schedule(asset.id));
       setError("تم الاستبعاد. رقم القيد: " + result.disposal_journal + " · " + (Number(result.gain) > 0 ? "ربح " + result.gain : Number(result.loss) > 0 ? "خسارة " + result.loss : "دون ربح أو خسارة"));
@@ -130,7 +132,7 @@ export default function FixedAssetsPanel({ companyId }: Props) {
         <div className="asset-disposal-fields">
           <label>تاريخ البيع / الاستبعاد<input type="date" value={disposalDate} onChange={e=>setDisposalDate(e.target.value)}/></label>
           <label>قيمة المتحصلات<input type="number" min="0" step="0.0001" value={disposalProceeds} onChange={e=>setDisposalProceeds(e.target.value)}/></label>
-          <label>حساب البنك / الخزينة<select value={disposalCashAccount} onChange={e=>setDisposalCashAccount(e.target.value)}><option value="">اختر الحساب</option>{assetAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+          <label>حساب الخزينة / البنك<select value={disposalCashAccount} onChange={e=>setDisposalCashAccount(e.target.value)}><option value="">اختر حساب الخزينة</option>{treasuryAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         </div>
         <button className="danger-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void dispose(a);}}>{saving ? "جارٍ الترحيل…" : "تأكيد البيع / الاستبعاد"}</button>
       </div>}
