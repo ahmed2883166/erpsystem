@@ -18,6 +18,11 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            if not company_id.isdigit() or not can_access_company(self.request.user, int(company_id)):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+            qs = qs.filter(company_id=int(company_id))
         if not self.request.user.is_superuser:
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
         return qs
