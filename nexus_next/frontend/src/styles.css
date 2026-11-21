@@ -296,3 +296,9 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
   align-items: center;
   gap: 6px;
 }
+
+
+.approval-snapshot summary { cursor: pointer; color: var(--accent, #6ea8fe); font-weight: 600; white-space: nowrap; }
+.approval-snapshot[open] { min-width: 520px; }
+.approval-snapshot .data-table-wrap { margin-top: 10px; max-width: min(760px, 75vw); }
+.approval-snapshot table { font-size: 12px; }
