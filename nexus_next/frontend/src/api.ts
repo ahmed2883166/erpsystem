@@ -11,9 +11,9 @@ export type Account = {
 export type AccountTemplateInfo = { company: number; activity: Company["activity"]; activity_label: string; template_account_count: number; existing_account_count: number; has_accounts: boolean };
 export type AccountImportPreview = {
   detail?: string;
-  rows: { excel_row:number; code:string; name_ar:string; parent_code:string|null; nature:string|null; is_group:boolean; status:string; errors:string[] }[];
+  rows: { excel_row:number; code:string; name_ar:string; parent_code:string|null; nature:string|null; is_group:boolean; status:string; errors:string[]; warnings:string[] }[];
   errors: string[];
-  summary: { total:number; ready_to_create:number; already_exists:number; blocked:number };
+  summary: { total:number; ready_to_create:number; already_exists:number; blocked:number; warnings:number };
 };
 export type AccountImportResult = { detail:string; created_accounts:string[]; skipped_existing:number; summary:AccountImportPreview["summary"] };
 export type AccountTemplateApplyResult = {
