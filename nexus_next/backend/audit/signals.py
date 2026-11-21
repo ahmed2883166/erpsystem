@@ -85,16 +85,14 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
         if obj is not None:
             company_id = getattr(obj, "company_id", None)
             branch_id = getattr(obj, "branch_id", None)
-            if company_id is None and branch_id:
+            if branch_id:
                 from companies.models import Branch
                 branch = Branch.objects.filter(pk=branch_id).first()
-                company_id = branch.company_id if branch else None
-            else:
+            if company_id is None and branch is not None:
+                company_id = branch.company_id
+            if company_id:
                 from companies.models import Company
-                company = Company.objects.filter(pk=company_id).first() if company_id else None
-            if branch is None and branch_id:
-                from companies.models import Branch
-                branch = Branch.objects.filter(pk=branch_id).first()
+                company = Company.objects.filter(pk=company_id).first()
     model_name = instance.content_type.model
     app_label = instance.content_type.app_label
     _safe_create_audit_event(
