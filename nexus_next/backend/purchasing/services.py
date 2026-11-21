@@ -113,3 +113,54 @@ def post_purchase_invoice(invoice_id, user):
     invoice.posted_at = timezone.now()
     invoice.save(update_fields=("net_total", "tax_total", "grand_total", "journal_entry", "status", "posted_at"))
     return invoice
+
+
+@transaction.atomic
+def post_supplier_payment(payment_id, user):
+    from .models import SupplierPayment
+
+    payment = SupplierPayment.objects.select_for_update().get(pk=payment_id)
+    if payment.status != SupplierPayment.Status.DRAFT:
+        raise ValidationError("سند صرف المورد مرحّل بالفعل.")
+    invoice = PurchaseInvoice.objects.select_for_update().get(pk=payment.invoice_id)
+    if invoice.status != PurchaseInvoice.Status.POSTED:
+        raise ValidationError("لا يمكن صرف قيمة فاتورة غير مرحلة.")
+    if payment.company_id != invoice.company_id or payment.supplier_id != invoice.supplier_id:
+        raise ValidationError("بيانات السند لا تطابق فاتورة المورد.")
+
+    paid_before = SupplierPayment.objects.filter(
+        invoice=invoice, status=SupplierPayment.Status.POSTED
+    ).exclude(pk=payment.pk).aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("amount"))["total"] or Decimal("0")
+    if paid_before + payment.amount > invoice.grand_total:
+        remaining = max(Decimal("0"), invoice.grand_total - paid_before)
+        raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
+
+    payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
+    payment_account = _account(payment.company, cash_role)
+    if payable.pk == payment_account.pk:
+        raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
+
+    receipt = invoice.receipt
+    branch, year = _branch_and_year(receipt, payment.payment_date)
+    entry = JournalEntry.objects.create(
+        company=payment.company, branch=branch, fiscal_year=year,
+        entry_number=f"PUR-PAY-{payment.pk}", entry_date=payment.payment_date,
+        description=f"سداد فاتورة المورد {invoice.invoice_number} - سند {payment.payment_number}"[:500],
+        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    )
+    JournalLine.objects.bulk_create([
+        JournalLine(entry=entry, account=payable, description="تخفيض مستحقات المورد", debit=payment.amount, credit=0),
+        JournalLine(entry=entry, account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
+    ])
+    try:
+        posted_entry = post_journal(entry.pk)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    payment.journal_entry = posted_entry
+    payment.status = SupplierPayment.Status.POSTED
+    payment.posted_at = timezone.now()
+    payment.save(update_fields=("journal_entry", "status", "posted_at"))
+    return payment
