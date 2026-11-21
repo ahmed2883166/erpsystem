@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
@@ -10,6 +11,7 @@ from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
+from purchasing.models import SupplierPayment
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -184,17 +186,19 @@ class PurchasingWorkflowTests(APITestCase):
             kind=TreasuryAccount.Kind.BANK, code="BANK-BR2", name_ar="بنك الفرع الآخر",
             currency_code="EGP",
         )
-        payment = self.client.post("/api/purchasing/payments/", {
-            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
-            "payment_number": "PAY-WRONG-BRANCH", "payment_date": "2026-03-15",
-            "method": "bank", "payment_account": other_bank.pk, "amount": "25.0000",
-        }, format="json")
-        self.assertEqual(payment.status_code, 201, payment.data)
-
-        rejected = self.client.post(
-            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        payment = SupplierPayment.objects.create(
+            company=self.company, supplier=self.supplier,
+            invoice_id=invoice.data["id"], payment_number="PAY-WRONG-BRANCH",
+            payment_date=date(2026, 3, 15), method=SupplierPayment.Method.BANK,
+            payment_account=other_bank, amount=Decimal("25.0000"),
         )
-        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+        from purchasing.services import post_supplier_payment
+        with self.assertRaises(DRFValidationError):
+            post_supplier_payment(payment.pk, self.user)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, SupplierPayment.Status.DRAFT)
+        self.assertIsNone(payment.journal_entry_id)
         self.assertEqual(
             JournalEntry.objects.filter(
                 source_type=JournalEntry.Source.PURCHASES, status=JournalEntry.Status.POSTED
