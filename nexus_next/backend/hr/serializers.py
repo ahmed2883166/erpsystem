@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import (
-    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory,
+    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
     PayrollRuleSet,
 )
@@ -188,3 +188,21 @@ class EmployeeSalaryHistorySerializer(serializers.ModelSerializer):
         model = EmployeeSalaryHistory
         fields = "__all__"
         read_only_fields = ("previous_salary", "changed_by", "created_at")
+
+class LoanInstallmentSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="loan.employee.full_name_ar", read_only=True)
+    loan_reference = serializers.CharField(source="loan.reference", read_only=True)
+
+    class Meta:
+        model = LoanInstallment
+        fields = "__all__"
+        read_only_fields = ("paid_amount", "paid_date", "status", "payroll_cycle")
+
+    def validate(self, attrs):
+        loan = attrs.get("loan", getattr(self.instance, "loan", None))
+        amount = attrs.get("amount", getattr(self.instance, "amount", 0))
+        if loan and loan.status != "active":
+            raise serializers.ValidationError({"loan": "لا يمكن إضافة قسط إلى سلفة غير سارية."})
+        if amount <= 0:
+            raise serializers.ValidationError({"amount": "قيمة القسط يجب أن تكون موجبة."})
+        return attrs
