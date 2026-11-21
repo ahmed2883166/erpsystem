@@ -99,9 +99,8 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             if remaining > 0:
                 deductions += remaining
                 lines.append((
-                    f"LOAN-{installment.loan_id}-{installment.pk}",
-                    f"قسط سلفة {installment.loan.reference}",
-                    "deduction", remaining, False,
+                    None, f"LOAN-{installment.loan_id}-{installment.pk}",
+                    f"قسط سلفة {installment.loan.reference}", "deduction", remaining, False,
                     {"loan_id": installment.loan_id, "installment_id": installment.pk, "due_date": installment.due_date.isoformat()},
                 ))
         result = PayrollResult.objects.create(
@@ -118,9 +117,9 @@ def calculate_payroll_cycle(cycle_id, actor=None):
                 "basic_salary": str(effective_basic_salary), "payable_days": str(payable_days),
             },
         )
-        for code, name, kind, amount, display_only, snapshot in lines:
+        for component, code, name, kind, amount, display_only, snapshot in lines:
             PayrollResultLine.objects.create(
-                result=result, code_snapshot=code, name_snapshot=name, kind_snapshot=kind,
+                result=result, component=component, code_snapshot=code, name_snapshot=name, kind_snapshot=kind,
                 amount=amount, display_only=display_only, calculation_snapshot=snapshot,
             )
         if employer_share:
