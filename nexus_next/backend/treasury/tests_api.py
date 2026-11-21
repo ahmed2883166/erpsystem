@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
-from accounting.models import ChartOfAccount, JournalEntry
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
@@ -35,6 +35,40 @@ class TreasuryWorkflowTests(APITestCase):
         }
         payload.update(extra)
         return self.client.post("/api/treasury/transactions/", payload, format="json")
+
+    def test_opening_balance_creates_balanced_opening_journal_and_is_counted_once(self):
+        retained = ChartOfAccount.objects.create(
+            company=self.company, code="3000", name_ar="الأرباح المحتجزة",
+            nature=ChartOfAccount.Nature.EQUITY,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
+        )
+        created = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": self.bank_gl.pk,
+            "kind": "bank", "code": "BANK-OPEN", "name_ar": "بنك برصيد افتتاحي",
+            "currency_code": "EGP", "opening_balance": "50000",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["opening_balance"], "50000.0000")
+        self.assertIsNotNone(created.data["opening_journal_entry"])
+        entry = JournalEntry.objects.get(pk=created.data["opening_journal_entry"])
+        self.assertEqual(entry.source_type, JournalEntry.Source.OPENING)
+        self.assertEqual(entry.lines.get(account=self.bank_gl).debit, Decimal("50000.0000"))
+        self.assertEqual(entry.lines.get(account=retained).credit, Decimal("50000.0000"))
+
+        payment = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": created.data["id"], "counter_account": self.revenue_gl.pk,
+            "kind": "payment", "document_number": "TR-OPEN-SPEND", "transaction_date": "2026-03-15",
+            "amount": "50000", "description": "اختبار استخدام الرصيد الافتتاحي",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(JournalEntry.objects.filter(pk=entry.pk).count(), 1)
 
     def test_receipt_posts_balanced_journal_and_is_idempotent(self):
         response = self._create()
