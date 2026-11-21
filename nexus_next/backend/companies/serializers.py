@@ -45,11 +45,13 @@ class CompanyMembershipSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at",)
 
     def validate_user(self, user):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         if not user.is_active:
             raise serializers.ValidationError("لا يمكن إضافة مستخدم غير نشط إلى الشركة.")
         return user
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", self.instance.company if self.instance else None)
         branches = attrs.get("branches")
         if branches is None and self.instance:
