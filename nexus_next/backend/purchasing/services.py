@@ -59,9 +59,7 @@ def post_purchase_receipt(receipt_id, user):
 
 @transaction.atomic
 def post_purchase_invoice(invoice_id, user):
-    invoice = PurchaseInvoice.objects.select_for_update().select_related(
-        "company", "supplier", "receipt", "receipt__stock_movement", "journal_entry"
-    ).get(pk=invoice_id)
+    invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice_id)
     if invoice.status != PurchaseInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المورد مرحلة بالفعل.")
     receipt = invoice.receipt
