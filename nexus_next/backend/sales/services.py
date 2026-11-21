@@ -69,9 +69,18 @@ def post_sales_invoice(invoice_id, user):
         from approvals.models import SalesInvoiceApproval
         exceeds_limit = invoice.lines.filter(discount_percent__gt=invoice.discount_approval_limit).exists()
         if exceeds_limit:
-            approval = SalesInvoiceApproval.objects.filter(invoice=invoice).first()
-            if not approval or approval.status != SalesInvoiceApproval.Status.APPROVED:
-                raise ValidationError("تجاوز الخصم الحد المسموح؛ يجب اعتماد مدير الشركة قبل ترحيل الفاتورة.")
+            approval = invoice.approval_requests.order_by("-requested_at", "-pk").first()
+            current_max_discount = max(
+                invoice.lines.values_list("discount_percent", flat=True),
+                default=Decimal("0"),
+            )
+            if (
+                not approval
+                or approval.status != SalesInvoiceApproval.Status.APPROVED
+                or approval.requested_discount_total != invoice.discount_total
+                or approval.requested_max_discount_percent != current_max_discount
+            ):
+                raise ValidationError("تجاوز الخصم الحد المسموح؛ يجب اعتماد مدير الشركة لآخر نسخة من الفاتورة قبل الترحيل.")
     delivery = invoice.delivery
     if delivery.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
