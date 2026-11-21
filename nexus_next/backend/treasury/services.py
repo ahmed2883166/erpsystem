@@ -38,12 +38,14 @@ def post_treasury_transaction(transaction_id, user=None):
         if not destination.is_active:
             raise ValidationError("حساب الخزينة المستقبلة موقوف.")
         if destination.branch_id and destination.branch_id != doc.branch_id:
-            raise ValidationError("فرع المستند لا يطابق فرع الخزينة المستقبلة.")
+            raise ValidationError("التحويل بين الفروع يحتاج معالجة تسوية بين الفروع؛ لا يمكن ترحيله كتحويل داخلي.")
+        if destination.currency_code != source.currency_code:
+            raise ValidationError("التحويل بين عملتين مختلفتين غير مدعوم قبل إضافة فروق العملة.")
         debit_account, credit_account = destination.account, source.account
 
     entry = JournalEntry.objects.create(
         company=doc.company, branch=doc.branch, fiscal_year=doc.fiscal_year,
-        entry_number=f"TR-{doc.document_number}", entry_date=doc.transaction_date,
+        entry_number=f"TR-{doc.pk}", entry_date=doc.transaction_date,
         description=doc.description, source_type=JournalEntry.Source.MANUAL,
         created_by=user or doc.created_by,
     )
