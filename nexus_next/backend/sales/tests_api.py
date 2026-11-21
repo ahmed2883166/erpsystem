@@ -578,3 +578,88 @@ class SalesWorkflowTests(APITestCase):
         posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
         self.assertEqual(posted.status_code, 200, posted.data)
 
+
+
+    def test_sales_invoice_above_company_amount_limit_requires_manager_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("100"),
+            max_sales_invoice_amount=Decimal("200"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-AMOUNT-APPROVAL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-AMOUNT-APPROVAL", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["grand_total"], "228.0000")
+        self.assertEqual(invoice.data["invoice_approval_limit"], "200.0000")
+        self.assertEqual(invoice.data["approval_status"], "pending")
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        self.assertEqual(approval.requested_invoice_limit, Decimal("200.0000"))
+        blocked = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+        manager = get_user_model().objects.create_user(username="amount-limit-manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/", {"note": "اعتماد قيمة الفاتورة"}, format="json"
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], "posted")
+
+    def test_sales_invoice_at_amount_limit_does_not_require_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("100"),
+            max_sales_invoice_amount=Decimal("228"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-AMOUNT-BOUNDARY")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-AMOUNT-BOUNDARY", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["approval_status"], "not_required")
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+    def test_revising_amount_limited_invoice_below_limit_supersedes_pending_request(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("100"),
+            max_sales_invoice_amount=Decimal("200"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-AMOUNT-REVISE")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-AMOUNT-REVISE", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        revised = self.client.patch(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/",
+            {"lines": [{"delivery_line": line_id, "unit_price": "80", "tax_rate": "14"}]},
+            format="json",
+        )
+        self.assertEqual(revised.status_code, 200, revised.data)
+        self.assertEqual(revised.data["approval_status"], "not_required")
+        approval.refresh_from_db()
+        self.assertEqual(approval.status, SalesInvoiceApproval.Status.SUPERSEDED)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
