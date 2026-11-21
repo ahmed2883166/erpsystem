@@ -50,6 +50,9 @@ def inspect_account_workbook(upload, company):
     try:
         workbook = load_workbook(BytesIO(upload.read()), read_only=True, data_only=True)
         sheet = workbook.active
+        if sheet.max_row > MAX_ROWS + 1 or sheet.max_column > 50:
+            workbook.close()
+            return {"errors": [f"الملف يتجاوز الحد المسموح: {MAX_ROWS} حسابًا أو 50 عمودًا."], "rows": [], "summary": {}}
         iterator = sheet.iter_rows(values_only=True)
         headers = next(iterator, None)
         if not headers:
@@ -93,6 +96,8 @@ def inspect_account_workbook(upload, company):
             raw_rows.append({"excel_row": excel_row, "code": code, "name_ar": name, "parent_code": parent_code,
                              "nature": nature, "is_group": is_group, "errors": errors, "warnings": [], "status": "جاهز"})
         workbook.close()
+        if not raw_rows:
+            return {"errors": ["لا توجد حسابات في الملف بعد صف العناوين."], "rows": [], "summary": {}}
     except Exception:
         return {"errors": ["تعذر قراءة الملف. تأكد أنه ملف Excel سليم وغير محمي بكلمة مرور."], "rows": [], "summary": {}}
 
