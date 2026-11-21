@@ -1,9 +1,11 @@
+from datetime import date
 from decimal import Decimal
 
 from django.db.models import Q, Sum
+from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
@@ -275,6 +277,106 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف المسودات متاح لمدير الشركة فقط.")
         instance.delete()
+
+    @action(detail=False, methods=("get",), url_path="stock-card")
+    def stock_card(self, request):
+        product_id = request.query_params.get("product")
+        warehouse_id = request.query_params.get("warehouse")
+        if not product_id or not warehouse_id:
+            return Response({"detail": "حدد الصنف والمخزن لعرض بطاقة الصنف."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            product_id, warehouse_id = int(product_id), int(warehouse_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "معرّف الصنف أو المخزن غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+
+        companies = accessible_companies(request.user)
+        product = Product.objects.filter(pk=product_id, company__in=companies, product_type=Product.ProductType.GOODS).first()
+        if product is None:
+            raise NotFound("الصنف غير موجود أو غير متاح.")
+        warehouse_query = Warehouse.objects.filter(pk=warehouse_id, company_id=product.company_id, is_active=True)
+        if not request.user.is_superuser:
+            branches = accessible_branches(request.user)
+            warehouse_query = warehouse_query.filter(Q(branch__isnull=True) | Q(branch__in=branches))
+        warehouse = warehouse_query.first()
+        if warehouse is None:
+            raise NotFound("المخزن غير موجود أو غير متاح.")
+
+        date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
+        date_from = parse_date(date_from_raw) if date_from_raw else None
+        date_to = parse_date(date_to_raw) if date_to_raw else None
+        if (date_from_raw and date_from is None) or (date_to_raw and date_to is None):
+            return Response({"detail": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+        if date_from and date_to and date_from > date_to:
+            return Response({"detail": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."}, status=status.HTTP_400_BAD_REQUEST)
+
+        movements = self.get_queryset().filter(
+            status=StockMovement.Status.POSTED,
+            lines__product_id=product_id,
+        ).filter(Q(source_warehouse_id=warehouse_id) | Q(destination_warehouse_id=warehouse_id)).distinct().prefetch_related("lines")
+        events = []
+        for movement in movements:
+            direction = "in" if movement.destination_warehouse_id == warehouse_id else "out"
+            for line in movement.lines.all():
+                if line.product_id != product_id:
+                    continue
+                events.append({
+                    "date": movement.movement_date,
+                    "movement_number": movement.movement_number,
+                    "movement_type": movement.movement_type,
+                    "direction": direction,
+                    "quantity": line.quantity,
+                    "unit_cost": line.unit_cost,
+                    "cost_amount": line.cost_amount,
+                })
+        events.sort(key=lambda item: (item["date"], item["movement_number"]))
+        opening_quantity, opening_value = Decimal("0"), Decimal("0")
+        period_events = []
+        for event in events:
+            if date_from and event["date"] < date_from:
+                sign = Decimal("1") if event["direction"] == "in" else Decimal("-1")
+                opening_quantity += sign * event["quantity"]
+                opening_value += sign * event["cost_amount"]
+            elif date_to and event["date"] > date_to:
+                continue
+            else:
+                period_events.append(event)
+
+        running_quantity, running_value = opening_quantity, opening_value
+        rows = []
+        for event in period_events:
+            incoming = event["quantity"] if event["direction"] == "in" else Decimal("0")
+            outgoing = event["quantity"] if event["direction"] == "out" else Decimal("0")
+            incoming_value = event["cost_amount"] if event["direction"] == "in" else Decimal("0")
+            outgoing_value = event["cost_amount"] if event["direction"] == "out" else Decimal("0")
+            running_quantity += incoming - outgoing
+            running_value += incoming_value - outgoing_value
+            rows.append({
+                "date": event["date"].isoformat(),
+                "movement_number": event["movement_number"],
+                "movement_type": event["movement_type"],
+                "direction": event["direction"],
+                "quantity_in": str(incoming),
+                "quantity_out": str(outgoing),
+                "unit_cost": str(event["unit_cost"]),
+                "value_in": str(incoming_value),
+                "value_out": str(outgoing_value),
+                "balance_quantity": str(running_quantity),
+                "balance_value": str(running_value),
+            })
+        return Response({
+            "product": product.pk,
+            "product_code": product.code,
+            "product_name": product.name_ar,
+            "warehouse": warehouse.pk,
+            "warehouse_name": warehouse.name_ar,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "opening_quantity": str(opening_quantity),
+            "opening_value": str(opening_value),
+            "closing_quantity": str(running_quantity),
+            "closing_value": str(running_value),
+            "rows": rows,
+        })
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
