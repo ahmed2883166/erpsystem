@@ -160,3 +160,14 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .aging-metric-card:focus-visible{outline:2px solid #438bd2;outline-offset:3px}
 .aging-buckets{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid #edf0f5;margin-top:12px;padding-top:10px;color:#8390a2;font-size:9px}
 @media(max-width:680px){.receivables-payables-grid{grid-template-columns:1fr}.aging-buckets{font-size:10px}}
+
+.treasury-panel .module-tabs{display:flex;gap:8px;margin:18px 0;flex-wrap:wrap}
+.treasury-panel .module-tabs button{border:1px solid #e4eaf2;background:#f7f9fc;color:#607086;border-radius:8px;padding:9px 14px;font-size:11px;cursor:pointer}
+.treasury-panel .module-tabs button.active{background:#eaf3ff;border-color:#a9c8ed;color:#2868ad}
+.treasury-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0 22px;padding:16px;background:#f8fafc;border:1px solid #e9eef5;border-radius:10px}
+.treasury-form label{display:flex;flex-direction:column;gap:6px;color:#64748b;font-size:10px}
+.treasury-form input,.treasury-form select{width:100%;min-width:0;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#26354b;padding:9px;font:inherit;font-size:11px}
+.treasury-form .form-wide{grid-column:1/-1}
+.treasury-form-actions{display:flex;align-items:end;justify-content:flex-start}
+@media(max-width:760px){.treasury-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.treasury-form{grid-template-columns:1fr}.treasury-form .form-wide{grid-column:auto}}
