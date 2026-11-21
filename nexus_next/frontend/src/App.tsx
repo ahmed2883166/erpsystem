@@ -247,7 +247,7 @@ export default function App() {
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
           {active === "purchasing" && <PurchasingPanel companyId={companyId} />}
           {active === "inventory" && <InventoryPanel companyId={companyId} />}
-          {active === "treasury" && <TreasuryPanel companyId={companyId} />}
+          {active === "treasury" && companyId !== null && <TreasuryPanel companyId={companyId} />}
           {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
