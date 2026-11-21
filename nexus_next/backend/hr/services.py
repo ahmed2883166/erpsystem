@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 
-from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, PayrollCycle, PayrollResult, PayrollResultLine
+from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollResult, PayrollResultLine
 
 
 CENT = Decimal("0.01")
@@ -70,13 +70,23 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         attendance = AttendanceRecord.objects.filter(employee=employee, work_date__range=(employment_start, employment_end))
         attendance_count = attendance.count()
         base_payable_days = Decimal("30") if full_calendar_month and employment_start == cycle.period_start and employment_end == cycle.period_end else min(calendar_days, Decimal("30"))
-        if attendance_count:
-            absent_days = attendance.filter(status__in=(AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.UNPAID_LEAVE)).count()
-            payable_days = max(Decimal("0"), base_payable_days - Decimal(absent_days))
-        elif employee.status == Employee.Status.UNPAID_LEAVE:
+        unpaid_dates = set(attendance.filter(
+            status__in=(AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.UNPAID_LEAVE)
+        ).values_list("work_date", flat=True))
+        approved_unpaid = LeaveRequest.objects.filter(
+            employee=employee, status=LeaveRequest.Status.APPROVED, kind=LeaveRequest.Kind.UNPAID,
+            start_date__lte=employment_end, end_date__gte=employment_start,
+        ).values_list("start_date", "end_date")
+        for leave_start, leave_end in approved_unpaid:
+            day = max(leave_start, employment_start)
+            final_day = min(leave_end, employment_end)
+            while day <= final_day:
+                unpaid_dates.add(day)
+                day += timedelta(days=1)
+        if not attendance_count and employee.status == Employee.Status.UNPAID_LEAVE and not approved_unpaid:
             payable_days = Decimal("0")
         else:
-            payable_days = base_payable_days
+            payable_days = max(Decimal("0"), base_payable_days - Decimal(len(unpaid_dates)))
         daily_divisor = Decimal(str((cycle.rule_set.configuration if cycle.rule_set_id else {}).get("monthly_daily_divisor", 30)))
         if daily_divisor <= 0:
             raise ValidationError("مقسم الراتب اليومي يجب أن يكون أكبر من صفر.")
