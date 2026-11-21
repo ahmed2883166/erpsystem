@@ -214,7 +214,7 @@ export type StockMovement = {
   status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
 };
 export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[] };
-export type InventoryReconciliation = { company: number; account_id: number; account_code: string; account_name: string; stock_value: string; gl_balance: string; difference: string; is_reconciled: boolean; basis: string };
+export type InventoryReconciliation = { company: number; branch: number | null; branch_code: string; branch_name: string; scope_branch_ids: number[]; scope_note: string; account_id: number; account_code: string; account_name: string; stock_value: string; gl_balance: string; difference: string; is_reconciled: boolean; basis: string };
 export type StockBalance = {
   id: number; product: number; product_code: string; product_name: string; warehouse: number;
   warehouse_name: string; location: number | null; location_name: string | null; expiry_date: string | null; quantity: string; average_cost: string; inventory_value: string; updated_at: string;
@@ -224,7 +224,7 @@ export const stockApi = {
   balances: (companyId: number) => request<StockBalance[]>(`/api/inventory/balances/?warehouse__company=${companyId}&ordering=product__code`),
   createMovement: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<StockMovement>("/api/inventory/movements/", { method: "POST", body: JSON.stringify(payload) }); },
   postMovement: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<StockMovement>(`/api/inventory/movements/${id}/post/`, { method: "POST" }); },
-  reconciliation: (companyId: number) => request<InventoryReconciliation>(`/api/inventory/balances/reconciliation/?company=${companyId}`),
+  reconciliation: (companyId: number, branchId?: number) => request<InventoryReconciliation>(`/api/inventory/balances/reconciliation/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
 };
 
