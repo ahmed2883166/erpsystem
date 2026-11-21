@@ -9,9 +9,9 @@ from companies.models import Company
 class DiscountApprovalPolicy(models.Model):
     company = models.OneToOneField(Company, on_delete=models.PROTECT, related_name="discount_approval_policy")
     max_discount_percent = models.DecimalField(
-        max_digits=7, decimal_places=4,
+        max_digits=7, decimal_places=4, null=True, blank=True,
         validators=[MinValueValidator(0), MaxValueValidator(100)],
-        help_text="الحد الأقصى للخصم المسموح دون موافقة مدير الشركة.",
+        help_text="الحد الأقصى للخصم المسموح دون موافقة مدير الشركة؛ اتركه فارغًا لتعطيله.",
     )
     max_sales_invoice_amount = models.DecimalField(
         max_digits=20, decimal_places=4, null=True, blank=True,
@@ -31,6 +31,8 @@ class DiscountApprovalPolicy(models.Model):
         super().clean()
         if self.max_discount_percent is not None and not (0 <= self.max_discount_percent <= 100):
             raise ValidationError({"max_discount_percent": "نسبة الحد يجب أن تكون بين 0 و100."})
+        if self.max_discount_percent is None and self.max_sales_invoice_amount is None:
+            raise ValidationError("يجب تحديد حد للخصم أو حد لقيمة فاتورة المبيعات على الأقل.")
 
 
 class SalesInvoiceApproval(models.Model):
