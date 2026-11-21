@@ -499,6 +499,7 @@ export default function App() {
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>([]);
   const [saving, setSaving] = useState(false);
   const [postingId, setPostingId] = useState<number | null>(null);
+  const [reversingId, setReversingId] = useState<number | null>(null);
   const [selectedJournal, setSelectedJournal] = useState<Journal | null>(null);
   const [journalError, setJournalError] = useState("");
   const [draft, setDraft] = useState({ branch: "", fiscal_year: "", entry_number: "", entry_date: new Date().toISOString().slice(0, 10), description: "" });
@@ -585,6 +586,20 @@ const postDraft = async (entry: Journal) => {
     try { await api.postJournal(entry.id); if (companyId) setJournals(await api.journals(companyId)); setSelectedJournal(null); }
     catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر ترحيل القيد."); }
     finally { setPostingId(null); }
+  };
+  // عكس قيد مرحّل بعد التأكيد، ثم تحديث قائمة القيود وإظهار نتيجة العملية.
+  const reverseJournal = async (entry: Journal) => {
+    if (!window.confirm("سيتم إنشاء قيد عكسي وترحيله وربطه بالقيد " + entry.entry_number + ". هل تريد المتابعة؟")) return;
+    setJournalError(""); setReversingId(entry.id);
+    try {
+      await api.reverseJournal(entry.id);
+      if (companyId) setJournals(await api.journals(companyId));
+      if (selectedJournal?.id === entry.id) setSelectedJournal(null);
+    } catch (reason) {
+      setJournalError(reason instanceof Error ? reason.message : "تعذر عكس القيد.");
+    } finally {
+      setReversingId(null);
+    }
   };
   const filteredJournals = useMemo(() => journals.filter((entry) =>
     `${entry.entry_number} ${entry.description}`.toLowerCase().includes(search.toLowerCase())), [journals, search]);
@@ -673,7 +688,7 @@ const postDraft = async (entry: Journal) => {
           {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
             {journalError && <div className="error-banner">{journalError}</div>}<div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead>
-              <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td><td>{entry.status === "draft" ? <button className="subtle-button" onClick={() => { setJournalError(""); setSelectedJournal(entry); }}>مراجعة</button> : "—"}</td></tr>)}</tbody></table>
+              <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td><td>{entry.status === "draft" ? <button className="subtle-button" onClick={() => { setJournalError(""); setSelectedJournal(entry); }}>مراجعة</button> : entry.status === "posted" ? <button className="subtle-button" disabled={reversingId === entry.id} onClick={() => void reverseJournal(entry)}>{reversingId === entry.id ? "جارٍ العكس…" : "عكس القيد"}</button> : "—"}</td></tr>)}</tbody></table>
               {!loading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div></section>}
 
           {active === "reports" && <section className="work-panel"><div className="work-panel-head"><div><h2>ميزان المراجعة</h2><p>أرصدة الحسابات من القيود المرحلة فقط — للشركة المحددة</p></div><span className="coming-soon">{trialBalance?.accounts.length ?? 0} حساب</span></div>
