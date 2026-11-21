@@ -27,11 +27,11 @@ class AuditEvent(models.Model):
     )
     company = models.ForeignKey(
         "companies.Company", null=True, blank=True,
-        on_delete=models.SET_NULL, related_name="audit_events",
+        on_delete=models.PROTECT, related_name="audit_events",
     )
     branch = models.ForeignKey(
         "companies.Branch", null=True, blank=True,
-        on_delete=models.SET_NULL, related_name="audit_events",
+        on_delete=models.PROTECT, related_name="audit_events",
     )
     action = models.CharField(max_length=8, choices=Action.choices, db_index=True)
     resource = models.CharField(max_length=180, db_index=True)
