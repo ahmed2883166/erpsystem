@@ -494,3 +494,21 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:640px){.account-import-card{padding:14px}.account-import-heading{align-items:flex-start}.account-import-controls{align-items:stretch}.account-import-controls input[type=file]{min-width:100%}.account-import-controls button{flex:1}}
 
 .import-row-warning{display:block;color:#e5bd76;font-size:11px;margin-top:4px;line-height:1.5}
+
+
+.account-role-manager{margin:18px 0;padding:20px;border:1px solid var(--line,#263449);border-radius:18px;background:linear-gradient(145deg,rgba(21,37,58,.78),rgba(12,23,38,.92));display:grid;gap:15px}
+.account-role-manager-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.account-role-manager-heading h3{margin:0;color:var(--text,#eef4ff);font-size:16px}
+.account-role-manager-heading p{margin:6px 0 0;color:var(--muted,#9aabc1);font-size:12px;line-height:1.7}
+.account-role-manager-heading>span{white-space:nowrap;border:1px solid rgba(90,157,220,.28);border-radius:999px;padding:6px 10px;color:#9ccaf0;font-size:11px}
+.account-role-manager-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.account-role-manager-row{min-width:0;display:grid;grid-template-columns:minmax(110px,.8fr) minmax(150px,1.3fr) auto;align-items:center;gap:9px;padding:11px;border:1px solid rgba(117,145,179,.15);border-radius:12px;background:rgba(5,14,27,.32)}
+.account-role-manager-label{min-width:0;display:grid;gap:4px}
+.account-role-manager-label strong{font-size:12px;color:var(--text,#eaf1fb)}
+.account-role-manager-label small{font-size:10px;color:var(--muted,#8fa2bb)}
+.account-role-manager-row select{width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line,#34445b);border-radius:9px;background:#101e30;color:var(--text,#eef4ff);font:inherit;font-size:11px}
+.account-role-manager-row button{white-space:nowrap;padding:8px 10px;font-size:11px}
+.account-role-manager-row button:disabled{opacity:.4;cursor:not-allowed}
+.account-role-manager-footnote{font-size:11px;color:var(--muted,#94a6bd);line-height:1.6}
+@media(max-width:900px){.account-role-manager-grid{grid-template-columns:1fr}}
+@media(max-width:560px){.account-role-manager{padding:13px}.account-role-manager-row{grid-template-columns:1fr;gap:8px}.account-role-manager-row button{width:100%}.account-role-manager-heading{flex-direction:column}}
