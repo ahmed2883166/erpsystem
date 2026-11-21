@@ -80,6 +80,28 @@ export const purchasingApi = {
   postPayment: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierPayment>(`/api/purchasing/payments/${id}/post/`, { method: "POST" }); },
 };
 
+
+export type TreasuryAccount = {
+  id: number; company: number; branch: number | null; branch_name: string; account: number;
+  account_code: string; account_name: string; kind: "cash" | "bank"; code: string; name_ar: string;
+  bank_name: string; account_number: string; iban: string; currency_code: string;
+  opening_balance: string; is_active: boolean;
+};
+export type TreasuryTransaction = {
+  id: number; company: number; branch: number; fiscal_year: number; source_account: number; source_name: string;
+  destination_account: number | null; destination_name: string; counter_account: number | null; counter_account_code: string;
+  kind: "receipt" | "payment" | "transfer"; status: "draft" | "posted"; document_number: string;
+  transaction_date: string; amount: string; description: string; reference: string; journal_entry: number | null;
+  journal_number: string; created_at: string; posted_at: string | null;
+};
+export const treasuryApi = {
+  accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
+  transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
+  createAccount: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryAccount>("/api/treasury/accounts/", {method:"POST", body:JSON.stringify(payload)}); },
+  createTransaction: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>("/api/treasury/transactions/", {method:"POST", body:JSON.stringify(payload)}); },
+  postTransaction: async (id: number) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/post/`, {method:"POST"}); },
+};
+
 export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
