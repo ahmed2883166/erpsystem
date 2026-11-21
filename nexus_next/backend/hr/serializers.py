@@ -76,10 +76,16 @@ class PayrollComponentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({field: "الحساب يجب أن يتبع نفس الشركة."})
         expense = attrs.get("expense_account", getattr(self.instance, "expense_account", None))
         payable = attrs.get("payable_account", getattr(self.instance, "payable_account", None))
+        kind = attrs.get("kind", getattr(self.instance, "kind", None))
+        method = attrs.get("method", getattr(self.instance, "method", None))
         if expense and expense.nature != "expense":
             raise serializers.ValidationError({"expense_account": "اختر حساب مصروفات."})
         if payable and payable.nature != "liability":
             raise serializers.ValidationError({"payable_account": "اختر حساب التزامات."})
+        if method in (PayrollComponent.Method.EMPLOYEE_INSURANCE, PayrollComponent.Method.PROGRESSIVE_TAX) and kind != PayrollComponent.Kind.DEDUCTION:
+            raise serializers.ValidationError({"kind": "التأمينات والضريبة الخاصة بالموظف يجب أن تكون استقطاعًا."})
+        if method == PayrollComponent.Method.EMPLOYER_INSURANCE and kind != PayrollComponent.Kind.EMPLOYER_SHARE:
+            raise serializers.ValidationError({"kind": "تأمينات صاحب العمل يجب أن تكون من نوع حصة صاحب العمل."})
         return attrs
 
 
