@@ -42,6 +42,17 @@ const roleNames: Record<string, string> = {
   inter_branch_clearing: "تسويات الفروع",
 };
 
+const roleNatures: Record<string, string> = {
+  cash:"asset", bank:"asset", accounts_receivable:"asset", inventory:"asset", vat_input:"asset",
+  accounts_payable:"liability", vat_output:"liability", vat_payable:"liability",
+  employee_insurance_payable:"liability", employer_insurance_payable:"liability",
+  payroll_payable:"liability", goods_received_not_invoiced:"liability", inter_branch_clearing:"liability",
+  sales:"revenue", sales_returns:"revenue", inventory_adjustment_gain:"revenue",
+  cogs:"expense", operating_expense:"expense", payroll_expense:"expense",
+  employer_insurance_expense:"expense", inventory_adjustment_loss:"expense",
+  retained_earnings:"equity",
+};
+
 const natureFilters = [
   { value: "all", label: "كل الحسابات" },
   { value: "asset", label: "الأصول" },
@@ -81,6 +92,7 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     let alive = true;
     if (!companyId) { setRoles([]); setTemplate(null); setExpanded(new Set()); return; }
     setError("");
+    setRoleSelections({});
     Promise.all([accountRoleApi.list(companyId), api.accountTemplateInfo(companyId)])
       .then(([roleRows, templateInfo]) => {
         if (alive) { setRoles(roleRows); setTemplate(templateInfo); }
@@ -285,7 +297,7 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
         {Object.entries(roleNames).map(([role, label]) => {
           const current = roles.find(item => item.role === role);
           const selected = roleSelections[role] ?? current?.account ?? 0;
-          const eligible = accounts.filter(item => item.is_active && !item.is_group && item.allow_posting);
+          const eligible = accounts.filter(item => item.is_active && !item.is_group && item.allow_posting && (!roleNatures[role] || item.nature === roleNatures[role]));
           const selectedAccount = accounts.find(item => item.id === selected);
           const changed = Boolean(selected && selected !== current?.account);
           return <div className="account-role-manager-row" key={role}>
