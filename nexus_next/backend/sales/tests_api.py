@@ -191,6 +191,32 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(denied.status_code, 403)
 
 
+
+    def test_vat_report_groups_posted_sales_by_tax_code_and_category(self):
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-STD-14", name_ar="ضريبة قياسية",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=True,
+        )
+        _, line_id = self._create_delivery("DEL-VAT-REPORT")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": self.company.sales_deliveries.get(delivery_number="DEL-VAT-REPORT").pk,
+            "invoice_number": "INV-VAT-REPORT", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        report = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["output_tax"], "28.0000")
+        self.assertEqual(report.data["sales"]["by_code"][0]["tax_code"], "VAT-STD-14")
+        self.assertEqual(report.data["sales"]["by_category"][0]["category"], "standard")
+
     def test_sales_invoice_uses_configured_tax_code_rate_and_validity(self):
         delivery_id, line_id = self._create_delivery("DEL-TAX-1")
         code = TaxCode.objects.create(
