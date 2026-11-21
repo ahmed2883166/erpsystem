@@ -1,9 +1,21 @@
+import logging
+
 from django.contrib.admin.models import LogEntry
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 from .models import AuditEvent
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_create_audit_event(**kwargs):
+    try:
+        AuditEvent.objects.create(**kwargs)
+    except Exception:
+        # Audit outages must not break authentication or Django Admin actions.
+        logger.exception("Could not persist authentication/admin audit event")
 
 
 def _request_details(request):
@@ -14,7 +26,7 @@ def _request_details(request):
 
 def _record_auth_event(*, request, user, event, succeeded, status_code):
     ip_address, user_agent = _request_details(request)
-    AuditEvent.objects.create(
+    _safe_create_audit_event(
         actor=user,
         action=AuditEvent.Action.ACTION,
         resource=f"authentication.{event}",
@@ -63,9 +75,11 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
         LogEntry.DELETION: AuditEvent.Action.DELETE,
     }
     action = action_by_flag.get(instance.action_flag, AuditEvent.Action.ACTION)
+    if instance.content_type_id is None:
+        return
     model_name = instance.content_type.model
     app_label = instance.content_type.app_label
-    AuditEvent.objects.create(
+    _safe_create_audit_event(
         actor=instance.user,
         action=action,
         resource=f"django_admin.{app_label}.{model_name}"[:180],
