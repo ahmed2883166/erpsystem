@@ -75,7 +75,9 @@ try {
     $AllowedLine = (Select-String -Path $EnvFile -Pattern "^DJANGO_ALLOWED_HOSTS=" | Select-Object -First 1).Line
     $AllowedHosts = @()
     if ($AllowedLine) {
-      $AllowedHosts = (($AllowedLine -split "=", 2)[1] -replace "[\"']", "").Split(",") | ForEach-Object { $_.Trim() }
+      $AllowedValue = ($AllowedLine -split "=", 2)[1]
+      $AllowedValue = $AllowedValue.Replace('"', '').Replace("'", '')
+      $AllowedHosts = $AllowedValue.Split(",") | ForEach-Object { $_.Trim() }
     }
     $HasLanHost = $AllowedHosts | Where-Object { $_ -and $_ -notin @("localhost", "127.0.0.1", "[::1]") }
     if (-not $HasLanHost) {
