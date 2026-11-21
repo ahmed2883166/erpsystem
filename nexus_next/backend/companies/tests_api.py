@@ -161,10 +161,13 @@ class CompanySetupApiTests(APITestCase):
         membership = CompanyMembership.objects.create(user=target, company=self.company, role="viewer")
         CompanyMembership.objects.create(user=accountant, company=self.company, role="accountant", all_branches=True)
         self.client.force_authenticate(accountant)
+        visible = self.client.get(f"/api/setup/memberships/?company={self.company.pk}")
+        self.assertEqual(visible.status_code, 200, visible.data)
+        self.assertEqual([row["user"] for row in visible.data], [accountant.pk])
         response = self.client.patch(
             f"/api/setup/memberships/{membership.pk}/", {"role": "admin"}, format="json"
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
         membership.refresh_from_db()
         self.assertEqual(membership.role, "viewer")
 
