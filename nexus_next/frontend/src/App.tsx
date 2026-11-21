@@ -6,8 +6,9 @@ import PurchasingPanel from "./PurchasingPanel";
 import SalesPanel from "./SalesPanel";
 import InventoryPanel from "./InventoryPanel";
 import TreasuryPanel from "./TreasuryPanel";
+import FixedAssetsPanel from "./FixedAssetsPanel";
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "setup";
+type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
   { id: "overview", label: "نظرة عامة", icon: "◫", group: "الرئيسية" },
@@ -19,6 +20,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "purchasing", label: "دورة المشتريات", icon: "↙", group: "المشتريات" },
   { id: "inventory", label: "المخزون والمستودعات", icon: "▦", group: "المخزون" },
   { id: "treasury", label: "الخزينة والبنوك", icon: "¤", group: "المالية" },
+  { id: "fixed-assets", label: "الأصول الثابتة", icon: "▣", group: "المالية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
 ];
@@ -28,7 +30,7 @@ const modules = [
   { title: "المشتريات والموردون", detail: "الموردون وأذون الاستلام وفواتير الموردين", icon: "↙", tone: "cyan", section: "purchasing" as Section },
   { title: "المخزون والمستودعات", detail: "الأصناف والمجموعات ووحدات القياس والمخازن", icon: "▦", tone: "amber", section: "inventory" as Section },
   { title: "المرتبات والموارد البشرية", detail: "الموظفون والاستحقاقات والحضور", icon: "♙", tone: "green", section: "setup" as Section },
-  { title: "الأصول الثابتة", detail: "الإهلاك والتصرفات والتسويات", icon: "▣", tone: "rose", section: "setup" as Section },
+  { title: "الأصول الثابتة", detail: "تسجيل الأصول والإهلاك وربط القيود", icon: "▣", tone: "rose", section: "fixed-assets" as Section },
 ];
 const natureNames: Record<string, string> = { asset: "أصول", liability: "التزامات", equity: "حقوق ملكية", revenue: "إيرادات", expense: "مصروفات" };
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
@@ -166,7 +168,7 @@ export default function App() {
             <option value="">—</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.name_ar}</option>)}
           </select></div>
         <nav className="navigation">
-          {["الرئيسية", "المحاسبة", "المبيعات", "المشتريات", "المخزون", "التقارير", "الإدارة"].map((group) => <div className="nav-group" key={group}><p>{group}</p>
+          {["الرئيسية", "المحاسبة", "المبيعات", "المشتريات", "المخزون", "المالية", "التقارير", "الإدارة"].map((group) => <div className="nav-group" key={group}><p>{group}</p>
             {navigation.filter((item) => item.group === group).map((item) => <button key={item.id} className={`nav-item ${active === item.id ? "nav-active" : ""}`}
               onClick={() => { setActive(item.id); setSearch(""); setSidebarOpen(false); }}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{active === item.id && <i />}</button>)}
           </div>)}
@@ -248,6 +250,7 @@ export default function App() {
           {active === "purchasing" && <PurchasingPanel companyId={companyId} />}
           {active === "inventory" && <InventoryPanel companyId={companyId} />}
           {active === "treasury" && companyId !== null && <TreasuryPanel companyId={companyId} />}
+          {active === "fixed-assets" && <FixedAssetsPanel companyId={companyId} />}
           {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
