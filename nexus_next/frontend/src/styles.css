@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
-:root{font-family:'Cairo',Tahoma,sans-serif;color:#172033;background:#f5f7fb;font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto}
+/* Offline-first font stack: no external font request required on LAN deployments. */
+:root{font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:#172033;background:#f5f7fb;font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto}
 *{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh;background:#f5f7fb}button{font:inherit;cursor:pointer}
 .app-shell{min-height:100vh;display:flex;background:#f5f7fb}.sidebar{width:264px;background:#111c2e;color:#e8eef8;display:flex;flex-direction:column;padding:25px 17px 17px;flex-shrink:0;min-height:100vh;position:sticky;top:0;height:100vh;overflow:auto}
 .brand-lockup{display:flex;align-items:center;gap:11px;padding:0 8px 27px;border-bottom:1px solid #26344a}.brand-symbol{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:linear-gradient(145deg,#3b82f6,#2356bd);font-size:23px;font-weight:800;color:white;box-shadow:0 7px 18px #1d4ed844}.brand-lockup strong{display:block;font-size:18px;letter-spacing:2px;color:#fff}.brand-lockup span{display:block;font-size:8px;letter-spacing:1.2px;color:#8192aa}.sidebar-close{display:none;margin-right:auto;background:none;border:0;color:#aab8cb;font-size:24px}
