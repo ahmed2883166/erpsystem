@@ -99,12 +99,28 @@ export type CashFlowReport = {
   categories: {category:"operating"|"investing"|"financing";label:string;inflows:string;outflows:string;net:string}[];
   rows: {id:number;date:string;document_number:string;description:string;branch:string;category:string;kind:string;amount:string;signed_amount:string;treasury_account:string;journal_entry:number|null}[];
 };
+export type IndirectCashFlowReport = {
+  company: number; branch: number | null; date_from: string; date_to: string;
+  net_profit: string; non_cash_adjustments: { depreciation: string; disposal_loss: string; disposal_gain: string; net: string };
+  working_capital: { role: string; account_code: string; account_name: string; opening_balance: string; closing_balance: string; change: string; cash_flow_adjustment: string }[];
+  missing_account_roles: string[]; operating_adjustments: string; operating_cash_flow: string;
+  investing_cash_flow: string; financing_cash_flow: string; net_change_in_cash: string;
+  ledger_cash_change: string; reconciliation_difference: string;
+  investing_transactions: { id: number; transaction_date: string; document_number: string; description: string; kind: string; amount: string }[];
+  financing_transactions: { id: number; transaction_date: string; document_number: string; description: string; kind: string; amount: string }[];
+  note: string;
+};
 export const treasuryApi = {
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
   transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
   createAccount: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryAccount>("/api/treasury/accounts/", {method:"POST", body:JSON.stringify(payload)}); },
   createTransaction: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>("/api/treasury/transactions/", {method:"POST", body:JSON.stringify(payload)}); },
   postTransaction: async (id: number) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/post/`, {method:"POST"}); },
+  indirectCashFlow: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => {
+    const q = new URLSearchParams({company:String(companyId), date_from:dateFrom, date_to:dateTo});
+    if (branch) q.set("branch", String(branch));
+    return request<IndirectCashFlowReport>(`/api/accounting/journal-entries/indirect-cash-flow/?${q.toString()}`);
+  },
   cashFlow: (companyId: number, dateFrom?: string, dateTo?: string, branch?: number) => {
     const q = new URLSearchParams({company:String(companyId)});
     if (dateFrom) q.set("date_from", dateFrom);
