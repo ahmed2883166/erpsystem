@@ -169,7 +169,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
 
     def get_paid_total(self, obj):
         return str(sum(
-            (payment.amount for payment in obj.payments.filter(status="posted")),
+            (payment.amount for payment in (payment for payment in obj.payments.all() if payment.status == "posted")),
             Decimal("0"),
         ))
 
