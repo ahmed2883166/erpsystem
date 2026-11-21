@@ -1,5 +1,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.http import HttpResponse
+from openpyxl import Workbook
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
@@ -110,6 +112,39 @@ class AccountTemplateView(APIView):
 
 class AccountImportView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
+
+    def get(self, request):
+        if not request.user.is_authenticated:
+            raise PermissionDenied("سجل الدخول أولًا لتحميل النموذج.")
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "دليل الحسابات"
+        sheet.append(["كود الحساب", "اسم الحساب", "كود الأب", "طبيعة الحساب", "التصنيف"])
+        sheet.append(["1000", "الأصول", None, "أصول", "مجموعة"])
+        sheet.append(["1100", "الأصول المتداولة", "1000", "أصول", "مجموعة"])
+        sheet.append(["1110", "الصندوق", "1100", "أصول", "تفصيلي"])
+        sheet.append(["2000", "الالتزامات", None, "التزامات", "مجموعة"])
+        sheet.append(["2100", "الالتزامات المتداولة", "2000", "التزامات", "مجموعة"])
+        sheet.append(["2110", "الموردون", "2100", "التزامات", "تفصيلي"])
+        for column, width in {"A": 18, "B": 34, "C": 18, "D": 22, "E": 18}.items():
+            sheet.column_dimensions[column].width = width
+        instructions = workbook.create_sheet("تعليمات")
+        instructions.append(["تعليمات استيراد دليل الحسابات"])
+        instructions.append(["استبدل الصفوف التجريبية بحسابات شركتك أو احذفها."])
+        instructions.append(["الأعمدة الخمسة في ورقة دليل الحسابات مطلوبة، وكود الأب يترك فارغًا للحساب الرئيسي."])
+        instructions.append(["طبيعة الحساب: أصول، التزامات، حقوق الملكية، إيرادات، مصروفات."])
+        instructions.append(["التصنيف: مجموعة أو تفصيلي. الحساب التفصيلي فقط يقبل الترحيل."])
+        instructions.append(["يجب أن يكون الحساب الأب موجودًا في الملف أو في دليل الشركة وأن يكون مجموعة."])
+        instructions.append(["لن يتم تعديل أو حذف الحسابات الموجودة؛ الأكواد المتعارضة تمنع الاعتماد."])
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = 'attachment; filename="nexus-chart-template.xlsx"'
+        return response_file
 
     def post(self, request):
         company_id = request.data.get("company")
