@@ -145,13 +145,17 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
   }, [companyId]);
   useEffect(() => { if (companyId && from && to && from <= to) void load(); }, [companyId, branchId]);
   const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 });
+  const categoryNames: Record<string, string> = {
+    standard: "قياسية", zero_rated: "صفرية", exempt: "معفاة", out_of_scope: "خارج النطاق",
+    reverse_charge: "احتساب عكسي", legacy_unclassified: "نسبة قديمة غير مصنفة",
+  };
   const rows = report ? [
-    ...report.sales.by_rate.map(row => ["مبيعات", row.tax_rate, row.taxable_base, row.tax_amount, row.gross_amount]),
-    ...report.purchases.by_rate.map(row => ["مشتريات", row.tax_rate, row.taxable_base, row.tax_amount, row.gross_amount]),
+    ...report.sales.by_code.map(row => ["مبيعات", row.tax_code || "بدون كود", categoryNames[row.category] || row.category, row.tax_rate, row.taxable_base, row.tax_amount, row.gross_amount]),
+    ...report.purchases.by_code.map(row => ["مشتريات", row.tax_code || "بدون كود", categoryNames[row.category] || row.category, row.tax_rate, row.taxable_base, row.tax_amount, row.recoverable_tax_amount, row.gross_amount]),
   ] : [];
   return <div className="asset-reports">
-    <div className="work-panel-head"><div><h2>تسوية ضريبة القيمة المضافة</h2><p>مراجعة ضريبة المبيعات والمشتريات حسب نسبة الضريبة والفترة والفرع</p></div><div className="report-actions">
-      <button type="button" className="subtle-button" disabled={!report} onClick={() => report && downloadCsv(`vat-reconciliation-${report.date_from}-${report.date_to}.csv`, ["النوع", "نسبة الضريبة %", "الوعاء", "قيمة الضريبة", "الإجمالي"], rows)}>تصدير CSV (Excel)</button>
+    <div className="work-panel-head"><div><h2>تسوية ضريبة القيمة المضافة</h2><p>مراجعة المبيعات والمشتريات حسب كود الضريبة وتصنيفها ونسبة السريان والفترة والفرع</p></div><div className="report-actions">
+      <button type="button" className="subtle-button" disabled={!report} onClick={() => report && downloadCsv(`vat-reconciliation-${report.date_from}-${report.date_to}.csv`, ["النوع", "كود الضريبة", "التصنيف", "النسبة %", "الوعاء", "قيمة الضريبة", "القابل للخصم", "الإجمالي"], rows)}>تصدير CSV (Excel)</button>
       <button type="button" className="subtle-button" onClick={(event) => { const target = event.currentTarget.closest(".asset-reports"); if (target) { target.classList.add("print-active"); window.print(); target.classList.remove("print-active"); } }}>طباعة / PDF</button>
       <button type="button" className="primary-button" disabled={busy || !companyId || !from || !to || from > to} onClick={() => void load()}>{busy ? "جارٍ الفحص…" : "تحديث التقرير"}</button>
     </div></div>
@@ -166,13 +170,13 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
         <span>مبيعات خاضعة: {money(report.sales.taxable_base)} {report.currency}</span>
         <span>ضريبة المخرجات: {money(report.output_tax)} {report.currency}</span>
         <span>مشتريات خاضعة: {money(report.purchases.taxable_base)} {report.currency}</span>
-        <span>ضريبة المدخلات: {money(report.input_tax)} {report.currency}</span>
+        <span>ضريبة المدخلات القابلة للخصم: {money(report.input_tax)} {report.currency}</span>
         <b>صافي الضريبة المستحقة: {money(report.net_tax_payable)} {report.currency}</b>
       </div>
-      <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>النسبة</th><th>الوعاء الضريبي</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>
-        {report.sales.by_rate.map(row => <tr key={`s-${row.tax_rate}`}><td>مبيعات</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>{money(row.gross_amount)}</td></tr>)}
-        {report.purchases.by_rate.map(row => <tr key={`p-${row.tax_rate}`}><td>مشتريات</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>{money(row.gross_amount)}</td></tr>)}
-        {!rows.length && <tr><td colSpan={5}>لا توجد فواتير ضريبية مرحلة في الفترة المحددة.</td></tr>}
+      <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>الكود</th><th>التصنيف</th><th>النسبة</th><th>الوعاء</th><th>الضريبة</th><th>القابل للخصم</th><th>الإجمالي</th></tr></thead><tbody>
+        {report.sales.by_code.map((row, index) => <tr key={`s-${row.tax_code_id ?? "legacy"}-${row.tax_rate}-${index}`}><td>مبيعات</td><td>{row.tax_code || "بدون كود"}</td><td>{categoryNames[row.category] || row.category}</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>—</td><td>{money(row.gross_amount)}</td></tr>)}
+        {report.purchases.by_code.map((row, index) => <tr key={`p-${row.tax_code_id ?? "legacy"}-${row.tax_rate}-${index}`}><td>مشتريات</td><td>{row.tax_code || "بدون كود"}</td><td>{categoryNames[row.category] || row.category}</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>{money(row.recoverable_tax_amount)}</td><td>{money(row.gross_amount)}</td></tr>)}
+        {!rows.length && <tr><td colSpan={8}>لا توجد فواتير ضريبية مرحلة في الفترة المحددة.</td></tr>}
       </tbody></table></div>
       <p className="asset-report-note">{report.note}</p>
     </>}
