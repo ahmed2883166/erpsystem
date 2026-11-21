@@ -10,10 +10,10 @@ from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 
-from .models import Product, ProductCategory, StockBalance, StockMovement, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
-    UnitOfMeasureSerializer, WarehouseSerializer,
+    UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
 )
 
 
@@ -117,6 +117,45 @@ class WarehouseViewSet(CompanyScopedViewSet):
             self.request.user, branch.pk, company.pk if company else None
         ):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+
+
+class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
+    serializer_class = WarehouseProductSettingSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = WarehouseProductSetting.objects.select_related("product", "warehouse", "warehouse__company")
+    filterset_fields = ("warehouse", "product", "warehouse__company", "is_active")
+    search_fields = ("product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar")
+    ordering_fields = ("warehouse__code", "product__code", "min_stock", "updated_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        queryset = self.queryset.filter(warehouse__company__in=companies)
+        if self.request.user.is_superuser:
+            return queryset
+        branches = accessible_branches(self.request.user)
+        return queryset.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches))
+
+    def _check_write(self, company_id):
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
+            raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
+
+    def perform_create(self, serializer):
+        warehouse = serializer.validated_data["warehouse"]
+        self._check_write(warehouse.company_id)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        warehouse = serializer.validated_data.get("warehouse", serializer.instance.warehouse)
+        self._check_write(warehouse.company_id)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not has_company_role(self.request.user, instance.warehouse.company_id, ("admin",)):
+            raise PermissionDenied("حذف الإعدادات متاح لمدير الشركة فقط.")
+        instance.is_active = False
+        instance.save(update_fields=("is_active",))
 
 
 class StorageLocationViewSet(viewsets.ModelViewSet):
