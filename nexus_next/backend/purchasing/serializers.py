@@ -4,7 +4,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseReceipt, SupplierPayment
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -13,6 +13,7 @@ class ReceiptLineInputSerializer(serializers.Serializer):
     unit_cost = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
     destination_location = serializers.IntegerField(required=False, allow_null=True)
     expiry_date = serializers.DateField(required=False, allow_null=True)
+    purchase_order_line = serializers.IntegerField(required=False, allow_null=True)
 
     def validate(self, attrs):
         product = attrs["product"]
@@ -37,7 +38,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseReceipt
         fields = (
-            "id", "company", "supplier", "supplier_name", "warehouse", "warehouse_name",
+            "id", "company", "supplier", "supplier_name", "warehouse", "warehouse_name", "purchase_order",
             "receipt_number", "receipt_date", "supplier_delivery_ref", "notes",
             "movement_status", "movement_number", "line_items", "lines", "created_at",
         )
@@ -65,9 +66,25 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"warehouse": "مخزن الاستلام موقوف."})
         if not attrs.get("lines"):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        order = attrs.get("purchase_order")
+        if order:
+            if order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED):
+                raise serializers.ValidationError({"purchase_order": "أمر الشراء غير معتمد أو مكتمل الاستلام."})
+            if order.company_id != company.pk or order.supplier_id != supplier.pk or order.warehouse_id != warehouse.pk:
+                raise serializers.ValidationError({"purchase_order": "بيانات أمر الشراء لا تطابق الشركة أو المورد أو المخزن."})
+        requested_by_line = {}
         for line in attrs["lines"]:
             if company and line["product"].company_id != company.pk:
                 raise serializers.ValidationError({"lines": "كل الأصناف يجب أن تتبع نفس الشركة."})
+            order_line_id = line.get("purchase_order_line")
+            if order and not order_line_id:
+                raise serializers.ValidationError({"lines": "حدد بند أمر الشراء لكل صنف مستلم."})
+            if order_line_id:
+                order_line = PurchaseOrderLine.objects.filter(pk=order_line_id, order=order).select_related("product").first()
+                if not order_line or order_line.product_id != line["product"].pk:
+                    raise serializers.ValidationError({"lines": "بند أمر الشراء لا يطابق الصنف المحدد."})
+                line["purchase_order_line_obj"] = order_line
+                requested_by_line[order_line.pk] = requested_by_line.get(order_line.pk, Decimal("0")) + line["quantity"]
             location_id = line.get("destination_location")
             if location_id:
                 location = StorageLocation.objects.filter(
@@ -76,6 +93,10 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                 if not location:
                     raise serializers.ValidationError({"lines": "موقع التخزين غير نشط أو لا يتبع مخزن الاستلام."})
                 line["destination_location_obj"] = location
+        for order_line_id, requested in requested_by_line.items():
+            order_line = next(x["purchase_order_line_obj"] for x in attrs["lines"] if x.get("purchase_order_line_obj") and x["purchase_order_line_obj"].pk == order_line_id)
+            if requested > order_line.remaining_quantity:
+                raise serializers.ValidationError({"lines": f"الكمية المطلوبة تتجاوز المتبقي في أمر الشراء للصنف {order_line.product.code}."})
         return attrs
 
     @transaction.atomic
@@ -93,19 +114,21 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             notes=validated_data.get("notes", ""),
             created_by=user,
         )
-        StockMovementLine.objects.bulk_create([
+        movement_lines = StockMovementLine.objects.bulk_create([
             StockMovementLine(
-                movement=movement,
-                product=line["product"],
-                quantity=line["quantity"],
-                unit_cost=line["unit_cost"],
-                destination_location=line.get("destination_location_obj"),
+                movement=movement, product=line["product"], quantity=line["quantity"],
+                unit_cost=line["unit_cost"], destination_location=line.get("destination_location_obj"),
                 expiry_date=line.get("expiry_date"),
             ) for line in lines
         ])
-        return PurchaseReceipt.objects.create(
-            **validated_data, stock_movement=movement, created_by=user
-        )
+        receipt = PurchaseReceipt.objects.create(**validated_data, stock_movement=movement, created_by=user)
+        for movement_line, line in zip(movement_lines, lines):
+            if line.get("purchase_order_line_obj"):
+                PurchaseOrderReceiptLine.objects.create(
+                    receipt_line=movement_line, order_line=line["purchase_order_line_obj"],
+                    quantity=line["quantity"],
+                )
+        return receipt
 
 
 class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
@@ -247,3 +270,54 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         return SupplierPayment.objects.create(
             **validated_data, created_by=self.context["request"].user
         )
+
+
+class PurchaseOrderLineInputSerializer(serializers.Serializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
+    tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=0, max_value=100, required=False, default=Decimal("0"))
+
+
+class PurchaseOrderSerializer(serializers.ModelSerializer):
+    lines = PurchaseOrderLineInputSerializer(many=True, write_only=True)
+    line_items = serializers.SerializerMethodField()
+    supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
+    warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+
+    class Meta:
+        model = PurchaseOrder
+        fields = ("id", "company", "supplier", "supplier_name", "warehouse", "warehouse_name",
+                  "order_number", "order_date", "expected_date", "status", "notes", "lines",
+                  "line_items", "created_at", "confirmed_at")
+        read_only_fields = ("status", "line_items", "created_at", "confirmed_at")
+
+    def get_line_items(self, obj):
+        return [{
+            "id": line.pk, "product": line.product_id, "product_code": line.product.code,
+            "product_name": line.product.name_ar, "quantity": str(line.quantity),
+            "received_quantity": str(line.received_quantity), "remaining_quantity": str(line.remaining_quantity),
+            "unit_price": str(line.unit_price), "tax_rate": str(line.tax_rate),
+        } for line in obj.lines.select_related("product").all()]
+
+    def validate(self, attrs):
+        company, supplier, warehouse = attrs.get("company"), attrs.get("supplier"), attrs.get("warehouse")
+        if supplier and (supplier.company_id != company.pk or not supplier.is_active):
+            raise serializers.ValidationError({"supplier": "اختر موردًا نشطًا تابعًا للشركة."})
+        if warehouse and (warehouse.company_id != company.pk or not warehouse.is_active):
+            raise serializers.ValidationError({"warehouse": "اختر مخزنًا نشطًا تابعًا للشركة."})
+        lines = attrs.get("lines", [])
+        if not lines:
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        for line in lines:
+            product = line["product"]
+            if product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
+                raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lines = validated_data.pop("lines")
+        order = PurchaseOrder.objects.create(**validated_data, created_by=self.context["request"].user)
+        PurchaseOrderLine.objects.bulk_create([PurchaseOrderLine(order=order, **line) for line in lines])
+        return order
