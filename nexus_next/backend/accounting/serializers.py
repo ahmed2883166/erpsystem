@@ -1,6 +1,6 @@
 from django.db import transaction
 from rest_framework import serializers
-from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
+from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 
 
 class ChartOfAccountSerializer(serializers.ModelSerializer):
@@ -133,3 +133,32 @@ class JournalEntrySerializer(serializers.ModelSerializer):
             instance.lines.all().delete()
             JournalLine.objects.bulk_create([JournalLine(entry=instance, **line) for line in lines])
         return instance
+
+
+
+class TaxCodeSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name_ar", read_only=True)
+
+    class Meta:
+        model = TaxCode
+        fields = ("id", "company", "company_name", "country", "code", "name_ar", "category",
+                  "rate", "effective_from", "effective_to", "input_tax_recoverable",
+                  "is_active", "created_at")
+        read_only_fields = ("created_at",)
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        country = attrs.get("country", getattr(self.instance, "country", None))
+        category = attrs.get("category", getattr(self.instance, "category", TaxCode.Category.STANDARD))
+        rate = attrs.get("rate", getattr(self.instance, "rate", 0))
+        effective_from = attrs.get("effective_from", getattr(self.instance, "effective_from", None))
+        effective_to = attrs.get("effective_to", getattr(self.instance, "effective_to", None))
+        if company and country and company.country != country:
+            raise serializers.ValidationError({"country": "بلد الضريبة يجب أن يطابق بلد الشركة."})
+        if effective_from and effective_to and effective_to < effective_from:
+            raise serializers.ValidationError({"effective_to": "تاريخ انتهاء الضريبة يجب ألا يسبق تاريخ بدايتها."})
+        if category in (TaxCode.Category.ZERO_RATED, TaxCode.Category.EXEMPT, TaxCode.Category.OUT_OF_SCOPE) and rate != 0:
+            raise serializers.ValidationError({"rate": "هذه الفئة يجب أن تكون بنسبة صفر."})
+        if category == TaxCode.Category.STANDARD and rate <= 0:
+            raise serializers.ValidationError({"rate": "أدخل نسبة موجبة للفئة القياسية."})
+        return attrs
