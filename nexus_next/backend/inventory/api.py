@@ -507,18 +507,14 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                     "value_difference": str(value_difference),
                 })
 
-        movement_scope = (
-            Q(source_warehouse__branch_id__in=branch_ids)
-            | Q(destination_warehouse__branch_id__in=branch_ids)
-        )
+        source_scope = Q(source_warehouse__isnull=True) | Q(source_warehouse__branch_id__in=branch_ids)
+        destination_scope = Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch_id__in=branch_ids)
         if include_unassigned:
-            movement_scope |= (
-                Q(source_warehouse__isnull=True) | Q(source_warehouse__branch__isnull=True)
-                | Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch__isnull=True)
-            )
+            source_scope |= Q(source_warehouse__branch__isnull=True)
+            destination_scope |= Q(destination_warehouse__branch__isnull=True)
         pending = StockMovement.objects.filter(
             company_id=company_id, status=StockMovement.Status.DRAFT
-        ).filter(movement_scope).select_related(
+        ).filter(source_scope, destination_scope).select_related(
             "source_warehouse", "destination_warehouse", "created_by"
         ).prefetch_related("lines").order_by("movement_date", "id")
         pending_count = pending.count()
