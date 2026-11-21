@@ -78,6 +78,54 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual([row["id"] for row in response.data], [first.pk])
 
 
+
+    def test_viewer_cannot_change_company_branch_or_fiscal_year_settings(self):
+        branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(self.user)
+
+        company_update = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {"name_ar": "تغيير غير مصرح"},
+            format="json",
+        )
+        self.assertEqual(company_update.status_code, 403)
+
+        branch_create = self.client.post("/api/setup/branches/", {
+            "company": self.company.pk, "code": "NEW", "name_ar": "فرع جديد",
+        }, format="json")
+        self.assertEqual(branch_create.status_code, 403)
+
+        branch_update = self.client.patch(
+            f"/api/setup/branches/{branch.pk}/",
+            {"name_ar": "تعديل غير مصرح"},
+            format="json",
+        )
+        self.assertEqual(branch_update.status_code, 403)
+
+        year_create = self.client.post("/api/setup/fiscal-years/", {
+            "company": self.company.pk, "name": "2027",
+            "start_date": "2027-01-01", "end_date": "2027-12-31",
+        }, format="json")
+        self.assertEqual(year_create.status_code, 403)
+
+    def test_company_admin_can_manage_branch_and_fiscal_year_without_global_staff(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+
+        branch = self.client.post("/api/setup/branches/", {
+            "company": self.company.pk, "code": "ADMIN-BR", "name_ar": "فرع المدير",
+        }, format="json")
+        self.assertEqual(branch.status_code, 201, branch.data)
+
+        year = self.client.post("/api/setup/fiscal-years/", {
+            "company": self.company.pk, "name": "2027",
+            "start_date": "2027-01-01", "end_date": "2027-12-31",
+        }, format="json")
+        self.assertEqual(year.status_code, 201, year.data)
+
     def test_foreign_company_branch_cannot_be_granted_through_membership(self):
         own = CompanyMembership.objects.create(user=self.user, company=self.company)
         foreign_branch = Branch.objects.create(
