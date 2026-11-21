@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from companies.models import Branch, Company, CompanyMembership, Currency
-from .models import Product, ProductCategory, StockBalance, StockMovement, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, UnitOfMeasure, Warehouse
 
 
 class InventoryApiTests(APITestCase):
@@ -161,3 +161,25 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(second.status_code, 400, second.data)
         balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
         self.assertEqual(str(balance.quantity), "2.0000")
+
+
+    def test_fifo_consumes_oldest_cost_layer_first(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="FIFO-1", name_ar="صنف FIFO", costing_method="fifo"
+        )
+        warehouse = self._warehouse("FIFO-WH")
+        first = self._movement("FIFO-R1", "receipt", destination=warehouse, quantity="3", cost="5")
+        second = self._movement("FIFO-R2", "receipt", destination=warehouse, quantity="3", cost="10")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{first.data['id']}/post/", {}, format="json").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{second.data['id']}/post/", {}, format="json").status_code, 200)
+        issue = self._movement("FIFO-I1", "issue", source=warehouse, quantity="4")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        posted = self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        self.assertEqual(str(balance.quantity), "2.0000")
+        self.assertEqual(str(balance.inventory_value), "20.0000")
+        self.assertEqual(StockCostLayer.objects.filter(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).count(), 1)
+        self.assertEqual(str(StockCostLayer.objects.get(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).unit_cost), "10.000000")
