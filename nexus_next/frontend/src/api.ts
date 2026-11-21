@@ -509,7 +509,7 @@ export const hrApi = {
   payrollResults: (id:number) => request<HrPayrollResult[]>(`/api/hr/payroll-cycles/${id}/results/`),
 };
 
-export type HrPayrollComponent = {id:number;company:number;code:string;name_ar:string;kind:"earning"|"deduction"|"employer_share";method:"fixed"|"percent_basic"|"per_day"|"per_hour"|"manual";default_value:string;affects_taxable_base:boolean;affects_insurance_base:boolean;requires_approval:boolean;is_active:boolean;expense_account:number|null;payable_account:number|null};
-export type HrAttendance = {id:number;employee:number;employee_code:string;employee_name:string;work_date:string;status:"present"|"absent"|"leave"|"unpaid_leave"|"holiday";worked_hours:string;overtime_hours:string;late_minutes:number;notes:string};
+export type HrPayrollComponent = {id:number;company:number;code:string;name_ar:string;kind:"earning"|"deduction"|"employer_share";method:"fixed"|"percent_basic"|"per_day"|"per_hour"|"friday_double_day"|"manual";default_value:string;affects_taxable_base:boolean;affects_insurance_base:boolean;requires_approval:boolean;is_active:boolean;expense_account:number|null;payable_account:number|null};
+export type HrAttendance = {id:number;employee:number;employee_code:string;employee_name:string;work_date:string;status:"present"|"absent"|"leave"|"unpaid_leave"|"holiday";worked_hours:string;overtime_hours:string;friday_worked:boolean;late_minutes:number;notes:string};
 export type HrLeaveRequest = {id:number;employee:number;employee_name:string;kind:"annual"|"sick"|"emergency"|"unpaid";start_date:string;end_date:string;days:string;reason:string;status:"pending"|"approved"|"rejected"};
 export type HrEmployeeLoan = {id:number;employee:number;employee_name:string;reference:string;issue_date:string;principal:string;installment_count:number;installment_amount:string;outstanding_balance:string;status:"active"|"settled"|"suspended";notes:string};
