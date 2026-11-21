@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
-from accounting.models import TaxCode
+from accounting.models import ChartOfAccount, TaxCode
 from companies.models import Company
 from customers.models import Customer
 from inventory.models import StockMovement, StockMovementLine, Warehouse
@@ -159,6 +159,7 @@ class CustomerReceipt(models.Model):
     receipt_number = models.CharField(max_length=40)
     receipt_date = models.DateField()
     method = models.CharField(max_length=8, choices=Method.choices, default=Method.BANK)
+    payment_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="customer_receipts")
     amount = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     reference = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
