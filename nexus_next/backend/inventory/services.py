@@ -9,6 +9,7 @@ from .models import Product, StockBalance, StockCostLayer, StockMovement, StockM
 
 @transaction.atomic
 def post_stock_movement(movement_id, user):
+    """ترحيل حركة المخزون وتحديث الأرصدة وطبقات التكلفة وأثرها المحاسبي."""
     # Lock only the movement row; nullable warehouse joins cannot be locked in PostgreSQL.
     movement = StockMovement.objects.select_for_update().get(pk=movement_id)
     if movement.status != StockMovement.Status.DRAFT:
@@ -38,6 +39,7 @@ def post_stock_movement(movement_id, user):
             balance_keys = [source_key]
 
         def key_order(key):
+            """تنفيذ مسؤولية الدالة key_order ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             return (key[0] or 0, key[1] or 0, key[2].isoformat() if key[2] else "")
 
         balance_ids = []
@@ -50,6 +52,7 @@ def post_stock_movement(movement_id, user):
         balances = {(b.warehouse_id, b.location_id, b.expiry_date): b for b in locked}
 
         def receive(balance, quantity, unit_cost, source_line):
+            """تنفيذ مسؤولية الدالة receive ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             amount = (quantity * unit_cost).quantize(Decimal("0.0001"))
             new_quantity = balance.quantity + quantity
             new_value = balance.inventory_value + amount
@@ -65,6 +68,7 @@ def post_stock_movement(movement_id, user):
                 )
 
         def issue(balance, quantity):
+            """تنفيذ مسؤولية الدالة issue ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             if balance.quantity < quantity:
                 raise ValidationError(
                     f"الرصيد غير كافٍ للصنف {product.code}. المتاح {balance.quantity} والمطلوب {quantity}."
