@@ -1,0 +1,79 @@
+from collections import deque
+from statistics import median
+from threading import Lock
+from time import perf_counter
+
+from django.db import connection
+
+
+_EVENTS = deque(maxlen=250)
+_LOCK = Lock()
+_SLOW_REQUEST_MS = 1000.0
+
+
+def _record(event):
+    with _LOCK:
+        _EVENTS.append(event)
+
+
+def performance_snapshot():
+    with _LOCK:
+        events = list(_EVENTS)
+    durations = sorted(item["duration_ms"] for item in events)
+    count = len(events)
+    errors = sum(1 for item in events if item["status_code"] >= 500)
+    slow = sum(1 for item in events if item["duration_ms"] >= _SLOW_REQUEST_MS)
+    query_total = sum(item["db_queries"] for item in events)
+    db_total = sum(item["db_duration_ms"] for item in events)
+    p95 = durations[min(len(durations) - 1, int(len(durations) * .95))] if durations else 0
+    return {
+        "scope": "current_application_worker_since_restart",
+        "sample_size": count,
+        "average_duration_ms": round(sum(durations) / count, 2) if count else 0,
+        "median_duration_ms": round(median(durations), 2) if count else 0,
+        "p95_duration_ms": round(p95, 2),
+        "error_count": errors,
+        "slow_request_count": slow,
+        "average_db_queries": round(query_total / count, 2) if count else 0,
+        "total_db_duration_ms": round(db_total, 2),
+        "recent": list(reversed(events[-30:])),
+    }
+
+
+class PerformanceMetricsMiddleware:
+    """Low-overhead, in-memory request and SQL timing; no SQL text or payloads are retained."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        started = perf_counter()
+        query_count = 0
+        query_duration = 0.0
+        status_code = 500
+
+        def track_execute(execute, sql, params, many, context):
+            nonlocal query_count, query_duration
+            query_count += 1
+            query_started = perf_counter()
+            try:
+                return execute(sql, params, many, context)
+            finally:
+                query_duration += (perf_counter() - query_started) * 1000
+
+        try:
+            with connection.execute_wrapper(track_execute):
+                response = self.get_response(request)
+            status_code = response.status_code
+            return response
+        finally:
+            route = getattr(getattr(request, "resolver_match", None), "route", None)
+            safe_route = route or request.path_info.split("?")[0][:160]
+            _record({
+                "route": safe_route,
+                "method": request.method,
+                "status_code": status_code,
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "db_queries": query_count,
+                "db_duration_ms": round(query_duration, 2),
+            })
