@@ -40,6 +40,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "track_expiry", "is_active", "created_at", "updated_at",
         )
         read_only_fields = ("created_at", "updated_at")
+        extra_kwargs = {"barcode": {"required": False, "allow_blank": True}}
 
     def validate(self, attrs):
         company = attrs.get("company", getattr(self.instance, "company", None))
