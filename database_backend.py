@@ -29,11 +29,16 @@ def require_supported_runtime_backend(environ=None):
         dsn = str(source.get("NEXUS_POSTGRES_DSN", "") or "").strip()
         if not dsn:
             raise RuntimeError("NEXUS_POSTGRES_DSN is required when PostgreSQL is selected.")
-        raise RuntimeError(
-            "PostgreSQL runtime is temporarily disabled until SQL dialect, "
-            "financial-year, transaction, concurrency, and restore acceptance tests pass. "
-            "Use the existing SQLite runtime; no automatic fallback is performed."
-        )
+        runtime_enabled = str(
+            source.get("NEXUS_POSTGRES_RUNTIME_ENABLE", "") or ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if not runtime_enabled:
+            raise RuntimeError(
+                "PostgreSQL runtime is not enabled. Set "
+                "NEXUS_POSTGRES_RUNTIME_ENABLE=1 only for an explicitly approved "
+                "PostgreSQL validation deployment. No automatic SQLite fallback is performed."
+            )
+        return backend
     if backend not in SUPPORTED_RUNTIME_BACKENDS:
         raise RuntimeError(
             f"Unsupported NEXUS runtime backend: {backend!r}. Choose 'sqlite'."

@@ -133,6 +133,7 @@ def main(argv=None) -> int:
     # Importing app must not trigger an implicit second initialization.
     os.environ["NEXUS_DB_BACKEND"] = "postgresql"
     os.environ["NEXUS_POSTGRES_DSN"] = scoped_dsn
+    os.environ["NEXUS_POSTGRES_RUNTIME_ENABLE"] = "1"
     # connect_postgres sets its own libpq search_path; pass the dedicated company schema explicitly.
     os.environ["NEXUS_POSTGRES_SCHEMA"] = args.schema
     os.environ["NEXUS_DATA_DIR"] = str(data_dir)
@@ -143,27 +144,16 @@ def main(argv=None) -> int:
     import app as nexus_app
     import database as database_module
 
-    # The bootstrap bypass is process-local and scoped to this explicit
-    # fresh-install command. app.db() and connect_database() each hold their
-    # own imported reference to the runtime gate, so both references must be
-    # patched together. The canonical database_backend policy stays fail-closed.
-    original_app_gate = nexus_app.require_supported_runtime_backend
-    original_connection_gate = database_module.require_supported_runtime_backend
-    bootstrap_gate = lambda: "postgresql"
-    nexus_app.require_supported_runtime_backend = bootstrap_gate
-    database_module.require_supported_runtime_backend = bootstrap_gate
-    try:
-        nexus_app.initialize_database()
-        with nexus_app.app.app_context():
-            connection = nexus_app.db()
-            try:
-                verification = _verify_bootstrap(connection)
-                connection.commit()
-            finally:
-                connection.close()
-    finally:
-        nexus_app.require_supported_runtime_backend = original_app_gate
-        database_module.require_supported_runtime_backend = original_connection_gate
+    # Bootstrap through the same explicit runtime gate used by a normal
+    # PostgreSQL validation launch; do not monkeypatch either module's gate.
+    nexus_app.initialize_database()
+    with nexus_app.app.app_context():
+        connection = nexus_app.db()
+        try:
+            verification = _verify_bootstrap(connection)
+            connection.commit()
+        finally:
+            connection.close()
 
     print(json.dumps({
         "status": "initialized",

@@ -64,22 +64,18 @@ def main() -> int:
             )
 
         import app as nexus_app
-        import database as nexus_database
         from database_backend import configured_database_backend
 
-        # Verify the explicit backend selection, then bypass only the
-        # production acceptance gate inside this disposable test process.
-        # The application-level gate remains unchanged and fail-closed for
-        # every normal launch; no environment flag can disable it.
+        # Verify that the ordinary application and connection factory accept
+        # PostgreSQL only through the explicit runtime environment flag.
+        from database_backend import require_supported_runtime_backend
         selected_backend = configured_database_backend()
         if selected_backend != "postgresql":
             raise AssertionError(
                 f"Runtime selector chose {selected_backend!r}, not PostgreSQL."
             )
-        nexus_app.require_supported_runtime_backend = lambda: "postgresql"
-        # database.py imported the guard function directly, so replace its
-        # module-local reference as well for this test process only.
-        nexus_database.require_supported_runtime_backend = lambda: "postgresql"
+        if require_supported_runtime_backend() != "postgresql":
+            raise AssertionError("The explicit PostgreSQL runtime gate did not select PostgreSQL.")
         try:
             with nexus_app.app.app_context():
                 connection = nexus_app.db()

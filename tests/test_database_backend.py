@@ -19,11 +19,25 @@ class DatabaseBackendSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "NEXUS_DB_BACKEND"):
             configured_database_backend({"NEXUS_DB_BACKEND": "mysql"})
 
-    def test_postgresql_runtime_remains_blocked_until_acceptance_gates_pass(self):
-        with self.assertRaisesRegex(RuntimeError, "temporarily disabled"):
+    def test_postgresql_runtime_requires_explicit_enable_flag(self):
+        with self.assertRaisesRegex(RuntimeError, "NEXUS_POSTGRES_RUNTIME_ENABLE=1"):
             require_supported_runtime_backend({
                 "NEXUS_DB_BACKEND": "postgresql",
                 "NEXUS_POSTGRES_DSN": "postgresql://test-only",
+            })
+
+    def test_postgresql_runtime_accepts_explicit_enable_flag(self):
+        self.assertEqual(require_supported_runtime_backend({
+            "NEXUS_DB_BACKEND": "postgresql",
+            "NEXUS_POSTGRES_DSN": "postgresql://test-only",
+            "NEXUS_POSTGRES_RUNTIME_ENABLE": "1",
+        }), "postgresql")
+
+    def test_postgresql_runtime_rejects_missing_dsn_even_when_enabled(self):
+        with self.assertRaisesRegex(RuntimeError, "DSN is required"):
+            require_supported_runtime_backend({
+                "NEXUS_DB_BACKEND": "postgresql",
+                "NEXUS_POSTGRES_RUNTIME_ENABLE": "1",
             })
 
 
