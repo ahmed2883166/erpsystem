@@ -60,6 +60,7 @@ export default function App() {
   const filteredJournals = useMemo(() => journals.filter((entry) =>
     `${entry.entry_number} ${entry.description}`.toLowerCase().includes(search.toLowerCase())), [journals, search]);
   const selectedCompany = companies.find((company) => company.id === companyId);
+  const today = new Intl.DateTimeFormat("ar-EG", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
 
   useEffect(() => {
     if (active !== "reports" || !companyId) return;
@@ -97,7 +98,7 @@ export default function App() {
             <button className="icon-button" aria-label="البحث" onClick={() => document.getElementById("global-search")?.focus()}>⌕</button>
             <a className="admin-shortcut" href="/admin/" target="_blank" rel="noreferrer">الإدارة</a></div></header>
         <div className="page-content">
-          <section className="welcome-row"><div><p className="eyebrow">NEXUS ERP · مساحة العمل</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
+          <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
             <button className="primary-button" onClick={() => setActive("journals")}><span>＋</span> قيود اليومية</button></section>
 
