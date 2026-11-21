@@ -6,6 +6,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
 from accounting.models import ChartOfAccount, JournalEntry
+from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
@@ -253,3 +254,41 @@ class TreasuryWorkflowTests(APITestCase):
         imported = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/import_csv/", {"file": csv_file}, format="multipart")
         self.assertEqual(imported.status_code, 400)
         self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 0)
+
+
+    def test_treasury_payment_over_limit_requires_manager_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_payment_amount=Decimal("100"),
+            created_by=self.user, updated_by=self.user,
+        )
+        seed = self._create(kind="receipt", document_number="TR-APPROVAL-SEED")
+        self.assertEqual(seed.status_code, 201, seed.data)
+        seeded = self.client.post(
+            f"/api/treasury/transactions/{seed.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(seeded.status_code, 200, seeded.data)
+
+        payment = self._create(
+            kind="payment", document_number="TR-APPROVAL-PAY",
+            amount="150", counter_account=self.revenue_gl.pk,
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        request = FinancialApprovalRequest.objects.get(treasury_transaction_id=payment.data["id"])
+        blocked = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+        manager = get_user_model().objects.create_user(username="treasury-approval-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/financial-requests/{request.pk}/approve/",
+            {"note": "اعتماد سند صرف خزينة"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
