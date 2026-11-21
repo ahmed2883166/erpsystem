@@ -27,6 +27,23 @@ export type AccountTemplateApplyResult = {
 };
 export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string };
 export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; debit_total: string; credit_total: string; net_balance: string }[] };
+export type SessionUser = { id: number; username: string; display_name: string; is_staff: boolean; is_superuser: boolean };
+export type SessionResponse = { authenticated: boolean; user?: SessionUser };
+
+export const authApi = {
+  current: () => request<SessionResponse>("/api/auth/session/"),
+  login: async (username: string, password: string) => {
+    await request<{ detail: string }>("/api/csrf/");
+    return request<SessionResponse>("/api/auth/login/", {
+      method: "POST", body: JSON.stringify({ username, password }),
+    });
+  },
+  logout: async () => {
+    await request<{ detail: string }>("/api/csrf/");
+    return request<SessionResponse>("/api/auth/logout/", { method: "POST", body: "{}" });
+  },
+};
+
 export type Journal = {
   id: number; company: number; branch: number; branch_code: string; fiscal_year: number;
   fiscal_year_name: string; entry_number: string; entry_date: string; description: string;
