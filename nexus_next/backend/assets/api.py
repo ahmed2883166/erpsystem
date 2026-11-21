@@ -6,7 +6,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from .models import FixedAsset, AssetDepreciation
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
-from .services import acquire_asset, depreciate_asset
+from .services import acquire_asset, depreciate_asset, dispose_asset
 
 
 class FixedAssetViewSet(viewsets.ModelViewSet):
@@ -77,3 +77,20 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "accumulated_depreciation": accumulated, "net_book_value": asset.original_cost - accumulated,
             "rows": AssetDepreciationSerializer(rows, many=True).data,
         })
+
+
+    @decorators.action(detail=True, methods=("post",))
+    def dispose(self, request, pk=None):
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            result = dispose_asset(
+                asset.pk, request.data.get("disposal_date"), request.data.get("proceeds", "0"),
+                request.data.get("cash_account"), request.data.get("fiscal_year"), request.user,
+            )
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response(result, status=status.HTTP_201_CREATED)
