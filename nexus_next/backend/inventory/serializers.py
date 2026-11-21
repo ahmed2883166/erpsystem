@@ -10,6 +10,7 @@ class ProductCategorySerializer(serializers.ModelSerializer):
         fields = ("id", "company", "code", "name_ar", "parent", "is_active")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and company and parent.company_id != company.pk:
@@ -25,6 +26,7 @@ class UnitOfMeasureSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "code", "name_ar", "symbol", "decimal_places", "is_active")
 
     def validate_code(self, value):
+        """التحقق من كود السجل قبل الحفظ."""
         return value.strip().upper()
 
 
@@ -44,6 +46,7 @@ class ProductSerializer(serializers.ModelSerializer):
         extra_kwargs = {"barcode": {"required": False, "allow_blank": True}}
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         category = attrs.get("category", getattr(self.instance, "category", None))
         unit = attrs.get("unit", getattr(self.instance, "unit", None))
@@ -66,9 +69,11 @@ class ProductSerializer(serializers.ModelSerializer):
         return attrs
 
     def validate_code(self, value):
+        """التحقق من كود السجل قبل الحفظ."""
         return value.strip().upper()
 
     def validate_barcode(self, value):
+        """التحقق من صلاحية الباركود وتفرده داخل الشركة."""
         return value.strip()
 
 
@@ -81,6 +86,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at",)
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if branch and company and branch.company_id != company.pk:
@@ -88,6 +94,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
         return attrs
 
     def validate_code(self, value):
+        """التحقق من كود السجل قبل الحفظ."""
         return value.strip().upper()
 
 
@@ -102,6 +109,7 @@ class WarehouseProductSettingSerializer(serializers.ModelSerializer):
         read_only_fields = ("updated_at",)
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs.get("product", getattr(self.instance, "product", None))
         warehouse = attrs.get("warehouse", getattr(self.instance, "warehouse", None))
         if product and warehouse and product.company_id != warehouse.company_id:
@@ -119,6 +127,7 @@ class StorageLocationSerializer(serializers.ModelSerializer):
         fields = ("id", "warehouse", "warehouse_name", "code", "name_ar", "location_type", "parent", "is_active")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         warehouse = attrs.get("warehouse", getattr(self.instance, "warehouse", None))
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and warehouse and parent.warehouse_id != warehouse.pk:
@@ -141,6 +150,7 @@ class StockMovementLineSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "cost_amount")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs.get("product")
         movement = self.context.get("movement")
         if product and product.product_type != Product.ProductType.GOODS:
@@ -167,6 +177,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "created_at", "posted_at")
 
     def get_journal_entries(self, obj):
+        """التحقق من بيانات get_journal_entries وضمان توافقها مع قواعد وحدة serializers.py قبل الحفظ."""
         return [
             {
                 "id": link.journal_entry_id,
@@ -178,6 +189,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         movement_type = attrs.get("movement_type", getattr(self.instance, "movement_type", None))
         source = attrs.get("source_warehouse", getattr(self.instance, "source_warehouse", None))
@@ -230,6 +242,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         movement = StockMovement.objects.create(**validated_data)
         StockMovementLine.objects.bulk_create([
@@ -239,6 +252,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         if instance.status != StockMovement.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل حركة مرحلة.")
         lines = validated_data.pop("lines", None)
