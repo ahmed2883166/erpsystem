@@ -118,7 +118,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         movement.source_warehouse = delivery.warehouse
         movement.movement_date = delivery.delivery_date
         movement.notes = delivery.notes
-        movement.save(update_fields=("source_warehouse", "movement_date", "notes", "updated_at"))
+        movement.save(update_fields=("source_warehouse", "movement_date", "notes"))
         if lines is not None:
             movement.lines.all().delete()
             StockMovementLine.objects.bulk_create([
