@@ -75,7 +75,7 @@ def post_stock_movement(movement_id, user):
                 layers = StockCostLayer.objects.select_for_update().filter(
                     product=product, warehouse=balance.warehouse, location=balance.location,
                     expiry_date=balance.expiry_date, quantity_remaining__gt=0,
-                ).order_by("created_at", "id")
+                ).order_by("source_line__movement__movement_date", "source_line__movement_id", "source_line_id", "id")
                 for layer in layers:
                     if remaining <= 0:
                         break
