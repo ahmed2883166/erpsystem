@@ -14,9 +14,10 @@ Only active users can be found through the company-scoped user lookup. Search re
 
 ## Discount policy and approval
 
-A company administrator configures two independent limits in **الموافقات وحدود الخصم**:
-- Maximum discount percentage per sales invoice line.
+A company administrator configures one or both independent limits in **الموافقات وحدود الخصم**:
+- Optional maximum discount percentage per sales invoice line.
 - Optional maximum sales invoice total, measured in the company's base currency and including VAT.
+At least one limit must be configured; an empty policy is rejected by both the API and PostgreSQL.
 
 - If no policy exists, no additional discount approval threshold is enforced.
 - Once configured, the policy threshold is snapshotted onto each new sales invoice.
