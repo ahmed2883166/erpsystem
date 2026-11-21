@@ -69,6 +69,12 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         qs = CompanyMembership.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related("company", "user").prefetch_related("branches")
+        if not self.request.user.is_superuser:
+            qs = qs.filter(
+                company__memberships__user=self.request.user,
+                company__memberships__is_active=True,
+                company__memberships__role=CompanyMembership.Role.ADMIN,
+            ).distinct()
         company_id = self.request.query_params.get("company")
         return qs.filter(company_id=company_id) if company_id else qs
 
