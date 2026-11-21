@@ -238,3 +238,18 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .report-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .report-actions button{white-space:nowrap}
 @media(max-width:760px){.report-actions{width:100%;justify-content:flex-start}.report-actions button{flex:1 1 145px}}
+
+
+@media print{
+  @page{size:A4 landscape;margin:12mm}
+  body *{visibility:hidden!important}
+  .print-active,.print-active *{visibility:visible!important}
+  .print-active{position:absolute!important;inset:0 auto auto 0!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:#fff!important;color:#111!important;box-shadow:none!important}
+  .print-active .report-actions,.print-active button{display:none!important}
+  .print-active .data-table-wrap{overflow:visible!important;max-width:none!important}
+  .print-active table{width:100%!important;border-collapse:collapse!important;font-size:9pt!important}
+  .print-active th,.print-active td{border:1px solid #bbb!important;color:#111!important;background:#fff!important;padding:5px!important}
+  .print-active tr{break-inside:avoid}
+  .print-active h2,.print-active h3{color:#111!important;break-after:avoid}
+  .print-active .asset-cashflow-totals{background:#f3f3f3!important;color:#111!important}
+}
