@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport } from "./api";
+import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
 const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
 const PurchasingPanel = lazy(() => import("./PurchasingPanel"));
@@ -52,6 +52,76 @@ const modules = [
 const natureNames: Record<string, string> = { asset: "أصول", liability: "التزامات", equity: "حقوق ملكية", revenue: "إيرادات", expense: "مصروفات" };
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
 const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
+
+function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null; country: "EG" | "SA" | undefined }) {
+  const [items, setItems] = useState<TaxCode[]>([]);
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState<TaxCode["category"]>("standard");
+  const [rate, setRate] = useState("14");
+  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [effectiveTo, setEffectiveTo] = useState("");
+  const [recoverable, setRecoverable] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const load = async () => {
+    if (!companyId) { setItems([]); return; }
+    try { setItems(await api.taxCodes(companyId)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أكواد الضرائب."); }
+  };
+  useEffect(() => { setError(""); setNotice(""); void load(); }, [companyId]);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !country) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.createTaxCode({
+        company: companyId, country, code: code.trim(), name_ar: name.trim(), category,
+        rate: category === "standard" || category === "reverse_charge" ? rate : "0",
+        effective_from: effectiveFrom, effective_to: effectiveTo || null,
+        input_tax_recoverable: recoverable, is_active: true,
+      });
+      setCode(""); setName(""); setRate("14"); setEffectiveTo("");
+      setNotice("تم حفظ كود الضريبة وفترة سريانه.");
+      await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ كود الضريبة."); }
+    finally { setBusy(false); }
+  };
+  const deactivate = async (item: TaxCode) => {
+    if (!window.confirm("تعطيل كود الضريبة؟ سيظل محفوظًا للمراجعة التاريخية.")) return;
+    setBusy(true); setError(""); setNotice("");
+    try { await api.deactivateTaxCode(item.id); setNotice("تم تعطيل الكود دون حذفه."); await load(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تعطيل الكود."); }
+    finally { setBusy(false); }
+  };
+  const categoryNames: Record<TaxCode["category"], string> = {
+    standard: "قياسية", zero_rated: "صفرية", exempt: "معفاة", out_of_scope: "خارج النطاق", reverse_charge: "احتساب عكسي",
+  };
+  return <section className="work-panel">
+    <div className="work-panel-head"><div><h2>أكواد وإعدادات الضرائب</h2><p>تعريف نسب الضريبة حسب بلد الشركة مع تاريخ بداية ونهاية السريان</p></div><span className="coming-soon">{country === "SA" ? "السعودية" : country === "EG" ? "مصر" : "اختر شركة"}</span></div>
+    {!companyId && <div className="empty-state">اختر الشركة أولًا لإدارة أكواد الضرائب.</div>}
+    {companyId && <>
+      <form className="journal-form" onSubmit={submit}>
+        <label>كود الضريبة<input required maxLength={32} value={code} onChange={e => setCode(e.target.value)} placeholder="VAT-STD" /></label>
+        <label>اسم الضريبة<input required maxLength={160} value={name} onChange={e => setName(e.target.value)} placeholder="ضريبة قيمة مضافة قياسية" /></label>
+        <label>الفئة<select value={category} onChange={e => { const next = e.target.value as TaxCode["category"]; setCategory(next); if (next === "zero_rated" || next === "exempt" || next === "out_of_scope") setRate("0"); }}><option value="standard">خاضعة بالنسبة القياسية</option><option value="zero_rated">نسبة صفرية</option><option value="exempt">معفاة</option><option value="out_of_scope">خارج النطاق</option><option value="reverse_charge">احتساب عكسي</option></select></label>
+        <label>النسبة %<input required type="number" min="0" max="100" step="0.0001" value={category === "zero_rated" || category === "exempt" || category === "out_of_scope" ? "0" : rate} disabled={category === "zero_rated" || category === "exempt" || category === "out_of_scope"} onChange={e => setRate(e.target.value)} /></label>
+        <label>ساري من<input required type="date" value={effectiveFrom} onChange={e => setEffectiveFrom(e.target.value)} /></label>
+        <label>ساري حتى<input type="date" value={effectiveTo} min={effectiveFrom} onChange={e => setEffectiveTo(e.target.value)} /></label>
+        <label className="form-wide"><span><input type="checkbox" checked={recoverable} onChange={e => setRecoverable(e.target.checked)} /> ضريبة المدخلات قابلة للخصم عند انطباق الشروط</span></label>
+        <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !country}>{busy ? "جارٍ الحفظ…" : "إضافة كود ضريبي"}</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void load()}>تحديث القائمة</button></div>
+      </form>
+      {error && <div className="error-banner">{error}</div>}
+      {notice && <div className="success-banner">{notice}</div>}
+      <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>الفئة</th><th>النسبة</th><th>السريان</th><th>مدخلات قابلة للخصم</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
+        {items.map(item => <tr key={item.id}><td className="code-cell">{item.code}</td><td>{item.name_ar}</td><td>{categoryNames[item.category]}</td><td>{Number(item.rate).toLocaleString("ar-EG", {maximumFractionDigits:4})}%</td><td>{item.effective_from} إلى {item.effective_to || "مفتوح"}</td><td>{item.input_tax_recoverable ? "نعم" : "لا"}</td><td>{item.is_active ? "نشط" : "معطل"}</td><td>{item.is_active && <button type="button" className="subtle-button" disabled={busy} onClick={() => void deactivate(item)}>تعطيل</button>}</td></tr>)}
+        {!items.length && <tr><td colSpan={8}>لا توجد أكواد ضريبية معرفة لهذه الشركة.</td></tr>}
+      </tbody></table></div>
+      <p className="asset-report-note">لا يتم تثبيت نسبة قانونية تلقائيًا؛ أدخل النسب المعتمدة لشركتك وتواريخ سريانها بعد مراجعة التشريعات السارية. الإعدادات لا تتصل بمصلحة الضرائب أو هيئة الزكاة.</p>
+    </>}
+  </section>;
+}
 
 function VATReturnPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -599,8 +669,8 @@ export default function App() {
           {active === "inventory" && <Suspense fallback={panelFallback}><InventoryPanel companyId={companyId} /></Suspense>}
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
           {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
-          {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
-            <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
+          {active === "setup" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
+            <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section></>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
             <section className="journal-modal" role="dialog" aria-modal="true" aria-labelledby="journal-title">
               <div className="modal-heading"><div><h2 id="journal-title">{reviewingJournal ? "مراجعة القيد قبل الحفظ" : "إنشاء قيد يومية"}</h2><p>{reviewingJournal ? "راجع بيانات القيد وإجمالياته، ثم احفظه كمسودة دون ترحيل." : "أدخل البيانات والتفاصيل ثم انتقل إلى المراجعة قبل الحفظ."}</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
