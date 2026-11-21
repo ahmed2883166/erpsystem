@@ -193,8 +193,8 @@ class BranchViewSet(viewsets.ModelViewSet):
         target_company = serializer.validated_data.get("company", serializer.instance.company)
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل الفروع متاح لمدير الشركة فقط.")
-        if not has_company_role(self.request.user, target_company.pk, ("admin",)):
-            raise PermissionDenied("لا تملك صلاحية نقل الفرع إلى الشركة المحددة.")
+        if target_company.pk != current_company_id:
+            raise ValidationError({"company": "لا يمكن نقل فرع قائم إلى شركة أخرى."})
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -228,8 +228,8 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         target_company = serializer.validated_data.get("company", serializer.instance.company)
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
-        if not has_company_role(self.request.user, target_company.pk, ("admin",)):
-            raise PermissionDenied("لا تملك صلاحية نقل السنة المالية إلى الشركة المحددة.")
+        if target_company.pk != current_company_id:
+            raise ValidationError({"company": "لا يمكن نقل سنة مالية قائمة إلى شركة أخرى."})
         serializer.save()
 
     def perform_destroy(self, instance):
