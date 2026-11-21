@@ -19,26 +19,31 @@ class DiscountApprovalPolicyViewSet(viewsets.ModelViewSet):
     http_method_names = ("get", "post", "patch", "head", "options")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = DiscountApprovalPolicy.objects.filter(company__in=accessible_companies(self.request.user)).select_related("company")
         company_id = self.request.query_params.get("company")
         return qs.filter(company_id=company_id) if company_id else qs
 
     def _admin(self, company_id):
+        """تنفيذ وظيفة _admin ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
         if not has_company_role(self.request.user, company_id, ("admin",)):
             raise PermissionDenied("إعداد حد الخصم متاح لمدير الشركة فقط.")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         company = serializer.validated_data["company"]
         self._admin(company.pk)
         serializer.save(created_by=self.request.user, updated_by=self.request.user)
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         self._admin(serializer.instance.company_id)
         serializer.save(updated_by=self.request.user)
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         raise PermissionDenied("لا يمكن حذف سياسة الخصم؛ عدّل الحد أو أوقف استخدامه.")
 
 
@@ -47,6 +52,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = SalesInvoiceApproval.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related("company", "invoice", "invoice__customer", "requested_by", "decided_by", "invoice__delivery__warehouse")
@@ -61,6 +67,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         return scoped.filter(company_id=company_id) if company_id else scoped
 
     def _manager(self, approval):
+        """تنفيذ وظيفة _manager ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if not has_company_role(self.request.user, approval.company_id, ("admin",)):
             raise PermissionDenied("اعتماد الخصومات متاح لمدير الشركة فقط.")
         if approval.requested_by_id == self.request.user.pk:
@@ -87,6 +94,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def approve(self, request, pk=None):
+        """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
         candidate = self.get_object()
         SalesInvoice.objects.select_for_update().get(pk=candidate.invoice_id)
         approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=candidate.pk)
@@ -100,6 +108,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def reject(self, request, pk=None):
+        """رفض الطلب وتسجيل قرار الرفض وسببه."""
         candidate = self.get_object()
         SalesInvoice.objects.select_for_update().get(pk=candidate.invoice_id)
         approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=candidate.pk)
@@ -119,6 +128,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = FinancialApprovalRequest.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related(
@@ -150,6 +160,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         return qs
 
     def _locked_document(self, approval):
+        """تنفيذ وظيفة _locked_document ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE:
             from purchasing.models import PurchaseInvoice
             return PurchaseInvoice.objects.select_for_update().select_related(
@@ -166,6 +177,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         ).get(pk=approval.treasury_transaction_id)
 
     def _validate_manager_decision(self, approval, document):
+        """تنفيذ وظيفة _validate_manager_decision ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if not has_company_role(self.request.user, approval.company_id, ("admin",)):
             raise PermissionDenied("اعتماد الطلبات المالية متاح لمدير الشركة فقط.")
         if approval.requested_by_id == self.request.user.pk:
@@ -209,6 +221,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def approve(self, request, pk=None):
+        """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
         candidate = self.get_object()
         approval = FinancialApprovalRequest.objects.select_for_update().get(pk=candidate.pk)
         document = self._locked_document(approval)
@@ -222,6 +235,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def reject(self, request, pk=None):
+        """رفض الطلب وتسجيل قرار الرفض وسببه."""
         candidate = self.get_object()
         approval = FinancialApprovalRequest.objects.select_for_update().get(pk=candidate.pk)
         document = self._locked_document(approval)
