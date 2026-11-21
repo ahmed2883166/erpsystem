@@ -68,6 +68,32 @@ class InventoryApiTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 400)
 
+    def test_unassigned_warehouse_is_scoped_to_the_company_default_branch(self):
+        Branch.objects.create(
+            company=self.company, code="HQ", name_ar="المركز الرئيسي", is_head_office=True,
+        )
+        shared = Warehouse.objects.create(
+            company=self.company, branch=None, code="WH-SHARED", name_ar="مخزن عام",
+        )
+        limited = get_user_model().objects.create_user(username="warehouse-branch-limited", password="test-password")
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+
+        listed = self.client.get("/api/inventory/warehouses/")
+        self.assertEqual(listed.status_code, 200)
+        ids = [row["id"] for row in listed.data] if isinstance(listed.data, list) else [row["id"] for row in listed.data["results"]]
+        self.assertNotIn(shared.pk, ids)
+
+        movement = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_type": "receipt", "movement_date": "2026-03-10",
+            "destination_warehouse": shared.pk, "movement_number": "WH-SCOPE-001",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "10"}],
+        }, format="json")
+        self.assertEqual(movement.status_code, 403, movement.data)
+
     def test_warehouse_branch_must_belong_to_company(self):
         foreign_branch = Branch.objects.create(company=self.other_company, code="B2", name_ar="فرع آخر")
         response = self.client.post("/api/inventory/warehouses/", {
