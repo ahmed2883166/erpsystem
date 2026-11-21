@@ -15,10 +15,10 @@ type DraftLine = { account: string; debit: string; credit: string; description: 
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
   const safe = (value: string | number) => {
     const text = String(value ?? "");
-    const protectedText = /^[=+@\\-\\t\\r]/.test(text) ? "'" + text : text;
+    const protectedText = /^[=+@-]/.test(text) || text.startsWith("\t") || text.startsWith("\r") ? "'" + text : text;
     return '"' + protectedText.replace(/"/g, '""') + '"';
   };
-  const csv = "\\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\\r\\n");
+  const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\r\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
