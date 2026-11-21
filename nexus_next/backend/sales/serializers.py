@@ -4,6 +4,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
+from treasury.models import TreasuryAccount
 
 from customers.models import Customer
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation, Warehouse
@@ -312,8 +313,12 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
         if invoice.company_id != company.pk or invoice.customer_id != customer.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة."})
         account = attrs.get("payment_account")
-        if account and (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET or not account.is_active or account.is_group or not account.allow_posting):
-            raise serializers.ValidationError({"payment_account": "اختر حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة."})
+        if account:
+            expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == CustomerReceipt.Method.CASH else TreasuryAccount.Kind.BANK
+            if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
+                    or not account.is_active or account.is_group or not account.allow_posting
+                    or not TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).exists()):
+                raise serializers.ValidationError({"payment_account": "اختر حساب خزينة/بنك نشطًا من حسابات الخزينة المعرفة للشركة وبنفس طريقة التحصيل."})
         return attrs
 
     def create(self, validated_data):
