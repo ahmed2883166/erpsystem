@@ -1,6 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+
+REM Keep preview data and backups isolated from any existing company database.
+set "NEXUS_DATA_DIR=%~dp0test_data"
+set "NEXUS_BACKUP_DIR=%USERPROFILE%\NEXUS ERP Test Backups"
 title NEXUS ERP - Windows Setup
 
 echo ==========================================
