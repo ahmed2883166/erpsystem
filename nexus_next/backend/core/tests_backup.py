@@ -68,3 +68,11 @@ class BackupConfigurationApiTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_reset_preview_resolves_all_operational_models(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get("/api/backup/reset-preview/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("accounting.JournalEntry", response.data["counts"])
+        self.assertIn("inventory.StockMovement", response.data["counts"])
+        self.assertIn("hr.PayrollCycle", response.data["counts"])
