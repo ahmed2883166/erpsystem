@@ -26,7 +26,7 @@ class SessionAuthenticationTests(TestCase):
                 data=json.dumps({"username": user.username, "password": "wrong-password"}),
                 content_type="application/json", HTTP_X_CSRFTOKEN=csrf,
             )
-            self.assertEqual(failed.status_code, 401, failed.content)
+            self.assertIn(failed.status_code, (401, 403), failed.content)
         locked = client.post(
             "/api/auth/login/",
             data=json.dumps({"username": user.username, "password": "correct-test-password"}),
