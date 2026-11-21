@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount, type HrEmployeePayReport } from "./api";
+import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount, type HrEmployeePayReport, type HrSalaryHistory } from "./api";
 
 const statusLabels: Record<string, string> = {
   active: "نشط", leave: "إجازة", unpaid_leave: "إجازة بدون راتب",
@@ -27,6 +27,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [paymentAccountId, setPaymentAccountId] = useState("");
   const [results, setResults] = useState<HrPayrollResult[]>([]);
   const [payReport, setPayReport] = useState<HrEmployeePayReport | null>(null);
+  const [salaryHistoryRows, setSalaryHistoryRows] = useState<HrSalaryHistory[]>([]);
   const [payReportFrom, setPayReportFrom] = useState(new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10));
   const [payReportTo, setPayReportTo] = useState(new Date().toISOString().slice(0,10));
   const [selectedCycle, setSelectedCycle] = useState<number | null>(null);
@@ -53,7 +54,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [assignmentDraft, setAssignmentDraft] = useState({employee:"",component:"",value:"",effective_from:new Date().toISOString().slice(0,10),effective_to:""});
   const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
   const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),receivable_account:"",principal:"0",installment_count:"1",installment_amount:"0",notes:""});
-  const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),new_salary:"0",change_type:"annual_raise",reason:""});
+  const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),raise_mode:"percentage" as "percentage"|"amount",raise_value:"0",change_type:"annual_raise",reason:""});
   const [ruleSetDraft, setRuleSetDraft] = useState({name:"",effective_from:new Date().toISOString().slice(0,10),effective_to:"",monthly_daily_divisor:"30",min_base:"",max_base:"",employee_rate:"",employer_rate:"",annual_personal_exemption:"",annual_brackets:"[]"});
   const [cycleDraft, setCycleDraft] = useState({rule_set:"",period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
 
@@ -72,7 +73,15 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات الموارد البشرية."); }
     finally { setBusy(false); }
   };
-  useEffect(()=>{ setEmployees([]);setCycles([]);setResults([]);setPayReport(null);setError("");setNotice(""); if(companyId) void load(); },[companyId]);
+  useEffect(()=>{ setEmployees([]);setCycles([]);setResults([]);setPayReport(null);setSalaryHistoryRows([]);setError("");setNotice(""); if(companyId) void load(); },[companyId]);
+  useEffect(()=>{
+    if(!salaryDraft.employee){setSalaryHistoryRows([]);return;}
+    let active=true;
+    hrApi.salaryHistory(Number(salaryDraft.employee))
+      .then(rows=>{if(active)setSalaryHistoryRows(rows);})
+      .catch(reason=>{if(active)setError(reason instanceof Error?reason.message:"تعذر تحميل سجل تغييرات الراتب.");});
+    return ()=>{active=false;};
+  },[salaryDraft.employee,companyId]);
 
   const submitEmployee = async (event:FormEvent) => {
     event.preventDefault(); if(!companyId) return;
@@ -159,12 +168,38 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل السلفة أو جدول أقساطها.");}
     finally{setBusy(false);}
   };
+  const selectedSalaryEmployee=employees.find(employee=>employee.id===Number(salaryDraft.employee));
+  const salaryBeforeEffectiveDate=(()=>{
+    if(!selectedSalaryEmployee)return 0;
+    const prior=salaryHistoryRows
+      .filter(row=>row.effective_date<salaryDraft.effective_date)
+      .sort((a,b)=>a.effective_date.localeCompare(b.effective_date)||a.id-b.id);
+    if(prior.length)return Number(prior[prior.length-1].new_salary);
+    const first=[...salaryHistoryRows].sort((a,b)=>a.effective_date.localeCompare(b.effective_date)||a.id-b.id)[0];
+    return first?Number(first.previous_salary):Number(selectedSalaryEmployee.basic_salary);
+  })();
+  const salaryIncrease=Number(salaryDraft.raise_value||0);
+  const calculatedNewSalary=salaryDraft.raise_mode==="percentage"
+    ? salaryBeforeEffectiveDate*(1+salaryIncrease/100)
+    : salaryBeforeEffectiveDate+salaryIncrease;
   const submitSalaryChange = async (event:FormEvent) => {
     event.preventDefault();if(!salaryDraft.employee)return;
+    if(!Number.isFinite(calculatedNewSalary)||calculatedNewSalary<0||salaryIncrease<0){
+      setError("قيمة الزيادة أو الراتب الناتج غير صحيحة.");return;
+    }
+    if(salaryHistoryRows.some(row=>row.effective_date===salaryDraft.effective_date)){
+      setError("يوجد تغيير راتب مسجل بالفعل في تاريخ السريان نفسه لهذا الموظف.");return;
+    }
     setBusy(true);setError("");setNotice("");
     try {
-      await hrApi.createSalaryChange({...salaryDraft,employee:Number(salaryDraft.employee)});
-      setNotice("تم تسجيل تغيير الراتب مع تاريخ السريان.");await load();
+      await hrApi.createSalaryChange({
+        employee:Number(salaryDraft.employee),effective_date:salaryDraft.effective_date,
+        new_salary:calculatedNewSalary.toFixed(4),change_type:salaryDraft.change_type,reason:salaryDraft.reason,
+      });
+      setNotice("تم تسجيل الزيادة مع تاريخ السريان، وحُفظ الراتب السابق والجديد في سجل غير قابل للتعديل."); 
+      setSalaryDraft(old=>({...old,raise_value:"0",reason:""}));
+      setSalaryHistoryRows(await hrApi.salaryHistory(Number(salaryDraft.employee)));
+      await load();
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل تغيير الراتب.");}
     finally{setBusy(false);}
   };
@@ -350,15 +385,22 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length||!components.length}>ربط العنصر بالموظف</button></div>
       </form>
       <div className="data-table-wrap"><table><thead><tr><th>الموظف</th><th>العنصر</th><th>القيمة الخاصة</th><th>من</th><th>إلى</th></tr></thead><tbody>{employeeComponents.map(x=><tr key={x.id}><td>{employees.find(e=>e.id===x.employee)?.full_name_ar||x.employee}</td><td>{x.component_name}</td><td>{x.value===null?"القيمة الافتراضية":money(x.value)}</td><td>{x.effective_from}</td><td>{x.effective_to||"مستمر"}</td></tr>)}</tbody></table>{!employeeComponents.length&&<div className="table-empty">لم يتم ربط عناصر بموظفين بعد.</div>}</div>
-      <h3 style={{marginTop:24}}>تاريخ تغييرات الرواتب</h3>
+      <h3 style={{marginTop:24}}>سجل الراتب والزيادات السنوية</h3>
+      <div className="asset-report-note">يمكن تسجيل الزيادة كنسبة مئوية أو مبلغ ثابت. يتم احتساب الراتب الجديد من الراتب الساري قبل تاريخ الزيادة، مع الاحتفاظ بكل تغيير سابق دون تعديله. لبدل منفصل عن الأساسي، أنشئ عنصرًا من نوع «استحقاق» واربطه بالموظف من شاشة عناصر الموظفين بتاريخ سريان.</div>
       <form className="journal-form" onSubmit={submitSalaryChange}>
         <label>الموظف<select required value={salaryDraft.employee} onChange={e=>setSalaryDraft({...salaryDraft,employee:e.target.value})}><option value="">اختر الموظف</option>{employees.map(e=><option key={e.id} value={e.id}>{e.code} — {e.full_name_ar}</option>)}</select></label>
         <label>تاريخ السريان<input type="date" required value={salaryDraft.effective_date} onChange={e=>setSalaryDraft({...salaryDraft,effective_date:e.target.value})}/></label>
-        <label>الراتب الجديد<input type="number" min="0" required value={salaryDraft.new_salary} onChange={e=>setSalaryDraft({...salaryDraft,new_salary:e.target.value})}/></label>
+        <label>طريقة الزيادة<select value={salaryDraft.raise_mode} onChange={e=>setSalaryDraft({...salaryDraft,raise_mode:e.target.value as "percentage"|"amount"})}><option value="percentage">نسبة مئوية %</option><option value="amount">مبلغ ثابت</option></select></label>
+        <label>{salaryDraft.raise_mode==="percentage"?"نسبة الزيادة %":"قيمة الزيادة" }<input type="number" min="0" step="0.01" required value={salaryDraft.raise_value} onChange={e=>setSalaryDraft({...salaryDraft,raise_value:e.target.value})}/></label>
         <label>نوع التغيير<select value={salaryDraft.change_type} onChange={e=>setSalaryDraft({...salaryDraft,change_type:e.target.value})}><option value="annual_raise">زيادة سنوية</option><option value="promotion">ترقية</option><option value="adjustment">تعديل</option></select></label>
         <label className="form-wide">سبب التغيير<input value={salaryDraft.reason} onChange={e=>setSalaryDraft({...salaryDraft,reason:e.target.value})}/></label>
-        <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>تسجيل تغيير الراتب</button></div>
+        <div className="form-wide asset-report-note">الراتب قبل السريان: <strong>{money(salaryBeforeEffectiveDate)}</strong> — الراتب الجديد بعد الزيادة: <strong>{money(calculatedNewSalary)}</strong></div>
+        <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length||!salaryDraft.employee||salaryIncrease<=0}>تسجيل تغيير الراتب</button></div>
       </form>
+      <div className="section-heading" style={{marginTop:20}}><div><h3>التاريخ الوظيفي للراتب</h3><p>سجلات مرتبة بتاريخ السريان، تشمل الراتب السابق والجديد</p></div><span className="module-count">{salaryHistoryRows.length} تغيير</span></div>
+      <div className="data-table-wrap"><table><thead><tr><th>تاريخ السريان</th><th>الراتب السابق</th><th>الراتب الجديد</th><th>الفرق</th><th>نوع التغيير</th><th>السبب</th></tr></thead><tbody>
+        {salaryHistoryRows.map(row=><tr key={row.id}><td>{row.effective_date}</td><td>{money(row.previous_salary)}</td><td>{money(row.new_salary)}</td><td>{money(Number(row.new_salary)-Number(row.previous_salary))}</td><td>{row.change_type==="annual_raise"?"زيادة سنوية":row.change_type==="promotion"?"ترقية":"تعديل"}</td><td>{row.reason||"—"}</td></tr>)}
+      </tbody></table>{!salaryHistoryRows.length&&<div className="table-empty">{salaryDraft.employee?"لا يوجد سجل تغييرات لهذا الموظف.":"اختر موظفًا لعرض سجل الراتب."}</div>}</div>
     </>}
     {tab==="leaveLoans"&&<>
       <h3>طلبات الإجازات</h3>
