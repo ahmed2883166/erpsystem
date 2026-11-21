@@ -752,3 +752,24 @@ class AccountExcelImportTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("spreadsheetml", response["Content-Type"])
         self.assertIn("attachment", response["Content-Disposition"])
+
+    def test_exact_existing_account_is_reused_without_modification(self):
+        root = ChartOfAccount.objects.create(
+            company=self.company, code="1000", name_ar="الأصول", nature="asset",
+            is_group=True, allow_posting=False,
+        )
+        upload = self.make_file([
+            ["1000", "الأصول", None, "أصول", "مجموعة"],
+            ["1110", "الصندوق", "1000", "أصول", "تفصيلي"],
+        ])
+        response = self.client.post(
+            "/api/accounting/account-import/",
+            {"company": self.company.pk, "action": "import", "file": upload}, format="multipart",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["skipped_existing"], 1)
+        self.assertEqual(response.data["created_accounts"], ["1110"])
+        root.refresh_from_db()
+        self.assertEqual(root.name_ar, "الأصول")
+        self.assertFalse(root.allow_posting)
+        self.assertEqual(ChartOfAccount.objects.filter(company=self.company, code="1000").count(), 1)
