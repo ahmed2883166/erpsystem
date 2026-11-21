@@ -10,9 +10,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
 from django.conf import settings
+from django.contrib.auth.hashers import check_password
+from django.utils import timezone
+from datetime import timedelta
 from audit.models import AuditEvent
 
 from .models import BackupConfiguration, BackupRun
+from .reset_service import reset_preview, reset_operational_data
 
 
 def _config():
@@ -162,3 +166,71 @@ class BackupConfigurationView(APIView):
             },
         )
         return Response(_serialize(config, True))
+
+
+
+class OperationalResetPreviewView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            raise PermissionDenied("معاينة التصفير متاحة لمدير النظام الأعلى فقط.")
+        return Response({
+            "counts": reset_preview(),
+            "total_records": sum(reset_preview().values()),
+            "preserved": [
+                "الشركات والفروع والمستخدمون والصلاحيات",
+                "دليل الحسابات ومراكز التكلفة وأكواد الضرائب",
+                "العملاء والموردون والأصناف والمخازن",
+                "الموظفون وإعدادات الموارد البشرية",
+                "إعدادات النظام وسجل التدقيق",
+            ],
+            "removed": [
+                "القيود وسطورها والفواتير والتحصيلات والمدفوعات",
+                "حركات المخزون والأرصدة وطبقات التكلفة",
+                "التسويات البنكية وحركات الخزينة",
+                "سجل الأصول الثابتة والإهلاكات",
+                "الحضور والإجازات والسلف وسجلات المرتبات",
+                "طلبات الموافقات المرتبطة بالحركات",
+            ],
+        })
+
+
+class OperationalResetView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    @transaction.atomic
+    def post(self, request):
+        if not request.user.is_superuser:
+            raise PermissionDenied("تصفير الحركات متاح لمدير النظام الأعلى فقط.")
+        if request.data.get("confirmation") != "تصفير الحركات":
+            raise ValidationError({"confirmation": "اكتب عبارة تصفير الحركات كما هي للتأكيد."})
+        password = request.data.get("password", "")
+        if not isinstance(password, str) or not password or not check_password(password, request.user.password):
+            raise PermissionDenied("كلمة مرور مدير النظام غير صحيحة.")
+        latest = BackupRun.objects.filter(status=BackupRun.Status.SUCCESS).first()
+        if not latest or latest.created_at < timezone.now() - timedelta(hours=24):
+            raise ValidationError({"detail": "يلزم إنشاء نسخة احتياطية ناجحة خلال آخر 24 ساعة قبل التصفير."})
+        backup_file = Path(latest.backup_file)
+        if not latest.backup_file or not backup_file.is_file() or backup_file.stat().st_size < 1024:
+            raise ValidationError({"detail": "ملف النسخة الاحتياطية الأخيرة غير موجود أو غير صالح؛ تم إلغاء التصفير."})
+        deleted = reset_operational_data()
+        AuditEvent.objects.create(
+            actor=request.user,
+            action=AuditEvent.Action.ACTION,
+            resource="core.OperationalReset",
+            object_id="all",
+            http_method="POST",
+            status_code=200,
+            succeeded=True,
+            metadata={
+                "deleted_counts": deleted,
+                "backup_run_id": latest.pk,
+                "backup_file": latest.backup_file,
+            },
+        )
+        return Response({
+            "detail": "تم تصفير الحركات التشغيلية مع الاحتفاظ بالبيانات الأساسية وسجل التدقيق.",
+            "deleted_counts": deleted,
+            "backup_run_id": latest.pk,
+        })
