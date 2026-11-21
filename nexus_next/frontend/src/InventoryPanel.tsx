@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
@@ -8,6 +8,8 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
   const [units, setUnits] = useState<InventoryUnit[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [reconciliationBranch, setReconciliationBranch] = useState("");
   const [warehouseSettings, setWarehouseSettings] = useState<WarehouseProductSetting[]>([]);
   const [stockCard, setStockCard] = useState<StockCard | null>(null);
   const [stockCardError, setStockCardError] = useState("");
@@ -39,8 +41,9 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [p, c, u, w, l, m, b, a, ar, ws] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId)]);
-      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws);
+      const [p, c, u, w, l, m, b, a, ar, ws, br] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId)]);
+      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br);
+      setReconciliationBranch((old) => old && br.some((item) => String(item.id) === old) ? old : "");
       setRoleForm((old) => ({ ...old, account: String(ar.find((item) => item.role === old.role)?.account || "") }));
       setLocationForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || "") }));
       setReorderForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || ""), product: old.product || String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "") }));
@@ -63,7 +66,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const loadReconciliation = async () => {
     if (!companyId) return;
     setReconciling(true); setReconciliationError("");
-    try { setReconciliation(await stockApi.reconciliation(companyId)); }
+    try { setReconciliation(await stockApi.reconciliation(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
     catch (reason) { setReconciliation(null); setReconciliationError(reason instanceof Error ? reason.message : "تعذرت مطابقة المخزون مع دفتر الأستاذ."); }
     finally { setReconciling(false); }
   };
@@ -248,8 +251,9 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
           <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الموقع</th><th>تاريخ الصلاحية</th><th>الأيام المتبقية</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{expiryAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_name}</td><td>{row.location_name || "عام"}</td><td>{row.expiry_date}</td><td><span className={row.days < 0 ? "status-pill reversed" : "status-pill draft"}>{row.days < 0 ? `منتهي منذ ${Math.abs(row.days)} يوم` : row.days === 0 ? "ينتهي اليوم" : `${row.days} يوم`}</span></td><td>{Number(row.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!expiryAlerts.length && <tr><td colSpan={7}>لا توجد تنبيهات صلاحية خلال الفترة المحددة.</td></tr>}</tbody></table></div>
         </section>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>مطابقة المخزون مع دفتر الأستاذ</h3><p>مقارنة قيمة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة</p></div><button type="button" className="primary-button" disabled={reconciling} onClick={() => void loadReconciliation()}>{reconciling ? "جارٍ الفحص…" : "تنفيذ المطابقة"}</button></div>
+          <div className="stock-card-filters"><label>نطاق المطابقة<select value={reconciliationBranch} onChange={(e) => { setReconciliationBranch(e.target.value); setReconciliation(null); setReconciliationError(""); }}><option value="">كل الفروع المسموح بها</option>{branches.map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label></div>
           {reconciliationError && <div className="error-banner">{reconciliationError}</div>}
-          {reconciliation && <div className="reconciliation-result"><div><span>حساب المخزون</span><strong>{reconciliation.account_code} - {reconciliation.account_name}</strong></div><div><span>قيمة المخزون</span><strong>{Number(reconciliation.stock_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>رصيد دفتر الأستاذ</span><strong>{Number(reconciliation.gl_balance).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>الفرق</span><strong>{Number(reconciliation.difference).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div className={reconciliation.is_reconciled ? "reconciliation-status matched" : "reconciliation-status mismatch"}>{reconciliation.is_reconciled ? "المخزون مطابق لدفتر الأستاذ" : "يوجد فرق يحتاج إلى مراجعة"}</div></div>}
+          {reconciliation && <div className="reconciliation-result"><div><span>نطاق المطابقة</span><strong>{reconciliation.branch_name || "الفروع المتاحة للمستخدم"}</strong></div><div><span>حساب المخزون</span><strong>{reconciliation.account_code} - {reconciliation.account_name}</strong></div><div><span>قيمة المخزون</span><strong>{Number(reconciliation.stock_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>رصيد دفتر الأستاذ</span><strong>{Number(reconciliation.gl_balance).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>الفرق</span><strong>{Number(reconciliation.difference).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div className={reconciliation.is_reconciled ? "reconciliation-status matched" : "reconciliation-status mismatch"}>{reconciliation.is_reconciled ? "المخزون مطابق لدفتر الأستاذ" : "يوجد فرق يحتاج إلى مراجعة"}</div></div>}
           {!reconciliation && !reconciliationError && <div className="table-empty">نفّذ المطابقة لعرض نتيجة المقارنة.</div>}
         </section>
         <p className="inventory-report-note">حد إعادة الطلب يُحدد لكل مخزن وصنف، ويُستخدم الحد العام للصنف كقيمة افتراضية عند غياب الإعداد الخاص. المطابقة تقارن لقطة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة؛ ولا تمثل مطابقة تاريخية لفترة سابقة.</p>
