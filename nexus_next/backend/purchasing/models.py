@@ -12,6 +12,7 @@ from suppliers.models import Supplier
 class PurchaseReceipt(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_receipts")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_receipts")
+    purchase_order = models.ForeignKey("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="receipts")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="purchase_receipts")
     stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="purchase_receipt")
     receipt_number = models.CharField(max_length=40)
@@ -204,3 +205,87 @@ class SupplierPayment(models.Model):
         if self.status == self.Status.POSTED:
             raise ValidationError("لا يمكن حذف سند صرف مورد مرحّل.")
         return super().delete(*args, **kwargs)
+
+
+class PurchaseOrder(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        CONFIRMED = "confirmed", "معتمد"
+        PARTIALLY_RECEIVED = "partially_received", "استلام جزئي"
+        RECEIVED = "received", "مستلم بالكامل"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_orders")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_orders")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="purchase_orders")
+    order_number = models.CharField(max_length=40)
+    order_date = models.DateField()
+    expected_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-order_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "order_number"), name="uq_purchase_order_company_no")]
+        indexes = [models.Index(fields=("company", "status", "order_date"), name="pur_order_co_status_date_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.warehouse_id and self.warehouse.company_id != self.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("أمر الشراء المعتمد غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر شراء معتمد أو مرتبط بحركات.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseOrderLine(models.Model):
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_order_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    received_quantity = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+
+    @property
+    def remaining_quantity(self):
+        return self.quantity - self.received_quantity
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.order.company_id or self.product.product_type != "goods"):
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا تابعًا لشركة أمر الشراء."})
+        if self.received_quantity > self.quantity:
+            raise ValidationError({"received_quantity": "الكمية المستلمة تتجاوز كمية أمر الشراء."})
+
+    def save(self, *args, **kwargs):
+        if self.order_id and self.order.status != PurchaseOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود أمر شراء معتمد.")
+        return super().save(*args, **kwargs)
+
+
+class PurchaseOrderReceiptLine(models.Model):
+    receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_order_link")
+    order_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, related_name="receipt_links")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+
+    class Meta:
+        ordering = ("id",)
