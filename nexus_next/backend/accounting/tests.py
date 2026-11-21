@@ -726,3 +726,29 @@ class AccountExcelImportTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
         self.assertEqual(ChartOfAccount.objects.filter(company=self.company).count(), 0)
+
+    def test_numeric_excel_codes_and_similar_names_are_safe_warnings(self):
+        ChartOfAccount.objects.create(company=self.company, code="999", name_ar="الصندوق", nature="asset")
+        upload = self.make_file([[1000, "الأصول", None, "أصول", "مجموعة"],
+                                 [1110, "الصندوق", 1000, "أصول", "تفصيلي"]])
+        preview = self.client.post(
+            "/api/accounting/account-import/",
+            {"company": self.company.pk, "action": "preview", "file": upload}, format="multipart",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["summary"]["warnings"], 1)
+        self.assertEqual(preview.data["summary"]["blocked"], 0)
+        upload = self.make_file([[1000, "الأصول", None, "أصول", "مجموعة"],
+                                 [1110, "الصندوق", 1000, "أصول", "تفصيلي"]])
+        imported = self.client.post(
+            "/api/accounting/account-import/",
+            {"company": self.company.pk, "action": "import", "file": upload}, format="multipart",
+        )
+        self.assertEqual(imported.status_code, 200, imported.data)
+        self.assertTrue(ChartOfAccount.objects.filter(company=self.company, code="1110").exists())
+
+    def test_download_excel_template(self):
+        response = self.client.get("/api/accounting/account-import/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("spreadsheetml", response["Content-Type"])
+        self.assertIn("attachment", response["Content-Disposition"])
