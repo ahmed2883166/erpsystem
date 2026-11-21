@@ -31,6 +31,7 @@ try {
   if (-not (Test-Path $EnvFile)) {
     throw "ملف backend/.env غير موجود. شغّل start-local.ps1 مرة واحدة لإنشاء الأسرار المحلية."
   }
+  $env:DJANGO_DEBUG = "False"
 
   docker compose -f compose.yaml up -d db
   if ($LASTEXITCODE -ne 0) { throw "تعذر تشغيل PostgreSQL." }
@@ -71,9 +72,14 @@ try {
 
   $Bind = "127.0.0.1:8000"
   if ($EnableLan) {
-    $Allowed = (Select-String -Path $EnvFile -Pattern "^DJANGO_ALLOWED_HOSTS=" | Select-Object -First 1).Line
-    if (-not $Allowed -or $Allowed -match "127\.0\.0\.1,localhost$") {
-      throw "قبل تفعيل الشبكة، أضف أسماء أو عناوين أجهزة الشبكة إلى DJANGO_ALLOWED_HOSTS داخل backend/.env."
+    $AllowedLine = (Select-String -Path $EnvFile -Pattern "^DJANGO_ALLOWED_HOSTS=" | Select-Object -First 1).Line
+    $AllowedHosts = @()
+    if ($AllowedLine) {
+      $AllowedHosts = (($AllowedLine -split "=", 2)[1] -replace "[\"']", "").Split(",") | ForEach-Object { $_.Trim() }
+    }
+    $HasLanHost = $AllowedHosts | Where-Object { $_ -and $_ -notin @("localhost", "127.0.0.1", "[::1]") }
+    if (-not $HasLanHost) {
+      throw "قبل تفعيل الشبكة، أضف عنوان IP أو اسم جهاز الشبكة إلى DJANGO_ALLOWED_HOSTS داخل backend/.env."
     }
     $Bind = "0.0.0.0:8000"
     Write-Warning "الخادم سيستمع على الشبكة المحلية. استخدم جدار حماية Windows واسمح فقط لأجهزة الشبكة الموثوقة."
