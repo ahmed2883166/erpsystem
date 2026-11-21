@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment
 
-from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest
+from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord
 from hr.services import calculate_component, money, salary_for_date
 
 
@@ -150,6 +150,31 @@ class EmployeePayrollReportApiTests(TestCase):
             {"BASIC", "BONUS", "ER-SHARE"},
         )
         self.assertEqual(len(employee["periods"]), 1)
+
+    def test_manager_can_delete_employee_only_when_no_linked_hr_records_exist(self):
+        manager = User.objects.create_user(username="hr_employee_delete_manager", password="test-password")
+        CompanyMembership.objects.create(
+            user=manager, company=self.company, role="admin", all_branches=True,
+        )
+        removable = Employee.objects.create(
+            company=self.company, code="EMP-DELETE", full_name_ar="موظف للحذف",
+            branch=self.branch, hire_date=date(2026, 1, 1),
+            basic_salary=Decimal("5000"), currency=self.currency,
+        )
+        linked = Employee.objects.create(
+            company=self.company, code="EMP-LINKED", full_name_ar="موظف مرتبط",
+            branch=self.branch, hire_date=date(2026, 1, 1),
+            basic_salary=Decimal("5000"), currency=self.currency,
+        )
+        AttendanceRecord.objects.create(
+            employee=linked, work_date=date(2026, 4, 1), status=AttendanceRecord.Status.PRESENT,
+        )
+        self.client.force_authenticate(manager)
+        deleted = self.client.delete(f"/api/hr/employees/{removable.pk}/")
+        blocked = self.client.delete(f"/api/hr/employees/{linked.pk}/")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertTrue(Employee.objects.filter(pk=linked.pk).exists())
 
     def test_manager_can_reject_pending_leave_request(self):
         leave = LeaveRequest.objects.create(
