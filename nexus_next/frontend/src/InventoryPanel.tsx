@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { inventoryApi, stockApi, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type StockBalance, type StockMovement, type Warehouse } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type StockBalance, type StockMovement, type Warehouse } from "./api";
 
-type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances";
+type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "accounting";
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
   const [tab, setTab] = useState<Tab>("products");
   const [products, setProducts] = useState<Product[]>([]);
@@ -11,6 +11,8 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [balances, setBalances] = useState<StockBalance[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [roleAssignments, setRoleAssignments] = useState<AccountRole[]>([]);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -20,14 +22,16 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [categoryForm, setCategoryForm] = useState({ code: "", name_ar: "" });
   const [warehouseForm, setWarehouseForm] = useState({ code: "", name_ar: "", branch: "", address: "" });
   const [locationForm, setLocationForm] = useState({ warehouse: "", code: "", name_ar: "", location_type: "area", parent: "" });
+  const [roleForm, setRoleForm] = useState({ role: "inventory", account: "" });
   const [stockForm, setStockForm] = useState({ movement_number: "", movement_type: "receipt", movement_date: new Date().toISOString().slice(0, 10), source_warehouse: "", destination_warehouse: "", source_location: "", destination_location: "", expiry_date: "", product: "", quantity: "1", unit_cost: "0", adjustment_direction: "in", notes: "" });
 
   const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [p, c, u, w, l, m, b] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId)]);
-      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b);
+      const [p, c, u, w, l, m, b, a, ar] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId)]);
+      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar);
+      setRoleForm((old) => ({ ...old, account: old.account || String(a.find((item) => item.is_active && !item.is_group && item.allow_posting)?.id || "") }));
       setLocationForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || "") }));
       setStockForm((old) => ({ ...old, source_warehouse: old.source_warehouse || String(w[0]?.id || ""), destination_warehouse: old.destination_warehouse || String(w[0]?.id || ""), product: old.product || String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "") }));
       setForm((old) => ({ ...old, unit: old.unit || String(u[0]?.id || ""), category: old.category || String(c[0]?.id || "") }));
@@ -54,6 +58,13 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
         if (!locationForm.warehouse) throw new Error("أضف مخزناً أولاً.");
         await inventoryApi.createLocation({ warehouse: Number(locationForm.warehouse), code: locationForm.code, name_ar: locationForm.name_ar, location_type: locationForm.location_type, parent: locationForm.parent ? Number(locationForm.parent) : null });
         setLocationForm((old) => ({ ...old, code: "", name_ar: "", parent: "" }));
+      } else if (tab === "accounting") {
+        if (!roleForm.account) throw new Error("اختر حساباً تفصيلياً قابلاً للترحيل.");
+        const payload = { company: companyId, role: roleForm.role, account: Number(roleForm.account) };
+        const existing = roleAssignments.find((item) => item.role === roleForm.role);
+        if (existing) await accountRoleApi.update(existing.id, payload);
+        else await accountRoleApi.create(payload);
+        setRoleForm((old) => ({ ...old, account: "" }));
       } else if (tab === "movements") {
         const type = stockForm.movement_type;
         const sourceId = type === "receipt" || (type === "adjustment" && stockForm.adjustment_direction === "in") ? null : Number(stockForm.source_warehouse);
@@ -73,6 +84,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     { id: "locations", label: "مواقع التخزين", count: locations.length },
     { id: "movements", label: "حركات المخزون", count: movements.length },
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
+    { id: "accounting", label: "ربط الحسابات", count: roleAssignments.length },
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
   return <section className="work-panel inventory-panel">
@@ -97,6 +109,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
       {tab === "units" && <><label>كود الوحدة<input required value={unitForm.code} onChange={(e) => setUnitForm({ ...unitForm, code: e.target.value })} /></label><label>اسم الوحدة<input required value={unitForm.name_ar} onChange={(e) => setUnitForm({ ...unitForm, name_ar: e.target.value })} /></label><label>الرمز<input value={unitForm.symbol} onChange={(e) => setUnitForm({ ...unitForm, symbol: e.target.value })} /></label><label>الخانات العشرية<input type="number" min="0" max="6" value={unitForm.decimal_places} onChange={(e) => setUnitForm({ ...unitForm, decimal_places: e.target.value })} /></label></>}
       {tab === "warehouses" && <><label>كود المخزن<input required value={warehouseForm.code} onChange={(e) => setWarehouseForm({ ...warehouseForm, code: e.target.value })} /></label><label>اسم المخزن<input required value={warehouseForm.name_ar} onChange={(e) => setWarehouseForm({ ...warehouseForm, name_ar: e.target.value })} /></label><label className="inventory-wide">العنوان<textarea value={warehouseForm.address} onChange={(e) => setWarehouseForm({ ...warehouseForm, address: e.target.value })} /></label></>}
       {tab === "locations" && <><label>المخزن<select required value={locationForm.warehouse} onChange={(e) => setLocationForm({ ...locationForm, warehouse: e.target.value, parent: "" })}><option value="">اختر المخزن</option>{warehouses.filter((w) => w.is_active).map((w) => <option key={w.id} value={w.id}>{w.name_ar}</option>)}</select></label><label>نوع الموقع<select value={locationForm.location_type} onChange={(e) => setLocationForm({ ...locationForm, location_type: e.target.value })}><option value="floor">دور</option><option value="area">منطقة</option><option value="rack">رف</option><option value="bin">خانة</option></select></label><label>الكود<input required value={locationForm.code} onChange={(e) => setLocationForm({ ...locationForm, code: e.target.value })} /></label><label>اسم الموقع<input required value={locationForm.name_ar} onChange={(e) => setLocationForm({ ...locationForm, name_ar: e.target.value })} /></label><label>الموقع الأب<select value={locationForm.parent} onChange={(e) => setLocationForm({ ...locationForm, parent: e.target.value })}><option value="">بدون موقع أب</option>{locations.filter((x) => String(x.warehouse) === locationForm.warehouse).map((x) => <option key={x.id} value={x.id}>{x.name_ar} ({x.code})</option>)}</select></label></>}
+      {tab === "accounting" && <><label>الدور المحاسبي<select value={roleForm.role} onChange={(e) => { const next = e.target.value; const assigned = roleAssignments.find((item) => item.role === next); setRoleForm({ role: next, account: assigned ? String(assigned.account) : "" }); }}><option value="inventory">حساب المخزون</option><option value="goods_received_not_invoiced">بضاعة مستلمة غير مفوترة</option><option value="cogs">تكلفة المبيعات</option><option value="inventory_adjustment_gain">أرباح تسوية المخزون</option><option value="inventory_adjustment_loss">خسائر تسوية المخزون</option><option value="inter_branch_clearing">تسوية بين الفروع</option></select></label><label>الحساب المرتبط<select required value={roleForm.account} onChange={(e) => setRoleForm({ ...roleForm, account: e.target.value })}><option value="">اختر حساباً</option>{accounts.filter((a) => a.is_active && !a.is_group && a.allow_posting).map((a) => <option key={a.id} value={a.id}>{a.code} - {a.name_ar}</option>)}</select></label><p className="inventory-wide">اربط الأدوار المطلوبة قبل ترحيل الحركات. الاستلام يحتاج المخزون والبضاعة المستلمة غير المفوترة، والصرف يحتاج المخزون وتكلفة المبيعات.</p></>}
       {tab === "movements" && <>
         <label>رقم الحركة<input required value={stockForm.movement_number} onChange={(e) => setStockForm({ ...stockForm, movement_number: e.target.value })} /></label>
         <label>نوع الحركة<select value={stockForm.movement_type} onChange={(e) => setStockForm({ ...stockForm, movement_type: e.target.value, source_location: "", destination_location: "" })}><option value="receipt">استلام</option><option value="issue">صرف</option><option value="transfer">تحويل بين مخازن</option><option value="adjustment">تسوية جرد</option></select></label>
@@ -123,6 +136,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
       {tab === "warehouses" && <table><thead><tr><th>الكود</th><th>اسم المخزن</th><th>الفرع</th><th>العنوان</th><th>الحالة</th></tr></thead><tbody>{warehouses.filter((x) => `${x.code} ${x.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((x) => <tr key={x.id}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.branch_code || "عام"}</td><td>{x.address || "—"}</td><td>{x.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table>}
       {tab === "locations" && <table><thead><tr><th>المخزن</th><th>الكود</th><th>اسم الموقع</th><th>النوع</th><th>الموقع الأب</th><th>الحالة</th></tr></thead><tbody>{locations.filter((x) => `${x.code} ${x.name_ar} ${x.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((x) => <tr key={x.id}><td>{x.warehouse_name}</td><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{{ floor: "دور", area: "منطقة", rack: "رف", bin: "خانة" }[x.location_type]}</td><td>{locations.find((parent) => parent.id === x.parent)?.name_ar || "—"}</td><td>{x.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table>}
       {tab === "movements" && <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{m.lines.reduce((sum, line) => sum + Number(line.cost_amount || 0), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>}
+      {tab === "accounting" && <table><thead><tr><th>الدور المحاسبي</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>{[{ role: "inventory", label: "حساب المخزون" }, { role: "goods_received_not_invoiced", label: "بضاعة مستلمة غير مفوترة" }, { role: "cogs", label: "تكلفة المبيعات" }, { role: "inventory_adjustment_gain", label: "أرباح تسوية المخزون" }, { role: "inventory_adjustment_loss", label: "خسائر تسوية المخزون" }, { role: "inter_branch_clearing", label: "تسوية بين الفروع" }].map((item) => { const assigned = roleAssignments.find((x) => x.role === item.role); const account = accounts.find((x) => x.id === assigned?.account); return <tr key={item.role}><td>{item.label}</td><td>{assigned ? `${account?.code || assigned.account_code} - ${account?.name_ar || ""}` : "غير مربوط"}</td><td>{assigned ? "مربوط" : "مطلوب"}</td></tr>; })}</tbody></table>}
       {tab === "balances" && <table><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>موقع التخزين</th><th>الصلاحية</th><th>الرصيد</th><th>متوسط التكلفة</th><th>قيمة المخزون</th></tr></thead><tbody>{balances.filter((b) => `${b.product_code} ${b.product_name} ${b.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((b) => <tr key={b.id}><td className="code-cell">{b.product_code}</td><td>{b.product_name}</td><td>{b.warehouse_name}</td><td>{b.location_name || "عام"}</td><td>{b.expiry_date || "—"}</td><td>{Number(b.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.average_cost).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}</tbody></table>}
     </div>
   </section>;
