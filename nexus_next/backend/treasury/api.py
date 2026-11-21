@@ -117,6 +117,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         bank = data["bank_account"]
         if bank.company_id != company_id or bank.kind != TreasuryAccount.Kind.BANK or not bank.is_active:
             raise ValidationError("اختر حسابًا بنكيًا نشطًا تابعًا للشركة.")
+        if bank.branch_id and not can_access_branch(self.request.user, bank.branch_id, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -198,7 +200,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         book_balance = (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
         statement_balance = recon.opening_balance + sum((line.amount for line in lines), Decimal("0"))
-        outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).filter(
+        outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
             models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
         ).order_by("transaction_date", "id")
         outstanding_rows = []
@@ -238,7 +240,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             bank_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date)
             totals = bank_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             book_balance = (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
-            outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).filter(
+            outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
                 models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
             )
             outstanding_total = Decimal("0")
@@ -258,7 +260,10 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
     queryset = BankStatementLine.objects.select_related("reconciliation", "matched_transaction").all()
 
     def get_queryset(self):
-        return self.queryset.filter(reconciliation__company__in=accessible_companies(self.request.user))
+        qs = self.queryset.filter(reconciliation__company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser:
+            qs = qs.filter(models.Q(reconciliation__bank_account__branch__isnull=True) | models.Q(reconciliation__bank_account__branch__in=accessible_branches(self.request.user)))
+        return qs
 
     def perform_create(self, serializer):
         recon = serializer.validated_data["reconciliation"]
