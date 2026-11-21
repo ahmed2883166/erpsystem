@@ -38,6 +38,10 @@ class AccountRoleSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         company = attrs.get("company", getattr(self.instance, "company", None))
         account = attrs.get("account", getattr(self.instance, "account", None))
+        if self.instance and "company" in attrs and company.pk != self.instance.company_id:
+            raise serializers.ValidationError({"company": "لا يمكن نقل الدور المحاسبي إلى شركة أخرى؛ أنشئ ربطًا مستقلًا للشركة الأخرى."})
+        if self.instance and "role" in attrs and attrs["role"] != self.instance.role:
+            raise serializers.ValidationError({"role": "هوية الدور المحاسبي ثابتة؛ غيّر الحساب المرتبط فقط."})
         if company and account and account.company_id != company.id:
             raise serializers.ValidationError({"account": "الحساب لا يتبع نفس الشركة."})
         if account and (account.is_group or not account.allow_posting or not account.is_active):
