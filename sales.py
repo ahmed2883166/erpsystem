@@ -2513,7 +2513,7 @@ def new_invoice():
                     request.form.getlist("quantity"), request.form.getlist("unit_price"),
                     request.form.getlist("description"), request.form.getlist("line_tax_rate"),
                     request.form.getlist("line_tax_treatment"), request.form.getlist("uom_id"),
-                    request.form.getlist("line_tax_category")):
+                    request.form.getlist("line_tax_category") or [""] * len(request.form.getlist("product_id"))):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
@@ -2767,7 +2767,7 @@ def edit_invoice_workflow(workflow_id):
                     request.form.getlist("product_id"), request.form.getlist("quantity"),
                     request.form.getlist("unit_price"), request.form.getlist("description"),
                     request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
-                    request.form.getlist("uom_id"), request.form.getlist("line_tax_category")):
+                    request.form.getlist("uom_id"), request.form.getlist("line_tax_category") or [""] * len(request.form.getlist("product_id"))):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
@@ -2841,7 +2841,7 @@ def edit_invoice_workflow(workflow_id):
                     request.form.getlist("product_id"), request.form.getlist("quantity"),
                     request.form.getlist("unit_price"), request.form.getlist("description"),
                     request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
-                    request.form.getlist("uom_id"), request.form.getlist("line_tax_category"))],
+                    request.form.getlist("uom_id"), request.form.getlist("line_tax_category") or [""] * len(request.form.getlist("product_id")))],
                 "dimensions": {key: request.form.get(key) for key in
                     ("branch_id", "cost_center_id", "project_id", "salesperson_id")},
             }
