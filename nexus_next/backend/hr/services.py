@@ -7,7 +7,7 @@ from django.db.models import Q, Sum
 
 from accounting.models import JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
-from companies.models import FiscalYear
+from companies.models import FiscalYear\nfrom approvals.models import FinancialApprovalRequest\nfrom approvals.services import refresh_financial_approval\nfrom treasury.models import TreasuryAccount, TreasuryTransaction\nfrom treasury.services import post_treasury_transaction
 
 from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
@@ -374,6 +374,109 @@ def post_payroll_cycle(cycle_id, actor=None):
     cycle.status = PayrollCycle.Status.POSTED
     cycle.save(update_fields=("journal_entry", "status", "updated_at"))
     return {"cycle_id": cycle.pk, "status": cycle.status, "postings": posted}
+
+@transaction.atomic
+def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
+    cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
+    if cycle.status != PayrollCycle.Status.POSTED:
+        raise ValidationError("يجب ترحيل استحقاق المرتبات محاسبيًا قبل إعداد الصرف.")
+    postings = list(cycle.postings.select_related("branch").order_by("branch__code"))
+    if not postings or any(item.payment_treasury_transaction_id for item in postings):
+        raise ValidationError("لا توجد قيود مرتبات جاهزة للصرف أو تم إعداد الصرف من قبل.")
+    treasury_account = TreasuryAccount.objects.select_related("account", "branch").select_for_update().get(pk=treasury_account_id)
+    if treasury_account.company_id != cycle.company_id or not treasury_account.is_active:
+        raise ValidationError("حساب الخزينة غير نشط أو لا يتبع الشركة.")
+    validate_account = treasury_account.account
+    if not validate_account.is_active or validate_account.is_group or not validate_account.allow_posting or validate_account.nature != "asset":
+        raise ValidationError("الحساب المحاسبي المرتبط بالخزينة غير صالح.")
+    fiscal_year = FiscalYear.objects.filter(
+        company=cycle.company, start_date__lte=cycle.payment_date, end_date__gte=cycle.payment_date,
+    ).first()
+    if not fiscal_year or fiscal_year.status != FiscalYear.Status.OPEN:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تغطي تاريخ صرف المرتبات.")
+    payroll_payable = get_account_for_role(cycle.company, "payroll_payable")
+    prepared = []
+    for posting in postings:
+        if treasury_account.branch_id and treasury_account.branch_id != posting.branch_id:
+            raise ValidationError(f"حساب الخزينة المحدد لا يخدم فرع {posting.branch.name_ar}.")
+        results = cycle.results.filter(employee__branch_id=posting.branch_id).select_related("employee__currency")
+        currencies = set(results.values_list("employee__currency__code", flat=True).distinct())
+        if currencies and currencies != {treasury_account.currency_code}:
+            raise ValidationError("عملة حساب الخزينة لا تطابق عملة مرتبات جميع موظفي الفرع؛ لا يوجد تحويل عملات تلقائي في هذه المرحلة.")
+        amount = sum((row.net_pay for row in results), Decimal("0"))
+        if amount <= 0:
+            raise ValidationError(f"صافي الصرف لفرع {posting.branch.name_ar} غير موجب.")
+        document = TreasuryTransaction.objects.create(
+            company=cycle.company,
+            branch=posting.branch,
+            fiscal_year=fiscal_year,
+            source_account=treasury_account,
+            counter_account=payroll_payable,
+            kind=TreasuryTransaction.Kind.PAYMENT,
+            document_number=f"PAYDISB{cycle.pk}-{posting.branch_id}",
+            transaction_date=cycle.payment_date,
+            amount=money(amount),
+            description=f"صرف مرتبات دورة {cycle.pk} — {posting.branch.name_ar}",
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
+            created_by=actor,
+        )
+        approval = refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT, document, actor
+        )
+        posting.payment_treasury_transaction = document
+        posting.save(update_fields=("payment_treasury_transaction",))
+        prepared.append({
+            "branch_id": posting.branch_id,
+            "branch_name": posting.branch.name_ar,
+            "treasury_transaction_id": document.pk,
+            "amount": str(document.amount),
+            "approval_required": bool(approval),
+        })
+    cycle.status = PayrollCycle.Status.PAYMENT_PENDING
+    cycle.save(update_fields=("status", "updated_at"))
+    return {"cycle_id": cycle.pk, "status": cycle.status, "payments": prepared}
+
+
+@transaction.atomic
+def complete_payroll_payment(cycle_id, actor=None):
+    cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
+    if cycle.status != PayrollCycle.Status.PAYMENT_PENDING:
+        raise ValidationError("يجب إعداد مستندات الصرف أولًا.")
+    postings = list(cycle.postings.select_related("branch", "payment_treasury_transaction").order_by("branch__code"))
+    if not postings or any(not item.payment_treasury_transaction_id for item in postings):
+        raise ValidationError("مستندات الصرف غير مكتملة لكل الفروع.")
+    completed = []
+    for posting in postings:
+        document = post_treasury_transaction(posting.payment_treasury_transaction_id, actor)
+        posting.payment_journal_entry = document.journal_entry
+        posting.save(update_fields=("payment_journal_entry",))
+        branch_results = cycle.results.filter(employee__branch_id=posting.branch_id).prefetch_related("lines")
+        for result in branch_results:
+            for line in result.lines.filter(code_snapshot__startswith="LOAN-", kind_snapshot="deduction", display_only=False):
+                installment_id = line.calculation_snapshot.get("installment_id")
+                installment = LoanInstallment.objects.select_for_update().select_related("loan").get(pk=installment_id)
+                remaining = money(installment.amount - installment.paid_amount)
+                if line.amount > remaining:
+                    raise ValidationError("قيمة قسط السلفة المرحّل تتجاوز الرصيد المستحق.")
+                installment.paid_amount = money(installment.paid_amount + line.amount)
+                installment.paid_date = cycle.payment_date
+                installment.status = LoanInstallment.Status.PAID if installment.paid_amount >= installment.amount else LoanInstallment.Status.PARTIAL
+                installment.payroll_cycle = cycle
+                installment.save(update_fields=("paid_amount", "paid_date", "status", "payroll_cycle"))
+                loan = installment.loan
+                loan.outstanding_balance = max(Decimal("0"), money(loan.outstanding_balance - line.amount))
+                if loan.outstanding_balance == 0:
+                    loan.status = loan.Status.SETTLED
+                loan.save(update_fields=("outstanding_balance", "status"))
+        completed.append({
+            "branch_id": posting.branch_id,
+            "branch_name": posting.branch.name_ar,
+            "treasury_transaction_id": document.pk,
+            "journal_entry_id": document.journal_entry_id,
+        })
+    cycle.status = PayrollCycle.Status.PAID
+    cycle.save(update_fields=("status", "updated_at"))
+    return {"cycle_id": cycle.pk, "status": cycle.status, "payments": completed}
 
 
 def models_q_end(start_date):
