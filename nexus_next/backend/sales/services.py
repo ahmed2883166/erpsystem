@@ -66,23 +66,30 @@ def post_sales_invoice(invoice_id, user):
     invoice = SalesInvoice.objects.select_for_update().get(pk=invoice_id)
     if invoice.status != SalesInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المبيعات مرحلة بالفعل.")
-    if invoice.discount_approval_limit is not None:
+    discount_exceeded = (
+        invoice.discount_approval_limit is not None
+        and invoice.lines.filter(discount_percent__gt=invoice.discount_approval_limit).exists()
+    )
+    amount_exceeded = (
+        invoice.invoice_approval_limit is not None
+        and invoice.grand_total > invoice.invoice_approval_limit
+    )
+    if discount_exceeded or amount_exceeded:
         from approvals.models import SalesInvoiceApproval
-        exceeds_limit = invoice.lines.filter(discount_percent__gt=invoice.discount_approval_limit).exists()
-        if exceeds_limit:
-            approval = invoice.approval_requests.order_by("-requested_at", "-pk").first()
-            current_max_discount = max(
-                invoice.lines.values_list("discount_percent", flat=True),
-                default=Decimal("0"),
-            )
-            if (
-                not approval
-                or approval.status != SalesInvoiceApproval.Status.APPROVED
-                or approval.requested_discount_total != invoice.discount_total
-                or approval.requested_max_discount_percent != current_max_discount
-                or approval.requested_lines_snapshot != invoice_discount_snapshot(invoice)
-            ):
-                raise ValidationError("تجاوز الخصم الحد المسموح؛ يجب اعتماد مدير الشركة لآخر نسخة من الفاتورة قبل الترحيل.")
+        approval = invoice.approval_requests.order_by("-requested_at", "-pk").first()
+        current_max_discount = max(
+            invoice.lines.values_list("discount_percent", flat=True),
+            default=Decimal("0"),
+        )
+        if (
+            not approval
+            or approval.status != SalesInvoiceApproval.Status.APPROVED
+            or approval.requested_discount_total != invoice.discount_total
+            or approval.requested_max_discount_percent != current_max_discount
+            or approval.requested_invoice_limit != invoice.invoice_approval_limit
+            or approval.requested_lines_snapshot != invoice_discount_snapshot(invoice)
+        ):
+            raise ValidationError("تجاوزت الفاتورة حد الخصم أو قيمة الفاتورة المعتمد؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل.")
     delivery = invoice.delivery
     if delivery.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
