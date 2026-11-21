@@ -19,11 +19,19 @@ class DiscountApprovalPolicySerializer(serializers.ModelSerializer):
             "max_discount_percent",
             self.instance.max_discount_percent if self.instance else None,
         )
-        amount_limit = attrs.get(
+        sales_amount_limit = attrs.get(
             "max_sales_invoice_amount",
             self.instance.max_sales_invoice_amount if self.instance else None,
         )
-        if discount_limit is None and amount_limit is None:
+        purchase_amount_limit = attrs.get(
+            "max_purchase_invoice_amount",
+            self.instance.max_purchase_invoice_amount if self.instance else None,
+        )
+        payment_amount_limit = attrs.get(
+            "max_payment_amount",
+            self.instance.max_payment_amount if self.instance else None,
+        )
+        if all(value is None for value in (discount_limit, sales_amount_limit, purchase_amount_limit, payment_amount_limit)):
             raise serializers.ValidationError(
                 "يجب تحديد حد للخصم أو حد لقيمة فاتورة المبيعات على الأقل."
             )
