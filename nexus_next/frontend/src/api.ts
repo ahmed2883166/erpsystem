@@ -155,6 +155,14 @@ export type EquityChangesReport = {
   accounts:{account_id:number;code:string;name_ar:string;opening_balance:string;period_movement:string;closing_balance_before_profit:string}[];
   note:string;
 };
+export type VATReturnReport = {
+  company: number; country: "EG" | "SA"; currency: string; date_from: string; date_to: string;
+  branch: number | null; scope_branch_ids: number[];
+  sales: { taxable_base: string; tax_amount: string; gross_amount: string; by_rate: { tax_rate: string; taxable_base: string; tax_amount: string; gross_amount: string }[] };
+  purchases: { taxable_base: string; tax_amount: string; gross_amount: string; by_rate: { tax_rate: string; taxable_base: string; tax_amount: string; gross_amount: string }[] };
+  output_tax: string; input_tax: string; net_tax_payable: string;
+  report_kind: "internal_vat_reconciliation"; note: string;
+};
 export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
@@ -164,6 +172,11 @@ export const api = {
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
   journalDetail: (id: number) => request<Journal>(`/api/accounting/journal-entries/${id}/`),
+  vatReturn: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => {
+    const q = new URLSearchParams({ company: String(companyId), date_from: dateFrom, date_to: dateTo });
+    if (branch) q.set("branch", String(branch));
+    return request<VATReturnReport>(`/api/accounting/journal-entries/vat-return/?${q.toString()}`);
+  },
   trialBalance: (companyId: number, dateFrom?: string, dateTo?: string, excludeClosing = false) => {
     const q = new URLSearchParams({company:String(companyId)});
     if (dateFrom) q.set("date_from", dateFrom);
