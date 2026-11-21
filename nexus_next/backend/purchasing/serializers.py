@@ -6,7 +6,7 @@ from rest_framework import serializers
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
-from accounting.models import TaxCode
+from accounting.models import ChartOfAccount, TaxCode
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment
@@ -173,6 +173,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
 
@@ -257,6 +258,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
 
 
 class SupplierPaymentSerializer(serializers.ModelSerializer):
+    payment_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all(), required=False, allow_null=True)
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
@@ -265,7 +267,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         model = SupplierPayment
         fields = (
             "id", "company", "supplier", "supplier_name", "invoice", "invoice_number",
-            "payment_number", "payment_date", "method", "amount", "reference",
+            "payment_number", "payment_date", "method", "payment_account", "payment_account_name", "amount", "reference",
             "status", "journal_entry", "journal_number", "created_at", "posted_at",
         )
         read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
@@ -282,6 +284,9 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
         if supplier and invoice.supplier_id != supplier.pk:
             raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد الفاتورة."})
+        account = attrs.get("payment_account")
+        if account and (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET or not account.is_active or account.is_group or not account.allow_posting):
+            raise serializers.ValidationError({"payment_account": "اختر حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة."})
         return attrs
 
     @transaction.atomic
