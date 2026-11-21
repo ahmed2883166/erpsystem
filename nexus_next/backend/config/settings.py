@@ -12,7 +12,7 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhos
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
-    "rest_framework", "django_filters", "corsheaders", "core", "accounts", "companies", "accounting", "customers", "inventory", "suppliers", "purchasing", "sales", "treasury",
+    "rest_framework", "django_filters", "corsheaders", "core", "accounts", "companies", "accounting", "customers", "inventory", "suppliers", "purchasing", "sales", "treasury", "assets",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
