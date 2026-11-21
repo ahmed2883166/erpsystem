@@ -1,4 +1,4 @@
-# NEXUS ERP — Security & Audit Review
+# Admrail ERP v2 ERP — Security & Audit Review
 
 **Review date:** 2026-11-21  
 **Reviewed branch:** `work/nexus-django-react-rebuild`  
