@@ -195,18 +195,13 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return attrs
 
     def _recalculate_invoice(self, invoice, lines_changed):
-        from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
+        from approvals.models import SalesInvoiceApproval
         invoice_lines = list(invoice.lines.all())
         invoice.net_total = sum((line.net_amount for line in invoice_lines), Decimal("0"))
         invoice.discount_total = sum((line.discount_amount for line in invoice_lines), Decimal("0"))
         invoice.tax_total = sum((line.tax_amount for line in invoice_lines), Decimal("0"))
         invoice.grand_total = invoice.net_total + invoice.tax_total
         update_fields = ["net_total", "discount_total", "tax_total", "grand_total"]
-        if invoice.discount_approval_limit is None:
-            policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
-            if policy:
-                invoice.discount_approval_limit = policy.max_discount_percent
-                update_fields.append("discount_approval_limit")
         invoice.save(update_fields=update_fields)
 
         if lines_changed and invoice.discount_approval_limit is not None:
@@ -227,8 +222,13 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        from approvals.models import DiscountApprovalPolicy
         lines = validated_data.pop("lines")
         invoice = SalesInvoice.objects.create(**validated_data, created_by=self.context["request"].user)
+        policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
+        if policy:
+            invoice.discount_approval_limit = policy.max_discount_percent
+            invoice.save(update_fields=("discount_approval_limit",))
         for line in lines:
             SalesInvoiceLine.objects.create(invoice=invoice, **line)
         self._recalculate_invoice(invoice, lines_changed=True)
