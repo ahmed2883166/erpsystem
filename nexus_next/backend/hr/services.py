@@ -85,7 +85,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
                 deductions += amount
             else:
                 employer_share += amount
-            lines.append((component.code, component.name_ar, component.kind, amount, False, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
+            lines.append((component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
         installments = LoanInstallment.objects.filter(
             loan__employee=employee,
             due_date__range=(cycle.period_start, cycle.period_end),
