@@ -121,6 +121,7 @@ class PayrollComponent(CompanyScopedModel):
         PERCENT_BASIC = "percent_basic", "نسبة من الأساسي"
         PER_DAY = "per_day", "حسب الأيام"
         PER_HOUR = "per_hour", "حسب الساعات"
+        FRIDAY_DOUBLE_DAY = "friday_double_day", "عمل الجمعة بضعف اليومية"
         MANUAL = "manual", "إدخال يدوي"
 
     code = models.CharField(max_length=32)
@@ -181,6 +182,7 @@ class AttendanceRecord(models.Model):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PRESENT)
     worked_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     overtime_hours = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    friday_worked = models.BooleanField(default=False)
     late_minutes = models.PositiveIntegerField(default=0)
     notes = models.CharField(max_length=300, blank=True)
     entered_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT)
