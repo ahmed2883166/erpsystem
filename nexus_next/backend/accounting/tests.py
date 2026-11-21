@@ -138,6 +138,32 @@ class AccountingApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data), 1)
 
+    def test_viewer_cannot_create_account(self):
+        user = User.objects.create_user(username="read_only", password="test-password")
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer")
+        self.client.force_authenticate(user=user)
+        response = self.client.post("/api/accounting/accounts/", {
+            "company": self.company.pk,
+            "code": "2000",
+            "name_ar": "حساب ممنوع",
+            "nature": "liability",
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ChartOfAccount.objects.filter(company=self.company, code="2000").exists())
+
+    def test_accountant_can_create_account(self):
+        user = User.objects.create_user(username="accountant", password="test-password")
+        CompanyMembership.objects.create(user=user, company=self.company, role="accountant")
+        self.client.force_authenticate(user=user)
+        response = self.client.post("/api/accounting/accounts/", {
+            "company": self.company.pk,
+            "code": "2001",
+            "name_ar": "حساب المحاسب",
+            "nature": "liability",
+        }, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(ChartOfAccount.objects.filter(company=self.company, code="2001").exists())
+
 
 class CompanyIsolationApiTests(TestCase):
     def setUp(self):
