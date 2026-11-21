@@ -252,7 +252,7 @@ export type AssetRegisterReport = {
   totals:{original_cost:string;accumulated_depreciation:string;net_book_value_active:string;asset_count:number};
   rows:{asset_id:number;code:string;name_ar:string;branch_id:number;branch_name:string;acquisition_date:string;original_cost:string;salvage_value:string;useful_life_months:number;accumulated_depreciation:string;net_book_value:string;status:"active"|"disposed";disposed_at:string|null;acquisition_journal:number|null;disposal_journal:number|null}[];
 };
-export type AssetDepreciationReport = {company:number;date_from:string|null;date_to:string|null;total_depreciation:string;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;period_date:string;amount:string;is_partial_period:boolean;journal_entry:number}[]};
+export type AssetDepreciationReport = {company:number;date_from:string|null;date_to:string|null;total_depreciation:string;branch_totals:{branch_name:string;amount:string}[];rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;period_date:string;amount:string;is_partial_period:boolean;journal_entry:number}[]};
 export type AssetMovementReport = {company:number;date_from:string|null;date_to:string|null;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;date:string;event_type:string;event_label:string;amount:string;journal_entry:number|null;treasury_transaction:number|null}[]};
 export const fixedAssetsApi = {
   list: (companyId: number) => request<FixedAsset[]>(`/api/assets/fixed-assets/?company=${companyId}`),
