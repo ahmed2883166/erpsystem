@@ -474,6 +474,7 @@ export type HrEmployee = {
   status:"active"|"leave"|"unpaid_leave"|"suspended"|"resigned"|"retired";
   basic_salary:string; currency:number; currency_code:string; payment_method:"bank"|"cash";
 };
+export type HrPayrollRuleSet = {id:number;company:number;country:"EG"|"SA";name:string;effective_from:string;effective_to:string|null;configuration:Record<string,unknown>;is_active:boolean};
 export type HrPayrollCycle = {
   id:number; company:number; period_start:string; period_end:string; payment_date:string;
   status:"draft"|"calculated"|"review"|"approved"|"posted"|"paid";
@@ -505,6 +506,8 @@ export const hrApi = {
   createSalaryChange: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>("/api/hr/salary-history/", {method:"POST",body:JSON.stringify(payload)}); },
   employees: (companyId:number) => request<HrEmployee[]>(`/api/hr/employees/?company=${companyId}&ordering=code`),
   createEmployee: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployee>("/api/hr/employees/", {method:"POST",body:JSON.stringify(payload)}); },
+  payrollRuleSets: (companyId:number) => request<HrPayrollRuleSet[]>(`/api/hr/payroll-rule-sets/?company=${companyId}&ordering=-effective_from`),
+  createPayrollRuleSet: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollRuleSet>("/api/hr/payroll-rule-sets/", {method:"POST",body:JSON.stringify(payload)}); },
   payrollCycles: (companyId:number) => request<HrPayrollCycle[]>(`/api/hr/payroll-cycles/?company=${companyId}&ordering=-period_start`),
   createPayrollCycle: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>("/api/hr/payroll-cycles/", {method:"POST",body:JSON.stringify(payload)}); },
   calculatePayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,string|number>>(`/api/hr/payroll-cycles/${id}/calculate/`, {method:"POST"}); },
