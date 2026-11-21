@@ -1,3 +1,4 @@
+from decimal import Decimal
 import django.core.validators
 import django.db.models.deletion
 from django.db import migrations, models
