@@ -21,7 +21,7 @@ HEADER_ALIASES = {
 NATURES = {
     "asset": "asset", "assets": "asset", "أصول": "asset", "الاصول": "asset", "الأصول": "asset",
     "liability": "liability", "liabilities": "liability", "التزامات": "liability", "الالتزامات": "liability",
-    "equity": "equity", "حقوقملكية": "equity", "حقوق الملكية": "equity",
+    "equity": "equity", "حقوقملكية": "equity", "حقوقالملكية": "equity", "حقوق الملكية": "equity",
     "revenue": "revenue", "income": "revenue", "إيرادات": "revenue", "الايرادات": "revenue", "الإيرادات": "revenue",
     "expense": "expense", "expenses": "expense", "مصروفات": "expense", "التكاليفوالمصروفات": "expense",
 }
