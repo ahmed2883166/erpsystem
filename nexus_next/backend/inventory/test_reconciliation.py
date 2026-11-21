@@ -62,10 +62,10 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         )
         StockBalance.objects.create(
             product=product, warehouse=second_warehouse, quantity=Decimal("5"),
-            inventory_value=Decimal("50"), average_cost=Decimal("10"),
+            inventory_value=Decimal("50.0000"), average_cost=Decimal("10"),
         )
-        cls._post_inventory_balance("RECON-HQ", cls.head_office, offset, Decimal("120"))
-        cls._post_inventory_balance("RECON-BR2", cls.second_branch, offset, Decimal("50"))
+        cls._post_inventory_balance("RECON-HQ", cls.head_office, offset, Decimal("120.0000"))
+        cls._post_inventory_balance("RECON-BR2", cls.second_branch, offset, Decimal("50.0000"))
 
         cls.full_user = User.objects.create_user(username="inventory_full", password="test-password")
         CompanyMembership.objects.create(
@@ -95,9 +95,9 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         self.client.force_authenticate(user=self.full_user)
         response = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["stock_value"], "170")
-        self.assertEqual(response.data["gl_balance"], "170")
-        self.assertEqual(response.data["difference"], "0")
+        self.assertEqual(response.data["stock_value"], "170.0000")
+        self.assertEqual(response.data["gl_balance"], "170.0000")
+        self.assertEqual(response.data["difference"], "0.0000")
         self.assertCountEqual(
             response.data["scope_branch_ids"], [self.head_office.pk, self.second_branch.pk],
         )
@@ -111,11 +111,11 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
             f"/api/inventory/balances/reconciliation/?company={self.company.pk}&branch={self.second_branch.pk}"
         )
         self.assertEqual(head.status_code, 200)
-        self.assertEqual(head.data["stock_value"], "120")
-        self.assertEqual(head.data["gl_balance"], "120")
+        self.assertEqual(head.data["stock_value"], "120.0000")
+        self.assertEqual(head.data["gl_balance"], "120.0000")
         self.assertEqual(second.status_code, 200)
-        self.assertEqual(second.data["stock_value"], "50")
-        self.assertEqual(second.data["gl_balance"], "50")
+        self.assertEqual(second.data["stock_value"], "50.0000")
+        self.assertEqual(second.data["gl_balance"], "50.0000")
 
     def test_limited_user_sees_only_accessible_branches_and_cannot_query_another_branch(self):
         self.client.force_authenticate(user=self.limited_user)
@@ -124,6 +124,6 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
             f"/api/inventory/balances/reconciliation/?company={self.company.pk}&branch={self.second_branch.pk}"
         )
         self.assertEqual(scoped.status_code, 200)
-        self.assertEqual(scoped.data["stock_value"], "120")
-        self.assertEqual(scoped.data["gl_balance"], "120")
+        self.assertEqual(scoped.data["stock_value"], "120.0000")
+        self.assertEqual(scoped.data["gl_balance"], "120.0000")
         self.assertEqual(denied.status_code, 403)
