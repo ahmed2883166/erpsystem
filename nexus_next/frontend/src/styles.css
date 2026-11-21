@@ -521,3 +521,29 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .hr-payroll-panel .asset-report-note{margin-top:18px;padding:10px 12px;background:#f6f8fb;border-radius:8px;color:#7d899a;font-size:10px;line-height:1.8}
 .hr-payroll-panel .status-pill{white-space:nowrap}
 @media(max-width:760px){.hr-payroll-panel{padding:14px}.hr-payroll-panel .journal-form{grid-template-columns:1fr}.hr-payroll-panel .form-wide{grid-column:1}.hr-payroll-panel .data-table-wrap{overflow-x:auto}.hr-payroll-panel table{min-width:720px}}
+
+
+/* Financial dashboard and system monitoring */
+.finance-dashboard{margin-bottom:18px}
+.dashboard-filters{align-items:end}
+.dashboard-filters .primary-button{min-height:40px}
+.finance-kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:14px}
+.finance-kpi{width:100%;text-align:right;cursor:pointer;transition:transform .16s ease,border-color .16s ease}
+.finance-kpi:hover{transform:translateY(-2px);border-color:rgba(104,160,220,.55)}
+.finance-kpi .metric-value{font-size:clamp(18px,2vw,26px);overflow-wrap:anywhere}
+.finance-balance-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+.finance-balance-strip>div{display:grid;gap:5px;padding:13px 15px;border:1px solid var(--line,#263449);border-radius:12px;background:rgba(9,20,34,.45)}
+.finance-balance-strip span{font-size:11px;color:var(--muted,#9aabc1)}
+.finance-balance-strip strong{font-size:17px;color:var(--text,#eef4ff);overflow-wrap:anywhere}
+.finance-aging-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+.finance-aging-grid .activity-panel{margin:0;min-width:0}
+.finance-aging-grid .aging-buckets{display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 0}
+.finance-aging-grid .aging-buckets span{font-size:11px}
+.system-monitor .monitor-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line,#263449);padding-bottom:12px;margin-bottom:16px}
+.system-monitor .monitor-tabs button{padding:9px 14px;border:1px solid var(--line,#34445b);border-radius:9px;background:transparent;color:var(--muted,#9aabc1);font:inherit;cursor:pointer}
+.system-monitor .monitor-tabs button.active{background:rgba(71,133,194,.18);border-color:rgba(90,157,220,.55);color:var(--text,#eef4ff)}
+.monitor-kpis{grid-template-columns:repeat(3,minmax(0,1fr));margin:12px 0 16px}
+.system-monitor .data-table-wrap{max-height:520px;overflow:auto}
+.system-monitor table{min-width:760px}
+@media(max-width:900px){.finance-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.monitor-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.finance-kpi-grid,.monitor-kpis{grid-template-columns:1fr 1fr}.finance-balance-strip,.finance-aging-grid{grid-template-columns:1fr}.dashboard-filters{display:grid;grid-template-columns:1fr 1fr}.dashboard-filters .primary-button{grid-column:1/-1}.system-monitor .monitor-tabs{overflow:auto}.system-monitor .monitor-tabs button{white-space:nowrap}}
