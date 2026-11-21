@@ -12,10 +12,10 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                   "depreciation_start_date", "original_cost", "salvage_value", "useful_life_months",
                   "depreciation_method", "asset_account", "accumulated_depreciation_account",
                   "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account",
-                  "acquisition_journal", "status", "disposed_at", "disposal_proceeds", "disposal_journal",
+                  "acquisition_journal", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
                   "accumulated_depreciation", "net_book_value", "created_at")
         read_only_fields = ("acquisition_journal", "status", "disposed_at", "disposal_proceeds",
-                            "disposal_journal", "accumulated_depreciation", "net_book_value", "created_at")
+                            "disposal_journal", "disposal_treasury_transaction", "accumulated_depreciation", "net_book_value", "created_at")
 
     def validate(self, attrs):
         company = attrs.get("company", getattr(self.instance, "company", None))
