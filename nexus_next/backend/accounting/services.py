@@ -14,7 +14,7 @@ ACCOUNT_ROLE_NATURES = {
     "accounts_payable": {"liability"}, "vat_output": {"liability"}, "vat_payable": {"liability"},
     "employee_insurance_payable": {"liability"}, "employer_insurance_payable": {"liability"},
     "payroll_payable": {"liability"}, "goods_received_not_invoiced": {"liability"},
-    "inter_branch_clearing": {"liability"},
+    "inter_branch_clearing": {"asset", "liability"},
     "sales": {"revenue"}, "sales_returns": {"revenue"}, "inventory_adjustment_gain": {"revenue"},
     "cogs": {"expense"}, "operating_expense": {"expense"}, "payroll_expense": {"expense"},
     "employer_insurance_expense": {"expense"}, "inventory_adjustment_loss": {"expense"},
