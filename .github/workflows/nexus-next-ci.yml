@@ -46,6 +46,12 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python manage.py check
       - run: python manage.py makemigrations accounts companies accounting
+      - name: Print generated migrations for repository bootstrap
+        run: |
+          for file in accounts/migrations/*.py companies/migrations/*.py accounting/migrations/*.py; do
+            echo "===== MIGRATION_FILE:$file ====="
+            cat "$file"
+          done
       - run: python manage.py migrate --noinput
       - run: python manage.py test
 
