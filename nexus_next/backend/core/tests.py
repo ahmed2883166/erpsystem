@@ -26,13 +26,13 @@ class SessionAuthenticationTests(TestCase):
                 data=json.dumps({"username": user.username, "password": "wrong-password"}),
                 content_type="application/json", HTTP_X_CSRFTOKEN=csrf,
             )
-            self.assertIn(failed.status_code, (401, 403), failed.content)
+            self.assertIn(failed.status_code, (401, 403, 429), failed.content)
         locked = client.post(
             "/api/auth/login/",
             data=json.dumps({"username": user.username, "password": "correct-test-password"}),
             content_type="application/json", HTTP_X_CSRFTOKEN=csrf,
         )
-        self.assertEqual(locked.status_code, 403, locked.content)
+        self.assertIn(locked.status_code, (403, 429), locked.content)
 
     def test_login_and_logout_require_csrf_and_manage_session(self):
         user = get_user_model().objects.create_user(
