@@ -1,7 +1,9 @@
 from django.contrib import admin
 from django.urls import include, path
+from core.frontend import frontend_index
 
 urlpatterns = [
+    path("", frontend_index, name="frontend-index"),
     path("admin/", admin.site.urls),
     path("api/", include("core.urls")),
     path("api/setup/", include("companies.urls")),
