@@ -13,6 +13,27 @@ class HealthEndpointTests(TestCase):
 
 
 class SessionAuthenticationTests(TestCase):
+    def test_repeated_failed_logins_lock_the_account(self):
+        user = get_user_model().objects.create_user(
+            username="locked-session-user", password="correct-test-password",
+        )
+        client = Client(enforce_csrf_checks=True)
+        client.get("/api/csrf/")
+        csrf = client.cookies["csrftoken"].value
+        for _ in range(5):
+            failed = client.post(
+                "/api/auth/login/",
+                data=json.dumps({"username": user.username, "password": "wrong-password"}),
+                content_type="application/json", HTTP_X_CSRFTOKEN=csrf,
+            )
+            self.assertEqual(failed.status_code, 401, failed.content)
+        locked = client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": user.username, "password": "correct-test-password"}),
+            content_type="application/json", HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(locked.status_code, 403, locked.content)
+
     def test_login_and_logout_require_csrf_and_manage_session(self):
         user = get_user_model().objects.create_user(
             username="session-user", password="strong-test-password",
