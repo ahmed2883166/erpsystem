@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import decorators, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -363,6 +364,111 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
                 raise ValidationError(exc.messages) from exc
             raise
         return response.Response(result)
+
+
+    @decorators.action(detail=False, methods=("get",), url_path="employee-pay-report")
+    def employee_pay_report(self, request):
+        company_raw = request.query_params.get("company", "")
+        date_from_raw = request.query_params.get("date_from", "")
+        date_to_raw = request.query_params.get("date_to", "")
+        if not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة المطلوبة."})
+        company_id = int(company_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+        date_from = parse_date(date_from_raw)
+        date_to = parse_date(date_to_raw)
+        if not date_from or not date_to or date_from > date_to:
+            raise ValidationError({"date_from": "حدد فترة صحيحة بصيغة YYYY-MM-DD."})
+
+        cycles = self.get_queryset().filter(
+            company_id=company_id,
+            status__in=(
+                PayrollCycle.Status.POSTED,
+                PayrollCycle.Status.PAYMENT_PENDING,
+                PayrollCycle.Status.PAID,
+            ),
+            period_start__lte=date_to,
+            period_end__gte=date_from,
+        )
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            cycles = cycles.filter(results__employee__branch_id=int(branch_raw)).distinct()
+
+        results = PayrollResult.objects.filter(cycle__in=cycles).select_related(
+            "employee", "employee__branch", "employee__department", "cycle"
+        ).prefetch_related("lines").order_by("employee__code", "cycle__period_start")
+        employees = {}
+        totals = {
+            "earnings": Decimal("0"), "employee_deductions": Decimal("0"),
+            "employer_share": Decimal("0"), "net_pay": Decimal("0"), "company_cost": Decimal("0"),
+        }
+        for result in results:
+            employee = result.employee
+            row = employees.setdefault(employee.pk, {
+                "employee_id": employee.pk,
+                "employee_code": employee.code,
+                "employee_name": employee.full_name_ar,
+                "branch": employee.branch.name_ar,
+                "department": employee.department.name_ar if employee.department_id else "",
+                "currency": employee.currency.code,
+                "cycle_count": 0,
+                "earnings": Decimal("0"),
+                "employee_deductions": Decimal("0"),
+                "employer_share": Decimal("0"),
+                "net_pay": Decimal("0"),
+                "company_cost": Decimal("0"),
+                "components": {},
+                "periods": [],
+            })
+            row["cycle_count"] += 1
+            row["earnings"] += result.earnings_total
+            row["employee_deductions"] += result.employee_deductions_total
+            row["employer_share"] += result.employer_share_total
+            row["net_pay"] += result.net_pay
+            row["company_cost"] += result.company_cost
+            row["periods"].append({
+                "cycle_id": result.cycle_id,
+                "period_start": result.cycle.period_start,
+                "period_end": result.cycle.period_end,
+                "status": result.cycle.status,
+                "net_pay": result.net_pay,
+            })
+            for line in result.lines.all():
+                if line.display_only:
+                    continue
+                key = (line.code_snapshot, line.name_snapshot, line.kind_snapshot)
+                component = row["components"].setdefault(key, Decimal("0"))
+                row["components"][key] = component + line.amount
+            for key in totals:
+                source_key = "employee_deductions" if key == "employee_deductions" else key
+                totals[key] += getattr(result, {
+                    "earnings": "earnings_total",
+                    "employee_deductions": "employee_deductions_total",
+                    "employer_share": "employer_share_total",
+                    "net_pay": "net_pay",
+                    "company_cost": "company_cost",
+                }[source_key])
+
+        rows = []
+        for row in employees.values():
+            row["components"] = [
+                {"code": code, "name": name, "kind": kind, "amount": amount}
+                for (code, name, kind), amount in sorted(row["components"].items())
+            ]
+            rows.append(row)
+        return response.Response({
+            "company": company_id,
+            "date_from": date_from,
+            "date_to": date_to,
+            "branch": int(branch_raw) if branch_raw else None,
+            "currency_note": "المجاميع تعرض بعملة كل موظف؛ لا يتم جمع عملات مختلفة في إجمالي موحد.",
+            "employees": rows,
+            "totals": totals if len({row["currency"] for row in rows}) <= 1 else None,
+            "employee_count": len(rows),
+        })
 
 class LoanInstallmentViewSet(viewsets.ModelViewSet):
     queryset = LoanInstallment.objects.select_related("loan", "loan__employee", "loan__employee__company").all()
