@@ -582,7 +582,7 @@ class SalesWorkflowTests(APITestCase):
 
     def test_sales_invoice_above_company_amount_limit_requires_manager_approval(self):
         DiscountApprovalPolicy.objects.create(
-            company=self.company, max_discount_percent=Decimal("100"),
+            company=self.company, max_discount_percent=None,
             max_sales_invoice_amount=Decimal("200"),
             created_by=self.user, updated_by=self.user,
         )
@@ -688,3 +688,24 @@ class SalesWorkflowTests(APITestCase):
                     )
         approval.refresh_from_db()
         self.assertEqual(approval.requested_invoice_limit, Decimal("200.0000"))
+
+
+    def test_company_admin_can_create_amount_only_approval_policy(self):
+        manager = get_user_model().objects.create_user(username="amount-policy-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        response = self.client.post("/api/approvals/discount-policies/", {
+            "company": self.company.pk, "max_sales_invoice_amount": "5000",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertIsNone(response.data["max_discount_percent"])
+        self.assertEqual(response.data["max_sales_invoice_amount"], "5000.0000")
+
+    def test_company_admin_cannot_create_empty_approval_policy(self):
+        manager = get_user_model().objects.create_user(username="empty-policy-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        response = self.client.post("/api/approvals/discount-policies/", {
+            "company": self.company.pk,
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
