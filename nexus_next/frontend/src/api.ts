@@ -92,7 +92,12 @@ export type TreasuryTransaction = {
   destination_account: number | null; destination_name: string; counter_account: number | null; counter_account_code: string;
   kind: "receipt" | "payment" | "transfer"; status: "draft" | "posted"; document_number: string;
   transaction_date: string; amount: string; description: string; reference: string; journal_entry: number | null;
-  journal_number: string; created_at: string; posted_at: string | null;
+  journal_number: string; cash_flow_category: "operating" | "investing" | "financing"; created_at: string; posted_at: string | null;
+};
+export type CashFlowReport = {
+  company: number; date_from: string | null; date_to: string | null; net_cash_flow: string; note: string;
+  categories: {category:"operating"|"investing"|"financing";label:string;inflows:string;outflows:string;net:string}[];
+  rows: {id:number;date:string;document_number:string;description:string;branch:string;category:string;kind:string;amount:string;signed_amount:string;treasury_account:string;journal_entry:number|null}[];
 };
 export const treasuryApi = {
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
@@ -100,6 +105,13 @@ export const treasuryApi = {
   createAccount: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryAccount>("/api/treasury/accounts/", {method:"POST", body:JSON.stringify(payload)}); },
   createTransaction: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>("/api/treasury/transactions/", {method:"POST", body:JSON.stringify(payload)}); },
   postTransaction: async (id: number) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/post/`, {method:"POST"}); },
+  cashFlow: (companyId: number, dateFrom?: string, dateTo?: string, branch?: number) => {
+    const q = new URLSearchParams({company:String(companyId)});
+    if (dateFrom) q.set("date_from", dateFrom);
+    if (dateTo) q.set("date_to", dateTo);
+    if (branch) q.set("branch", String(branch));
+    return request<CashFlowReport>(`/api/treasury/transactions/cash-flow/?${q.toString()}`);
+  },
 };
 
 export const api = {
@@ -229,14 +241,33 @@ export type FixedAsset = {
   acquisition_date: string; depreciation_start_date: string; original_cost: string; salvage_value: string;
   useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
-  acquisition_counter_account: number; disposal_gain_loss_account: number; acquisition_journal: number | null;
+  acquisition_counter_account: number; disposal_gain_loss_account: number; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
   status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null; disposal_journal: number | null; disposal_treasury_transaction: number | null;
   accumulated_depreciation: string; net_book_value: string; created_at: string;
 };
 export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; net_book_value: string;
   rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[] };
+export type AssetRegisterReport = {
+  company:number;as_of:string;
+  totals:{original_cost:string;accumulated_depreciation:string;net_book_value_active:string;asset_count:number};
+  rows:{asset_id:number;code:string;name_ar:string;branch_id:number;branch_name:string;acquisition_date:string;original_cost:string;salvage_value:string;useful_life_months:number;accumulated_depreciation:string;net_book_value:string;status:"active"|"disposed";disposed_at:string|null;acquisition_journal:number|null;disposal_journal:number|null}[];
+};
+export type AssetDepreciationReport = {company:number;date_from:string|null;date_to:string|null;total_depreciation:string;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;period_date:string;amount:string;is_partial_period:boolean;journal_entry:number}[]};
+export type AssetMovementReport = {company:number;date_from:string|null;date_to:string|null;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;date:string;event_type:string;event_label:string;amount:string;journal_entry:number|null;treasury_transaction:number|null}[]};
 export const fixedAssetsApi = {
   list: (companyId: number) => request<FixedAsset[]>(`/api/assets/fixed-assets/?company=${companyId}`),
+  register: (companyId:number, asOf:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId),as_of:asOf}); if(branch) q.set("branch",String(branch));
+    return request<AssetRegisterReport>(`/api/assets/fixed-assets/register/?${q.toString()}`);
+  },
+  depreciationReport: (companyId:number, dateFrom?:string, dateTo?:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId)}); if(dateFrom) q.set("date_from",dateFrom); if(dateTo) q.set("date_to",dateTo); if(branch) q.set("branch",String(branch));
+    return request<AssetDepreciationReport>(`/api/assets/fixed-assets/depreciation-report/?${q.toString()}`);
+  },
+  movementReport: (companyId:number, dateFrom?:string, dateTo?:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId)}); if(dateFrom) q.set("date_from",dateFrom); if(dateTo) q.set("date_to",dateTo); if(branch) q.set("branch",String(branch));
+    return request<AssetMovementReport>(`/api/assets/fixed-assets/movement-report/?${q.toString()}`);
+  },
   create: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<FixedAsset>("/api/assets/fixed-assets/", {method:"POST",body:JSON.stringify(payload)}); },
   depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
   schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
