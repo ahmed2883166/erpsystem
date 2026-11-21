@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-REM Always initialize the configured company database in the normal local launcher.
+REM Initialize only the isolated preview database selected below.
 set "NEXUS_SKIP_DB_INIT=0"
 
 REM Preview-only isolated storage; never reuse the normal company data folder.
