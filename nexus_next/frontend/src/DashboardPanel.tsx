@@ -4,15 +4,16 @@ import { api, salesApi, purchasingApi, type BalanceSheetReport, type IncomeState
 type Props = { companyId: number | null; currency: string; onNavigate: (section: "reports" | "sales-workflow" | "purchasing" | "treasury") => void };
 
 const money = (value?: string | number, currency = "") => `${Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ${currency}`.trim();
-const monthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1).toISOString().slice(0, 10);
+const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const monthStart = (date: Date) => localDate(new Date(date.getFullYear(), date.getMonth(), 1));
 const previousMonth = (date: Date) => {
   const start = new Date(date.getFullYear(), date.getMonth() - 1, 1);
   const end = new Date(date.getFullYear(), date.getMonth(), 0);
-  return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+  return { from: localDate(start), to: localDate(end) };
 };
 
 export default function DashboardPanel({ companyId, currency, onNavigate }: Props) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate(new Date());
   const [from, setFrom] = useState(monthStart(new Date()));
   const [to, setTo] = useState(today);
   const [income, setIncome] = useState<IncomeStatementReport | null>(null);
