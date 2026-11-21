@@ -205,7 +205,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     if proceeds > 0:
         treasury_doc = TreasuryTransaction.objects.create(
             company=asset.company, branch=asset.branch, fiscal_year=year, source_account=treasury_account,
-            counter_account=gain_loss_account, kind=TreasuryTransaction.Kind.RECEIPT,
+            counter_account=settlement_counter, kind=TreasuryTransaction.Kind.RECEIPT,
             status=TreasuryTransaction.Status.POSTED, document_number=f"FA-DISP-{asset.pk}",
             transaction_date=disposal_date, amount=proceeds,
             description=f"متحصلات بيع / استبعاد الأصل: {asset.name_ar}",
