@@ -51,13 +51,6 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
-    def get_paid_total(self, obj):
-        from django.db.models import Sum
-        return str(obj.payments.filter(status=SupplierPayment.Status.POSTED).aggregate(total=Sum("amount"))["total"] or Decimal("0"))
-
-    def get_balance_due(self, obj):
-        return str(max(Decimal("0"), obj.grand_total - Decimal(self.get_paid_total(obj))))
-
     def validate(self, attrs):
         company = attrs.get("company")
         supplier = attrs.get("supplier")
@@ -168,14 +161,15 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         )
 
     def get_paid_total(self, obj):
-        return str(sum(
-            (payment.amount for payment in (payment for payment in obj.payments.all() if payment.status == "posted")),
+        paid = sum(
+            (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
             Decimal("0"),
-        ))
+        )
+        return str(paid)
 
     def get_balance_due(self, obj):
         paid = sum(
-            (payment.amount for payment in obj.payments.filter(status="posted")),
+            (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
             Decimal("0"),
         )
         return str(max(obj.grand_total - paid, Decimal("0")))
