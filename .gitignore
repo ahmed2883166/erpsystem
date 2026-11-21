@@ -16,3 +16,4 @@ backups/
 **/.nexus_initial_admin_password
 nexus_license.json
 **/nexus_license.json
+test_data/
