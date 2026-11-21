@@ -82,6 +82,15 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         self._require_admin(instance.company_id)
         return instance
 
+    def create(self, request, *args, **kwargs):
+        from rest_framework.exceptions import ValidationError
+        try:
+            company_id = int(request.data.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة أولًا."})
+        self._require_admin(company_id)
+        return super().create(request, *args, **kwargs)
+
     def _protect_last_admin(self, membership, new_role, new_active):
         from rest_framework.exceptions import ValidationError
         remains_admin = (
