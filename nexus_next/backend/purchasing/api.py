@@ -57,6 +57,16 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
+    def perform_update(self, serializer):
+        order = serializer.instance
+        self._check_write(order.company_id)
+        warehouse = serializer.validated_data.get("warehouse", order.warehouse)
+        if warehouse.branch_id and not can_access_branch(
+            self.request.user, warehouse.branch_id, order.company_id
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        serializer.save()
+
     @action(detail=True, methods=("post",))
     def confirm(self, request, pk=None):
         order = self.get_object()
