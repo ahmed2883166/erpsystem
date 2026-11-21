@@ -3,6 +3,7 @@ from statistics import median
 from threading import Lock
 from time import perf_counter
 
+import psutil
 from django.db import connection
 
 
@@ -14,6 +15,52 @@ _SLOW_REQUEST_MS = 1000.0
 def _record(event):
     with _LOCK:
         _EVENTS.append(event)
+
+
+def _system_resources():
+    try:
+        memory = psutil.virtual_memory()
+        return {
+            "available": True,
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": round(memory.percent, 2),
+            "memory_total_mb": round(memory.total / (1024 * 1024), 1),
+            "memory_available_mb": round(memory.available / (1024 * 1024), 1),
+        }
+    except (OSError, RuntimeError):
+        return {"available": False}
+
+
+def _postgres_resources():
+    if connection.vendor != "postgresql":
+        return {"available": False, "reason": "postgresql_only"}
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_connections,
+                    COUNT(*) FILTER (WHERE state = 'active') AS active_connections,
+                    COUNT(*) FILTER (WHERE state = 'idle') AS idle_connections
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                """
+            )
+            total, active, idle = cursor.fetchone()
+            cursor.execute("SELECT current_setting('max_connections')::integer, pg_database_size(current_database())")
+            maximum, database_bytes = cursor.fetchone()
+        return {
+            "available": True,
+            "database_connections": total,
+            "active_connections": active,
+            "idle_connections": idle,
+            "max_connections": maximum,
+            "database_size_mb": round(database_bytes / (1024 * 1024), 2),
+            "connection_usage_percent": round(total * 100 / maximum, 2) if maximum else 0,
+        }
+    except Exception:
+        # Monitoring must never make normal application requests fail.
+        return {"available": False, "reason": "database_metrics_unavailable"}
 
 
 def performance_snapshot():
@@ -36,6 +83,8 @@ def performance_snapshot():
         "slow_request_count": slow,
         "average_db_queries": round(query_total / count, 2) if count else 0,
         "total_db_duration_ms": round(db_total, 2),
+        "system": _system_resources(),
+        "postgresql": _postgres_resources(),
         "recent": list(reversed(events[-30:])),
     }
 
