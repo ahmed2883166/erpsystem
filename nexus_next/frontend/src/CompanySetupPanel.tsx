@@ -20,6 +20,7 @@ const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
   industrial: "صناعي",
 };
 
+// شاشة تأسيس الشركة وإدارة الفروع والسنوات المالية والعملات والنشاط.
 export default function CompanySetupPanel({ companies, companyId, onCompanyCreated, onStructureChanged }: Props) {
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -45,7 +46,8 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
 
   const selectedCompany = companies.find(item => item.id === companyId) || null;
 
-  const refreshStructure = async (id: number) => {
+  // تحديث فروع وسنوات الشركة المحددة بعد الإنشاء أو التعديل.
+const refreshStructure = async (id: number) => {
     const [branchRows, yearRows] = await Promise.all([api.branches(id), api.fiscalYears(id)]);
     setBranches(branchRows.filter(item => item.company === id));
     setYears(yearRows.filter(item => item.company === id));
@@ -72,7 +74,8 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
     if (preferred) setCurrencyId(String(preferred.id));
   }, [country, currencies]);
 
-  const createCompany = async (event: FormEvent) => {
+  // إنشاء شركة جديدة وإرسال بيانات النشاط والعملة والبلد إلى الخادم.
+const createCompany = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyCode.trim() || !companyName.trim() || !currencyId) return;
     setBusy(true); setError(""); setNotice("");
@@ -97,7 +100,8 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
     } finally { setBusy(false); }
   };
 
-  const createBranch = async (event: FormEvent) => {
+  // إضافة فرع جديد إلى الشركة الحالية.
+const createBranch = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId) return;
     setBusy(true); setError(""); setNotice("");
@@ -115,7 +119,8 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
     finally { setBusy(false); }
   };
 
-  const createYear = async (event: FormEvent) => {
+  // إنشاء سنة مالية للشركة مع تواريخ بدايتها ونهايتها.
+const createYear = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId || yearStart > yearEnd) return;
     setBusy(true); setError(""); setNotice("");
