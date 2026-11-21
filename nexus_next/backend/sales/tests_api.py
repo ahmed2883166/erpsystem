@@ -519,3 +519,48 @@ class SalesWorkflowTests(APITestCase):
                     )
         self.assertTrue(DiscountApprovalPolicy.objects.filter(pk=policy.pk).exists())
 
+
+    def test_changing_discount_after_approval_requires_a_new_decision(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("5"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-REAPPROVE")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DISCOUNT-REAPPROVE", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "10"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        manager = get_user_model().objects.create_user(username="reapproval-manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        first = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        self.client.force_authenticate(manager)
+        approved_first = self.client.post(
+            f"/api/approvals/requests/{first.pk}/approve/", {"note": "اعتماد أول"}, format="json"
+        )
+        self.assertEqual(approved_first.status_code, 200, approved_first.data)
+
+        self.client.force_authenticate(self.user)
+        revised = self.client.patch(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/",
+            {"lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "12"}]},
+            format="json",
+        )
+        self.assertEqual(revised.status_code, 200, revised.data)
+        self.assertEqual(revised.data["approval_status"], "pending")
+        second = SalesInvoiceApproval.objects.order_by("-requested_at", "-pk").first()
+        self.assertNotEqual(first.pk, second.pk)
+        self.assertEqual(first.status, SalesInvoiceApproval.Status.APPROVED)
+        blocked = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+        self.client.force_authenticate(manager)
+        approved_second = self.client.post(
+            f"/api/approvals/requests/{second.pk}/approve/", {"note": "اعتماد بعد تعديل الخصم"}, format="json"
+        )
+        self.assertEqual(approved_second.status_code, 200, approved_second.data)
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
