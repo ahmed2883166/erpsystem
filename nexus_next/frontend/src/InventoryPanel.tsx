@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type StockBalance, type StockMovement, type Warehouse } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type StockBalance, type StockMovement, type Warehouse } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "accounting";
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
@@ -11,6 +11,9 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [balances, setBalances] = useState<StockBalance[]>([]);
+  const [reconciliation, setReconciliation] = useState<InventoryReconciliation | null>(null);
+  const [reconciliationError, setReconciliationError] = useState("");
+  const [reconciling, setReconciling] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [roleAssignments, setRoleAssignments] = useState<AccountRole[]>([]);
   const [search, setSearch] = useState("");
@@ -42,6 +45,13 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     finally { setBusy(false); }
   };
   useEffect(() => { void refresh(); }, [companyId]);
+  const loadReconciliation = async () => {
+    if (!companyId) return;
+    setReconciling(true); setReconciliationError("");
+    try { setReconciliation(await stockApi.reconciliation(companyId)); }
+    catch (reason) { setReconciliation(null); setReconciliationError(reason instanceof Error ? reason.message : "تعذرت مطابقة المخزون مع دفتر الأستاذ."); }
+    finally { setReconciling(false); }
+  };
   const filteredProducts = useMemo(() => products.filter((p) => `${p.code} ${p.barcode} ${p.name_ar}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
   const warehouseValuation = useMemo(() => warehouses.map((warehouse) => {
     const rows = balances.filter((balance) => balance.warehouse === warehouse.id);
@@ -186,7 +196,12 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تنبيهات الصلاحية</h3><p>الأصناف المنتهية أو التي تنتهي خلال 30 يوماً</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الموقع</th><th>تاريخ الصلاحية</th><th>الأيام المتبقية</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{expiryAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_name}</td><td>{row.location_name || "عام"}</td><td>{row.expiry_date}</td><td><span className={row.days < 0 ? "status-pill reversed" : "status-pill draft"}>{row.days < 0 ? `منتهي منذ ${Math.abs(row.days)} يوم` : row.days === 0 ? "ينتهي اليوم" : `${row.days} يوم`}</span></td><td>{Number(row.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!expiryAlerts.length && <tr><td colSpan={7}>لا توجد تنبيهات صلاحية خلال الفترة المحددة.</td></tr>}</tbody></table></div>
         </section>
-        <p className="inventory-report-note">ملاحظة: حد إعادة الطلب الحالي مُعرّف على مستوى الصنف ويُقارن بإجمالي رصيده في الشركة. إعداد حد مستقل لكل مخزن وتسوية المخزون مع دفتر الأستاذ سيُستكملان في المرحلة التالية.</p>
+        <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>مطابقة المخزون مع دفتر الأستاذ</h3><p>مقارنة قيمة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة</p></div><button type="button" className="primary-button" disabled={reconciling} onClick={() => void loadReconciliation()}>{reconciling ? "جارٍ الفحص…" : "تنفيذ المطابقة"}</button></div>
+          {reconciliationError && <div className="error-banner">{reconciliationError}</div>}
+          {reconciliation && <div className="reconciliation-result"><div><span>حساب المخزون</span><strong>{reconciliation.account_code} - {reconciliation.account_name}</strong></div><div><span>قيمة المخزون</span><strong>{Number(reconciliation.stock_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>رصيد دفتر الأستاذ</span><strong>{Number(reconciliation.gl_balance).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>الفرق</span><strong>{Number(reconciliation.difference).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div className={reconciliation.is_reconciled ? "reconciliation-status matched" : "reconciliation-status mismatch"}>{reconciliation.is_reconciled ? "المخزون مطابق لدفتر الأستاذ" : "يوجد فرق يحتاج إلى مراجعة"}</div></div>}
+          {!reconciliation && !reconciliationError && <div className="table-empty">نفّذ المطابقة لعرض نتيجة المقارنة.</div>}
+        </section>
+        <p className="inventory-report-note">حد إعادة الطلب الحالي مُعرّف على مستوى الصنف ويُقارن بإجمالي رصيده في الشركة. المطابقة تقارن لقطة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة؛ ولا تمثل مطابقة تاريخية لفترة سابقة.</p>
       </div>}
     </div>
   </section>;
