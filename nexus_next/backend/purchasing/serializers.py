@@ -205,25 +205,49 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         return str(max(obj.grand_total - paid, Decimal("0")))
 
     def validate(self, attrs):
-        company = attrs.get("company")
-        supplier = attrs.get("supplier")
-        receipt = attrs.get("receipt")
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        supplier = attrs.get("supplier", instance.supplier if instance else None)
+        receipt = attrs.get("receipt", instance.receipt if instance else None)
+        invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
+
+        if instance:
+            if instance.status != PurchaseInvoice.Status.DRAFT:
+                raise serializers.ValidationError("لا يمكن تعديل فاتورة مورد مرحلة.")
+            immutable = {
+                "company": instance.company_id,
+                "supplier": instance.supplier_id,
+                "receipt": instance.receipt_id,
+                "invoice_number": instance.invoice_number,
+                "invoice_date": instance.invoice_date,
+            }
+            for field, current in immutable.items():
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "بيانات الفاتورة الأساسية لا تتغير بعد إنشائها."})
+            if instance.payments.filter(status=SupplierPayment.Status.POSTED).exists():
+                raise serializers.ValidationError("لا يمكن تعديل فاتورة لها مدفوعات مرحلة.")
+
         if not receipt or receipt.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"receipt": "يجب ترحيل إذن استلام البضاعة أولاً."})
         if company and receipt.company_id != company.pk:
             raise serializers.ValidationError({"receipt": "إذن الاستلام لا يتبع الشركة المحددة."})
-        if supplier and not supplier.is_active:
+        if supplier and not instance and not supplier.is_active:
             raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن استخدامه في مستند جديد."})
         if supplier and receipt.supplier_id != supplier.pk:
             raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد إذن الاستلام."})
         if receipt.stock_movement.movement_type != StockMovement.MovementType.RECEIPT:
             raise serializers.ValidationError({"receipt": "الإذن المرتبط ليس استلامًا مخزنيًا."})
-        lines = attrs.get("lines", [])
+
+        lines = attrs.get("lines")
+        if lines is None:
+            return attrs
         expected = set(receipt.stock_movement.lines.values_list("id", flat=True))
         supplied = [line["receipt_line"].pk for line in lines]
         if not lines or set(supplied) != expected or len(supplied) != len(expected):
             raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن الاستلام مرة واحدة دون حذف أو تكرار."})
-        invoice_date = attrs.get("invoice_date")
         for line in lines:
             code = line.get("tax_code")
             if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
@@ -250,6 +274,39 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
         invoice.grand_total = invoice.net_total + invoice.tax_total
         invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
+            invoice, self.context["request"].user,
+        )
+        return invoice
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        invoice = PurchaseInvoice.objects.select_for_update().get(pk=instance.pk)
+        if invoice.status != PurchaseInvoice.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل فاتورة مورد مرحلة.")
+        if invoice.payments.filter(status=SupplierPayment.Status.POSTED).exists():
+            raise serializers.ValidationError("لا يمكن تعديل فاتورة لها مدفوعات مرحلة.")
+
+        lines = validated_data.pop("lines", None)
+        invoice = super().update(invoice, validated_data)
+        if lines is not None:
+            existing = {line.receipt_line_id: line for line in invoice.lines.select_for_update()}
+            for data in lines:
+                receipt_line = data["receipt_line"]
+                line = existing.get(receipt_line.pk)
+                if line is None:
+                    raise serializers.ValidationError({"lines": "تعذر مطابقة سطر الفاتورة مع سطر الاستلام."})
+                line.unit_price = data["unit_price"]
+                line.tax_rate = data.get("tax_rate", line.tax_rate)
+                line.tax_code = data.get("tax_code", line.tax_code)
+                line.save()
+
+            invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
+            invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
+            invoice.grand_total = invoice.net_total + invoice.tax_total
+            invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
+
         refresh_financial_approval(
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
             invoice, self.context["request"].user,
