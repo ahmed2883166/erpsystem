@@ -7,7 +7,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_companies, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from .models import (
     AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
