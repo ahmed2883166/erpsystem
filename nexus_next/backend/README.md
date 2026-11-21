@@ -17,7 +17,7 @@ python manage.py createsuperuser
 python manage.py runserver 127.0.0.1:8000
 ```
 
-The setup API is under `/api/setup/` and the accounting API is under `/api/accounting/`:
+The accounting API is under `/api/accounting/`:
 - `accounts/` — chart of accounts
 - `account-roles/` — semantic account mappings
 - `cost-centers/` — cost centers
@@ -29,6 +29,6 @@ The setup API is under `/api/setup/`:
 - `branches/`
 - `fiscal-years/`
 
-Authenticated users can read setup records. Only staff users can create, edit, or delete them. Use Django groups and permissions for role design; do not grant staff access as a substitute for ordinary business roles.
+Authenticated users can read setup records. Only staff users can create, edit, or delete setup records. Accounting write actions use Django model permissions; assign permissions through groups rather than granting staff access to ordinary business users.
 
 Keep the server bound to localhost until LAN security acceptance is complete. Never connect this project to the legacy database during development.
