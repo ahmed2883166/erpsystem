@@ -316,7 +316,7 @@ def post_payroll_cycle(cycle_id, actor=None):
             credit = money(credit)
             if debit <= 0 and credit <= 0:
                 return
-            validate_account(account, "expense" if debit > 0 and credit == 0 else account.nature, description)
+            expected_nature = "expense" if debit > 0 and credit == 0 else (account.nature if account else "liability")\n            validate_account(account, expected_nature, description)
             if cost_center and cost_center.company_id != cycle.company_id:
                 raise ValidationError("مركز تكلفة المرتبات لا يتبع نفس الشركة.")
             JournalLine.objects.create(
