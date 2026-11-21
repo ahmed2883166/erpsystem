@@ -15,7 +15,7 @@ const AccountsPanel = lazy(() => import("./AccountsPanel"));
 const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
+type Section = "overview" | "journals" | "accounts" | "reports" | "tax" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
@@ -46,6 +46,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "fixed-assets", label: "الأصول الثابتة", icon: "▣", group: "المالية" },
   { id: "hr", label: "الموارد البشرية والمرتبات", icon: "♙", group: "الموارد البشرية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
+  { id: "tax", label: "الضرائب والإقرارات", icon: "%", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
   { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
   { id: "approvals", label: "الموافقات وحدود الخصم", icon: "✓", group: "الإدارة" },
@@ -58,6 +59,7 @@ const modules = [
   { title: "المخزون والمستودعات", detail: "الأصناف والمجموعات ووحدات القياس والمخازن", icon: "▦", tone: "amber", section: "inventory" as Section },
   { title: "المرتبات والموارد البشرية", detail: "ملفات الموظفين والحضور ودورات المرتبات", icon: "♙", tone: "green", section: "hr" as Section },
   { title: "الأصول الثابتة", detail: "تسجيل الأصول والإهلاك وربط القيود", icon: "▣", tone: "rose", section: "fixed-assets" as Section },
+  { title: "الضرائب والإقرارات", detail: "تسوية ضريبة المدخلات والمخرجات وتجهيز الإقرار", icon: "%", tone: "cyan", section: "tax" as Section },
 ];
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
 const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
@@ -639,7 +641,7 @@ export default function App() {
                 <div className="aging-buckets"><span>غير مستحق {Number(supplierAging?.totals.not_due || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })}</span><span>متأخر {Number((Number(supplierAging?.totals.total_due || 0) - Number(supplierAging?.totals.not_due || 0))).toLocaleString("ar-EG", { maximumFractionDigits: 0 })}</span></div>
               </button>
             </div>
-            <div className="section-heading module-heading"><div><h2>وحدات النظام</h2><p>البنية الأساسية للوحدات الرئيسية</p></div><span className="module-count">6 وحدات أساسية</span></div>
+            <div className="section-heading module-heading"><div><h2>وحدات النظام</h2><p>البنية الأساسية للوحدات الرئيسية</p></div><span className="module-count">7 وحدات أساسية</span></div>
             <div className="modules-grid">{modules.map((module) => <button className="module-card" key={module.title} onClick={() => setActive(module.section)}>
               <i className={`module-icon ${module.tone}`}>{module.icon}</i><div><strong>{module.title}</strong><small>{module.detail}</small></div><span className="module-arrow">←</span></button>)}</div>
             <section className="activity-panel"><div className="activity-title"><div><h2>أحدث قيود اليومية</h2><p>آخر خمس حركات مسجلة</p></div><button className="subtle-button" onClick={() => setActive("journals")}>عرض الكل ←</button></div>
@@ -668,8 +670,9 @@ export default function App() {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
-            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><VATReturnPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
-          {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}
+            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
+          {active === "tax" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><VATReturnPanel companyId={companyId} /></section></>}
+          {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>
           {active === "sales-workflow" && <Suspense fallback={panelFallback}><SalesPanel companyId={companyId} /></Suspense>}
           {active === "suppliers" && <Suspense fallback={panelFallback}><SuppliersPanel companyId={companyId} /></Suspense>}
           {active === "purchasing" && <Suspense fallback={panelFallback}><PurchasingPanel companyId={companyId} /></Suspense>}
@@ -680,7 +683,7 @@ export default function App() {
           {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
-          {active === "setup" && <Suspense fallback={panelFallback}><CompanySetupPanel companies={companies} companyId={companyId} onCompanyCreated={(company) => { setCompanies((rows) => [...rows, company]); setCompanyId(company.id); setActive("setup"); }} onStructureChanged={async () => { if (!companyId) return; try { const [branchRows, yearRows] = await Promise.all([api.branches(companyId), api.fiscalYears(companyId)]); setBranches(branchRows.filter((row) => row.company === companyId)); setFiscalYears(yearRows.filter((row) => row.company === companyId)); setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active)?.id || ""), fiscal_year: String(yearRows.find((row) => row.status === "open")?.id || "") })); } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر تحديث إعدادات الفرع والسنة المالية."); } }} /><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /></Suspense>}
+          {active === "setup" && <Suspense fallback={panelFallback}><CompanySetupPanel companies={companies} companyId={companyId} onCompanyCreated={(company) => { setCompanies((rows) => [...rows, company]); setCompanyId(company.id); setActive("setup"); }} onStructureChanged={async () => { if (!companyId) return; try { const [branchRows, yearRows] = await Promise.all([api.branches(companyId), api.fiscalYears(companyId)]); setBranches(branchRows.filter((row) => row.company === companyId)); setFiscalYears(yearRows.filter((row) => row.company === companyId)); setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active)?.id || ""), fiscal_year: String(yearRows.find((row) => row.status === "open")?.id || "") })); } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر تحديث إعدادات الفرع والسنة المالية."); } }} /></Suspense>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
             <section className="journal-modal" role="dialog" aria-modal="true" aria-labelledby="journal-title">
               <div className="modal-heading"><div><h2 id="journal-title">{reviewingJournal ? "مراجعة القيد قبل الحفظ" : "إنشاء قيد يومية"}</h2><p>{reviewingJournal ? "راجع بيانات القيد وإجمالياته، ثم احفظه كمسودة دون ترحيل." : "أدخل البيانات والتفاصيل ثم انتقل إلى المراجعة قبل الحفظ."}</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
