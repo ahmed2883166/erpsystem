@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { useState, type FormEvent } from "react";
 import { authApi } from "./api";
 
 type Props = { onLogin: () => void };
