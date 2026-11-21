@@ -3,6 +3,8 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework import serializers
 
+from accounting.models import TaxCode
+
 from customers.models import Customer
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation, Warehouse
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine
