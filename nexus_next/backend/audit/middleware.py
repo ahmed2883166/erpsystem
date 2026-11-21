@@ -19,6 +19,7 @@ _ACTION_ENDPOINTS = {"post", "reverse", "dispose", "depreciate", "approve", "rej
 
 
 def _numeric_id(value):
+    """تطبيع قيمة المعرّف الرقمي قبل تسجيل مرجع التدقيق."""
     if isinstance(value, dict):
         value = value.get("id") or value.get("pk")
     if isinstance(value, int) and not isinstance(value, bool):
@@ -29,6 +30,7 @@ def _numeric_id(value):
 
 
 def _json_object(raw):
+    """قراءة نص JSON وإرجاع كائن آمن عند صلاحية المحتوى."""
     if not raw or len(raw) > 65536:
         return {}
     try:
@@ -70,9 +72,11 @@ class AuditTrailMiddleware:
     """Record API write attempts without persisting request/response payloads."""
 
     def __init__(self, get_response):
+        """تهيئة وسيط سجل التدقيق وربطه بمعالج الطلب التالي."""
         self.get_response = get_response
 
     def __call__(self, request):
+        """تسجيل أثر الطلب والتغيرات الناتجة عنه وفق قواعد التدقيق."""
         method = request.method.upper()
         should_audit = request.path.startswith("/api/") and method in _ACTIONS
         prior_object_id, prior_company_id, prior_branch_id = (
