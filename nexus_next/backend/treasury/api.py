@@ -228,6 +228,10 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             doc = TreasuryTransaction.objects.select_for_update().get(pk=request.data.get("transaction_id"), company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date)
         except (BankStatementLine.DoesNotExist, TreasuryTransaction.DoesNotExist, ValueError, TypeError):
             raise ValidationError("سطر كشف البنك أو الحركة المحاسبية غير موجودة.")
+        if not can_access_branch(request.user, doc.branch_id, doc.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحركة المحاسبية.")
+        if recon.bank_account.branch_id and doc.branch_id != recon.bank_account.branch_id:
+            raise ValidationError("الحركة لا تخص فرع الحساب البنكي محل التسوية.")
         bank_id = recon.bank_account_id
         if doc.source_account_id == bank_id:
             signed_amount = doc.amount if doc.kind == TreasuryTransaction.Kind.RECEIPT else -doc.amount
