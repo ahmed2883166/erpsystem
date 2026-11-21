@@ -60,6 +60,14 @@ class FixedAsset(models.Model):
             raise ValidationError({"depreciation_start_date": "بداية الإهلاك لا تسبق تاريخ الاقتناء."})
 
     @property
+    def accumulated_depreciation(self):
+        return self.depreciations.aggregate(total=models.Sum("amount"))["total"] or 0
+
+    @property
+    def net_book_value(self):
+        return self.original_cost - self.accumulated_depreciation
+
+    @property
     def depreciable_amount(self):
         return self.original_cost - self.salvage_value
 
