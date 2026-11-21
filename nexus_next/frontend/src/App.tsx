@@ -3,7 +3,8 @@
  * يحمل الشاشات الكبيرة عند الحاجة، ويربط مكونات المبيعات والمشتريات والتقارير والحسابات.
  */
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
+import LoginPanel from "./LoginPanel";
+import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
 const BackupPanel = lazy(() => import("./BackupPanel"));
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
 const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
@@ -476,6 +477,8 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
 
 // التطبيق الرئيسي: إدارة حالة الجلسة والشركة والفرع والتنقل وعمليات القيود.
 export default function App() {
+  const [authStatus, setAuthStatus] = useState<"checking" | "signed-out" | "signed-in">("checking");
+  const [authRefresh, setAuthRefresh] = useState(0);
   const [active, setActive] = useState<Section>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -507,12 +510,27 @@ export default function App() {
   const current = useMemo(() => navigation.find((item) => item.id === active), [active]);
 
   useEffect(() => {
-    api.companies().then((items) => {
+    let cancelled = false;
+    setAuthStatus("checking");
+    authApi.current().then(async (session) => {
+      if (cancelled) return;
+      if (!session.authenticated) {
+        setAuthStatus("signed-out");
+        return;
+      }
+      setAuthStatus("signed-in");
+      const items = await api.companies();
+      if (cancelled) return;
       setCompanies(items);
       if (items.length) setCompanyId(items[0].id);
       else setActive("setup");
-    }).catch((reason: Error) => setError(reason.message));
-  }, []);
+    }).catch((reason: Error) => {
+      if (cancelled) return;
+      setError(reason.message);
+      setAuthStatus("signed-out");
+    });
+    return () => { cancelled = true; };
+  }, [authRefresh]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -616,6 +634,24 @@ const postDraft = async (entry: Journal) => {
     return () => { cancelled = true; };
   }, [active, companyId, trialBalanceFrom, trialBalanceTo, excludeClosingEntries]);
 
+  const logoutCurrentUser = async () => {
+    try {
+      await authApi.logout();
+      setAuthStatus("signed-out");
+      setCompanies([]); setCompanyId(null); setAccounts([]); setJournals([]);
+      setSelectedJournal(null); setSidebarOpen(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تسجيل الخروج.");
+    }
+  };
+
+  if (authStatus === "checking") {
+    return <main className="auth-screen" dir="rtl"><div className="auth-card"><div className="table-empty">جارٍ التحقق من جلسة الدخول…</div></div></main>;
+  }
+  if (authStatus === "signed-out") {
+    return <LoginPanel onLogin={() => setAuthRefresh((value) => value + 1)} />;
+  }
+
   return (
     <div className="app-shell" dir="rtl">
       {sidebarOpen && <button className="mobile-scrim" aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} />}
@@ -640,7 +676,8 @@ const postDraft = async (entry: Journal) => {
           <div className="breadcrumb"><span>NEXUS</span><b>/</b>{current?.label}</div></div>
           <div className="topbar-actions"><div className="period-select"><span className="period-dot" /> {selectedCompany?.name_ar || "لا توجد شركة"} <span>⌄</span></div>
             <button className="icon-button" aria-label="البحث" onClick={() => document.getElementById("global-search")?.focus()}>⌕</button>
-            <a className="admin-shortcut" href="/admin/" target="_blank" rel="noreferrer">الإدارة</a></div></header>
+            <a className="admin-shortcut" href="/admin/" target="_blank" rel="noreferrer">الإدارة</a>
+            <button type="button" className="subtle-button" onClick={() => void logoutCurrentUser()}>تسجيل الخروج</button></div></header>
         <div className="page-content">
           <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
