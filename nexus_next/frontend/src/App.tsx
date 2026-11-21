@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance } from "./api";
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
+import PurchasingPanel from "./PurchasingPanel";
 import InventoryPanel from "./InventoryPanel";
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "suppliers" | "inventory" | "setup";
+type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "suppliers" | "purchasing" | "inventory" | "setup";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
   { id: "overview", label: "نظرة عامة", icon: "◫", group: "الرئيسية" },
@@ -12,6 +13,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "accounts", label: "دليل الحسابات", icon: "☷", group: "المحاسبة" },
   { id: "customers", label: "العملاء", icon: "♙", group: "المبيعات" },
   { id: "suppliers", label: "الموردون", icon: "♧", group: "المشتريات" },
+  { id: "purchasing", label: "دورة المشتريات", icon: "↙", group: "المشتريات" },
   { id: "inventory", label: "المخزون والمستودعات", icon: "▦", group: "المخزون" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
@@ -19,7 +21,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
 const modules = [
   { title: "المحاسبة العامة", detail: "القيود، دليل الحسابات، مراكز التكلفة", icon: "◈", tone: "blue", section: "accounts" as Section },
   { title: "المبيعات والعملاء", detail: "دورة البيع والتحصيل والأرصدة", icon: "↗", tone: "violet", section: "customers" as Section },
-  { title: "المشتريات والموردون", detail: "الموردون والفواتير والاستحقاقات والمدفوعات", icon: "↙", tone: "cyan", section: "suppliers" as Section },
+  { title: "المشتريات والموردون", detail: "الموردون وأذون الاستلام وفواتير الموردين", icon: "↙", tone: "cyan", section: "purchasing" as Section },
   { title: "المخزون والمستودعات", detail: "الأصناف والمجموعات ووحدات القياس والمخازن", icon: "▦", tone: "amber", section: "inventory" as Section },
   { title: "المرتبات والموارد البشرية", detail: "الموظفون والاستحقاقات والحضور", icon: "♙", tone: "green", section: "setup" as Section },
   { title: "الأصول الثابتة", detail: "الإهلاك والتصرفات والتسويات", icon: "▣", tone: "rose", section: "setup" as Section },
@@ -158,7 +160,7 @@ export default function App() {
         <div className="page-content">
           <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
-            {active !== "customers" && active !== "suppliers" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
+            {active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
           {active === "overview" && <>
@@ -203,6 +205,7 @@ export default function App() {
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}</section>}
           {active === "customers" && <CustomersPanel companyId={companyId} />}
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
+          {active === "purchasing" && <PurchasingPanel companyId={companyId} />}
           {active === "inventory" && <InventoryPanel companyId={companyId} />}
           {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
