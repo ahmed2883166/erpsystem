@@ -158,8 +158,13 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "journal_entry": row.journal_entry_id,
         } for row in rows]
         total = sum((row["amount"] for row in details), start=0)
+        branch_totals = {}
+        for row in details:
+            key = row["branch_name"]
+            branch_totals[key] = branch_totals.get(key, 0) + row["amount"]
         return response.Response({"company": int(request.query_params["company"]),
             "date_from": date_from, "date_to": date_to, "total_depreciation": total,
+            "branch_totals": [{"branch_name": key, "amount": value} for key, value in sorted(branch_totals.items())],
             "rows": details})
 
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
