@@ -377,7 +377,7 @@ export const approvalsApi = {
   rejectFinancial: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
 };
 
-export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
+export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
   totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
