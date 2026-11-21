@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
-from companies.models import Branch
+from companies.models import Branch, CompanyMembership
 
 from .models import Product, ProductCategory, StockBalance, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
@@ -434,9 +434,18 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "حساب المخزون المرتبط يجب أن يكون حساب أصول تفصيليًا ونشطًا وقابلًا للترحيل."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Never expose company-wide totals to a user who can access only selected branches.
-        accessible_ids = list(
-            accessible_branches(request.user, company_id).values_list("id", flat=True)
-        )
+        has_all_branch_access = request.user.is_superuser or CompanyMembership.objects.filter(
+            user=request.user, company_id=company_id, is_active=True, all_branches=True
+        ).exists()
+        if has_all_branch_access:
+            # Inactive branches remain part of consolidated accounting balances.
+            accessible_ids = list(
+                Branch.objects.filter(company_id=company_id).values_list("id", flat=True)
+            )
+        else:
+            accessible_ids = list(
+                accessible_branches(request.user, company_id).values_list("id", flat=True)
+            )
         requested_branch = request.query_params.get("branch")
         if requested_branch:
             try:
