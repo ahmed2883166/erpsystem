@@ -26,7 +26,7 @@ class DeliveryLineInputSerializer(serializers.Serializer):
 
 
 class SalesDeliverySerializer(serializers.ModelSerializer):
-    delivery_number = serializers.CharField(max_length=40)
+    delivery_number = serializers.CharField(max_length=37)
     lines = DeliveryLineInputSerializer(many=True, write_only=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
