@@ -240,3 +240,18 @@ class StockBalance(models.Model):
         ]
         indexes = [models.Index(fields=("warehouse", "product"), name="inv_balance_wh_product_idx")]
 
+
+
+
+class StockCostLayer(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="cost_layers")
+    source_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="created_cost_layers")
+    quantity_remaining = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(0)])
+    unit_cost = models.DecimalField(max_digits=20, decimal_places=6, validators=[MinValueValidator(0)])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [models.Index(fields=("product", "warehouse", "created_at"), name="inv_fifo_layer_order_idx")]
+        constraints = [models.CheckConstraint(condition=Q(quantity_remaining__gte=0), name="ck_fifo_layer_nonnegative")]
