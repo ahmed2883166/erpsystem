@@ -140,6 +140,7 @@ class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
         max_digits=7, decimal_places=4, min_value=Decimal("0"),
         max_value=Decimal("100"), required=False, default=Decimal("0")
     )
+    tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
 
 
 class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
@@ -153,7 +154,7 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
         model = PurchaseInvoiceLine
         fields = (
             "id", "receipt_line", "product_code", "product_name", "quantity",
-            "unit_price", "tax_rate", "net_amount", "tax_amount", "total_amount",
+            "unit_price", "tax_rate", "tax_code", "net_amount", "tax_amount", "total_amount",
         )
         read_only_fields = (
             "id", "product_code", "product_name", "quantity",
@@ -216,6 +217,13 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         supplied = [line["receipt_line"].pk for line in lines]
         if not lines or set(supplied) != expected or len(supplied) != len(expected):
             raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن الاستلام مرة واحدة دون حذف أو تكرار."})
+        invoice_date = attrs.get("invoice_date")
+        for line in lines:
+            code = line.get("tax_code")
+            if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
+                         or not code.input_tax_recoverable or code.category == TaxCode.Category.REVERSE_CHARGE
+                         or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
+                raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو غير قابل للخصم للشركة أو تاريخ الفاتورة."})
         return attrs
 
     @transaction.atomic
@@ -230,6 +238,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 receipt_line=line["receipt_line"],
                 unit_price=line["unit_price"],
                 tax_rate=line["tax_rate"],
+                tax_code=line.get("tax_code"),
             )
         invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
         invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
