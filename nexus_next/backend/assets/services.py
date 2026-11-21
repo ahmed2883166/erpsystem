@@ -76,3 +76,99 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         ], user)
     AssetDepreciation.objects.create(asset=asset, period_date=period_date, amount=amount, journal_entry=entry)
     return amount
+
+
+@transaction.atomic
+def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None):
+    from datetime import timedelta
+    from accounting.models import ChartOfAccount
+
+    if isinstance(disposal_date, str):
+        disposal_date = dateparse.parse_date(disposal_date)
+    if not disposal_date:
+        raise ValidationError("أدخل تاريخ استبعاد صحيحًا.")
+    try:
+        proceeds = Decimal(str(proceeds))
+    except Exception as exc:
+        raise ValidationError("قيمة البيع غير صحيحة.") from exc
+    if proceeds < 0:
+        raise ValidationError("قيمة البيع لا يمكن أن تكون سالبة.")
+
+    asset = FixedAsset.objects.select_for_update().select_related(
+        "company", "branch", "asset_account", "accumulated_depreciation_account",
+        "depreciation_expense_account", "disposal_gain_loss_account"
+    ).get(pk=asset_id)
+    if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
+        raise ValidationError("الأصل غير نشط أو لم يتم إثبات اقتنائه.")
+    if disposal_date < asset.depreciation_start_date:
+        raise ValidationError("تاريخ الاستبعاد يسبق بداية الإهلاك.")
+    if AssetDepreciation.objects.filter(asset=asset, period_date__gt=disposal_date).exists():
+        raise ValidationError("توجد قيود إهلاك بتاريخ لاحق لتاريخ الاستبعاد؛ راجعها أولًا.")
+
+    try:
+        year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    except (FiscalYear.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
+    if not (year.start_date <= disposal_date <= year.end_date):
+        raise ValidationError("تاريخ الاستبعاد خارج السنة المالية المفتوحة.")
+
+    cash_account = ChartOfAccount.objects.get(pk=cash_account_id, company=asset.company)
+    if not cash_account.is_active or cash_account.is_group or not cash_account.allow_posting or cash_account.nature != "asset":
+        raise ValidationError("اختر حساب بنك أو خزينة نشطًا وتفصيليًا من طبيعة الأصول.")
+
+    last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
+    previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1)
+    elapsed_days = max(0, (disposal_date - previous_date).days)
+    posted_total = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    remaining = max(Decimal("0"), asset.depreciable_amount - posted_total)
+
+    if elapsed_days and remaining:
+        daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
+        partial_amount = min(remaining, (daily_rate * Decimal(elapsed_days)).quantize(MONEY, rounding=ROUND_HALF_UP))
+        if partial_amount > 0:
+            partial_entry = _post_entry(
+                asset, year, f"FA-DEP-PART-{asset.pk}-{disposal_date:%Y%m%d}", disposal_date,
+                f"إهلاك حتى تاريخ استبعاد الأصل: {asset.name_ar}",
+                [
+                    {"account": asset.depreciation_expense_account, "debit": partial_amount, "credit": 0, "description": asset.name_ar},
+                    {"account": asset.accumulated_depreciation_account, "debit": 0, "credit": partial_amount, "description": asset.name_ar},
+                ], user,
+            )
+            AssetDepreciation.objects.create(
+                asset=asset, period_date=disposal_date, amount=partial_amount,
+                is_partial_period=True, journal_entry=partial_entry,
+            )
+
+    accumulated = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    accumulated = min(accumulated, asset.depreciable_amount)
+    net_book_value = asset.original_cost - accumulated
+    gain = max(Decimal("0"), proceeds - net_book_value)
+    loss = max(Decimal("0"), net_book_value - proceeds)
+    gain_loss_account = asset.disposal_gain_loss_account
+    expected_nature = "revenue" if gain > 0 else "expense" if loss > 0 else None
+    if expected_nature and gain_loss_account.nature != expected_nature:
+        raise ValidationError("طبيعة حساب أرباح/خسائر الاستبعاد لا تتوافق مع نتيجة البيع؛ راجع ربط الحساب.")
+
+    lines = [
+        {"account": cash_account, "debit": proceeds, "credit": 0, "description": f"متحصلات استبعاد {asset.name_ar}"},
+        {"account": asset.accumulated_depreciation_account, "debit": accumulated, "credit": 0, "description": f"إقفال مجمع إهلاك {asset.name_ar}"},
+        {"account": asset.asset_account, "debit": 0, "credit": asset.original_cost, "description": f"استبعاد تكلفة {asset.name_ar}"},
+    ]
+    if gain > 0:
+        lines.append({"account": gain_loss_account, "debit": 0, "credit": gain, "description": f"ربح استبعاد {asset.name_ar}"})
+    elif loss > 0:
+        lines.append({"account": gain_loss_account, "debit": loss, "credit": 0, "description": f"خسارة استبعاد {asset.name_ar}"})
+
+    entry = _post_entry(
+        asset, year, f"FA-DISP-{asset.pk}", disposal_date,
+        f"بيع / استبعاد الأصل: {asset.name_ar}", lines, user,
+    )
+    asset.status = FixedAsset.Status.DISPOSED
+    asset.disposed_at = disposal_date
+    asset.disposal_proceeds = proceeds
+    asset.disposal_journal = entry
+    asset.save(update_fields=("status", "disposed_at", "disposal_proceeds", "disposal_journal"))
+    return {
+        "asset_id": asset.pk, "disposal_journal": entry.pk, "accumulated_depreciation": accumulated,
+        "net_book_value": net_book_value, "proceeds": proceeds, "gain": gain, "loss": loss,
+    }
