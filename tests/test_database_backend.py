@@ -1,5 +1,6 @@
 import unittest
 
+
 from database_backend import configured_database_backend, require_supported_runtime_backend
 
 
@@ -14,6 +15,22 @@ class DatabaseBackendSelectionTests(unittest.TestCase):
     def test_normalizes_postgres_aliases(self):
         self.assertEqual(configured_database_backend({"NEXUS_DB_BACKEND": "postgres"}), "postgresql")
         self.assertEqual(configured_database_backend({"NEXUS_DB_BACKEND": "postgresql"}), "postgresql")
+
+    def test_native_profile_defaults_to_postgresql(self):
+        env = {
+            "NEXUS_DEPLOYMENT_PROFILE": "postgresql_native",
+            "NEXUS_POSTGRES_DSN": "postgresql://test-only",
+            "NEXUS_POSTGRES_RUNTIME_ENABLE": "1",
+        }
+        self.assertEqual(configured_database_backend(env), "postgresql")
+        self.assertEqual(require_supported_runtime_backend(env), "postgresql")
+
+    def test_native_profile_rejects_sqlite_override(self):
+        with self.assertRaisesRegex(ValueError, "requires NEXUS_DB_BACKEND=postgresql"):
+            configured_database_backend({
+                "NEXUS_DEPLOYMENT_PROFILE": "postgresql_native",
+                "NEXUS_DB_BACKEND": "sqlite",
+            })
 
     def test_rejects_unknown_backend(self):
         with self.assertRaisesRegex(ValueError, "NEXUS_DB_BACKEND"):
