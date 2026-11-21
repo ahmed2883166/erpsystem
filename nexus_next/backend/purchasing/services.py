@@ -64,11 +64,24 @@ def post_purchase_receipt(receipt_id, user):
         ).select_related("order_line"))
         if not links:
             raise ValidationError("يجب ربط أصناف الاستلام ببنود أمر الشراء.")
+        received_by_line = {}
         for link in links:
             line = link.order_line
-            if line.received_quantity + link.quantity > line.quantity:
+            if line.order_id != order.pk or link.receipt_line.product_id != line.product_id:
+                raise ValidationError("ربط صنف الاستلام ببند أمر الشراء غير صحيح.")
+            received_by_line[line.pk] = received_by_line.get(line.pk, Decimal("0")) + link.quantity
+        locked_lines = {
+            line.pk: line for line in PurchaseOrderLine.objects.select_for_update().filter(
+                pk__in=received_by_line, order=order
+            )
+        }
+        if len(locked_lines) != len(received_by_line):
+            raise ValidationError("بعض بنود أمر الشراء المرتبطة بالاستلام غير موجودة.")
+        for line_id, quantity in received_by_line.items():
+            line = locked_lines[line_id]
+            if line.received_quantity + quantity > line.quantity:
                 raise ValidationError("الكمية المستلمة تتجاوز كمية أمر الشراء.")
-            PurchaseOrderLine.objects.filter(pk=line.pk).update(received_quantity=line.received_quantity + link.quantity)
+            PurchaseOrderLine.objects.filter(pk=line_id).update(received_quantity=line.received_quantity + quantity)
         remaining_exists = order.lines.filter(received_quantity__lt=F("quantity")).exists()
         PurchaseOrder.objects.filter(pk=order.pk).update(status=PurchaseOrder.Status.PARTIALLY_RECEIVED if remaining_exists else PurchaseOrder.Status.RECEIVED)
     return PurchaseReceipt.objects.select_related("stock_movement").get(pk=receipt.pk)
