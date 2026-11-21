@@ -14,6 +14,7 @@ const emptyForm = {
   disposal_gain_loss_account: "", disposal_loss_account: "", fiscal_year: "",
 };
 
+// شاشة الأصول الثابتة لإضافة الأصول وإدارة الإهلاك والاستبعاد والتقارير.
 export default function FixedAssetsPanel({ companyId }: Props) {
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -42,7 +43,8 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [movementReport, setMovementReport] = useState<AssetMovementReport|null>(null);
   const [cashFlowReport, setCashFlowReport] = useState<CashFlowReport|null>(null);
 
-  const refresh = async () => {
+  // تحميل الأصول والحسابات والفروع والسنوات المالية وحسابات الخزينة.
+const refresh = async () => {
     if (!companyId) return;
     setLoading(true);
     try { setAssets(await fixedAssetsApi.list(companyId)); }
@@ -63,12 +65,14 @@ export default function FixedAssetsPanel({ companyId }: Props) {
 
   const assetAccounts = useMemo(() => accounts.filter(x => x.nature === "asset"), [accounts]);
   const expenseAccounts = useMemo(() => accounts.filter(x => x.nature === "expense"), [accounts]);
-  const accountSelect = (label: string, key: keyof typeof emptyForm, rows: Account[]) => (
+  // إنشاء قائمة اختيار موحدة للحسابات المرتبطة ببطاقة الأصل.
+const accountSelect = (label: string, key: keyof typeof emptyForm, rows: Account[]) => (
     <label>{label}<select required value={form[key]} onChange={e => setForm(old => ({...old,[key]:e.target.value}))}>
       <option value="">اختر الحساب</option>{rows.map(a => <option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}
     </select></label>
   );
-  const create = async (event: FormEvent) => {
+  // حفظ بطاقة الأصل وتفاصيل التكلفة والعمر والحسابات المحاسبية.
+const create = async (event: FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setSaving(true); setError("");
     try {
@@ -87,19 +91,22 @@ export default function FixedAssetsPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تسجيل الأصل."); }
     finally { setSaving(false); }
   };
-  const depreciate = async (asset: FixedAsset) => {
+  // طلب احتساب وترحيل إهلاك الأصل المحدد وفق الجدول المعتمد.
+const depreciate = async (asset: FixedAsset) => {
     if (!form.fiscal_year) { setError("حدد سنة مالية مفتوحة."); return; }
     setSaving(true); setError("");
     try { await fixedAssetsApi.depreciate(asset.id, periodDate, Number(form.fiscal_year)); await refresh(); if (selected === asset.id) setSchedule(await fixedAssetsApi.schedule(asset.id)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تسجيل الإهلاك."); }
     finally { setSaving(false); }
   };
-  const showSchedule = async (asset: FixedAsset) => {
+  // تحميل جدول الإهلاك التفصيلي للأصل لعرض الفترات والقيم.
+const showSchedule = async (asset: FixedAsset) => {
     setSelected(asset.id); setError("");
     try { setSchedule(await fixedAssetsApi.schedule(asset.id)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل سجل الإهلاك."); }
   };
-  const dispose = async (asset: FixedAsset) => {
+  // تنفيذ إجراء بيع أو استبعاد الأصل وإرسال بيانات التسوية للخادم.
+const dispose = async (asset: FixedAsset) => {
     if (!form.fiscal_year || (Number(disposalProceeds) > 0 && !disposalCashAccount)) { setError("حدد السنة المالية وحساب البنك أو الخزينة عند وجود متحصلات."); return; }
     if (!window.confirm("تأكيد بيع / استبعاد الأصل؟ سيتم ترحيل الإهلاك حتى التاريخ وقيد الاستبعاد.")) return;
     setSaving(true); setError("");
@@ -112,7 +119,8 @@ export default function FixedAssetsPanel({ companyId }: Props) {
     finally { setSaving(false); }
   };
 
-  const loadReport = async () => {
+  // تحميل تقارير سجل الأصول والإهلاك والحركة للفلاتر المحددة.
+const loadReport = async () => {
     if (!companyId) return;
     setReportLoading(true); setReportError("");
     const branch = reportBranch ? Number(reportBranch) : undefined;
