@@ -9,4 +9,5 @@ class PerformanceMetricsView(APIView):
     permission_classes = (IsAdminUser,)
 
     def get(self, request):
+        """عرض مؤشرات الأداء والتشغيل للمستخدم الإداري المصرح له."""
         return Response(performance_snapshot())
