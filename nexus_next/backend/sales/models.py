@@ -63,6 +63,7 @@ class SalesInvoice(models.Model):
     net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     discount_approval_limit = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    invoice_approval_limit = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     notes = models.TextField(blank=True)
