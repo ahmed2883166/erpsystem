@@ -11,10 +11,10 @@ const AuditPanel = lazy(() => import("./AuditPanel"));
 const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
-const AccountsPanel = lazy(() => import("./AccountsPanel"));
+const AccountsPanel = lazy(() => import("./AccountsPanel"));\nconst HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup" | "audit" | "approvals" | "access";
+type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
@@ -42,7 +42,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "purchasing", label: "دورة المشتريات", icon: "↙", group: "المشتريات" },
   { id: "inventory", label: "المخزون والمستودعات", icon: "▦", group: "المخزون" },
   { id: "treasury", label: "الخزينة والبنوك", icon: "¤", group: "المالية" },
-  { id: "fixed-assets", label: "الأصول الثابتة", icon: "▣", group: "المالية" },
+  { id: "fixed-assets", label: "الأصول الثابتة", icon: "▣", group: "المالية" },\n  { id: "hr", label: "الموارد البشرية والمرتبات", icon: "♙", group: "الموارد البشرية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
   { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
@@ -54,7 +54,7 @@ const modules = [
   { title: "المبيعات والعملاء", detail: "تسليم مخزني وفواتير وتحصيل وأرصدة", icon: "↗", tone: "violet", section: "sales-workflow" as Section },
   { title: "المشتريات والموردون", detail: "الموردون وأذون الاستلام وفواتير الموردين", icon: "↙", tone: "cyan", section: "purchasing" as Section },
   { title: "المخزون والمستودعات", detail: "الأصناف والمجموعات ووحدات القياس والمخازن", icon: "▦", tone: "amber", section: "inventory" as Section },
-  { title: "المرتبات والموارد البشرية", detail: "الموظفون والاستحقاقات والحضور", icon: "♙", tone: "green", section: "setup" as Section },
+  { title: "المرتبات والموارد البشرية", detail: "ملفات الموظفين والحضور ودورات المرتبات", icon: "♙", tone: "green", section: "hr" as Section },
   { title: "الأصول الثابتة", detail: "تسجيل الأصول والإهلاك وربط القيود", icon: "▣", tone: "rose", section: "fixed-assets" as Section },
 ];
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
@@ -673,7 +673,7 @@ export default function App() {
           {active === "purchasing" && <Suspense fallback={panelFallback}><PurchasingPanel companyId={companyId} /></Suspense>}
           {active === "inventory" && <Suspense fallback={panelFallback}><InventoryPanel companyId={companyId} /></Suspense>}
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
-          {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
+          {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}\n          {active === "hr" && <Suspense fallback={panelFallback}><HrPayrollPanel companyId={companyId} /></Suspense>}
           {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
