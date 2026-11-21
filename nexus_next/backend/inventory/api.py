@@ -20,6 +20,29 @@ from .serializers import (
 )
 
 
+def _default_branch(company_id):
+    return Branch.objects.filter(company_id=company_id, is_active=True).order_by("-is_head_office", "code").first()
+
+
+def _can_access_warehouse(user, warehouse):
+    if warehouse.branch_id:
+        return can_access_branch(user, warehouse.branch_id, warehouse.company_id)
+    default_branch = _default_branch(warehouse.company_id)
+    return bool(default_branch and can_access_branch(user, default_branch.pk, warehouse.company_id))
+
+
+def _default_branch_company_ids(user, companies):
+    if user.is_superuser:
+        return list(companies.values_list("id", flat=True))
+    allowed = []
+    for company_id in companies.values_list("id", flat=True):
+        default_branch = _default_branch(company_id)
+        if default_branch and can_access_branch(user, default_branch.pk, company_id):
+            allowed.append(company_id)
+    return allowed
+
+
+
 class CompanyScopedViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
     company_field = "company"
@@ -420,27 +443,6 @@ class StockMovementViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         from .services import post_stock_movement
-
-def _default_branch(company_id):
-    return Branch.objects.filter(company_id=company_id, is_active=True).order_by("-is_head_office", "code").first()
-
-
-def _can_access_warehouse(user, warehouse):
-    if warehouse.branch_id:
-        return can_access_branch(user, warehouse.branch_id, warehouse.company_id)
-    default_branch = _default_branch(warehouse.company_id)
-    return bool(default_branch and can_access_branch(user, default_branch.pk, warehouse.company_id))
-
-
-def _default_branch_company_ids(user, companies):
-    if user.is_superuser:
-        return list(companies.values_list("id", flat=True))
-    allowed = []
-    for company_id in companies.values_list("id", flat=True):
-        default_branch = _default_branch(company_id)
-        if default_branch and can_access_branch(user, default_branch.pk, company_id):
-            allowed.append(company_id)
-    return allowed
 
         movement = self.get_object()
         self._check_warehouse(movement.source_warehouse, movement.company_id) if movement.source_warehouse else None
