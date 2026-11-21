@@ -240,6 +240,7 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     <div className="account-import-card">
       <div className="account-import-heading"><div><strong>استيراد شجرة من Excel</strong><p>ارفع ملف .xlsx لمعاينته وفحص الأكواد والحسابات الأب قبل أي حفظ.</p></div><span>معاينة آمنة</span></div>
       <div className="account-import-controls">
+        <a className="subtle-button" href="/api/accounting/account-import/" download>تحميل نموذج Excel</a>
         <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => { setImportFile(event.target.files?.[0] || null); setImportPreview(null); }} aria-label="اختيار ملف شجرة الحسابات Excel" />
         <button type="button" className="subtle-button" disabled={!importFile || importBusy} onClick={() => void previewWorkbook()}>{importBusy ? "جارٍ الفحص…" : "معاينة وفحص الملف"}</button>
         {importPreview && <button type="button" className="primary-button" disabled={importBusy || importPreview.errors.length > 0 || importPreview.summary.blocked > 0} onClick={() => void commitWorkbook()}>{importBusy ? "جارٍ الاعتماد…" : "اعتماد الاستيراد"}</button>}
