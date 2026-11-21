@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
+from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from customers.models import Customer
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
@@ -264,3 +265,97 @@ class SalesWorkflowTests(APITestCase):
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
         self.assertEqual(response.status_code, 400)
+
+
+    def test_discount_above_company_limit_requires_separate_manager_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("5"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-APPROVAL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DISCOUNT-APPROVAL", "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": line_id, "unit_price": "100", "tax_rate": "14",
+                "discount_percent": "10",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["discount_total"], "20.0000")
+        self.assertEqual(invoice.data["net_total"], "180.0000")
+        self.assertEqual(invoice.data["tax_total"], "25.2000")
+        self.assertEqual(invoice.data["approval_status"], "pending")
+        invoice_id = invoice.data["id"]
+
+        blocked = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice_id)
+        self.assertEqual(approval.status, SalesInvoiceApproval.Status.PENDING)
+
+        self_approval = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/", {"note": "محاولة اعتماد ذاتي"}, format="json"
+        )
+        self.assertEqual(self_approval.status_code, 403, self_approval.data)
+
+        manager = get_user_model().objects.create_user(username="sales-manager", password="test-password")
+        CompanyMembership.objects.create(
+            user=manager, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/", {"note": "موافقة المدير"}, format="json"
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["status"], "approved")
+
+        self.client.force_authenticate(self.user)
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], "posted")
+        self.assertEqual(posted.data["approval_status"], "approved")
+
+    def test_discount_within_company_limit_posts_without_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("10"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-WITHIN")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DISCOUNT-WITHIN", "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": line_id, "unit_price": "100", "tax_rate": "0",
+                "discount_percent": "7.5",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["discount_total"], "15.0000")
+        self.assertEqual(invoice.data["approval_status"], "not_required")
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+    def test_rejected_discount_request_cannot_be_posted(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("0"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-REJECT")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DISCOUNT-REJECT", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "1"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        manager = get_user_model().objects.create_user(username="rejecting-manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        rejected = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/reject/", {"note": "الخصم غير مبرر"}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.assertEqual(rejected.data["status"], "rejected")
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 400, posted.data)
+
