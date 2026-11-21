@@ -30,7 +30,8 @@ try {
             $Segments -contains "release" -or
             $Segments -contains "data" -or
             $Segments -contains "backups" -or
-            $Relative -match '(^|[\\/])backend[\\/]\.env$' -or
+            $_.Name -eq ".env" -or
+            ($_.Name -like ".env.*" -and $_.Name -ne ".env.example") -or
             $_.Extension -in @(".pyc", ".pyo", ".sqlite", ".sqlite3", ".db", ".dump") -or
             $_.Name -eq ".DS_Store") {
             return
