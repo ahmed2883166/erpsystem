@@ -22,6 +22,16 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
 
+    def create(self, request, *args, **kwargs):
+        # Reject unauthorized writes before serializer validation can expose field errors.
+        company_id = request.data.get("company")
+        if company_id not in (None, ""):
+            try:
+                self._check_company_write(int(company_id))
+            except (TypeError, ValueError):
+                pass
+        return super().create(request, *args, **kwargs)
+
     def perform_create(self, serializer):
         company = serializer.validated_data.get("company")
         if company is None:
@@ -120,6 +130,14 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         return self.queryset.filter(warehouse__company__in=companies).filter(
             Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches)
         )
+
+    def create(self, request, *args, **kwargs):
+        warehouse_id = request.data.get("warehouse")
+        if warehouse_id not in (None, ""):
+            warehouse = Warehouse.objects.filter(pk=warehouse_id).first()
+            if warehouse:
+                self._check_write(warehouse)
+        return super().create(request, *args, **kwargs)
 
     def _check_write(self, warehouse):
         if not can_access_company(self.request.user, warehouse.company_id):
