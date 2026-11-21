@@ -710,3 +710,13 @@ class SalesWorkflowTests(APITestCase):
             "company": self.company.pk,
         }, format="json")
         self.assertEqual(response.status_code, 400, response.data)
+
+    def test_database_rejects_approval_policy_without_any_threshold(self):
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                DiscountApprovalPolicy.objects.create(
+                    company=self.company, max_discount_percent=None,
+                    max_sales_invoice_amount=None, created_by=self.user, updated_by=self.user,
+                )
+        self.assertFalse(DiscountApprovalPolicy.objects.filter(company=self.company).exists())
+
