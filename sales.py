@@ -19,6 +19,7 @@ from database import connect_database, fetch_page
 from stock import consume_layers, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
+from tax_categories import validate_tax_category, tax_category_options
 
 sales_bp = Blueprint("sales", __name__, url_prefix="/sales")
 
@@ -281,6 +282,7 @@ def init_sales_schema(c):
         "tax_rate": "TEXT NOT NULL DEFAULT '0'",
         "tax_treatment": "TEXT NOT NULL DEFAULT 'standard'",
         "tax_amount": "TEXT NOT NULL DEFAULT '0'",
+        "tax_category": "TEXT NOT NULL DEFAULT ''",
     }.items():
         if name not in line_columns:
             execute_compat(c, f"ALTER TABLE sales_invoice_lines ADD COLUMN {name} {definition}")
@@ -538,6 +540,10 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
     # Header rate is only a default for standard-tax lines; each line is validated
     # independently. Exempt/zero-rated invoices must not fail on an unused header rate.
     allowed_rates = _allowed_vat_rates(conn)
+    tax_country_row = execute_compat(
+        conn, "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'"
+    ).fetchone()
+    tax_country = str(tax_country_row["setting_value"] if tax_country_row else "EG").strip().upper()
 
     # A customer-row lock serializes credit exposure checks across concurrent invoices.
     customer = _customer_for_update(conn, customer_id)
@@ -644,6 +650,9 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         treatment = str(item.get("tax_treatment") or "standard").strip().lower()
         if treatment not in {"standard", "zero_rated", "exempt", "out_of_scope"}:
             raise ValueError("المعاملة الضريبية للبند غير صحيحة.")
+        tax_category = validate_tax_category(
+            tax_country, "sale", item.get("tax_category", ""), treatment
+        )
         line_rate = Decimal(str(item.get("tax_rate", rate if treatment == "standard" else "0"))).quantize(CENT, rounding=ROUND_HALF_UP)
         if not line_rate.is_finite() or line_rate < 0 or line_rate > 100:
             raise ValueError("نسبة ضريبة البند يجب أن تكون بين صفر و100.")
@@ -660,7 +669,8 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
             "uom_key": str(selected_uom_key or ""), "entered_uom_name": selected_uom_name,
             "conversion_factor": conversion_factor,
             "gross_line_total": line_total, "line_total": line_total, "cost_total": cost,
-            "tax_rate": line_rate, "tax_treatment": treatment, "tax_amount": Decimal("0.00"),
+            "tax_rate": line_rate, "tax_treatment": treatment, "tax_category": tax_category,
+            "tax_amount": Decimal("0.00"),
             "stock_allocations": _allocations if product_id else [],
             "inventory_account_code": product_inventory_code if product_id else None,
             "cogs_account_code": product_cogs_code if product_id else None,
@@ -772,13 +782,14 @@ def post_invoice(conn, customer_id, invoice_date, warehouse_id, lines, tax_rate,
         order_line_id = item.get("sales_order_line_id")
         invoice_line_id = insert_and_get_id(conn,
             """INSERT INTO sales_invoice_lines(invoice_id,product_id,description,quantity,unit_price,
-               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,sales_order_line_id,
+               line_total,cost_total,stock_movement_id,tax_rate,tax_treatment,tax_amount,tax_category,sales_order_line_id,
                entered_quantity,uom_id,uom_key,entered_uom_name,conversion_factor)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (invoice_id, item["product_id"], item["description"], str(item["quantity"]),
              str(item["unit_price"]), str(item["line_total"]), str(item["cost_total"]), movement_id,
-             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), order_line_id,
-             str(item["entered_quantity"]), item["uom_id"], item["uom_key"], item["entered_uom_name"], str(item["conversion_factor"])))
+             str(item["tax_rate"]), item["tax_treatment"], str(item["tax_amount"]), item.get("tax_category", ""),
+             order_line_id, str(item["entered_quantity"]), item["uom_id"], item["uom_key"],
+             item["entered_uom_name"], str(item["conversion_factor"])))
         for allocation in item.get("stock_allocations", []):
             if len(allocation) == 4:
                 lot_id, allocated_qty, allocated_unit_cost, allocated_cost = allocation
@@ -2498,10 +2509,11 @@ def new_invoice():
     if request.method == "POST":
         try:
             items = []
-            for pid, qty, price, desc, line_rate, treatment, uom_id in zip(request.form.getlist("product_id"),
+            for pid, qty, price, desc, line_rate, treatment, uom_id, tax_category in zip(request.form.getlist("product_id"),
                     request.form.getlist("quantity"), request.form.getlist("unit_price"),
                     request.form.getlist("description"), request.form.getlist("line_tax_rate"),
-                    request.form.getlist("line_tax_treatment"), request.form.getlist("uom_id")):
+                    request.form.getlist("line_tax_treatment"), request.form.getlist("uom_id"),
+                    request.form.getlist("line_tax_category")):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
@@ -2516,7 +2528,8 @@ def new_invoice():
                             selected_price = Decimal(str(matched_price))*factor
                     items.append({"product_id": int(pid) if pid else None, "quantity": qty,
                                   "unit_price": selected_price, "uom_id":uom_id,
-                                  "description": desc, "tax_rate": line_rate, "tax_treatment": treatment})
+                                  "description": desc, "tax_rate": line_rate, "tax_treatment": treatment,
+                                  "tax_category": tax_category})
             due_date = request.form.get("due_date") or request.form["invoice_date"]
             if due_date < request.form["invoice_date"]:
                 raise ValueError("تاريخ الاستحقاق لا يمكن أن يسبق تاريخ الفاتورة.")
@@ -2666,17 +2679,19 @@ def new_invoice():
     products = execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms={p["id"]:product_uom_options(c,p["id"]) for p in products}
     warehouses = execute_compat(c, "SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
-    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c,
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate','tax_country')")}
     dimension_options = active_dimension_options(c)
     from company_activities import list_company_activities
     activity_options = [row for row in list_company_activities(c) if row["enabled"]]
     primary_activity = next((row["activity_code"] for row in activity_options if row["is_primary"]), None)
     selected_activity = primary_activity or settings.get("activity", "commercial")
+    sales_tax_categories = tax_category_options(settings.get("tax_country", "EG"), "sale")
     c.close()
     return render_template("sales_invoice_new.html", customers=customers, products=products, product_uoms=product_uoms,
                            warehouses=warehouses, settings=settings, dimension_options=dimension_options,
                            activity_options=activity_options, selected_activity=selected_activity,
+                           sales_tax_categories=sales_tax_categories,
                            today=date.today().isoformat())
 
 
@@ -2832,8 +2847,8 @@ def edit_invoice_workflow(workflow_id):
     products = execute_compat(c, "SELECT * FROM stock_products WHERE active=1 ORDER BY name_ar").fetchall()
     product_uoms = {p["id"]: product_uom_options(c, p["id"]) for p in products}
     warehouses = execute_compat(c, "SELECT * FROM stock_warehouses WHERE active=1 ORDER BY code").fetchall()
-    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c, 
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate')")}
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c,
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate','tax_country')")}
     dimension_options = active_dimension_options(c)
     c.close()
     return render_template("sales_invoice_workflow_edit.html", workflow=workflow, payload=payload,
