@@ -343,6 +343,81 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(sum((line.debit for line in lines), 0), 35)
         self.assertEqual(sum((line.credit for line in lines), 0), 35)
 
+    def test_fifo_uses_movement_date_for_backdated_receipts(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="FIFO-DATE", name_ar="FIFO بتاريخ الحركة", costing_method="fifo"
+        )
+        warehouse = self._warehouse("FIFO-DATE-WH")
+
+        later = self._movement("FIFO-DATE-LATE", "receipt", destination=warehouse, quantity="3", cost="20")
+        self.assertEqual(later.status_code, 201, later.data)
+        later_record = StockMovement.objects.get(pk=later.data["id"])
+        later_record.movement_date = date(2026, 11, 25)
+        later_record.save(update_fields=("movement_date",))
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{later.data['id']}/post/", {}, format="json").status_code, 200)
+
+        earlier = self._movement("FIFO-DATE-EARLY", "receipt", destination=warehouse, quantity="3", cost="10")
+        self.assertEqual(earlier.status_code, 201, earlier.data)
+        earlier_record = StockMovement.objects.get(pk=earlier.data["id"])
+        earlier_record.movement_date = date(2026, 11, 20)
+        earlier_record.save(update_fields=("movement_date",))
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{earlier.data['id']}/post/", {}, format="json").status_code, 200)
+
+        issue = self._movement("FIFO-DATE-ISSUE", "issue", source=warehouse, quantity="1")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        posted = self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        issue_line = StockMovement.objects.get(pk=issue.data["id"]).lines.get()
+        self.assertEqual(issue_line.cost_amount, 10)
+        remaining_layers = list(
+            StockCostLayer.objects.filter(product=self.product, warehouse=warehouse, quantity_remaining__gt=0)
+            .order_by("source_line__movement__movement_date", "source_line_id")
+        )
+        self.assertEqual(len(remaining_layers), 2)
+        self.assertEqual(remaining_layers[0].quantity_remaining, 2)
+        self.assertEqual(remaining_layers[0].unit_cost, 10)
+        self.assertEqual(remaining_layers[1].quantity_remaining, 3)
+        self.assertEqual(remaining_layers[1].unit_cost, 20)
+
+    def test_fifo_transfer_preserves_layer_costs_and_destination_issue_cost(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="FIFO-TRANSFER", name_ar="FIFO تحويل", costing_method="fifo"
+        )
+        source = self._warehouse("FIFO-TRANSFER-SRC")
+        destination = self._warehouse("FIFO-TRANSFER-DST")
+
+        first = self._movement("FIFO-TRANSFER-R1", "receipt", destination=source, quantity="2", cost="5")
+        second = self._movement("FIFO-TRANSFER-R2", "receipt", destination=source, quantity="2", cost="9")
+        for receipt in (first, second):
+            self.assertEqual(receipt.status_code, 201, receipt.data)
+            posted = self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json")
+            self.assertEqual(posted.status_code, 200, posted.data)
+
+        transfer = self._movement("FIFO-TRANSFER-T1", "transfer", destination=destination, source=source, quantity="3")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        posted_transfer = self.client.post(f"/api/inventory/movements/{transfer.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_transfer.status_code, 200, posted_transfer.data)
+        transfer_line = StockMovement.objects.get(pk=transfer.data["id"]).lines.get()
+        self.assertEqual(transfer_line.cost_amount, 19)
+
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=source)
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination)
+        self.assertEqual(source_balance.quantity, 1)
+        self.assertEqual(source_balance.inventory_value, 9)
+        self.assertEqual(destination_balance.quantity, 3)
+        self.assertEqual(destination_balance.inventory_value, 19)
+
+        issue = self._movement("FIFO-TRANSFER-I1", "issue", source=destination, quantity="2")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        posted_issue = self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_issue.status_code, 200, posted_issue.data)
+        issue_line = StockMovement.objects.get(pk=issue.data["id"]).lines.get()
+        self.assertEqual(issue_line.cost_amount, 10)
+        destination_balance.refresh_from_db()
+        self.assertEqual(destination_balance.quantity, 1)
+        self.assertEqual(destination_balance.inventory_value, 9)
+
     def test_receipt_posts_balanced_inventory_journal(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-R1", name_ar="استلام محاسبي")
         warehouse = self._warehouse("GL-WH1")
