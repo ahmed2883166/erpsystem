@@ -1,6 +1,6 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from .models import Company, CompanyMembership, Currency
+from .models import Branch, Company, CompanyMembership, Currency
 
 
 class CompanySetupApiTests(APITestCase):
