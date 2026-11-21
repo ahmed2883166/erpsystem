@@ -175,9 +175,18 @@ class OperationalResetPreviewView(APIView):
     def get(self, request):
         if not request.user.is_superuser:
             raise PermissionDenied("معاينة التصفير متاحة لمدير النظام الأعلى فقط.")
+        counts = reset_preview()
+        latest = BackupRun.objects.filter(status=BackupRun.Status.SUCCESS).first()
+        backup_ready = bool(
+            latest and latest.created_at >= timezone.now() - timedelta(hours=24)
+            and latest.backup_file and Path(latest.backup_file).is_file()
+            and Path(latest.backup_file).stat().st_size >= 1024
+        )
         return Response({
-            "counts": reset_preview(),
-            "total_records": sum(reset_preview().values()),
+            "counts": counts,
+            "total_records": sum(counts.values()),
+            "backup_ready": backup_ready,
+            "last_backup_at": latest.created_at if latest else None,
             "preserved": [
                 "الشركات والفروع والمستخدمون والصلاحيات",
                 "دليل الحسابات ومراكز التكلفة وأكواد الضرائب",
