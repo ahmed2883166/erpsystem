@@ -29,6 +29,10 @@ def refresh_financial_approval(document_type, document, user):
     amount = Decimal(document.grand_total if document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE else document.amount)
     policy = DiscountApprovalPolicy.objects.filter(company_id=document.company_id).first()
     limit = getattr(policy, LIMIT_FIELD[document_type], None) if policy else None
+    if document_type == FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT:
+        from treasury.models import TreasuryTransaction
+        if document.kind != TreasuryTransaction.Kind.PAYMENT:
+            limit = None
     pending = FinancialApprovalRequest.objects.select_for_update().filter(
         document_type=document_type, **{f"{relation}_id": document.pk},
         status=FinancialApprovalRequest.Status.PENDING,
@@ -66,6 +70,10 @@ def require_financial_approval(document_type, document):
     amount = Decimal(document.grand_total if document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE else document.amount)
     policy = DiscountApprovalPolicy.objects.filter(company_id=document.company_id).first()
     limit = getattr(policy, LIMIT_FIELD[document_type], None) if policy else None
+    if document_type == FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT:
+        from treasury.models import TreasuryTransaction
+        if document.kind != TreasuryTransaction.Kind.PAYMENT:
+            limit = None
     if limit is None or amount <= limit:
         return
     latest = FinancialApprovalRequest.objects.filter(
