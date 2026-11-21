@@ -4,6 +4,7 @@ from tax_categories import (
     tax_category_options,
     tax_category_label,
     validate_tax_category,
+    validate_tax_document_reference,
 )
 
 
@@ -42,6 +43,15 @@ class TaxCategoryTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             validate_tax_category("EG", "purchase", "eg_purchase_exempt", "standard")
+
+    def test_customs_import_category_requires_document_reference(self):
+        with self.assertRaises(ValueError):
+            validate_tax_document_reference("eg_purchase_customs_vat", "")
+        self.assertEqual(
+            validate_tax_document_reference("sa_purchase_customs_vat", "CUSTOMS-2026-1"),
+            "CUSTOMS-2026-1",
+        )
+        self.assertEqual(validate_tax_document_reference("eg_purchase_standard", ""), "")
 
     def test_category_must_match_existing_generic_tax_treatment(self):
         with self.assertRaises(ValueError):
