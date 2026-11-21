@@ -117,7 +117,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     if proceeds < 0:
         raise ValidationError("قيمة البيع لا يمكن أن تكون سالبة.")
 
-    asset = FixedAsset.objects.select_for_update().select_related(
+    asset = FixedAsset.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "asset_account", "accumulated_depreciation_account",
         "depreciation_expense_account", "disposal_gain_loss_account", "disposal_loss_account"
     ).get(pk=asset_id)
