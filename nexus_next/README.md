@@ -15,5 +15,11 @@ This directory contains the new, independent NEXUS ERP implementation.
 - Do not connect this project to legacy databases or copy production data during development.
 - Keep LAN deployment private; do not expose the service publicly by default.
 
-## Development
-See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend/README.md).
+## Start locally on Windows
+Install Docker Desktop, Python 3.12, and Node.js 22, then run this from the `nexus_next` directory:
+```powershell
+.\start-local.ps1
+```
+On first startup, create the administrator with `python manage.py createsuperuser` in the Backend PowerShell window. The database port is bound to localhost only.
+
+See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend/README.md) for details.
