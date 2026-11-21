@@ -45,7 +45,23 @@ try {
     if (Test-Path -LiteralPath $ZipPath) {
         Remove-Item -LiteralPath $ZipPath -Force
     }
-    Compress-Archive -Path (Join-Path $Stage "*") -DestinationPath $ZipPath -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $PackageItems = @(Get-ChildItem -LiteralPath $Stage -Force | ForEach-Object { $_.FullName })
+    Compress-Archive -Path $PackageItems -DestinationPath $ZipPath -CompressionLevel Optimal
+
+    $Archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $Entries = @($Archive.Entries | ForEach-Object { $_.FullName })
+        foreach ($RequiredEntry in @("backend/.env.example", "compose.yaml", "start-local.ps1", "TRIAL-QUICKSTART.md")) {
+            if ($Entries -notcontains $RequiredEntry) {
+                throw "Trial package is missing required file: $RequiredEntry"
+            }
+        }
+    }
+    finally {
+        $Archive.Dispose()
+    }
+
     $Hash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash
     Set-Content -LiteralPath "$ZipPath.sha256" -Value "$Hash  $(Split-Path -Leaf $ZipPath)" -Encoding ASCII
     Write-Host "Trial package created: $ZipPath" -ForegroundColor Green
