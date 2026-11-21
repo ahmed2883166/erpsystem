@@ -174,7 +174,6 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
-    payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
 
