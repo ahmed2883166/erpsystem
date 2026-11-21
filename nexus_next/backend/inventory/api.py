@@ -139,6 +139,20 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
                 self._check_write(warehouse)
         return super().create(request, *args, **kwargs)
 
+    def create(self, request, *args, **kwargs):
+        # Validate warehouse permissions before serializer validation.
+        warehouse_id = request.data.get("warehouse")
+        if warehouse_id not in (None, ""):
+            warehouse = Warehouse.objects.filter(pk=warehouse_id).first()
+            if warehouse:
+                self._check_write(warehouse)
+        return super().create(request, *args, **kwargs)
+
+    def perform_destroy(self, instance):
+        self._check_write(instance.warehouse)
+        instance.is_active = False
+        instance.save(update_fields=("is_active",))
+
     def _check_write(self, warehouse):
         if not can_access_company(self.request.user, warehouse.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
