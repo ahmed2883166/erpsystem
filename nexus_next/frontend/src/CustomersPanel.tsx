@@ -9,6 +9,7 @@ type Props = { companyId: number | null };
 
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
+// شاشة إدارة العملاء والبحث في السجل وفتح نموذج الإضافة أو التعديل.
 export default function CustomersPanel({ companyId }: Props) {
   const [rows, setRows] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
@@ -22,7 +23,8 @@ export default function CustomersPanel({ companyId }: Props) {
     credit_limit: "0", payment_terms_days: "0", address: "",
   });
 
-  const refresh = async () => {
+  // تحميل قائمة العملاء للشركة الحالية وتحديث نتائج العرض.
+const refresh = async () => {
     if (!companyId) { setRows([]); return; }
     setLoading(true);
     setError("");
@@ -38,7 +40,8 @@ export default function CustomersPanel({ companyId }: Props) {
       .join(" ").toLocaleLowerCase("ar").includes(search.toLocaleLowerCase("ar"))
   ), [rows, search]);
 
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+  // التحقق من نموذج العميل ثم إنشاء السجل أو تحديثه عبر API.
+const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!companyId) return;
     setSaving(true);
