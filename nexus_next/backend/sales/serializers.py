@@ -19,6 +19,7 @@ class DeliveryLineInputSerializer(serializers.Serializer):
     expiry_date = serializers.DateField(required=False, allow_null=True)
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
         if product.product_type != Product.ProductType.GOODS or not product.is_active:
             raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
@@ -45,6 +46,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         read_only_fields = ("movement_status", "line_items", "created_at")
 
     def get_line_items(self, obj):
+        """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
             "product_name": line.product.name_ar, "quantity": str(line.quantity),
@@ -52,6 +54,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         customer = attrs.get("customer", instance.customer if instance else None)
@@ -89,6 +92,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         company, warehouse = validated_data["company"], validated_data["warehouse"]
         user = self.context["request"].user
@@ -107,6 +111,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         delivery = SalesDelivery.objects.select_for_update().select_related("stock_movement").get(pk=instance.pk)
         movement = StockMovement.objects.select_for_update().get(pk=delivery.stock_movement_id)
         if movement.status != StockMovement.Status.DRAFT:
@@ -171,14 +176,17 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                             "created_at", "posted_at")
 
     def get_paid_total(self, obj):
+        """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""
         paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
         return str(paid)
 
     def get_balance_due(self, obj):
+        """حساب الرصيد المتبقي بعد خصم الدفعات المرحلة."""
         paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
         return str(max(obj.grand_total - paid, Decimal("0")))
 
     def get_approval_status(self, obj):
+        """تحديد حالة الموافقة بناءً على حدود الاعتماد ولقطة الفاتورة الحالية."""
         limit = obj.discount_approval_limit
         lines = list(obj.lines.all())
         discount_exceeded = limit is not None and any(line.discount_percent > limit for line in lines)
@@ -203,6 +211,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return approval.status
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         customer = attrs.get("customer", instance.customer if instance else None)
@@ -252,6 +261,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return attrs
 
     def _recalculate_invoice(self, invoice, lines_changed):
+        """إعادة حساب إجماليات الفاتورة وتحديث طلبات الموافقة عند تغير البنود."""
         from approvals.models import SalesInvoiceApproval
         invoice_lines = list(invoice.lines.all())
         invoice.net_total = sum((line.net_amount for line in invoice_lines), Decimal("0"))
@@ -291,6 +301,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         from approvals.models import DiscountApprovalPolicy
         lines = validated_data.pop("lines")
         invoice = SalesInvoice.objects.create(**validated_data, created_by=self.context["request"].user)
@@ -306,6 +317,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         instance = SalesInvoice.objects.select_for_update().get(pk=instance.pk)
         self.instance = instance
         if instance.status != SalesInvoice.Status.DRAFT:
@@ -342,6 +354,7 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company, customer, invoice = attrs.get("company"), attrs.get("customer"), attrs.get("invoice")
         if not customer.is_active:
             raise serializers.ValidationError({"customer": "العميل موقوف."})
@@ -363,4 +376,5 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         return CustomerReceipt.objects.create(**validated_data, created_by=self.context["request"].user)
