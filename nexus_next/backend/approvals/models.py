@@ -69,6 +69,13 @@ class SalesInvoiceApproval(models.Model):
             old = type(self).objects.get(pk=self.pk)
             if old.status != self.Status.PENDING:
                 raise ValidationError("قرار الموافقة نهائي ولا يمكن تغييره.")
+            immutable_fields = (
+                "company_id", "invoice_id", "requested_by_id", "requested_limit",
+                "requested_discount_total", "requested_max_discount_percent",
+                "requested_lines_snapshot", "requested_at",
+            )
+            if any(getattr(old, field) != getattr(self, field) for field in immutable_fields):
+                raise ValidationError("بيانات ولقطة طلب الموافقة لا يمكن تعديلها.")
             if self.status not in (self.Status.APPROVED, self.Status.REJECTED, self.Status.SUPERSEDED):
                 raise ValidationError("حالة قرار الموافقة غير صالحة.")
             if self.status == self.Status.SUPERSEDED and self.decided_by_id:
