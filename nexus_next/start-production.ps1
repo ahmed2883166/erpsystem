@@ -93,7 +93,7 @@ try {
   }
 
   if (-not (Test-Path $Waitress)) { throw "لم يتم تثبيت Waitress داخل بيئة Backend." }
-  Write-Host "NEXUS ERP Production mode: http://$Bind" -ForegroundColor Green
+  Write-Host "Admrail ERP v2 Production mode: http://$Bind" -ForegroundColor Green
   & $Waitress "--listen=$Bind" "config.wsgi:application"
   if ($LASTEXITCODE -ne 0) { throw "توقف خادم Waitress بخطأ." }
 } finally { Pop-Location }
