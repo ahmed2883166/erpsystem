@@ -102,13 +102,13 @@ def preview_activity_template(company, activity):
         current = existing.get(row["code"])
         if not current:
             continue
-        parent = existing.get(row["parent_code"]) if row["parent_code"] else None
+        actual_parent_code = current.parent.code if current.parent_id else None
         matches = (
             current.name_ar == row["name_ar"]
             and current.nature == row["nature"]
             and current.is_group == row["is_group"]
             and current.allow_posting == row["allow_posting"]
-            and current.parent_id == (parent.pk if parent else None)
+            and actual_parent_code == row["parent_code"]
         )
         if matches:
             reusable.append(row["code"])
