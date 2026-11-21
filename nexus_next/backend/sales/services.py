@@ -17,9 +17,11 @@ from .models import CustomerReceipt, SalesDelivery, SalesInvoice
 
 
 def _account(company, role):
+    """استخراج الحساب التفصيلي المرتبط بدور المبيعات المطلوب."""
     return get_account_for_role(company, role)
 
 def _branch_and_year(delivery, entry_date):
+    """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
     warehouse = delivery.warehouse
     branch = warehouse.branch if warehouse.branch_id else None
     if branch and not branch.is_active:
@@ -41,6 +43,7 @@ def _branch_and_year(delivery, entry_date):
 
 @transaction.atomic
 def post_sales_delivery(delivery_id, user):
+    """ترحيل إذن التسليم إلى حركة مخزون وتكلفة مبيعات مرة واحدة."""
     delivery = SalesDelivery.objects.select_for_update().select_related(
         "company", "customer", "warehouse", "stock_movement"
     ).get(pk=delivery_id)
@@ -56,6 +59,7 @@ def post_sales_delivery(delivery_id, user):
 
 @transaction.atomic
 def post_sales_invoice(invoice_id, user):
+    """ترحيل فاتورة المبيعات والإيراد والضريبة وذمم العميل."""
     invoice = SalesInvoice.objects.select_for_update().get(pk=invoice_id)
     if invoice.status != SalesInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المبيعات مرحلة بالفعل.")
@@ -128,6 +132,7 @@ def post_sales_invoice(invoice_id, user):
 
 @transaction.atomic
 def post_customer_receipt(receipt_id, user):
+    """ترحيل تحصيل العميل وربطه بالفاتورة وحساب الخزينة."""
     receipt = CustomerReceipt.objects.select_for_update().get(pk=receipt_id)
     if receipt.status != CustomerReceipt.Status.DRAFT:
         raise ValidationError("سند القبض مرحّل بالفعل.")
