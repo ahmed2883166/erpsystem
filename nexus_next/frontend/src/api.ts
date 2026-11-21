@@ -103,11 +103,11 @@ export const purchasingApi = {
   invoices: (companyId: number) => request<PurchaseInvoice[]>(`/api/purchasing/invoices/?company=${companyId}&ordering=-invoice_date`),
   // جلب دفعات الموردين للشركة.
   payments: (companyId: number) => request<SupplierPayment[]>(`/api/purchasing/payments/?company=${companyId}&ordering=-payment_date`),
-  // إنشاء سند قبض من عميل.
+  // إنشاء مستند استلام مشتريات جديد.
   createReceipt: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseReceipt>("/api/purchasing/receipts/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل سند القبض وتحديث رصيد العميل والخزينة.
   postReceipt: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseReceipt>(`/api/purchasing/receipts/${id}/post/`, { method: "POST" }); },
-  // إنشاء فاتورة بيع جديدة.
+  // إنشاء فاتورة مورد وربطها ببيانات الاستلام.
   createInvoice: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseInvoice>("/api/purchasing/invoices/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل فاتورة البيع وتثبيت الإيراد والضريبة والذمم.
   postInvoice: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseInvoice>(`/api/purchasing/invoices/${id}/post/`, { method: "POST" }); },
@@ -417,11 +417,11 @@ export const stockApi = {
 export type AccountRole = { id: number; company: number; role: string; account: number; account_code: string };
 // واجهات أدوار الحسابات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const accountRoleApi = {
-  // جلب السجلات المعرفة للشركة ضمن الوحدة الحالية.
+  // جلب أدوار الحسابات المعرفة للشركة.
   list: (companyId: number) => request<AccountRole[]>(`/api/accounting/account-roles/?company=${companyId}`),
-  // إنشاء سجل جديد ضمن الوحدة الحالية.
+  // إنشاء ربط دور محاسبي بحساب في دليل الحسابات.
   create: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<AccountRole>("/api/accounting/account-roles/", { method: "POST", body: JSON.stringify(payload) }); },
-  // تعديل سجل موجود ضمن الوحدة الحالية.
+  // تعديل الحساب المرتبط بالدور المحاسبي المحدد.
   update: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<AccountRole>(`/api/accounting/account-roles/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
 };
 
@@ -516,9 +516,9 @@ export type BankStatementLine = { id: number; reconciliation: number; line_numbe
 export type BankReconciliationSummary = { reconciliation: BankReconciliation; statement_calculated: string; statement_difference: string; book_balance: string; outstanding_total: string; expected_book_balance: string; unexplained_difference: string; matched_lines: number; unmatched_lines: number; lines: BankStatementLine[]; outstanding_transactions: { id: number; date: string; document_number: string; description: string; amount: string }[] };
 // واجهات التسوية البنكية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const bankReconciliationApi = {
-  // جلب السجلات المعرفة للشركة ضمن الوحدة الحالية.
+  // جلب جلسات التسوية البنكية للشركة مرتبة حسب تاريخ كشف الحساب.
   list: (companyId: number) => request<BankReconciliation[]>(`/api/treasury/reconciliations/?company=${companyId}&ordering=-statement_date`),
-  // إنشاء سجل جديد ضمن الوحدة الحالية.
+  // إنشاء جلسة تسوية بنكية جديدة.
   create: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>("/api/treasury/reconciliations/", { method: "POST", body: JSON.stringify(payload) }); },
   // جلب ملخص التسوية البنكية والأرصدة والسطور غير المطابقة.
   summary: (id: number) => request<BankReconciliationSummary>(`/api/treasury/reconciliations/${id}/summary/`),
@@ -568,7 +568,7 @@ export type AssetDepreciationReport = {company:number;date_from:string|null;date
 export type AssetMovementReport = {company:number;date_from:string|null;date_to:string|null;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;date:string;event_type:string;event_label:string;amount:string;journal_entry:number|null;treasury_transaction:number|null}[]};
 // واجهات الأصول الثابتة: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const fixedAssetsApi = {
-  // جلب السجلات المعرفة للشركة ضمن الوحدة الحالية.
+  // جلب سجل الأصول الثابتة للشركة.
   list: (companyId: number) => request<FixedAsset[]>(`/api/assets/fixed-assets/?company=${companyId}`),
   // جلب سجل الأصول الثابتة في تاريخ محدد.
   register: (companyId:number, asOf:string, branch?:number) => {
@@ -585,7 +585,7 @@ export const fixedAssetsApi = {
     const q = new URLSearchParams({company:String(companyId)}); if(dateFrom) q.set("date_from",dateFrom); if(dateTo) q.set("date_to",dateTo); if(branch) q.set("branch",String(branch));
     return request<AssetMovementReport>(`/api/assets/fixed-assets/movement-report/?${q.toString()}`);
   },
-  // إنشاء سجل جديد ضمن الوحدة الحالية.
+  // إنشاء بطاقة أصل ثابت جديدة.
   create: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<FixedAsset>("/api/assets/fixed-assets/", {method:"POST",body:JSON.stringify(payload)}); },
   // احتساب وترحيل إهلاك الأصل عن الفترة والسنة المالية.
   depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
