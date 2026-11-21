@@ -124,7 +124,15 @@ document.getElementById('bill-subtotal').addEventListener('input',updateInvoiceS
 document.querySelector('[name="tax_rate"]')?.addEventListener('input',updateInvoiceSummary);
 document.getElementById('purchase-tax-category')?.addEventListener('change',event=>{
  const treatment=event.target.selectedOptions[0]?.dataset.treatment;
- if(treatment) document.getElementById('purchase-tax-treatment').value=treatment;
+ if(treatment){
+  document.getElementById('purchase-tax-treatment').value=treatment;
+  if(treatment!=='standard') document.querySelector('[name="tax_rate"]').value='0';
+  updateInvoiceSummary();
+ }
+});
+document.getElementById('purchase-tax-treatment')?.addEventListener('change',event=>{
+ if(event.target.value!=='standard') document.querySelector('[name="tax_rate"]').value='0';
+ updateInvoiceSummary();
 });
 function toggleBillKind(){
   const kind=document.getElementById('bill-kind').value;
