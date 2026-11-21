@@ -118,11 +118,8 @@ class SalesWorkflowTests(APITestCase):
             "receipt_number": "RC-OTHER", "receipt_date": "2026-03-12",
             "method": "bank", "payment_account": other_bank.pk, "amount": "10",
         }, format="json")
-        self.assertEqual(wrong_branch_receipt.status_code, 201, wrong_branch_receipt.data)
-        wrong_branch_post = self.client.post(
-            f"/api/sales-documents/receipts/{wrong_branch_receipt.data['id']}/post/", {}, format="json"
-        )
-        self.assertEqual(wrong_branch_post.status_code, 400, wrong_branch_post.data)
+        self.assertEqual(wrong_branch_receipt.status_code, 400, wrong_branch_receipt.data)
+        self.assertIn("payment_account", wrong_branch_receipt.data)
 
         # Delivery owns the inventory/COGS posting; invoice owns revenue/VAT/receivable.
         inventory_account = AccountRole.objects.get(company=self.company, role=AccountRole.Role.INVENTORY).account
