@@ -47,7 +47,8 @@ def post_treasury_transaction(transaction_id, user=None):
     if source.branch_id and source.branch_id != doc.branch_id:
         raise ValidationError("فرع المستند لا يطابق فرع الخزينة.")
     totals = source.account.journal_lines.filter(entry__status=JournalEntry.Status.POSTED).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-    available = source.opening_balance + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+    opening_base = Decimal("0") if source.opening_journal_entry_id else source.opening_balance
+    available = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
     if doc.kind in (TreasuryTransaction.Kind.PAYMENT, TreasuryTransaction.Kind.TRANSFER) and available < doc.amount:
         raise ValidationError("الرصيد المتاح غير كافٍ لتنفيذ الحركة؛ تم إيقاف الترحيل لمنع الرصيد السالب.")
     debit_account = credit_account = None
