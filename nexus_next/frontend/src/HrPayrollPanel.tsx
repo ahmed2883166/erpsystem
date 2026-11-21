@@ -31,7 +31,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [employeeDraft, setEmployeeDraft] = useState({code:"",full_name_ar:"",branch:"",currency:"",hire_date:new Date().toISOString().slice(0,10),basic_salary:"0"});
-  const [componentDraft, setComponentDraft] = useState({code:"",name_ar:"",kind:"earning" as HrPayrollComponent["kind"],method:"fixed" as HrPayrollComponent["method"],default_value:"0"});
+  const [componentDraft, setComponentDraft] = useState({code:"",name_ar:"",kind:"earning" as HrPayrollComponent["kind"],method:"fixed" as HrPayrollComponent["method"],default_value:"0",expense_account:"",payable_account:"",affects_taxable_base:false,affects_insurance_base:false,requires_approval:false});
   const [attendanceDraft, setAttendanceDraft] = useState({employee:"",work_date:new Date().toISOString().slice(0,10),status:"present" as HrAttendance["status"],worked_hours:"8",overtime_hours:"0",friday_worked:false,late_minutes:"0"});
   const [assignmentDraft, setAssignmentDraft] = useState({employee:"",component:"",value:"",effective_from:new Date().toISOString().slice(0,10),effective_to:""});
   const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
@@ -71,9 +71,9 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     event.preventDefault();if(!companyId)return;
     setBusy(true);setError("");setNotice("");
     try {
-      await hrApi.createPayrollComponent({...componentDraft,company:companyId,expense_account:null,payable_account:null,affects_taxable_base:false,affects_insurance_base:false,requires_approval:false,is_active:true});
-      setComponentDraft({code:"",name_ar:"",kind:"earning",method:"fixed",default_value:"0"});
-      setNotice("تم حفظ عنصر المرتب. اربط الحسابات المحاسبية قبل تفعيل الترحيل.");await load();
+      await hrApi.createPayrollComponent({...componentDraft,company:companyId,default_value:componentDraft.default_value,expense_account:componentDraft.expense_account?Number(componentDraft.expense_account):null,payable_account:componentDraft.payable_account?Number(componentDraft.payable_account):null,is_active:true});
+      setComponentDraft({code:"",name_ar:"",kind:"earning",method:"fixed",default_value:"0",expense_account:"",payable_account:"",affects_taxable_base:false,affects_insurance_base:false,requires_approval:false});
+      setNotice("تم حفظ عنصر المرتب وربط حساباته وإعداداته.");await load();
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر حفظ عنصر المرتب.");}
     finally{setBusy(false);}
   };
@@ -210,6 +210,11 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <label>نوع العنصر<select value={componentDraft.kind} onChange={e=>setComponentDraft({...componentDraft,kind:e.target.value as HrPayrollComponent["kind"]})}><option value="earning">استحقاق</option><option value="deduction">استقطاع موظف</option><option value="employer_share">حصة صاحب العمل</option></select></label>
         <label>طريقة الحساب<select value={componentDraft.method} onChange={e=>setComponentDraft({...componentDraft,method:e.target.value as HrPayrollComponent["method"]})}><option value="fixed">مبلغ ثابت</option><option value="percent_basic">نسبة من الأساسي</option><option value="per_day">حسب الأيام</option><option value="per_hour">حسب الساعات</option><option value="friday_double_day">عمل الجمعة بضعف اليومية</option><option value="employee_insurance">تأمينات الموظف حسب القواعد</option><option value="employer_insurance">تأمينات صاحب العمل حسب القواعد</option><option value="progressive_tax">ضريبة شرائح حسب القواعد</option><option value="manual">إدخال يدوي</option></select></label>
         <label>القيمة الافتراضية<input type="number" min="0" step="0.0001" value={componentDraft.default_value} onChange={e=>setComponentDraft({...componentDraft,default_value:e.target.value})}/></label>
+        <label>حساب المصروف (للاستحقاق/حصة صاحب العمل)<select value={componentDraft.expense_account} onChange={e=>setComponentDraft({...componentDraft,expense_account:e.target.value})}><option value="">الحساب الافتراضي لمصروف المرتبات</option>{accounts.filter(a=>a.nature==="expense"&&a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} — {a.name_ar}</option>)}</select></label>
+        <label>حساب الالتزام (للاستقطاع/حصة صاحب العمل)<select value={componentDraft.payable_account} onChange={e=>setComponentDraft({...componentDraft,payable_account:e.target.value})}><option value="">اختر حساب الالتزام</option>{accounts.filter(a=>a.nature==="liability"&&a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} — {a.name_ar}</option>)}</select></label>
+        <label className="checkbox-filter"><input type="checkbox" checked={componentDraft.affects_taxable_base} onChange={e=>setComponentDraft({...componentDraft,affects_taxable_base:e.target.checked})}/> يدخل في وعاء الضريبة</label>
+        <label className="checkbox-filter"><input type="checkbox" checked={componentDraft.affects_insurance_base} onChange={e=>setComponentDraft({...componentDraft,affects_insurance_base:e.target.checked})}/> يدخل في وعاء التأمينات</label>
+        <label className="checkbox-filter"><input type="checkbox" checked={componentDraft.requires_approval} onChange={e=>setComponentDraft({...componentDraft,requires_approval:e.target.checked})}/> يتطلب اعتمادًا قبل الصرف</label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy}>حفظ عنصر المرتب</button></div>
       </form>
       <div className="section-heading" style={{marginTop:24}}><div><h2>عناصر المرتب المعرفة</h2><p>استحقاقات واستقطاعات الموظف وحصة صاحب العمل</p></div><span className="module-count">{components.length} عنصر</span></div>
