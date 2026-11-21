@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, inventoryApi, salesApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse } from "./api";
 
 type Props = { companyId: number | null };
@@ -40,12 +40,11 @@ export default function SalesPanel({ companyId }: Props) {
   const filteredInvoices = invoices.filter(x => [x.invoice_number, x.customer_name, x.delivery_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredReceipts = receipts.filter(x => [x.receipt_number, x.customer_name, x.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
 
-  const createDelivery = async (event: React.FormEvent) => {
+  const createDelivery = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const product = products.find(p => p.id === Number(deliveryForm.product));
       await salesApi.createDelivery({
         company: companyId, customer: Number(deliveryForm.customer), warehouse: Number(deliveryForm.warehouse),
         delivery_number: deliveryForm.delivery_number, delivery_date: deliveryForm.delivery_date,
