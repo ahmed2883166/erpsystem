@@ -1,6 +1,8 @@
-/* Offline-first font stack: no external font request required on LAN deployments. */
+/* الإعدادات العامة: الخطوط والألوان الأساسية والخلفية الافتراضية للبرنامج. */
+/* الخطوط محلية لتجنب طلب خطوط خارجية عند التشغيل على الشبكة الداخلية. */
 :root{font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:#172033;background:#f5f7fb;font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto}
 *{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh;background:#f5f7fb}button{font:inherit;cursor:pointer}
+/* الهيكل الرئيسي للتطبيق: القائمة الجانبية، مساحة العمل، الشريط العلوي وتخطيط الصفحة. */
 .app-shell{min-height:100vh;display:flex;background:#f5f7fb}.sidebar{width:264px;background:#111c2e;color:#e8eef8;display:flex;flex-direction:column;padding:25px 17px 17px;flex-shrink:0;min-height:100vh;position:sticky;top:0;height:100vh;overflow:auto}
 .brand-lockup{display:flex;align-items:center;gap:11px;padding:0 8px 27px;border-bottom:1px solid #26344a}.brand-symbol{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:linear-gradient(145deg,#3b82f6,#2356bd);font-size:23px;font-weight:800;color:white;box-shadow:0 7px 18px #1d4ed844}.brand-lockup strong{display:block;font-size:18px;letter-spacing:2px;color:#fff}.brand-lockup span{display:block;font-size:8px;letter-spacing:1.2px;color:#8192aa}.sidebar-close{display:none;margin-right:auto;background:none;border:0;color:#aab8cb;font-size:24px}
 .workspace{display:flex;align-items:center;gap:10px;padding:17px 9px;margin:15px 0 10px;background:#1a2940;border:1px solid #293b55;border-radius:12px}.workspace-avatar{width:34px;height:34px;border-radius:10px;background:#314e76;display:grid;place-items:center;font-size:11px;font-weight:800;color:#dceaff}.workspace strong,.workspace small{display:block}.workspace strong{font-size:11px}.workspace small{font-size:10px;color:#90a1b9;margin-top:3px}.chevron{margin-right:auto;color:#8fa1b8}
@@ -8,6 +10,7 @@
 .sidebar-bottom{padding-top:14px}.help-card{display:flex;align-items:center;gap:9px;padding:12px 10px;border-radius:10px;background:#1b2c44;margin-bottom:14px}.help-card>span{width:25px;height:25px;border-radius:8px;display:grid;place-items:center;background:#304a6b;color:#b7d5ff}.help-card strong,.help-card small{display:block}.help-card strong{font-size:10px}.help-card small{font-size:9px;color:#91a2b9;margin-top:2px}.help-card b{margin-right:auto;color:#9db2cc}.user-profile{display:flex;align-items:center;gap:9px;padding:14px 5px 0;border-top:1px solid #29384c}.user-avatar{width:31px;height:31px;display:grid;place-items:center;border-radius:50%;background:#d9e8ff;color:#28528c;font-weight:800;font-size:12px}.user-profile strong,.user-profile small{display:block}.user-profile strong{font-size:11px}.user-profile small{font-size:9px;color:#8ea0b8}.user-profile>span{margin-right:auto;color:#8ea0b8}
 .main-area{min-width:0;flex:1}.topbar{height:72px;background:#fff;border-bottom:1px solid #e8edf4;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(18px,3vw,42px);position:sticky;top:0;z-index:5}.topbar-start,.topbar-actions{display:flex;align-items:center;gap:17px}.breadcrumb{font-size:12px;color:#1d293b;font-weight:700}.breadcrumb span{color:#8b98aa;font-weight:500}.breadcrumb b{color:#c2cad5;margin:0 9px}.topbar-actions{gap:12px}.period-select{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #e7ebf1;border-radius:8px;color:#4a586c;font-size:10px}.period-select>span:last-child{margin-right:8px;color:#9aa6b5}.period-dot{width:6px;height:6px;border-radius:50%;background:#39b980}.icon-button{width:34px;height:34px;border:1px solid #e8edf3;background:white;border-radius:9px;color:#617188;font-size:18px;position:relative}.notification i{position:absolute;top:6px;right:7px;width:5px;height:5px;border-radius:50%;background:#ef6c66}.top-user{display:flex;align-items:center;gap:8px;padding-right:12px;border-right:1px solid #edf0f4;font-size:10px;color:#526074}.top-user b{color:#9aa6b5}.menu-toggle{display:none;background:none;border:0;font-size:20px;color:#53657b}
 .page-content{max-width:1500px;margin:0 auto;padding:32px clamp(18px,3vw,42px) 20px}.welcome-row{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:30px}.eyebrow{font-size:10px;color:#8b98aa;margin:0 0 4px}.welcome-row h1{font-size:25px;line-height:1.4;color:#17243a;margin:0;font-weight:800}.welcome-copy{font-size:11px;color:#8793a4;margin:5px 0 0}.primary-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#2865c7;color:white;border:0;border-radius:9px;padding:10px 16px;font-size:11px;font-weight:700;box-shadow:0 5px 12px #2865c71c;transition:.18s}.primary-button:hover{background:#1e55ad;transform:translateY(-1px)}.primary-button span{font-size:17px;line-height:12px}.primary-button:disabled{opacity:.55;cursor:not-allowed}.section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.section-heading h2,.activity-title h2,.work-panel h2{font-size:14px;margin:0;color:#26354b}.section-heading p,.activity-title p{font-size:10px;color:#8a96a7;margin:3px 0 0}.subtle-button{border:1px solid #e5eaf1;background:white;color:#738196;border-radius:8px;padding:7px 10px;font-size:9px}.subtle-button span{font-size:14px;margin-right:5px}.metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.metric-card{background:white;border:1px solid #e9edf3;border-radius:12px;padding:17px 17px 15px;min-height:132px;box-shadow:0 3px 12px #233b5a05}.metric-top{display:flex;align-items:center;justify-content:space-between;color:#78869a;font-size:10px}.metric-icon{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-style:normal;font-size:15px}.metric-icon.blue{background:#eaf2ff;color:#3677d4}.metric-icon.orange{background:#fff1e8;color:#e28b4c}.metric-icon.green{background:#e7f8f0;color:#39a879}.metric-icon.purple{background:#f2edff;color:#9272d6}.metric-value{display:block;font-size:24px;color:#26354b;margin:9px 0 1px;letter-spacing:.5px}.metric-card>small{font-size:9px;color:#a0aaba}
+/* الصفحة الرئيسية: بطاقات المؤشرات، اختصارات الوحدات، آخر النشاط وتذييل الصفحة. */
 .module-heading{margin-top:30px}.module-count{font-size:9px;color:#8b98aa;background:#fff;border:1px solid #e8edf3;padding:6px 9px;border-radius:7px}.modules-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.module-card{display:flex;align-items:center;gap:12px;text-align:right;background:white;border:1px solid #e9edf3;border-radius:11px;padding:15px 14px;min-height:76px;transition:.18s;color:#25344a}.module-card:hover{border-color:#b7cbed;box-shadow:0 8px 20px #23466d0d;transform:translateY(-2px)}.module-icon{width:37px;height:37px;display:grid;place-items:center;border-radius:10px;font-size:17px;font-style:normal;flex-shrink:0}.module-icon.blue{background:#eaf2ff;color:#3677d4}.module-icon.violet{background:#f1edff;color:#8c70d4}.module-icon.cyan{background:#e7f8fa;color:#329eaa}.module-icon.amber{background:#fff5df;color:#d19b35}.module-icon.green{background:#e8f7ef;color:#3eaa7b}.module-icon.rose{background:#fff0f1;color:#d77b86}.module-card strong,.module-card small{display:block}.module-card strong{font-size:10px}.module-card small{font-size:9px;color:#8b98a8;margin-top:4px}.module-arrow{margin-right:auto;color:#9cabbc;font-size:15px}
 .activity-panel{margin-top:22px;background:white;border:1px solid #e9edf3;border-radius:12px;padding:17px 18px}.activity-title{display:flex;align-items:center;justify-content:space-between}.empty-indicator{font-size:9px;color:#9aa6b5}.empty-state{display:flex;align-items:center;flex-direction:column;padding:23px 10px 19px;text-align:center}.empty-graphic{width:42px;height:42px;display:grid;place-items:center;border-radius:50%;background:#f1f5fa;color:#8fa2ba;font-size:22px;margin-bottom:9px}.empty-state strong{font-size:11px;color:#536176}.empty-state p{font-size:9px;color:#9aa6b5;margin:5px 0 0}
 .work-panel{background:white;border:1px solid #e9edf3;border-radius:12px;padding:20px;min-height:450px}.work-panel-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:18px;border-bottom:1px solid #edf0f5}.work-panel-head p{font-size:10px;color:#8a96a7}.coming-soon{font-size:9px;color:#b17a2e;background:#fff6e6;border-radius:7px;padding:6px 9px}.table-placeholder{margin-top:22px;border:1px solid #edf0f4;border-radius:9px;overflow:hidden}.table-toolbar{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;font-size:11px;font-weight:700}.small{padding:7px 10px;font-size:9px}.table-head{display:grid;grid-template-columns:1fr 1fr 2fr 1fr 1fr;background:#f7f9fc;padding:11px 14px;color:#7d899a;font-size:9px}.table-empty{text-align:center;padding:65px 15px;color:#9aa6b5;font-size:10px}.page-footer{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #e8edf3;margin-top:27px;padding-top:14px;color:#9aa5b4;font-size:9px}.page-footer span:nth-child(2){display:flex;align-items:center;gap:6px}.page-footer i{width:6px;height:6px;border-radius:50%;background:#42b987}.mobile-scrim{display:none}
@@ -19,6 +22,7 @@
 .admin-link{display:block;text-decoration:none;color:#9dbbe1;font-size:10px;padding:10px 8px;border-radius:8px;margin-bottom:10px;background:#1b2c44}.admin-link:hover{background:#263d5c;color:white}
 .admin-shortcut{font-size:10px;color:#74849a;text-decoration:none;border:1px solid #e7ebf1;border-radius:7px;padding:7px 10px}
 .error-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#fff1f0;border:1px solid #ffd6d2;color:#9d4038;border-radius:10px;padding:12px 15px;margin-bottom:18px;font-size:10px}.error-banner strong{font-size:11px}.error-banner a{color:#245db2;margin-right:auto}
+/* الجداول العامة: شريط البحث، التمرير الأفقي، رؤوس الأعمدة وحالات القيود. */
 .table-toolbar input{font:inherit;font-size:10px;border:1px solid #e5eaf1;border-radius:8px;padding:9px 12px;min-width:min(320px,70%);outline:none;background:#fbfcfe;color:#26354b}.table-toolbar input:focus{border-color:#8bb4eb;box-shadow:0 0 0 3px #2865c714}
 .data-table-wrap{width:100%;overflow:auto;border:1px solid #edf0f4;border-radius:9px;margin-top:14px}
 .data-table-wrap table{width:100%;border-collapse:collapse;min-width:650px;text-align:right;font-size:10px}
@@ -31,7 +35,7 @@
 @media(max-width:760px){.workspace select{max-width:82px}.admin-shortcut{display:none}.table-toolbar{gap:8px}.table-toolbar input{min-width:0;width:100%}.error-banner{align-items:flex-start;flex-direction:column}.error-banner a{margin-right:0}}
 
 
-/* NEXUS interaction layer: consistent controls, keyboard focus and responsive data surfaces. */
+/* تحسين التفاعل العام: حالات المرور والضغط، التركيز بلوحة المفاتيح، وتعطيل الأزرار. */
 :root{--nx-primary:#2865c7;--nx-primary-hover:#1e55ad;--nx-border:#e5eaf1;--nx-muted:#8290a3;--nx-radius:10px;--nx-focus:0 0 0 3px #2865c72b}
 button,a,input,select,textarea{ -webkit-tap-highlight-color:transparent }
 button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:0;box-shadow:var(--nx-focus)}
@@ -62,7 +66,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
  *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
 
-/* Journal entry workspace */
+/* القيود اليومية: النافذة المنبثقة ونموذج بيانات القيد وحقول الإدخال. */
 .modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(10,20,36,.58);backdrop-filter:blur(5px);display:grid;place-items:center;padding:20px;overflow:auto}
 .journal-modal{width:min(760px,100%);max-height:min(92vh,900px);overflow:auto;background:var(--surface,#fff);color:var(--text,#17243a);border:1px solid var(--nx-border,#e5eaf1);border-radius:18px;padding:24px;box-shadow:0 24px 80px #081a3340}
 .modal-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px}
@@ -75,7 +79,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .balance-preview{display:flex;flex-direction:column;justify-content:center;gap:4px;border:1px dashed #b9cbe2;border-radius:10px;padding:10px 14px;background:#f6f9fd;color:#253c5d}.balance-preview span,.balance-preview small{font-size:11px;color:#6d7e95}.balance-preview strong{font-size:17px;font-variant-numeric:tabular-nums}
 .form-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:8px}.form-actions button{min-width:110px}
 @media(max-width:600px){.modal-backdrop{padding:8px;align-items:end}.journal-modal{max-height:94vh;border-radius:16px 16px 10px 10px;padding:17px}.journal-form{grid-template-columns:1fr;gap:12px}.form-wide{grid-column:auto}.balance-preview{min-height:76px}.form-actions{grid-column:auto}}
-/* Dynamic journal editor — responsive accounting workspace */
+/* محرر أطراف القيد: إضافة وحذف السطور، جدول الحسابات والمدين والدائن. */
 .journal-modal{width:min(1040px,100%);background:var(--surface,#fff);border:1px solid var(--nx-border,#e5eaf1);box-shadow:0 28px 90px #07172e45}
 .journal-form{grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.journal-form label{font-size:12px}.journal-form label:nth-child(5){grid-column:1/-1}
 .journal-lines-head{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;border:0;padding:8px 0 2px}.journal-lines-head>div{display:flex;align-items:baseline;gap:8px}.journal-lines-head span{font-size:12px;color:var(--muted,#8190a3)}
@@ -86,11 +90,12 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .form-actions.form-wide{grid-column:1/-1}
 @media(max-width:800px){.journal-form{grid-template-columns:repeat(2,minmax(0,1fr))}.balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.modal-backdrop{padding:7px;align-items:end}.journal-modal{max-height:96vh;padding:15px;border-radius:17px 17px 9px 9px}.journal-form{grid-template-columns:1fr;gap:12px}.journal-form label:nth-child(5),.journal-lines-head,.journal-lines-wrap,.balance-preview.form-wide,.form-actions.form-wide{grid-column:1}.journal-lines-head{align-items:flex-start}.journal-lines-head>div{display:block}.balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr))}.form-actions.form-wide{justify-content:stretch}.form-actions.form-wide button{flex:1}}
-/* Journal review-before-save step */
+/* مراجعة القيد قبل الحفظ: بيانات القيد، الإجماليات والتحقق من التوازن. */
 .journal-review{display:flex;flex-direction:column;gap:17px}.review-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.review-meta>div,.review-totals>div{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--nx-border,#e3e9f1);border-radius:10px;background:var(--surface-soft,#f8fafc);min-width:0}.review-meta span,.review-totals span{font-size:11px;color:var(--muted,#7b8798)}.review-meta strong{font-size:13px;overflow-wrap:anywhere}.review-description{grid-column:1/-1}.review-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.review-totals strong{font-size:17px;font-variant-numeric:tabular-nums}.review-totals small{font-size:11px;color:#16845c}.journal-review .form-actions{justify-content:space-between}.journal-review .form-actions button{min-height:42px}
 @media(max-width:600px){.review-meta{grid-template-columns:repeat(2,minmax(0,1fr))}.review-description{grid-column:1/-1}.review-totals{grid-template-columns:1fr}.journal-review .form-actions{flex-direction:column-reverse}.journal-review .form-actions button{width:100%}}
 
 
+/* شاشة العملاء: أدوات البحث، نموذج بيانات العميل، الحالة وجدول العملاء. */
 .customers-panel .work-panel-head{gap:14px;flex-wrap:wrap}
 .customer-toolbar{display:flex;align-items:center;gap:10px;margin:16px 0;padding:12px;background:#f8fafd;border:1px solid #edf1f6;border-radius:9px}
 .customer-toolbar input{flex:1;min-width:180px;border:1px solid #e3e9f1;border-radius:8px;padding:9px 11px;background:white;color:#26354b;font:inherit;font-size:11px;outline:none}
@@ -108,7 +113,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:460px){.customer-form{grid-template-columns:1fr}.customer-form-wide{grid-column:auto}.customer-form-actions{grid-column:1/-1}}
 
 
-/* Inventory workspace */
+/* شاشة المخزون: التبويبات، نماذج الأصناف والمخازن وحركات المخزون. */
 .inventory-tabs{display:flex;gap:7px;overflow:auto;padding:14px 0 4px;border-bottom:1px solid #edf0f5}
 .inventory-tab{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;border:1px solid #e5eaf1;background:#fff;color:#718097;border-radius:8px;padding:9px 12px;font:inherit;font-size:11px;cursor:pointer}
 .inventory-tab b{font-size:9px;background:#f0f3f7;border-radius:20px;padding:3px 7px;color:#7d8ba0}
@@ -127,25 +132,29 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:460px){.inventory-form{grid-template-columns:1fr}.inventory-wide,.inventory-actions{grid-column:auto}.inventory-actions{flex-direction:column}.inventory-actions button{width:100%}}
 
 
+/* تفاصيل مستندات المخزون: محرر أصناف المستند وكميات وأسعار البنود. */
 .inventory-line-editor{min-width:0}.inventory-line-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;color:#33445c;font-size:12px}.inventory-line-editor .data-table-wrap{overflow-x:auto;border:1px solid #e5eaf1;border-radius:9px;background:#fff}.inventory-line-editor table{width:100%;min-width:650px;border-collapse:collapse}.inventory-line-editor th,.inventory-line-editor td{padding:8px 9px;border-bottom:1px solid #edf0f5;text-align:right;vertical-align:middle;font-size:11px}.inventory-line-editor th{background:#f4f7fb;color:#697990;font-weight:700}.inventory-line-editor td select,.inventory-line-editor td input{min-width:105px;min-height:35px}.inventory-line-editor td:first-child,.inventory-line-editor td:last-child{text-align:center}.inventory-line-editor>small{display:block;margin-top:8px;color:#7b899c;font-size:10px;line-height:1.7}
 
 
+/* تقارير المخزون: مؤشرات القيمة والكميات وملاحظات نتائج التقارير. */
 .inventory-reports{display:grid;gap:16px;padding-top:14px}.inventory-report-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.inventory-report-section{margin:0;min-width:0}.inventory-report-section .activity-title{padding:14px 16px}.inventory-report-section .activity-title h3{margin:0;font-size:13px;color:#304159}.inventory-report-section .activity-title p{margin:4px 0 0;font-size:10px;color:#8794a7}.inventory-report-note{margin:0;padding:11px 13px;border:1px solid #e6ebf2;border-radius:9px;color:#738197;background:#f8fafd;font-size:10px;line-height:1.8}
 @media(max-width:900px){.inventory-report-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:460px){.inventory-report-metrics{grid-template-columns:1fr}}
 
 
+/* نتيجة المطابقة: عرض الأرصدة والفروق وحالة التطابق أو عدم التطابق. */
 .reconciliation-result{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:14px}.reconciliation-result>div:not(.reconciliation-status){display:flex;flex-direction:column;gap:6px;padding:11px;border:1px solid #e7edf4;border-radius:8px;background:#fafbfd;min-width:0}.reconciliation-result span{font-size:10px;color:#7a8799}.reconciliation-result strong{font-size:13px;color:#34465e;overflow-wrap:anywhere}.reconciliation-status{grid-column:1/-1;padding:11px 13px;border-radius:8px;font-size:11px;font-weight:750}.reconciliation-status.matched{background:#eaf7ef;color:#237747}.reconciliation-status.mismatch{background:#fff0ef;color:#b44949}
 @media(max-width:760px){.reconciliation-result{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:460px){.reconciliation-result{grid-template-columns:1fr}}
 
 
+/* كارت الصنف: فلاتر الفترة والمخزن والصنف وملخص حركة ورصيد المخزون. */
 .stock-card-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:10px;padding:14px;align-items:end}.stock-card-filters label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#64748b}.stock-card-filters input,.stock-card-filters select{min-width:0;min-height:37px;padding:7px 9px;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#34465e}.stock-card-filters .primary-button{white-space:nowrap;min-height:37px}.stock-card-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:12px 14px}.stock-card-summary>div{display:flex;flex-direction:column;gap:5px;min-width:0;padding:10px;border:1px solid #e7edf4;border-radius:8px;background:#fafbfd}.stock-card-summary span{font-size:10px;color:#7a8799}.stock-card-summary strong{font-size:12px;color:#34465e;overflow-wrap:anywhere}
 @media(max-width:1000px){.stock-card-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.stock-card-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:460px){.stock-card-filters,.stock-card-summary{grid-template-columns:1fr}}
 
 
-/* Purchasing document line editor */
+/* المشتريات: صف إدخال بنود الفاتورة أو مستند الشراء وأزرار إدارة البنود. */
 .inventory-form-row{grid-column:1/-1;display:grid;grid-template-columns:minmax(180px,2fr) repeat(2,minmax(120px,1fr)) auto;align-items:end;gap:10px;padding:12px;border:1px solid #e4eaf2;border-radius:9px;background:#fff}
 .inventory-form-row label{min-width:0}
 .inventory-form-row .subtle-button{min-height:38px;white-space:nowrap}
@@ -153,7 +162,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:760px){.inventory-form-row{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-form-row label:first-child{grid-column:1/-1}}
 @media(max-width:460px){.inventory-form-row{grid-template-columns:1fr}.inventory-form-row label:first-child{grid-column:auto}.inventory-form-actions{flex-direction:column}.inventory-form-actions button{width:100%}}
 
-/* Receivables and payables overview */
+/* العملاء والموردون: ملخص المديونيات وتقسيم أعمار الديون. */
 .receivables-payables-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:24px}
 .aging-metric-card{width:100%;text-align:right;cursor:pointer;transition:border-color .18s,box-shadow .18s,transform .18s}
 .aging-metric-card:hover{border-color:#8eb7e7;box-shadow:0 8px 22px #233b5a12;transform:translateY(-2px)}
@@ -161,6 +170,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .aging-buckets{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid #edf0f5;margin-top:12px;padding-top:10px;color:#8390a2;font-size:9px}
 @media(max-width:680px){.receivables-payables-grid{grid-template-columns:1fr}.aging-buckets{font-size:10px}}
 
+/* الخزينة والبنوك: التبويبات والنماذج والحسابات وواجهة التسوية البنكية. */
 .treasury-panel .module-tabs{display:flex;gap:8px;margin:18px 0;flex-wrap:wrap}
 .treasury-panel .module-tabs button{border:1px solid #e4eaf2;background:#f7f9fc;color:#607086;border-radius:8px;padding:9px 14px;font-size:11px;cursor:pointer}
 .treasury-panel .module-tabs button.active{background:#eaf3ff;border-color:#a9c8ed;color:#2868ad}
@@ -184,6 +194,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .treasury-panel h3{padding:14px 0 8px;color:#33465e;font-size:13px}
 @media(max-width:760px){.treasury-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.treasury-recon-footer{align-items:flex-start;flex-direction:column}}
 
+/* استيراد كشف البنك: اختيار ملف CSV وعرض تعليمات الاستيراد. */
 .treasury-csv-import{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0;padding:14px;border:1px dashed #8ca6c5;border-radius:10px;background:#f7faff}
 .treasury-csv-import>div{display:flex;flex-direction:column;gap:5px;min-width:220px}
 .treasury-csv-import strong{font-size:12px;color:#2b405a}
@@ -192,7 +203,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:600px){.treasury-csv-import{align-items:stretch;flex-direction:column}.treasury-csv-import input[type=file]{max-width:100%}}
 
 
-/* Fixed assets workspace */
+/* الأصول الثابتة: إضافة الأصل، بياناته، وجدول الإهلاك الدوري. */
 .assets-panel .asset-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:17px;background:#fff;border:1px solid #e8edf3;border-radius:12px;margin:18px 0 22px}
 .asset-form-heading{grid-column:1/-1;display:flex;align-items:baseline;gap:12px;border-bottom:1px solid #edf0f4;padding-bottom:10px}
 .asset-form-heading strong{font-size:12px;color:#2a3950}.asset-form-heading small{font-size:10px;color:#8a96a7}
@@ -205,7 +216,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:900px){.assets-panel .asset-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.assets-panel .asset-form{grid-template-columns:1fr}.asset-form-heading{display:block}.asset-form-heading small{display:block;margin-top:5px}.asset-description{grid-column:auto}.asset-depreciation-action{align-items:stretch;flex-direction:column}.asset-depreciation-action label{width:100%}}
 
-/* Fixed asset disposal form */
+/* استبعاد وبيع الأصل: نموذج بيانات الاستبعاد وتقارير الأصول. */
 .asset-disposal-form{margin-top:16px;padding:16px;border:1px solid #f0d8d8;border-radius:10px;background:#fffafa;display:flex;flex-direction:column;gap:12px}
 .asset-disposal-form>strong{font-size:12px;color:#783b3b}
 .asset-disposal-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
@@ -226,6 +237,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .asset-report-note{color:#78869a;font-size:10px;margin:8px 0 12px}
 
 
+/* تفاصيل التقارير والقيود: الانتقال من إجمالي التقرير إلى السطور التفصيلية. */
 .report-drilldown,.journal-detail-inline{margin-top:18px;padding:16px;border:1px solid #dce4ee;border-radius:10px;background:#fbfcfe}
 .report-drilldown h3,.journal-detail-inline h3{margin:0 0 5px}
 .text-action-button{border:0;background:transparent;color:#2563a6;padding:4px 2px;font:inherit;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
@@ -240,6 +252,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:760px){.report-actions{width:100%;justify-content:flex-start}.report-actions button{flex:1 1 145px}}
 
 
+/* إعداد الطباعة: إظهار التقرير المحدد فقط وإخفاء أزرار التحكم وضبط الورق A4. */
 @media print{
   @page{size:A4 landscape;margin:12mm}
   body *{visibility:hidden!important}
@@ -255,6 +268,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 }
 
 
+/* سجل التدقيق: فلاتر الأحداث وعدد النتائج وتنسيق التاريخ. */
 .audit-panel .audit-filters {
   align-items: end;
 }
@@ -277,6 +291,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 }
 
 
+/* الصلاحيات والفروع: محرر نطاق الفروع وأزرار الإجراءات داخل الجداول. */
 .access-branch-editor {
   display: flex;
   flex-wrap: wrap;
@@ -298,6 +313,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 }
 
 
+/* الموافقات: تفاصيل لقطة الموافقة وعرض البيانات الفنية المرتبطة بها. */
 .approval-snapshot summary { cursor: pointer; color: var(--accent, #6ea8fe); font-weight: 600; white-space: nowrap; }
 .approval-snapshot[open] { min-width: 520px; }
 .approval-snapshot .data-table-wrap { margin-top: 10px; max-width: min(760px, 75vw); }
@@ -325,7 +341,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 }
 
 
-/* First-run company setup */
+/* إعداد الشركة لأول مرة: خطوات التهيئة وملخص بيانات الشركة والنماذج الفرعية. */
 .setup-intro {
   margin: 18px 0;
   padding: 18px 20px;
@@ -378,7 +394,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 }
 
 
-/* Premium chart of accounts tree */
+/* دليل الحسابات الشجري: رأس الصفحة والمؤشرات والبحث والفلاتر وشجرة الحسابات. */
 .accounts-premium-panel{padding:0;overflow:hidden;background:#f8fafd}
 .accounts-hero{position:relative;display:flex;align-items:center;justify-content:space-between;gap:20px;overflow:hidden;padding:30px 32px;background:linear-gradient(115deg,#14243b 0%,#1b385b 58%,#244d78 100%);color:#fff}
 .accounts-hero:before,.accounts-hero:after{content:"";position:absolute;border:1px solid #ffffff13;border-radius:50%;pointer-events:none}
@@ -477,6 +493,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .account-tree-columns span:nth-child(4){grid-column:7}
 
 
+/* استيراد دليل الحسابات: اختيار ملف الاستيراد، ملخص المعاينة وجدول الصفوف. */
 .account-import-card{margin:18px 0;padding:20px;border:1px solid var(--line,#263449);border-radius:18px;background:linear-gradient(145deg,rgba(24,39,61,.72),rgba(13,24,39,.88));display:grid;gap:14px}
 .account-import-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .account-import-heading strong{font-size:16px;color:var(--text,#eef4ff)}
@@ -496,6 +513,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .import-row-warning{display:block;color:#e5bd76;font-size:11px;margin-top:4px;line-height:1.5}
 
 
+/* إدارة أدوار الحسابات: ربط الأدوار المحاسبية بالحسابات المختارة. */
 .account-role-manager{margin:18px 0;padding:20px;border:1px solid var(--line,#263449);border-radius:18px;background:linear-gradient(145deg,rgba(21,37,58,.78),rgba(12,23,38,.92));display:grid;gap:15px}
 .account-role-manager-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
 .account-role-manager-heading h3{margin:0;color:var(--text,#eef4ff);font-size:16px}
@@ -513,6 +531,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:900px){.account-role-manager-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.account-role-manager{padding:13px}.account-role-manager-row{grid-template-columns:1fr;gap:8px}.account-role-manager-row button{width:100%}.account-role-manager-heading{flex-direction:column}}
 
+/* الموارد البشرية والمرتبات: رسائل النجاح والتبويبات والنماذج والجداول. */
 .hr-payroll-panel .success-banner{margin:12px 0;padding:10px 12px;border:1px solid #b8e2ca;background:#effaf3;color:#24744b;border-radius:9px;font-size:11px}
 .hr-payroll-panel .hr-tabs{border-bottom:1px solid #edf0f5;padding-bottom:12px}
 .hr-payroll-panel .section-heading{margin-bottom:12px}
@@ -523,7 +542,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:760px){.hr-payroll-panel{padding:14px}.hr-payroll-panel .journal-form{grid-template-columns:1fr}.hr-payroll-panel .form-wide{grid-column:1}.hr-payroll-panel .data-table-wrap{overflow-x:auto}.hr-payroll-panel table{min-width:720px}}
 
 
-/* Financial dashboard and system monitoring */
+/* لوحة المؤشرات المالية ومراقبة النظام: مؤشرات الأداء، أعمار الديون وسجل الطلبات. */
 .finance-dashboard{margin-bottom:18px}
 .dashboard-filters{align-items:end}
 .dashboard-filters .primary-button{min-height:40px}
