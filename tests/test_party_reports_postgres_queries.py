@@ -1,5 +1,6 @@
 """Exercise party-report query execution on PostgreSQL without touching app data."""
 import os
+import sqlite3
 import unittest
 
 try:
@@ -143,6 +144,80 @@ class PartyReportsPostgreSQLQueryTests(unittest.TestCase):
             self.assertEqual(len(supplier_all), 3)
             self.assertEqual(sum((e["debit"] for e in supplier_all)), 50)
             self.assertEqual(sum((e["credit"] for e in supplier_all)), 200)
+
+            # Run the same fixture through SQLite and compare the normalized
+            # customer/supplier event streams, not only PostgreSQL query success.
+            sqlite_connection = sqlite3.connect(":memory:")
+            sqlite_connection.row_factory = sqlite3.Row
+            try:
+                sqlite_connection.executescript("""
+                    CREATE TABLE sales_invoices (
+                        id INTEGER PRIMARY KEY, customer_id INTEGER, invoice_date TEXT,
+                        invoice_no TEXT, status TEXT, total_amount NUMERIC(18,2)
+                    );
+                    CREATE TABLE customer_receipts (
+                        id INTEGER PRIMARY KEY, invoice_id INTEGER, receipt_date TEXT,
+                        receipt_no TEXT, reference TEXT, amount NUMERIC(18,2)
+                    );
+                    CREATE TABLE sales_credit_notes (
+                        id INTEGER PRIMARY KEY, invoice_id INTEGER, credit_date TEXT,
+                        credit_note_no TEXT, reason TEXT, total_amount NUMERIC(18,2),
+                        status TEXT
+                    );
+                    CREATE TABLE supplier_bills (
+                        id INTEGER PRIMARY KEY, supplier_id INTEGER, bill_date TEXT,
+                        bill_no TEXT, status TEXT, total_amount NUMERIC(18,2)
+                    );
+                    CREATE TABLE supplier_credit_notes (
+                        id INTEGER PRIMARY KEY, supplier_id INTEGER, credit_date TEXT,
+                        credit_no TEXT, reason TEXT, total_amount NUMERIC(18,2),
+                        status TEXT
+                    );
+                    CREATE TABLE supplier_payments (
+                        id INTEGER PRIMARY KEY, supplier_id INTEGER, payment_date TEXT,
+                        payment_no TEXT, reference TEXT, amount NUMERIC(18,2)
+                    );
+                    INSERT INTO sales_invoices VALUES
+                        (1,10,'2026-11-01','SI-1','posted',125.00);
+                    INSERT INTO customer_receipts VALUES
+                        (1,1,'2026-11-02','CR-1','BANK',25.00);
+                    INSERT INTO sales_credit_notes VALUES
+                        (1,1,'2026-11-03','SCN-1','return',5.00,'posted');
+                    INSERT INTO supplier_bills VALUES
+                        (1,20,'2026-11-01','PB-1','posted',200.00);
+                    INSERT INTO supplier_credit_notes VALUES
+                        (1,20,'2026-11-02','PCN-1','return',20.00,'posted');
+                    INSERT INTO supplier_payments VALUES
+                        (1,20,'2026-11-03','SP-1','BANK',30.00);
+                """)
+                def normalize(events):
+                    return sorted(
+                        [
+                            (
+                                event.get("party_id"),
+                                event["event_date"],
+                                event["reference"],
+                                event["description"],
+                                Decimal(str(event["debit"] or "0")),
+                                Decimal(str(event["credit"] or "0")),
+                                int(event["priority"]),
+                            )
+                            for event in events
+                        ],
+                        key=lambda item: tuple(str(value) for value in item[:3]),
+                    )
+
+                for kind, party_id in (("customer", 10), ("supplier", 20)):
+                    self.assertEqual(
+                        normalize(_events(connection, kind, party_id)),
+                        normalize(_events(sqlite_connection, kind, party_id)),
+                    )
+                    self.assertEqual(
+                        normalize(_all_party_events(connection, kind)),
+                        normalize(_all_party_events(sqlite_connection, kind)),
+                    )
+            finally:
+                sqlite_connection.close()
         finally:
             connection.rollback()
             connection.close()
