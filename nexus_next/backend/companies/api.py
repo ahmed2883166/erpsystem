@@ -2,7 +2,7 @@ from rest_framework import permissions, viewsets
 
 from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
 from .models import Branch, CompanyMembership, Currency, FiscalYear
-from .serializers import BranchSerializer, CompanySerializer, CurrencySerializer, FiscalYearSerializer
+from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, FiscalYearSerializer
 
 
 class ReadOnlyOrAdmin(permissions.BasePermission):
@@ -53,6 +53,56 @@ class CompanyViewSet(viewsets.ModelViewSet):
         if instance.audit_events.exists():
             raise ValidationError("لا يمكن حذف شركة لها سجل تدقيق؛ أوقف الشركة بدل حذفها.")
         instance.delete()
+
+
+
+class CompanyMembershipViewSet(viewsets.ModelViewSet):
+    serializer_class = CompanyMembershipSerializer
+    permission_classes = (CompanyAdminOrReadOnly,)
+    http_method_names = ("get", "post", "patch", "head", "options")
+
+    def get_queryset(self):
+        qs = CompanyMembership.objects.filter(
+            company__in=accessible_companies(self.request.user)
+        ).select_related("company", "user").prefetch_related("branches")
+        company_id = self.request.query_params.get("company")
+        return qs.filter(company_id=company_id) if company_id else qs
+
+    def _require_admin(self, company_id):
+        from rest_framework.exceptions import PermissionDenied
+        if not has_company_role(self.request.user, company_id, ("admin",)):
+            raise PermissionDenied("إدارة المستخدمين والصلاحيات متاحة لمدير الشركة فقط.")
+
+    def _protect_last_admin(self, membership, new_role, new_active):
+        from rest_framework.exceptions import ValidationError
+        remains_admin = (
+            membership.is_active and membership.role == CompanyMembership.Role.ADMIN
+            and (not new_active or new_role != CompanyMembership.Role.ADMIN)
+        )
+        if remains_admin:
+            active_admins = CompanyMembership.objects.filter(
+                company_id=membership.company_id, is_active=True,
+                role=CompanyMembership.Role.ADMIN,
+            ).count()
+            if active_admins <= 1:
+                raise ValidationError("لا يمكن تعطيل أو تخفيض صلاحية آخر مدير نشط للشركة.")
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        self._require_admin(company.pk)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        self._require_admin(instance.company_id)
+        new_role = serializer.validated_data.get("role", instance.role)
+        new_active = serializer.validated_data.get("is_active", instance.is_active)
+        self._protect_last_admin(instance, new_role, new_active)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied("لا تحذف عضويات المستخدمين؛ عطّل العضوية للاحتفاظ بسجل الصلاحيات.")
 
 
 class BranchViewSet(viewsets.ModelViewSet):
