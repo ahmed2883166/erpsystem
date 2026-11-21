@@ -31,6 +31,7 @@ class FixedAsset(models.Model):
     acquisition_counter_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_acquisitions")
     disposal_gain_loss_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_disposals")
     acquisition_journal = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="acquired_fixed_asset")
+    acquisition_treasury_transaction = models.OneToOneField("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_acquisition")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
     disposed_at = models.DateField(null=True, blank=True)
     disposal_proceeds = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
