@@ -14,6 +14,7 @@ const cycleLabels: Record<string, string> = {
   approved: "معتمدة", posted: "مرحّلة", payment_pending: "بانتظار اعتماد الصرف", paid: "تم الصرف",
 };
 
+// الشاشة الجامعة للموارد البشرية والمرتبات وإدارة تبويبات الموظفين والحضور والدورات.
 export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: { companyId: number | null; baseCurrencyId?: number; country?: "EG" | "SA" }) {
   const [tab, setTab] = useState<"employees" | "components" | "attendance" | "assignments" | "leaveLoans" | "rules" | "payroll">("employees");
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
@@ -62,7 +63,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [ruleSetDraft, setRuleSetDraft] = useState({name:"",effective_from:new Date().toISOString().slice(0,10),effective_to:"",monthly_daily_divisor:"30",min_base:"",max_base:"",employee_rate:"",employer_rate:"",annual_personal_exemption:"",annual_brackets:"[]"});
   const [cycleDraft, setCycleDraft] = useState({rule_set:"",period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
 
-  const load = async () => {
+  // تحميل بيانات الموارد البشرية اللازمة للشركة: الموظفون والإعدادات والدورات والتقارير.
+const load = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -87,7 +89,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     return ()=>{active=false;};
   },[salaryDraft.employee,companyId]);
 
-  const submitEmployee = async (event:FormEvent) => {
+  // حفظ بيانات الموظف الجديدة أو تعديلات ملفه.
+const submitEmployee = async (event:FormEvent) => {
     event.preventDefault(); if(!companyId) return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -97,7 +100,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ الموظف."); }
     finally { setBusy(false); }
   };
-  const submitComponent = async (event:FormEvent) => {
+  // تسجيل عنصر استحقاق أو خصم يمكن ربطه بالموظف أو المرتبات.
+const submitComponent = async (event:FormEvent) => {
     event.preventDefault();if(!companyId)return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -107,7 +111,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر حفظ عنصر المرتب.");}
     finally{setBusy(false);}
   };
-  const updateAttendanceCell = async (employeeId:number, workDate:string, nextStatus:HrAttendance["status"]) => {
+  // تحديث حالة حضور موظف في يوم محدد ثم مزامنة بيانات الحضور.
+const updateAttendanceCell = async (employeeId:number, workDate:string, nextStatus:HrAttendance["status"]) => {
     const existing = attendance.find(item => item.employee === employeeId && item.work_date === workDate);
     setBusy(true); setError(""); setNotice("");
     try {
@@ -127,7 +132,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } finally { setBusy(false); }
   };
 
-  const submitAttendance = async (event:FormEvent) => {
+  // حفظ إدخال الحضور المجمع للفترة المحددة.
+const submitAttendance = async (event:FormEvent) => {
     event.preventDefault();if(!attendanceDraft.employee)return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -136,7 +142,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل الحضور.");}
     finally{setBusy(false);}
   };
-  const submitAssignment = async (event:FormEvent) => {
+  // حفظ ربط مكونات الأجر بالموظف وتواريخ سريانها.
+const submitAssignment = async (event:FormEvent) => {
     event.preventDefault();if(!assignmentDraft.employee||!assignmentDraft.component)return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -145,7 +152,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر ربط عنصر المرتب.");}
     finally{setBusy(false);}
   };
-  const submitLeave = async (event:FormEvent) => {
+  // تسجيل طلب إجازة الموظف وإرسال بياناته للتحقق والحفظ.
+const submitLeave = async (event:FormEvent) => {
     event.preventDefault();if(!leaveDraft.employee)return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -154,7 +162,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل الإجازة.");}
     finally{setBusy(false);}
   };
-  const submitLoan = async (event:FormEvent) => {
+  // تسجيل سلفة الموظف وجدول أو بيانات استردادها.
+const submitLoan = async (event:FormEvent) => {
     event.preventDefault();if(!loanDraft.employee)return;
     const count=Number(loanDraft.installment_count), principal=Number(loanDraft.principal), regular=Number(loanDraft.installment_amount);
     if(count<1||regular<=0||regular*(count-1)>=principal){setError("قيمة الأقساط غير متوافقة مع أصل السلفة.");return;}
@@ -186,7 +195,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const calculatedNewSalary=salaryDraft.raise_mode==="percentage"
     ? salaryBeforeEffectiveDate*(1+salaryIncrease/100)
     : salaryBeforeEffectiveDate+salaryIncrease;
-  const submitSalaryChange = async (event:FormEvent) => {
+  // تسجيل تغيير الراتب مع تاريخ السريان وحفظ سجل تاريخ الأجر.
+const submitSalaryChange = async (event:FormEvent) => {
     event.preventDefault();if(!salaryDraft.employee)return;
     if(!Number.isFinite(calculatedNewSalary)||calculatedNewSalary<0||salaryIncrease<0){
       setError("قيمة الزيادة أو الراتب الناتج غير صحيحة.");return;
@@ -207,7 +217,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل تغيير الراتب.");}
     finally{setBusy(false);}
   };
-  const submitRuleSet = async (event:FormEvent) => {
+  // حفظ مجموعة قواعد المرتبات والتأمينات والإعدادات السنوية.
+const submitRuleSet = async (event:FormEvent) => {
     event.preventDefault();if(!companyId||!country)return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -223,7 +234,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر حفظ مجموعة القواعد.");}
     finally{setBusy(false);}
   };
-  const submitCycle = async (event:FormEvent) => {
+  // إنشاء أو حفظ دورة المرتبات للفترة المختارة.
+const submitCycle = async (event:FormEvent) => {
     event.preventDefault();if(!companyId)return;
     setBusy(true);setError("");setNotice("");
     try {
@@ -232,20 +244,23 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إنشاء دورة المرتبات."); }
     finally { setBusy(false); }
   };
-  const action = async (fn:()=>Promise<unknown>, success:string) => {
+  // غلاف موحد لتنفيذ إجراءات الدورة وإظهار رسالة النجاح أو الخطأ وتحديث البيانات.
+const action = async (fn:()=>Promise<unknown>, success:string) => {
     setBusy(true);setError("");setNotice("");
     try { await fn();setNotice(success);await load(); }
     catch(reason){setError(reason instanceof Error?reason.message:"تعذر تنفيذ الإجراء.");}
     finally{setBusy(false);}
   };
-  const showResults = async (cycleId:number) => {
+  // تحميل تفاصيل نتائج احتساب دورة مرتبات بعينها.
+const showResults = async (cycleId:number) => {
     setBusy(true);setError("");setSelectedCycle(cycleId);
     try {setResults(await hrApi.payrollResults(cycleId));}
     catch(reason){setError(reason instanceof Error?reason.message:"تعذر تحميل نتائج المرتبات.");}
     finally{setBusy(false);}
   };
 
-  const loadEmployeePayReport = async () => {
+  // تحميل تقرير إجمالي مستحقات الموظف وفق نطاق التاريخ والفلاتر.
+const loadEmployeePayReport = async () => {
     if (!companyId) return;
     setBusy(true); setError(""); setPayReport(null);
     try {
@@ -264,7 +279,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     }
     return [...columns.values()];
   },[payReport]);
-  const exportEmployeePayReport = () => {
+  // تصدير تقرير مستحقات الموظفين إلى ملف قابل للتنزيل.
+const exportEmployeePayReport = () => {
     if (!payReport) return;
     const rows = [
       ["كود الموظف","الموظف","الفرع","القسم","العملة","عدد الدورات",...reportColumns.map(column=>column.name),"الاستحقاقات","استقطاعات الموظف","حصة صاحب العمل","صافي المرتب","تكلفة الشركة"],
