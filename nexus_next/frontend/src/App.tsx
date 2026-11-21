@@ -1,3 +1,7 @@
+/*
+ * نقطة تجميع واجهة NEXUS: إدارة الشركة والفرع والسنة المالية والتنقل بين الوحدات.
+ * يحمل الشاشات الكبيرة عند الحاجة، ويربط مكونات المبيعات والمشتريات والتقارير والحسابات.
+ */
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
 const BackupPanel = lazy(() => import("./BackupPanel"));
