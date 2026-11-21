@@ -171,6 +171,12 @@ class PayrollCycleSerializer(serializers.ModelSerializer):
         rule_set = attrs.get("rule_set", getattr(self.instance, "rule_set", None))
         if company and rule_set and rule_set.company_id != company.pk:
             raise serializers.ValidationError({"rule_set": "مجموعة القواعد يجب أن تتبع نفس الشركة."})
+        if company and start and end:
+            overlapping = PayrollCycle.objects.filter(company=company, period_start__lte=end, period_end__gte=start)
+            if self.instance:
+                overlapping = overlapping.exclude(pk=self.instance.pk)
+            if overlapping.exists():
+                raise serializers.ValidationError("توجد دورة مرتبات أخرى تتداخل مع هذه الفترة.")
         if self.instance and self.instance.status in ("approved", "posted", "paid"):
             raise serializers.ValidationError("الدورة المعتمدة أو المرحلة أو المصروفة غير قابلة للتعديل.")
         return attrs
