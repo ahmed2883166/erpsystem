@@ -125,6 +125,10 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
     account_columns = table_columns(conn, "accounts")
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
+    # Older/imported PostgreSQL schemas may not yet carry the optional account
+    # tree flag. Treat those legacy rows as detail accounts rather than failing
+    # the entire read-only report transaction.
+    detail_account_filter = "a.is_group=0" if "is_group" in account_columns else "1=1"
     debit_sum_sql = decimal_sum_expression(
         conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END"
     )
@@ -138,7 +142,7 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         FROM accounts a
         LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
-        WHERE a.account_type IN ('revenue','expense') AND a.is_group=0 AND a.active=1
+        WHERE a.account_type IN ('revenue','expense') AND {detail_account_filter} AND a.active=1
         GROUP BY a.id ORDER BY a.account_type,a.code""",
         (date_from, date_to, *dimension_params)).fetchall()
 

@@ -1624,6 +1624,8 @@ def build_balance_sheet_snapshot(conn, as_of):
     account_columns = table_columns(conn, "accounts")
     section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
     subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
+    parent_expr = "a.parent_id" if "parent_id" in account_columns else "NULL"
+    group_expr = "a.is_group" if "is_group" in account_columns else "0"
 
     # Exclude only opening entries explicitly classified as copies when
     # they were created. Never infer this from today's ledger contents: a late
@@ -1722,7 +1724,8 @@ def build_balance_sheet_snapshot(conn, as_of):
         exclusion_sql = f" AND je.id NOT IN ({marks})"
         exclusion_params = sorted(excluded_opening_ids)
 
-    rows = _execute(conn, f"""SELECT a.id,a.code,a.name_ar,a.account_type,a.parent_id,a.is_group,
+    rows = _execute(conn, f"""SELECT a.id,a.code,a.name_ar,a.account_type,
+        {parent_expr} parent_id,{group_expr} is_group,
         {section_expr} statement_section,{subtype_expr} account_subtype,
         {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END")} debit,
         {decimal_sum_expression(conn, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END")} credit

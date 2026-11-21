@@ -180,9 +180,9 @@ class TaxReportSnapshotPostgreSQLTests(unittest.TestCase):
                         sqlite_conn.execute(
                             "UPDATE company_settings SET setting_value='SA' WHERE setting_key='tax_country'"
                         )
-                        with patch("activity_profiles.active_tax_roles", return_value=roles), \
-                             patch("tax_center._build_saudi_tax_preparation",
-                                   return_value={"available": False, "year": 2026}):
+                        with patch("activity_profiles.active_tax_roles", return_value=roles):
+                            # Exercise the real Saudi annual workpaper builder on both
+                            # engines, including legacy account schemas without tree columns.
                             pg_sa_snapshot = build_tax_report_snapshot(conn, "2026-11")
                             sqlite_sa_snapshot = build_tax_report_snapshot(sqlite_conn, "2026-11")
                         self.assertEqual(pg_sa_snapshot["tax_profile"]["standard_rate"], Decimal("15"))
