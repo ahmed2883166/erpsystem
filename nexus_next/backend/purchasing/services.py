@@ -16,9 +16,11 @@ from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseO
 
 
 def _account(company, role):
+    """استخراج الحساب التفصيلي المرتبط بدور المشتريات المطلوب."""
     return get_account_for_role(company, role)
 
 def _branch_and_year(receipt, entry_date):
+    """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
     warehouse = receipt.warehouse
     branch = warehouse.branch if warehouse.branch_id else None
     if branch and not branch.is_active:
@@ -40,6 +42,7 @@ def _branch_and_year(receipt, entry_date):
 
 @transaction.atomic
 def post_purchase_receipt(receipt_id, user):
+    """ترحيل استلام المشتريات إلى المخزون وحساب البضاعة المستلمة غير المفوترة."""
     receipt = PurchaseReceipt.objects.select_for_update().select_related(
         "company", "supplier", "warehouse", "stock_movement"
     ).get(pk=receipt_id)
@@ -86,6 +89,7 @@ def post_purchase_receipt(receipt_id, user):
 
 @transaction.atomic
 def post_purchase_invoice(invoice_id, user):
+    """ترحيل فاتورة المورد وتسوية حساب الاستلامات وضريبة المدخلات والدائنين."""
     invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice_id)
     if invoice.status != PurchaseInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المورد مرحلة بالفعل.")
@@ -150,6 +154,7 @@ def post_purchase_invoice(invoice_id, user):
 
 @transaction.atomic
 def post_supplier_payment(payment_id, user):
+    """ترحيل دفعة المورد والتحقق من الفرع والحساب النقدي وتوزيع السداد."""
     from .models import SupplierPayment
 
     payment = SupplierPayment.objects.select_for_update().get(pk=payment_id)
