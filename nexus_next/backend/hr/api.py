@@ -1,5 +1,5 @@
-from django.utils import timezone
-from rest_framework import decorators, response, viewsets
+from decimal import Decimal\n\nfrom django.db import transaction\nfrom django.utils import timezone
+from rest_framework import decorators, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
@@ -159,6 +159,36 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
         employee = serializer.validated_data["employee"]
         self.check_employee_write(employee)
         serializer.save(outstanding_balance=serializer.validated_data["principal"])
+
+    @decorators.action(detail=False, methods=("post",), url_path="create-with-schedule")
+    def create_with_schedule(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        employee = serializer.validated_data["employee"]
+        self.check_employee_write(employee)
+        schedule = request.data.get("installments")
+        if not isinstance(schedule, list) or len(schedule) != serializer.validated_data["installment_count"]:
+            raise ValidationError({"installments": "عدد الأقساط في الجدول يجب أن يطابق عدد الأقساط في السلفة."})
+        amounts = []
+        normalized = []
+        from django.utils.dateparse import parse_date
+        for row in schedule:
+            due_date = parse_date(str(row.get("due_date", "")))
+            amount = Decimal(str(row.get("amount", "0")))
+            if not due_date or amount <= 0:
+                raise ValidationError({"installments": "كل قسط يحتاج تاريخ استحقاق وقيمة موجبة."})
+            amounts.append(amount)
+            normalized.append((due_date, amount))
+        principal = serializer.validated_data["principal"]
+        if abs(sum(amounts, Decimal("0")) - principal) > Decimal("0.0001"):
+            raise ValidationError({"installments": "مجموع الأقساط يجب أن يساوي أصل السلفة."})
+        with transaction.atomic():
+            loan = serializer.save(outstanding_balance=principal)
+            LoanInstallment.objects.bulk_create([
+                LoanInstallment(loan=loan, due_date=due_date, amount=amount)
+                for due_date, amount in normalized
+            ])
+        return response.Response(self.get_serializer(loan).data, status=status.HTTP_201_CREATED)
 
 
 class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
