@@ -8,12 +8,6 @@ from tax_categories import (
 
 
 class TaxCategoryTests(unittest.TestCase):
-    def test_egypt_sales_exposes_table_tax_as_separate_internal_category(self):
-        options = tax_category_options("EG", "sale")
-        table_tax = next(item for item in options if item.code == "eg_sales_table_tax")
-        self.assertEqual(table_tax.treatment, "standard")
-        self.assertIn("نسبة جدول معتمدة", table_tax.note_ar)
-
     def test_egypt_customs_import_category_keeps_standard_input_tax_treatment(self):
         code = validate_tax_category(
             "EG", "purchase", "eg_purchase_customs_vat", "standard"
@@ -35,6 +29,7 @@ class TaxCategoryTests(unittest.TestCase):
         self.assertEqual(saudi["sa_purchase_customs_vat"].treatment, "standard")
         self.assertNotIn("sa_purchase_reverse_charge", saudi)
         self.assertNotIn("eg_purchase_reverse_charge", egypt)
+        self.assertNotIn("eg_purchase_table_tax", egypt)
 
     def test_category_must_match_existing_generic_tax_treatment(self):
         with self.assertRaises(ValueError):
