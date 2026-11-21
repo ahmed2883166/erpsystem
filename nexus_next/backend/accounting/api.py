@@ -304,6 +304,132 @@ class JournalEntryViewSet(AccountingViewSet):
             "note": "يُفصل حساب تكلفة المبيعات عند ربطه بدور تكلفة المبيعات في إعدادات أدوار الحسابات؛ بقية حسابات المصروفات تظهر ضمن المصروفات التشغيلية والأخرى.",
         })
 
+
+    @decorators.action(detail=False, methods=("get",), url_path="general-ledger")
+    def general_ledger(self, request):
+        from decimal import Decimal
+        company_raw = request.query_params.get("company")
+        account_raw = request.query_params.get("account")
+        date_from = parse_date(request.query_params.get("date_from") or "")
+        date_to = parse_date(request.query_params.get("date_to") or "")
+        if not company_raw or not company_raw.isdigit() or not account_raw or not account_raw.isdigit():
+            raise ValidationError({"account": "حدد الشركة والحساب المطلوب لعرض دفتر الأستاذ."})
+        company_id, account_id = int(company_raw), int(account_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not date_from or not date_to or date_from > date_to:
+            raise ValidationError({"date_from": "حدد فترة صحيحة بصيغة YYYY-MM-DD."})
+        account = ChartOfAccount.objects.filter(company_id=company_id, pk=account_id).first()
+        if not account:
+            raise ValidationError({"account": "الحساب غير موجود ضمن الشركة المحددة."})
+        visible_branches = accessible_branches(request.user, company_id)
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            visible_branches = visible_branches.filter(pk=int(branch_raw))
+        base = account.journal_lines.filter(
+            entry__status=JournalEntry.Status.POSTED,
+            entry__company_id=company_id,
+            entry__branch__in=visible_branches,
+        )
+        opening_lines = base.filter(
+            Q(entry__entry_date__lt=date_from)
+            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        )
+        opening_totals = opening_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        opening_balance = (opening_totals["debit"] or Decimal("0")) - (opening_totals["credit"] or Decimal("0"))
+        period_lines = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
+            entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
+        ).select_related("entry", "entry__branch").order_by("entry__entry_date", "entry_id", "id")
+        running = opening_balance
+        rows = []
+        for line in period_lines:
+            running += line.debit - line.credit
+            rows.append({
+                "line_id": line.pk, "date": line.entry.entry_date, "entry_id": line.entry_id,
+                "entry_number": line.entry.entry_number, "description": line.description or line.entry.description,
+                "source_type": line.entry.source_type, "branch": line.entry.branch.name_ar,
+                "debit": line.debit, "credit": line.credit, "running_balance": running,
+            })
+        return response.Response({
+            "company": company_id, "account": account_id, "account_code": account.code,
+            "account_name": account.name_ar, "date_from": date_from, "date_to": date_to,
+            "opening_balance": opening_balance, "rows": rows, "closing_balance": running,
+        })
+
+    @decorators.action(detail=False, methods=("get",), url_path="changes-in-equity")
+    def changes_in_equity(self, request):
+        from decimal import Decimal
+        company_raw = request.query_params.get("company")
+        date_from = parse_date(request.query_params.get("date_from") or "")
+        date_to = parse_date(request.query_params.get("date_to") or "")
+        if not company_raw or not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض التغيرات في حقوق الملكية."})
+        company_id = int(company_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not date_from or not date_to or date_from > date_to:
+            raise ValidationError({"date_from": "حدد فترة صحيحة بصيغة YYYY-MM-DD."})
+        visible_branches = accessible_branches(request.user, company_id)
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            visible_branches = visible_branches.filter(pk=int(branch_raw))
+        equity_accounts = ChartOfAccount.objects.filter(
+            company_id=company_id, nature=ChartOfAccount.Nature.EQUITY
+        ).order_by("code")
+        account_rows = []
+        opening_total = Decimal("0")
+        movement_total = Decimal("0")
+        for account in equity_accounts:
+            base = account.journal_lines.filter(
+                entry__status=JournalEntry.Status.POSTED,
+                entry__company_id=company_id, entry__branch__in=visible_branches,
+            )
+            opening = base.filter(
+                Q(entry__entry_date__lt=date_from)
+                | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+            ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+            opening_balance = (opening["credit"] or Decimal("0")) - (opening["debit"] or Decimal("0"))
+            movement = base.filter(
+                entry__entry_date__gte=date_from, entry__entry_date__lte=date_to
+            ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING)).aggregate(
+                debit=Sum("debit"), credit=Sum("credit")
+            )
+            period_movement = (movement["credit"] or Decimal("0")) - (movement["debit"] or Decimal("0"))
+            if opening_balance or period_movement:
+                account_rows.append({
+                    "account_id": account.pk, "code": account.code, "name_ar": account.name_ar,
+                    "opening_balance": opening_balance, "period_movement": period_movement,
+                    "closing_balance_before_profit": opening_balance + period_movement,
+                })
+            opening_total += opening_balance
+            movement_total += period_movement
+        period_entries = JournalEntry.objects.filter(
+            company_id=company_id, status=JournalEntry.Status.POSTED,
+            entry_date__gte=date_from, entry_date__lte=date_to, branch__in=visible_branches,
+        ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
+        period_lines = JournalLine.objects.filter(entry__in=period_entries)
+        revenue = period_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
+            credit=Sum("credit"), debit=Sum("debit")
+        )
+        expenses = period_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
+            debit=Sum("debit"), credit=Sum("credit")
+        )
+        net_profit = (
+            (revenue["credit"] or Decimal("0")) - (revenue["debit"] or Decimal("0"))
+            - (expenses["debit"] or Decimal("0")) + (expenses["credit"] or Decimal("0"))
+        )
+        return response.Response({
+            "company": company_id, "date_from": date_from, "date_to": date_to,
+            "accounts": account_rows, "opening_equity": opening_total,
+            "equity_movements": movement_total, "period_net_profit": net_profit,
+            "closing_equity": opening_total + movement_total + net_profit,
+            "note": "يشمل صافي ربح الفترة بصورة مستقلة، ويستبعد قيود الإقفال من حركة حقوق الملكية لتجنب احتساب الربح مرتين.",
+        })
+
     @decorators.action(detail=False, methods=("get",), url_path="indirect-cash-flow")
     def indirect_cash_flow(self, request):
         from decimal import Decimal
