@@ -104,6 +104,39 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("3"))
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.SALES, status="posted").count(), 2)
 
+        # Delivery owns the inventory/COGS posting; invoice owns revenue/VAT/receivable.
+        inventory_account = AccountRole.objects.get(company=self.company, role=AccountRole.Role.INVENTORY).account
+        cogs_account = AccountRole.objects.get(company=self.company, role=AccountRole.Role.COGS).account
+        sales_account = AccountRole.objects.get(company=self.company, role=AccountRole.Role.SALES).account
+        from accounting.models import JournalLine
+        self.assertEqual(
+            JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY, status="posted").count(),
+            2,  # opening receipt + delivery issue
+        )
+        self.assertTrue(JournalLine.objects.filter(
+            entry__source_type=JournalEntry.Source.INVENTORY,
+            account=cogs_account, debit=Decimal("80.0000"),
+        ).exists())
+        self.assertTrue(JournalLine.objects.filter(
+            entry__source_type=JournalEntry.Source.INVENTORY,
+            account=inventory_account, credit=Decimal("80.0000"),
+        ).exists())
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted.data["journal_entry"], account=sales_account,
+            credit=Decimal("200.0000"),
+        ).exists())
+
+        # Retrying a posted delivery must not issue stock or create another journal.
+        repeated_delivery = self.client.post(
+            f"/api/sales-documents/deliveries/{delivery_id}/post/", {}, format="json"
+        )
+        self.assertEqual(repeated_delivery.status_code, 400)
+        self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("3"))
+        self.assertEqual(
+            JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY, status="posted").count(),
+            2,
+        )
+
     def test_customer_receipt_cannot_exceed_invoice_balance(self):
         delivery_id, line_id = self._create_delivery()
         invoice = self.client.post("/api/sales-documents/invoices/", {
