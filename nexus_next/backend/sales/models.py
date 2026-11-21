@@ -61,6 +61,8 @@ class SalesInvoice(models.Model):
     invoice_date = models.DateField()
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    discount_approval_limit = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
     tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     notes = models.TextField(blank=True)
@@ -104,6 +106,8 @@ class SalesInvoiceLine(models.Model):
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
     tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_lines")
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    discount_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
@@ -121,7 +125,9 @@ class SalesInvoiceLine(models.Model):
                     or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح لهذه الشركة أو تاريخ الفاتورة."})
             self.tax_rate = code.rate
-        self.net_amount = (self.delivery_line.quantity * self.unit_price).quantize(Decimal("0.0001"))
+        gross_amount = (self.delivery_line.quantity * self.unit_price).quantize(Decimal("0.0001"))
+        self.discount_amount = (gross_amount * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
+        self.net_amount = gross_amount - self.discount_amount
         self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
         self.total_amount = self.net_amount + self.tax_amount
 
