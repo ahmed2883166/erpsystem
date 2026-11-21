@@ -3,6 +3,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import RequestFactory, TestCase
 from django.db import connection, DatabaseError, transaction
+from django.db.models.deletion import ProtectedError
 from django.http import HttpResponse, JsonResponse
 from rest_framework.test import APIClient
 
@@ -137,6 +138,20 @@ class AuditTrailMiddlewareTests(TestCase):
                 with connection.cursor() as cursor:
                     cursor.execute("DELETE FROM audit_auditevent WHERE id = %s", [event.pk])
         self.assertEqual(AuditEvent.objects.get(pk=event.pk).resource, "immutable-test")
+
+
+    def test_audit_history_protects_branch_and_actor_identity(self):
+        AuditEvent.objects.create(
+            actor=self.user, company=self.company, branch=self.branch,
+            action="create", resource="protected-test", http_method="POST",
+            status_code=201, succeeded=True,
+        )
+        with self.assertRaises(ProtectedError):
+            self.branch.delete()
+        with self.assertRaises(ProtectedError):
+            self.user.delete()
+        self.assertTrue(Branch.objects.filter(pk=self.branch.pk).exists())
+        self.assertTrue(get_user_model().objects.filter(pk=self.user.pk).exists())
 
 
 class AuditEventApiTests(TestCase):
