@@ -100,6 +100,9 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
     @transaction.atomic
     def perform_update(self, serializer):
         instance = serializer.instance
+        from hr.models import PayrollPosting
+        if PayrollPosting.objects.filter(payment_treasury_transaction=instance).exists():
+            raise ValidationError("مستند صرف المرتبات مرتبط بدورة مرتبات ولا يمكن تعديله من شاشة الخزينة.")
         if instance.status != TreasuryTransaction.Status.DRAFT:
             raise ValidationError("المستند المرحّل غير قابل للتعديل.")
         company = serializer.validated_data.get("company", instance.company)
