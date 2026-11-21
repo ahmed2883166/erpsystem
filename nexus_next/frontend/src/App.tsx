@@ -656,9 +656,9 @@ const postDraft = async (entry: Journal) => {
     <div className="app-shell" dir="rtl">
       {sidebarOpen && <button className="mobile-scrim" aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
-        <div className="brand-lockup"><div className="brand-symbol">N</div><div><strong>ADMRAIL</strong><span>ENTERPRISE PLATFORM</span></div>
+        <div className="brand-lockup"><div className="brand-symbol">A</div><div><strong>ADMRAIL</strong><span>ENTERPRISE PLATFORM</span></div>
           <button className="sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="إغلاق القائمة">×</button></div>
-        <div className="workspace"><div className="workspace-avatar">NX</div><div><strong>مساحة العمل</strong><small>{selectedCompany?.name_ar || "اختر الشركة"}</small></div>
+        <div className="workspace"><div className="workspace-avatar">AE</div><div><strong>مساحة العمل</strong><small>{selectedCompany?.name_ar || "اختر الشركة"}</small></div>
           <select aria-label="الشركة" value={companyId ?? ""} onChange={(event) => setCompanyId(Number(event.target.value) || null)}>
             <option value="">—</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.name_ar}</option>)}
           </select></div>
@@ -669,7 +669,7 @@ const postDraft = async (entry: Journal) => {
           </div>)}
         </nav>
         <div className="sidebar-bottom"><a className="admin-link" href="/admin/" target="_blank" rel="noreferrer">فتح لوحة إدارة النظام ↗</a>
-          <div className="user-profile"><div className="user-avatar">N</div><div><strong>Admrail ERP v2</strong><small>منصة إدارة الأعمال</small></div><span>•••</span></div></div>
+          <div className="user-profile"><div className="user-avatar">A</div><div><strong>Admrail ERP v2</strong><small>منصة إدارة الأعمال</small></div><span>•••</span></div></div>
       </aside>
       <main className="main-area">
         <header className="topbar"><div className="topbar-start"><button className="menu-toggle" onClick={() => setSidebarOpen(true)} aria-label="فتح القائمة">☰</button>
