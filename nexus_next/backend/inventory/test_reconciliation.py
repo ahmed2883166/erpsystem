@@ -128,6 +128,40 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         self.assertEqual(second.data["stock_value"], "50.0000")
         self.assertEqual(second.data["gl_balance"], "50.0000")
 
+    def test_fifo_integrity_report_detects_layer_mismatch_and_pending_movements(self):
+        from .models import StockCostLayer, StockMovement, StockMovementLine
+
+        product = Product.objects.create(
+            company=self.company, unit=UnitOfMeasure.objects.get(company=self.company),
+            code="FIFO-1", name_ar="صنف FIFO", costing_method=Product.CostingMethod.FIFO,
+        )
+        warehouse = Warehouse.objects.get(company=self.company, code="WH-HQ")
+        balance = StockBalance.objects.create(
+            product=product, warehouse=warehouse, quantity=Decimal("10"),
+            inventory_value=Decimal("100"), average_cost=Decimal("10"),
+        )
+        movement = StockMovement.objects.create(
+            company=self.company, movement_number="DRAFT-FIFO", movement_type=StockMovement.MovementType.RECEIPT,
+            movement_date=date(2026, 3, 1), destination_warehouse=warehouse,
+            created_by=self.full_user,
+        )
+        line = StockMovementLine.objects.create(
+            movement=movement, product=product, quantity=Decimal("10"),
+            unit_cost=Decimal("10"), cost_amount=Decimal("100"),
+        )
+        StockCostLayer.objects.create(
+            product=product, warehouse=warehouse, source_line=line,
+            quantity_remaining=Decimal("9"), unit_cost=Decimal("10"),
+        )
+        self.client.force_authenticate(user=self.full_user)
+        response = self.client.get(f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["fifo_mismatch_count"], 1)
+        self.assertEqual(response.data["fifo_mismatches"][0]["quantity_difference"], "1.0000")
+        self.assertEqual(response.data["fifo_mismatches"][0]["value_difference"], "10.0000")
+        self.assertEqual(response.data["pending_movements_count"], 1)
+        self.assertEqual(response.data["pending_movements"][0]["movement_number"], "DRAFT-FIFO")
+
     def test_limited_user_sees_only_accessible_branches_and_cannot_query_another_branch(self):
         self.client.force_authenticate(user=self.limited_user)
         scoped = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
