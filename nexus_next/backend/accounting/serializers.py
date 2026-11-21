@@ -106,6 +106,8 @@ class JournalEntrySerializer(serializers.ModelSerializer):
                 account = line["account"]
                 if company and account.company_id != company.id:
                     raise serializers.ValidationError({"lines": "كل الحسابات يجب أن تتبع نفس الشركة."})
+                if not account.is_active or account.is_group or not account.allow_posting:
+                    raise serializers.ValidationError({"lines": f"الحساب {account.code} غير نشط أو غير قابل للترحيل."})
                 center = line.get("cost_center")
                 if center and company and center.company_id != company.id:
                     raise serializers.ValidationError({"lines": "مركز التكلفة لا يتبع نفس الشركة."})
