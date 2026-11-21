@@ -7,7 +7,7 @@ const emptyForm = {
   branch: "", code: "", name_ar: "", description: "", acquisition_date: today, depreciation_start_date: today,
   original_cost: "", salvage_value: "0", useful_life_months: "60", asset_account: "",
   accumulated_depreciation_account: "", depreciation_expense_account: "", acquisition_counter_account: "",
-  disposal_gain_loss_account: "", fiscal_year: "",
+  disposal_gain_loss_account: "", disposal_loss_account: "", fiscal_year: "",
 };
 
 export default function FixedAssetsPanel({ companyId }: Props) {
@@ -76,7 +76,7 @@ export default function FixedAssetsPanel({ companyId }: Props) {
         accumulated_depreciation_account: Number(form.accumulated_depreciation_account),
         depreciation_expense_account: Number(form.depreciation_expense_account),
         acquisition_counter_account: Number(form.acquisition_counter_account),
-        disposal_gain_loss_account: Number(form.disposal_gain_loss_account), fiscal_year: Number(form.fiscal_year),
+        disposal_gain_loss_account: Number(form.disposal_gain_loss_account), disposal_loss_account: Number(form.disposal_loss_account), fiscal_year: Number(form.fiscal_year),
       });
       setForm({...emptyForm, branch: form.branch, fiscal_year: form.fiscal_year});
       await refresh();
@@ -140,7 +140,8 @@ export default function FixedAssetsPanel({ companyId }: Props) {
       {accountSelect("حساب مجمع الإهلاك","accumulated_depreciation_account",assetAccounts)}
       {accountSelect("حساب مصروف الإهلاك","depreciation_expense_account",expenseAccounts)}
       {accountSelect("حساب مقابل الاقتناء","acquisition_counter_account",accounts)}
-      {accountSelect("حساب أرباح/خسائر الاستبعاد","disposal_gain_loss_account",accounts)}
+      {accountSelect("حساب أرباح بيع الأصول","disposal_gain_loss_account",accounts.filter(x=>x.nature==="revenue"))}
+      {accountSelect("حساب خسائر بيع الأصول","disposal_loss_account",expenseAccounts)}
       <label className="asset-description">الوصف<input value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label>
       <div className="asset-form-actions"><button className="primary-button" disabled={saving || !years.length}>{saving ? "جارٍ الحفظ…" : "حفظ الأصل وإثبات الاقتناء"}</button></div>
     </form>
