@@ -23,8 +23,23 @@ def salary_for_date(employee, target_date):
     return first.previous_salary if first else employee.basic_salary
 
 
-def calculate_component(component, assigned_value, basic_salary, payable_days, overtime_hours, daily_divisor, friday_days):
+def _config_decimal(section, key):
+    if key not in section or section[key] in (None, ""):
+        raise ValidationError(f"إعداد القاعدة القانونية ({key}) غير مكتمل.")
+    try:
+        return Decimal(str(section[key]))
+    except Exception as exc:
+        raise ValidationError(f"قيمة إعداد القاعدة القانونية ({key}) غير صحيحة.") from exc
+
+
+def calculate_component(
+    component, assigned_value, basic_salary, payable_days, overtime_hours,
+    daily_divisor, friday_days, rule_configuration=None, taxable_base=None, insurance_base=None,
+):
     value = assigned_value if assigned_value is not None else component.default_value
+    rule_configuration = rule_configuration or {}
+    taxable_base = taxable_base if taxable_base is not None else basic_salary
+    insurance_base = insurance_base if insurance_base is not None else basic_salary
     if component.method == component.Method.FIXED:
         amount = value
     elif component.method == component.Method.PERCENT_BASIC:
@@ -35,6 +50,47 @@ def calculate_component(component, assigned_value, basic_salary, payable_days, o
         amount = value * overtime_hours
     elif component.method == component.Method.FRIDAY_DOUBLE_DAY:
         amount = basic_salary / daily_divisor * Decimal("2") * friday_days
+    elif component.method in (component.Method.EMPLOYEE_INSURANCE, component.Method.EMPLOYER_INSURANCE):
+        insurance = rule_configuration.get("insurance") or {}
+        minimum = _config_decimal(insurance, "min_base")
+        maximum = _config_decimal(insurance, "max_base")
+        rate_key = "employee_rate" if component.method == component.Method.EMPLOYEE_INSURANCE else "employer_rate"
+        rate = _config_decimal(insurance, rate_key)
+        if minimum < 0 or maximum < minimum or rate < 0 or rate > 100:
+            raise ValidationError("إعدادات التأمينات غير صحيحة؛ راجع الحد الأدنى والأقصى والنسبة.")
+        contribution_base = min(max(insurance_base, minimum), maximum)
+        amount = contribution_base * rate / Decimal("100")
+    elif component.method == component.Method.PROGRESSIVE_TAX:
+        tax = rule_configuration.get("tax") or {}
+        exemption = _config_decimal(tax, "annual_personal_exemption")
+        brackets = tax.get("annual_brackets")
+        if exemption < 0 or not isinstance(brackets, list) or not brackets:
+            raise ValidationError("شرائح ضريبة المرتبات غير مكتملة.")
+        annual_taxable = max(Decimal("0"), taxable_base * Decimal("12") - exemption)
+        lower = Decimal("0")
+        annual_tax = Decimal("0")
+        has_open_ended_bracket = False
+        for bracket in brackets:
+            if not isinstance(bracket, dict) or "rate" not in bracket:
+                raise ValidationError("تعريف شريحة الضريبة غير صحيح.")
+            rate = Decimal(str(bracket["rate"]))
+            if rate < 0 or rate > 100:
+                raise ValidationError("نسبة شريحة الضريبة يجب أن تكون بين صفر و100.")
+            upper_value = bracket.get("up_to")
+            if upper_value in (None, ""):
+                has_open_ended_bracket = True
+                annual_tax += max(Decimal("0"), annual_taxable - lower) * rate / Decimal("100")
+                break
+            upper = Decimal(str(upper_value))
+            if upper <= lower:
+                raise ValidationError("حدود شرائح الضريبة يجب أن تكون تصاعدية.")
+            annual_tax += max(Decimal("0"), min(annual_taxable, upper) - lower) * rate / Decimal("100")
+            if annual_taxable <= upper:
+                break
+            lower = upper
+        if not has_open_ended_bracket and annual_taxable > lower:
+            raise ValidationError("شرائح الضريبة لا تغطي كامل الوعاء السنوي.")
+        amount = annual_tax / Decimal("12")
     else:
         amount = value
     return money(amount)
@@ -103,17 +159,48 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         friday_days = Decimal(attendance.filter(friday_worked=True).count())
         deductions = Decimal("0")
         employer_share = Decimal("0")
+        taxable_base = basic_amount
+        insurance_base = basic_amount
         lines = [(None, "BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
+        rule_configuration = cycle.rule_set.configuration if cycle.rule_set_id else {}
+        statutory_assignments = []
         for assignment in assignments:
             component = assignment.component
-            amount = calculate_component(component, assignment.value, effective_basic_salary, payable_days, overtime_hours, daily_divisor, friday_days)
+            if component.method in (
+                component.Method.EMPLOYEE_INSURANCE,
+                component.Method.EMPLOYER_INSURANCE,
+                component.Method.PROGRESSIVE_TAX,
+            ):
+                statutory_assignments.append(assignment)
+                continue
+            amount = calculate_component(
+                component, assignment.value, effective_basic_salary, payable_days,
+                overtime_hours, daily_divisor, friday_days, rule_configuration,
+                taxable_base, insurance_base,
+            )
             if component.kind == component.Kind.EARNING:
                 earnings += amount
+                if component.affects_taxable_base:
+                    taxable_base += amount
+                if component.affects_insurance_base:
+                    insurance_base += amount
             elif component.kind == component.Kind.DEDUCTION:
                 deductions += amount
             else:
                 employer_share += amount
             lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
+        for assignment in statutory_assignments:
+            component = assignment.component
+            amount = calculate_component(
+                component, assignment.value, effective_basic_salary, payable_days,
+                overtime_hours, daily_divisor, friday_days, rule_configuration,
+                taxable_base, insurance_base,
+            )
+            if component.method in (component.Method.EMPLOYEE_INSURANCE, component.Method.PROGRESSIVE_TAX):
+                deductions += amount
+            else:
+                employer_share += amount
+            lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "taxable_base": str(taxable_base), "insurance_base": str(insurance_base)}))
         installments = LoanInstallment.objects.filter(
             loan__employee=employee,
             due_date__range=(cycle.period_start, cycle.period_end),
