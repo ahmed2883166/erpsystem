@@ -93,6 +93,7 @@ class SalesInvoiceLineInputSerializer(serializers.Serializer):
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
     tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"),
                                         max_value=Decimal("100"), required=False, default=Decimal("0"))
+    tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
 
 
 class SalesInvoiceLineSerializer(serializers.ModelSerializer):
@@ -103,7 +104,7 @@ class SalesInvoiceLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesInvoiceLine
         fields = ("id", "delivery_line", "product_code", "product_name", "quantity",
-                  "unit_price", "tax_rate", "net_amount", "tax_amount", "total_amount")
+                  "unit_price", "tax_rate", "tax_code", "net_amount", "tax_amount", "total_amount")
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
@@ -145,6 +146,13 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         supplied = [line["delivery_line"].pk for line in attrs.get("lines", [])]
         if not supplied or set(supplied) != expected or len(supplied) != len(expected):
             raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن التسليم مرة واحدة دون حذف أو تكرار."})
+        invoice_date = attrs.get("invoice_date")
+        for line in attrs.get("lines", []):
+            code = line.get("tax_code")
+            if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
+                         or code.category == TaxCode.Category.REVERSE_CHARGE
+                         or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
+                raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح للشركة أو تاريخ الفاتورة."})
         return attrs
 
     @transaction.atomic
