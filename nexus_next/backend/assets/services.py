@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -64,7 +65,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
     last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
-    previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - __import__("datetime").timedelta(days=1)
+    previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1)
     elapsed_days = (period_date - previous_date).days
     if elapsed_days <= 0:
         raise ValidationError("تاريخ الإهلاك يجب أن يكون بعد آخر فترة إهلاك مسجلة.")
@@ -85,7 +86,6 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
 
 @transaction.atomic
 def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None):
-    from datetime import timedelta
     from treasury.models import TreasuryAccount, TreasuryTransaction
 
     if isinstance(disposal_date, str):
