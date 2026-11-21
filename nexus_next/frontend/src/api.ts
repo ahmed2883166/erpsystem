@@ -8,6 +8,12 @@ export type Account = {
   id: number; company: number; code: string; name_ar: string; parent: number | null;
   parent_code: string | null; nature: string; is_group: boolean; allow_posting: boolean; is_active: boolean;
 };
+export type AccountTemplateInfo = { company: number; activity: Company["activity"]; activity_label: string; template_account_count: number; existing_account_count: number; has_accounts: boolean };
+export type AccountTemplateApplyResult = {
+  detail: string; company: number; activity: string; created_accounts: string[]; reused_accounts: string[];
+  role_assignments_created: string[]; role_conflicts: {role: string; existing_account_code: string; template_account_code: string}[];
+  code_conflicts: {code: string; existing_name: string; template_name: string}[];
+};
 export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string };
 export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; debit_total: string; credit_total: string; net_balance: string }[] };
 export type Journal = {
@@ -216,6 +222,8 @@ export const api = {
   createJournal: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/", { method: "POST", body: JSON.stringify(payload) }); },
   postJournal: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/" + id + "/post/", { method: "POST" }); },
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
+  accountTemplateInfo: (companyId: number) => request<AccountTemplateInfo>(`/api/accounting/account-templates/?company=${companyId}`),
+  applyAccountTemplate: async (companyId: number) => { await request<{detail:string}>("/api/csrf/"); return request<AccountTemplateApplyResult>("/api/accounting/account-templates/", {method:"POST", body:JSON.stringify({company:companyId})}); },
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
   journalDetail: (id: number) => request<Journal>(`/api/accounting/journal-entries/${id}/`),
   vatReturn: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => {
