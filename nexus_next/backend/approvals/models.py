@@ -33,11 +33,14 @@ class SalesInvoiceApproval(models.Model):
         PENDING = "pending", "بانتظار الموافقة"
         APPROVED = "approved", "تمت الموافقة"
         REJECTED = "rejected", "مرفوض"
+        SUPERSEDED = "superseded", "تم استبداله بطلب أحدث"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_invoice_approvals")
-    invoice = models.OneToOneField("sales.SalesInvoice", on_delete=models.PROTECT, related_name="approval_request")
+    invoice = models.ForeignKey("sales.SalesInvoice", on_delete=models.PROTECT, related_name="approval_requests")
     requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="sales_discount_requests")
     requested_limit = models.DecimalField(max_digits=7, decimal_places=4)
+    requested_discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    requested_max_discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     decided_by = models.ForeignKey(
         "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
@@ -65,8 +68,12 @@ class SalesInvoiceApproval(models.Model):
             old = type(self).objects.get(pk=self.pk)
             if old.status != self.Status.PENDING:
                 raise ValidationError("قرار الموافقة نهائي ولا يمكن تغييره.")
-            if self.status not in (self.Status.APPROVED, self.Status.REJECTED):
+            if self.status not in (self.Status.APPROVED, self.Status.REJECTED, self.Status.SUPERSEDED):
                 raise ValidationError("حالة قرار الموافقة غير صالحة.")
+            if self.status == self.Status.SUPERSEDED and self.decided_by_id:
+                raise ValidationError("الطلب المستبدل لا يحمل قرار مدير.")
+            if self.status in (self.Status.APPROVED, self.Status.REJECTED) and not self.decided_by_id:
+                raise ValidationError("قرار المدير مطلوب.")
             if self.decided_at is None:
                 self.decided_at = timezone.now()
         elif self.status != self.Status.PENDING:
