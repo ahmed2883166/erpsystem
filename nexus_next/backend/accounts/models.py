@@ -5,7 +5,6 @@ class User(AbstractUser):
     """NEXUS user; authorization is managed through Django groups and permissions."""
     display_name = models.CharField(max_length=160, blank=True)
     preferred_language = models.CharField(max_length=8, default="ar")
-    is_active = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "مستخدم"
