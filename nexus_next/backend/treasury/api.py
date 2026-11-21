@@ -144,6 +144,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         serializer.save()
         return response.Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
     def match(self, request, pk=None):
         recon = self.get_object()
