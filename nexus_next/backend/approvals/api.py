@@ -79,6 +79,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         if (
             approval.requested_discount_total != approval.invoice.discount_total
             or approval.requested_max_discount_percent != current_max
+            or approval.requested_invoice_limit != approval.invoice.invoice_approval_limit
             or approval.requested_lines_snapshot != invoice_discount_snapshot(approval.invoice)
         ):
             raise ValidationError("تغيرت تفاصيل الخصم بعد إنشاء الطلب؛ يجب مراجعة الطلب الأحدث.")
