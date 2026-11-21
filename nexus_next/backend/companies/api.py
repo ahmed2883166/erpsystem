@@ -1,6 +1,7 @@
 from rest_framework import permissions, viewsets
-from companies.access import scope_company_queryset
-from .models import Branch, Company, Currency, FiscalYear
+
+from .access import accessible_branches, accessible_companies, can_access_company
+from .models import Branch, CompanyMembership, Currency, FiscalYear
 from .serializers import BranchSerializer, CompanySerializer, CurrencySerializer, FiscalYearSerializer
 
 
@@ -18,27 +19,39 @@ class CurrencyViewSet(viewsets.ModelViewSet):
 
 
 class CompanyViewSet(viewsets.ModelViewSet):
-    queryset = Company.objects.select_related("base_currency").all()
     serializer_class = CompanySerializer
     permission_classes = (ReadOnlyOrAdmin,)
 
     def get_queryset(self):
-        return scope_company_queryset(super().get_queryset(), self.request.user, "id")
+        return accessible_companies(self.request.user).select_related("base_currency")
+
+    def perform_create(self, serializer):
+        company = serializer.save()
+        CompanyMembership.objects.get_or_create(
+            user=self.request.user, company=company,
+            defaults={"role": CompanyMembership.Role.ADMIN, "all_branches": True, "is_active": True},
+        )
+
+    def perform_update(self, serializer):
+        if not can_access_company(self.request.user, self.get_object().pk):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى هذه الشركة.")
+        serializer.save()
 
 
 class BranchViewSet(viewsets.ModelViewSet):
-    queryset = Branch.objects.select_related("company").all()
     serializer_class = BranchSerializer
     permission_classes = (ReadOnlyOrAdmin,)
 
     def get_queryset(self):
-        return scope_company_queryset(super().get_queryset(), self.request.user, "company_id")
+        return accessible_branches(self.request.user).select_related("company")
 
 
 class FiscalYearViewSet(viewsets.ModelViewSet):
-    queryset = FiscalYear.objects.select_related("company").all()
     serializer_class = FiscalYearSerializer
     permission_classes = (ReadOnlyOrAdmin,)
 
     def get_queryset(self):
-        return scope_company_queryset(super().get_queryset(), self.request.user, "company_id")
+        return FiscalYear.objects.filter(
+            company__in=accessible_companies(self.request.user)
+        ).select_related("company")
