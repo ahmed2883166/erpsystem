@@ -7,7 +7,11 @@ from django.db.models import Q, Sum
 
 from accounting.models import JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
-from companies.models import FiscalYear\nfrom approvals.models import FinancialApprovalRequest\nfrom approvals.services import refresh_financial_approval\nfrom treasury.models import TreasuryAccount, TreasuryTransaction\nfrom treasury.services import post_treasury_transaction
+from companies.models import FiscalYear
+from approvals.models import FinancialApprovalRequest
+from approvals.services import refresh_financial_approval
+from treasury.models import TreasuryAccount, TreasuryTransaction
+from treasury.services import post_treasury_transaction
 
 from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
