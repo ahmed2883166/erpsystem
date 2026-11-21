@@ -307,6 +307,20 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(sum((line.credit for line in lines), 0), 50)
         self.assertEqual({line.account.code for line in lines}, {"1000", "2100"})
 
+    def test_inventory_gl_reconciliation_matches_posted_receipt(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="REC-1", name_ar="مطابقة مخزون")
+        warehouse = self._warehouse("REC-WH")
+        created = self._movement("REC-RCV-1", "receipt", destination=warehouse, quantity="3", cost="25")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        response = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["stock_value"], "75.0000")
+        self.assertEqual(response.data["gl_balance"], "75.0000")
+        self.assertEqual(response.data["difference"], "0.0000")
+        self.assertTrue(response.data["is_reconciled"])
+
     def test_cross_branch_transfer_creates_two_balanced_branch_entries(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-T1", name_ar="تحويل فروع")
         source = self._warehouse("GL-SRC")
