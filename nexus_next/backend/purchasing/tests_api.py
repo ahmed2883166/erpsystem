@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.db import DatabaseError, connection, transaction
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
@@ -369,6 +370,15 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(request.requested_amount, Decimal("228.0000"))
         self.assertEqual(request.requested_limit, Decimal("200.0000"))
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE approvals_financialapprovalrequest SET requested_amount = %s WHERE id = %s",
+                        ["1", request.pk],
+                    )
+        request.refresh_from_db()
+        self.assertEqual(request.requested_amount, Decimal("228.0000"))
         blocked = self.client.post(
             f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
         )
