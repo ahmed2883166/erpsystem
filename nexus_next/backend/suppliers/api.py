@@ -17,21 +17,25 @@ class SupplierViewSet(viewsets.ModelViewSet):
     ordering_fields = ("code", "name_ar", "created_at", "credit_limit")
 
     def get_queryset(self):
+        """تجهيز السجلات التي يمكن للمستخدم الوصول إليها ضمن شركته وصلاحياته."""
         if self.request.user.is_superuser:
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
     def _check_company_write(self, company_id):
+        """التحقق من صلاحية الكتابة داخل الشركة قبل تنفيذ التعديل."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("إضافة وتعديل الموردين متاحة لمدير الشركة والمحاسب فقط.")
 
     def perform_create(self, serializer):
+        """حفظ العميل أو المورد بعد التحقق من نطاق الشركة."""
         self._check_company_write(serializer.validated_data["company"].pk)
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديل بعد التحقق من صلاحية الشركة وثبات نطاق السجل."""
         company = serializer.validated_data.get("company", serializer.instance.company)
         if company.pk != serializer.instance.company_id:
             raise ValidationError("لا يمكن نقل سجل مورد إلى شركة أخرى بعد إنشائه.")
