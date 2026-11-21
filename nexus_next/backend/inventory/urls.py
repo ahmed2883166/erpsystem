@@ -1,7 +1,7 @@
 from rest_framework.routers import DefaultRouter
 
 from .api import (
-    ProductCategoryViewSet, ProductViewSet, StorageLocationViewSet,
+    ProductCategoryViewSet, ProductViewSet, StockMovementViewSet, StorageLocationViewSet,
     UnitOfMeasureViewSet, WarehouseViewSet,
 )
 
@@ -11,5 +11,6 @@ router.register("units", UnitOfMeasureViewSet)
 router.register("products", ProductViewSet)
 router.register("warehouses", WarehouseViewSet)
 router.register("locations", StorageLocationViewSet)
+router.register("movements", StockMovementViewSet)
 
 urlpatterns = router.urls
