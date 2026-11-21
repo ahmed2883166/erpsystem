@@ -222,3 +222,22 @@ export const importBankStatementCsv = async (id: number, file: File): Promise<{i
   }
   return response.json() as Promise<{imported:number;message:string}>;
 };
+
+
+export type FixedAsset = {
+  id: number; company: number; branch: number; code: string; name_ar: string; description: string;
+  acquisition_date: string; depreciation_start_date: string; original_cost: string; salvage_value: string;
+  useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
+  accumulated_depreciation_account: number; depreciation_expense_account: number;
+  acquisition_counter_account: number; disposal_gain_loss_account: number; acquisition_journal: number | null;
+  status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null;
+  accumulated_depreciation: string; net_book_value: string; created_at: string;
+};
+export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; net_book_value: string;
+  rows: { id: number; asset: number; period_date: string; amount: string; journal_entry: number; created_at: string }[] };
+export const fixedAssetsApi = {
+  list: (companyId: number) => request<FixedAsset[]>(`/api/assets/fixed-assets/?company=${companyId}`),
+  create: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<FixedAsset>("/api/assets/fixed-assets/", {method:"POST",body:JSON.stringify(payload)}); },
+  depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
+  schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
+};
