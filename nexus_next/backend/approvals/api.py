@@ -161,7 +161,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
                 "supplier", "invoice"
             ).get(pk=approval.supplier_payment_id)
         from treasury.models import TreasuryTransaction
-        return TreasuryTransaction.objects.select_for_update().select_related(
+        return TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
             "source_account", "counter_account"
         ).get(pk=approval.treasury_transaction_id)
 
