@@ -8,7 +8,7 @@ The company-scoped membership editor supports three predefined roles:
 - **Accountant:** creates and processes accounting and sales documents but cannot change company memberships or discount policies.
 - **Viewer:** read-only access.
 
-Memberships can be assigned to all company branches or a selected branch set. Branches from another company are rejected. A company administrator must have company-wide branch scope. The last active company administrator cannot be disabled or demoted. Existing membership identity cannot be reassigned to another user; deactivate the old membership and create a new one instead.
+Memberships can be assigned to all company branches or a selected branch set. Branches from another company are rejected. A company administrator must have company-wide branch scope. Non-admin users can see only their own membership; company administrators can manage memberships for their company. The last active company administrator cannot be disabled or demoted. Existing membership identity cannot be reassigned to another user; deactivate the old membership and create a new one instead.
 
 Only active users can be found through the company-scoped user lookup. Search returns a limited set of account identifiers and display names, not user credentials or security data.
 
