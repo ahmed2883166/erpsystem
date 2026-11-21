@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment
 
-from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord
+from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment
 from hr.services import calculate_component, money, salary_for_date
 
 
@@ -150,6 +150,22 @@ class EmployeePayrollReportApiTests(TestCase):
             {"BASIC", "BONUS", "ER-SHARE"},
         )
         self.assertEqual(len(employee["periods"]), 1)
+
+    def test_manual_loan_installments_cannot_exceed_loan_principal(self):
+        loan = EmployeeLoan.objects.create(
+            employee=self.employee, reference="LOAN-CAP", issue_date=date(2026, 1, 1),
+            principal=Decimal("200"), installment_count=2, installment_amount=Decimal("100"),
+            outstanding_balance=Decimal("200"),
+        )
+        first = self.client.post("/api/hr/loan-installments/", {
+            "loan": loan.pk, "due_date": "2026-05-01", "amount": "100",
+        }, format="json")
+        over = self.client.post("/api/hr/loan-installments/", {
+            "loan": loan.pk, "due_date": "2026-06-01", "amount": "101",
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(over.status_code, 400, over.data)
+        self.assertEqual(LoanInstallment.objects.filter(loan=loan).count(), 1)
 
     def test_manager_can_delete_employee_only_when_no_linked_hr_records_exist(self):
         manager = User.objects.create_user(username="hr_employee_delete_manager", password="test-password")
