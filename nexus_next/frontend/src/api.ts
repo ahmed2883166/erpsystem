@@ -73,7 +73,7 @@ export const inventoryApi = {
 export type InventoryLocation = { id: number; warehouse: number; warehouse_name: string; code: string; name_ar: string; location_type: "floor" | "area" | "rack" | "bin"; parent: number | null; is_active: boolean };
 
 
-export type StockMovementLine = { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; adjustment_direction: "in" | "out" | "" };
+export type StockMovementLine = { id: number; product: number; product_code: string; product_name: string; source_location: number | null; source_location_name: string | null; destination_location: number | null; destination_location_name: string | null; expiry_date: string | null; quantity: string; unit_cost: string; adjustment_direction: "in" | "out" | "" };
 export type StockMovement = {
   id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "transfer" | "adjustment";
   movement_date: string; source_warehouse: number | null; source_warehouse_name: string | null;
@@ -82,7 +82,7 @@ export type StockMovement = {
 };
 export type StockBalance = {
   id: number; product: number; product_code: string; product_name: string; warehouse: number;
-  warehouse_name: string; quantity: string; average_cost: string; inventory_value: string; updated_at: string;
+  warehouse_name: string; location: number | null; location_name: string | null; expiry_date: string | null; quantity: string; average_cost: string; inventory_value: string; updated_at: string;
 };
 export const stockApi = {
   movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/?company=${companyId}&ordering=-movement_date`),
