@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 
-from .models import AttendanceRecord, Employee, EmployeeComponent, PayrollCycle, PayrollResult, PayrollResultLine
+from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, PayrollCycle, PayrollResult, PayrollResultLine
 
 
 CENT = Decimal("0.01")
@@ -86,6 +86,21 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             else:
                 employer_share += amount
             lines.append((component.code, component.name_ar, component.kind, amount, False, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
+        installments = LoanInstallment.objects.filter(
+            loan__employee=employee,
+            due_date__range=(cycle.period_start, cycle.period_end),
+            status__in=(LoanInstallment.Status.DUE, LoanInstallment.Status.PARTIAL),
+        ).select_related("loan")
+        for installment in installments:
+            remaining = money(installment.amount - installment.paid_amount)
+            if remaining > 0:
+                deductions += remaining
+                lines.append((
+                    f"LOAN-{installment.loan_id}-{installment.pk}",
+                    f"قسط سلفة {installment.loan.reference}",
+                    "deduction", remaining, False,
+                    {"loan_id": installment.loan_id, "installment_id": installment.pk, "due_date": installment.due_date.isoformat()},
+                ))
         result = PayrollResult.objects.create(
             cycle=cycle, employee=employee, basic_salary_snapshot=effective_basic_salary,
             earnings_total=money(earnings), employee_deductions_total=money(deductions),
