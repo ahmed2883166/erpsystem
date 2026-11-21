@@ -552,6 +552,87 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(equity_response.data["closing_equity"], Decimal("250.0000"))
 
 
+    def test_income_statement_separates_cost_of_sales_from_operating_expenses(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="COGS-FS", name_ar="شركة اختبار تكلفة المبيعات", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية", nature="asset",
+        )
+        inventory = ChartOfAccount.objects.create(
+            company=company, code="1200", name_ar="المخزون", nature="asset",
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4100", name_ar="المبيعات", nature="revenue",
+        )
+        cogs = ChartOfAccount.objects.create(
+            company=company, code="5100", name_ar="تكلفة المبيعات", nature="expense",
+        )
+        operating = ChartOfAccount.objects.create(
+            company=company, code="5200", name_ar="مصروفات تشغيلية", nature="expense",
+        )
+        AccountRole.objects.create(
+            company=company, role=AccountRole.Role.COGS, account=cogs,
+        )
+
+        sale = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="SALE-COGS-1", entry_date=date(2026, 1, 2),
+            description="إثبات المبيعات",
+        )
+        JournalLine.objects.create(entry=sale, account=cash, debit=Decimal("1000"))
+        JournalLine.objects.create(entry=sale, account=revenue, credit=Decimal("1000"))
+        post_journal(sale.pk)
+
+        cost = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="COGS-1", entry_date=date(2026, 1, 2),
+            description="إثبات تكلفة البضاعة المباعة",
+        )
+        JournalLine.objects.create(entry=cost, account=cogs, debit=Decimal("400"))
+        JournalLine.objects.create(entry=cost, account=inventory, credit=Decimal("400"))
+        post_journal(cost.pk)
+
+        expense = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="OPEX-1", entry_date=date(2026, 1, 3),
+            description="مصروف تشغيلي",
+        )
+        JournalLine.objects.create(entry=expense, account=operating, debit=Decimal("150"))
+        JournalLine.objects.create(entry=expense, account=cash, credit=Decimal("150"))
+        post_journal(expense.pk)
+
+        user = User.objects.create_user(username="cogs_report_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        response = client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["revenue_total"], Decimal("1000.0000"))
+        self.assertEqual(response.data["cost_of_sales_total"], Decimal("400.0000"))
+        self.assertEqual(response.data["gross_profit"], Decimal("600.0000"))
+        self.assertEqual(response.data["expenses_total"], Decimal("150.0000"))
+        self.assertEqual(response.data["net_profit"], Decimal("450.0000"))
+        self.assertEqual([row["account_id"] for row in response.data["cost_of_sales"]], [cogs.pk])
+        self.assertEqual([row["account_id"] for row in response.data["operating_and_other_expenses"]], [operating.pk])
+
+
 class TrialBalanceClosingFilterTests(TestCase):
     def test_closing_entries_can_be_excluded_from_trial_balance(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
