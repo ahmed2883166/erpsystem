@@ -224,3 +224,12 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .asset-cashflow-totals{display:flex;flex-wrap:wrap;gap:12px;padding:12px;background:#f6f8fb;border-radius:8px;margin-bottom:12px;font-size:11px}
 .asset-cashflow-totals span,.asset-cashflow-totals b{padding:5px 8px}
 .asset-report-note{color:#78869a;font-size:10px;margin:8px 0 12px}
+
+
+.report-drilldown,.journal-detail-inline{margin-top:18px;padding:16px;border:1px solid #dce4ee;border-radius:10px;background:#fbfcfe}
+.report-drilldown h3,.journal-detail-inline h3{margin:0 0 5px}
+.text-action-button{border:0;background:transparent;color:#2563a6;padding:4px 2px;font:inherit;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.text-action-button:disabled{opacity:.45;cursor:not-allowed}
+.report-drilldown .work-panel-head,.journal-detail-inline .work-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.report-drilldown .data-table-wrap,.journal-detail-inline .data-table-wrap{overflow-x:auto}
+@media(max-width:650px){.report-drilldown,.journal-detail-inline{padding:10px}.report-drilldown .work-panel-head,.journal-detail-inline .work-panel-head{align-items:flex-start;flex-direction:column}}
