@@ -173,6 +173,19 @@ class TaxReportSnapshotPostgreSQLTests(unittest.TestCase):
                             sqlite_snapshot = build_tax_report_snapshot(sqlite_conn, "2026-11")
                         for key in ("tax_profile", "summary", "sales", "purchases", "ledger_reconciliation"):
                             self.assertEqual(snapshot[key], sqlite_snapshot[key], key)
+
+                        conn.execute(
+                            "UPDATE company_settings SET setting_value='SA' WHERE setting_key='tax_country'"
+                        )
+                        sqlite_conn.execute(
+                            "UPDATE company_settings SET setting_value='SA' WHERE setting_key='tax_country'"
+                        )
+                        with patch("activity_profiles.active_tax_roles", return_value=roles):
+                            pg_sa_snapshot = build_tax_report_snapshot(conn, "2026-11")
+                            sqlite_sa_snapshot = build_tax_report_snapshot(sqlite_conn, "2026-11")
+                        self.assertEqual(pg_sa_snapshot["tax_profile"]["standard_rate"], Decimal("15"))
+                        for key in ("tax_profile", "summary", "sales", "purchases", "ledger_reconciliation"):
+                            self.assertEqual(pg_sa_snapshot[key], sqlite_sa_snapshot[key], "Saudi " + key)
                     finally:
                         sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")

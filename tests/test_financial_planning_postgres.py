@@ -3,6 +3,7 @@ import os
 import sqlite3
 import unittest
 import uuid
+from decimal import Decimal
 
 from accounting_core import register_decimal_aggregates
 from financial_planning import (
@@ -88,7 +89,7 @@ class FinancialPlanningPostgreSQLSchemaTests(unittest.TestCase):
 
                 def normalize(rows):
                     return [
-                        (row["account_id"],row["code"],row["account_type"],row["budget"],
+                        (row["id"],row["code"],row["account_type"],row["budget"],
                          row["actual"],row["variance"],row.get("variance_pct"),
                          row["utilization_pct"],row["status"])
                         for row in rows

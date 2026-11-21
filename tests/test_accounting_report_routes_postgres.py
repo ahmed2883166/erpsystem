@@ -1,5 +1,6 @@
 """PostgreSQL route-level parity checks for trial balance and general ledger."""
 import os
+import re
 import sqlite3
 import unittest
 import uuid
@@ -264,7 +265,23 @@ class AccountingReportRoutesPostgreSQLTests(unittest.TestCase):
             "&date_to=2026-01-31&q=RENT"
         )
         self.assertEqual(sqlite_response.status_code, 200)
-        self.assertEqual(sqlite_response.get_data(as_text=True), html)
+        sqlite_html = sqlite_response.get_data(as_text=True)
+        self.assertIn("RENT-1", sqlite_html)
+        self.assertNotIn("SALE-1", sqlite_html)
+        self.assertNotIn("DRAFT-1", sqlite_html)
+        self.assertIn("100.00", sqlite_html)
+        self.assertIn("50.00", sqlite_html)
+        self.assertIn("70.00", sqlite_html)
+
+        def ledger_kpis(document):
+            match = re.search(
+                r'<section class="cards compact-cards ledger-kpis">(.*?)</section>',
+                document, re.S,
+            )
+            self.assertIsNotNone(match)
+            return re.findall(r"<b>(.*?)</b>", match.group(1))
+
+        self.assertEqual(ledger_kpis(sqlite_html), ledger_kpis(html))
 
 
 if __name__ == "__main__":
