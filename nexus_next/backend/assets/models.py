@@ -71,9 +71,10 @@ class AssetDepreciation(models.Model):
     asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="depreciations")
     period_date = models.DateField()
     amount = models.DecimalField(max_digits=20, decimal_places=4)
+    is_partial_period = models.BooleanField(default=False)
     journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name="asset_depreciation")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("period_date",)
-        constraints = [models.UniqueConstraint(fields=("asset", "period_date"), name="uq_asset_depr_period")]
+        constraints = [models.UniqueConstraint(fields=("asset", "period_date"), condition=Q(is_partial_period=False), name="uq_asset_depr_period")]
