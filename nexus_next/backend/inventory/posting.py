@@ -13,9 +13,11 @@ from .models import StockMovement, StockMovementJournalLink
 
 
 def _role_account(company, role):
+    """استخراج الحساب التفصيلي المرتبط بدور المخزون المطلوب."""
     return get_account_for_role(company, role)
 
 def _branch_for(warehouse, company):
+    """تحديد الفرع المحاسبي المرتبط بالمخزن وحركة المخزون."""
     if warehouse.branch_id:
         if not warehouse.branch.is_active:
             raise ValidationError("فرع المخزن موقوف ولا يمكن الترحيل عليه.")
@@ -30,6 +32,7 @@ def _branch_for(warehouse, company):
 
 
 def _fiscal_year(company, movement):
+    """تحديد السنة المالية الصالحة لتاريخ حركة المخزون."""
     year = FiscalYear.objects.filter(
         company=company, status=FiscalYear.Status.OPEN,
         start_date__lte=movement.movement_date, end_date__gte=movement.movement_date,
@@ -41,6 +44,7 @@ def _fiscal_year(company, movement):
 
 @transaction.atomic
 def _create_posted_entry(movement, user, fiscal_year, branch, suffix, debit_account, credit_account, amount, description):
+    """إنشاء قيد المخزون المتوازن وربطه بحركة المخزون."""
     amount = amount.quantize(Decimal("0.0001"))
     if amount <= 0:
         return None
@@ -65,6 +69,7 @@ def _create_posted_entry(movement, user, fiscal_year, branch, suffix, debit_acco
 
 
 def post_movement_journals(movement, user):
+    """إنشاء القيود المحاسبية اللازمة لحركة المخزون دون تكرار الترحيل."""
     lines = list(movement.lines.select_related("product"))
     amounts = [line.cost_amount for line in lines]
     total = sum(amounts, Decimal("0"))
