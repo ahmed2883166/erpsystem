@@ -207,6 +207,9 @@ class StockMovementLine(models.Model):
 
     movement = models.ForeignKey(StockMovement, on_delete=models.CASCADE, related_name="lines")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_movement_lines")
+    source_location = models.ForeignKey("StorageLocation", null=True, blank=True, on_delete=models.PROTECT, related_name="source_stock_lines")
+    destination_location = models.ForeignKey("StorageLocation", null=True, blank=True, on_delete=models.PROTECT, related_name="destination_stock_lines")
+    expiry_date = models.DateField(null=True, blank=True)
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0.0001)])
     unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     adjustment_direction = models.CharField(max_length=3, choices=AdjustmentDirection.choices, blank=True)
@@ -222,11 +225,22 @@ class StockMovementLine(models.Model):
             raise ValidationError("لا يمكن تعديل سطور حركة مرحلة.")
         if self.movement_id and self.movement.movement_type == StockMovement.MovementType.ADJUSTMENT and not self.adjustment_direction:
             raise ValidationError({"adjustment_direction": "حدد الزيادة أو العجز للتسوية."})
+        if self.movement_id:
+            if self.source_location_id and self.source_location.warehouse_id != self.movement.source_warehouse_id:
+                raise ValidationError({"source_location": "موقع الصرف لا يتبع مخزن المصدر."})
+            if self.destination_location_id and self.destination_location.warehouse_id != self.movement.destination_warehouse_id:
+                raise ValidationError({"destination_location": "موقع الاستلام لا يتبع مخزن الوجهة."})
+            if self.product.track_expiry and not self.expiry_date:
+                raise ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
+            if not self.product.track_expiry and self.expiry_date:
+                raise ValidationError({"expiry_date": "الصنف لا يتطلب تتبع الصلاحية."})
 
 
 class StockBalance(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_balances")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="stock_balances")
+    location = models.ForeignKey(StorageLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="stock_balances")
+    expiry_date = models.DateField(null=True, blank=True)
     quantity = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     inventory_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     average_cost = models.DecimalField(max_digits=20, decimal_places=6, default=0)
@@ -234,7 +248,7 @@ class StockBalance(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=("product", "warehouse"), name="uq_stock_balance_product_warehouse"),
+            models.UniqueConstraint(fields=("product", "warehouse", "location", "expiry_date"), nulls_distinct=False, name="uq_stock_balance_product_warehouse_location_expiry"),
             models.CheckConstraint(condition=Q(quantity__gte=0), name="ck_stock_balance_nonnegative"),
             models.CheckConstraint(condition=Q(inventory_value__gte=0), name="ck_stock_balance_value_nonnegative"),
         ]
@@ -247,11 +261,13 @@ class StockCostLayer(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="cost_layers")
     source_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="created_cost_layers")
+    location = models.ForeignKey(StorageLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="fifo_cost_layers")
+    expiry_date = models.DateField(null=True, blank=True)
     quantity_remaining = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(0)])
     unit_cost = models.DecimalField(max_digits=20, decimal_places=6, validators=[MinValueValidator(0)])
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("created_at", "id")
-        indexes = [models.Index(fields=("product", "warehouse", "created_at"), name="inv_fifo_layer_order_idx")]
+        indexes = [models.Index(fields=("product", "warehouse", "location", "created_at"), name="inv_fifo_layer_order_idx")]
         constraints = [models.CheckConstraint(condition=Q(quantity_remaining__gte=0), name="ck_fifo_layer_nonnegative")]
