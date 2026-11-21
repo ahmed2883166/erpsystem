@@ -168,3 +168,17 @@ class CompanyIsolationApiTests(TestCase):
     def test_account_from_unassigned_company_is_not_retrievable(self):
         response = self.client.get(f"/api/accounting/accounts/{self.account_b.pk}/")
         self.assertEqual(response.status_code, 404)
+
+
+    def test_user_cannot_read_an_unassigned_company_trial_balance(self):
+        other = Company.objects.create(
+            code="OTHER", name_ar="شركة غير مسموحة", country="SA",
+            activity="service", base_currency=self.currency,
+        )
+        user = User.objects.create_user(username="limited", password="test-password")
+        permission = Permission.objects.get(codename="view_journalentry")
+        user.user_permissions.add(permission)
+        CompanyMembership.objects.create(user=user, company=self.company, all_branches=True)
+        self.client.force_authenticate(user=user)
+        response = self.client.get(f"/api/accounting/journal-entries/trial-balance/?company={other.pk}")
+        self.assertEqual(response.status_code, 403)
