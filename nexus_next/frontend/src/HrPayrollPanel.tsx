@@ -1,3 +1,7 @@
+/*
+ * الموارد البشرية والمرتبات: ملفات الموظفين والحضور والإجازات والسلف ومكونات الأجر.
+ * تدير دورات المرتبات والاحتساب والمراجعة والاعتماد والصرف وسجل تغييرات الراتب.
+ */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount, type HrEmployeePayReport, type HrSalaryHistory } from "./api";
 
