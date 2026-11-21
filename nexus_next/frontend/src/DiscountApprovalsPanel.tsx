@@ -86,14 +86,26 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
     </form>}
     {!canManage && <p className="inventory-report-note">عرض طلبات الموافقة متاح حسب صلاحيات الشركة؛ تعديل السياسة واعتماد الطلبات متاحان لمدير الشركة فقط.</p>}
     <div className="data-table-wrap">
-      <table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>التاريخ</th><th>الإجمالي</th><th>حد الخصم وقت الطلب</th><th>مقدم الطلب</th><th>الحالة</th><th>القرار</th></tr></thead>
+      <table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>التاريخ</th><th>الإجمالي</th><th>حد الخصم وقت الطلب</th><th>إجمالي الخصم</th><th>تفاصيل النسخة محل المراجعة</th><th>مقدم الطلب</th><th>الحالة</th><th>القرار</th></tr></thead>
         <tbody>{requests.map(row => <tr key={row.id}>
           <td className="code-cell">{row.invoice_number}</td><td>{row.customer_name}</td><td>{row.invoice_date}</td>
           <td>{money(row.invoice_total)}</td><td>{Number(row.requested_limit).toLocaleString("ar-EG", {maximumFractionDigits:4})}%</td>
+          <td>{money(row.requested_discount_total)}</td>
+          <td><details className="approval-snapshot"><summary>عرض {row.requested_lines_snapshot?.length || 0} صنف</summary>
+            <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>الخصم %</th><th>قيمة الخصم</th><th>كود الضريبة</th><th>الضريبة</th><th>الإجمالي</th></tr></thead>
+              <tbody>{(row.requested_lines_snapshot || []).map(line => <tr key={line.delivery_line_id}>
+                <td>{line.product_code} · {line.product_name}</td><td>{money(line.quantity)}</td><td>{money(line.unit_price)}</td>
+                <td>{Number(line.discount_percent).toLocaleString("ar-EG", {maximumFractionDigits:4})}%</td><td>{money(line.discount_amount)}</td>
+                <td>{line.tax_code || "—"} ({Number(line.tax_rate).toLocaleString("ar-EG", {maximumFractionDigits:4})}%)</td>
+                <td>{money(line.tax_amount)}</td><td>{money(line.total_amount)}</td>
+              </tr>)}
+              {!row.requested_lines_snapshot?.length && <tr><td colSpan={8}>لا تتوفر لقطة تفصيلية لهذا الطلب القديم؛ يلزم إنشاء طلب مراجعة جديد.</td></tr>}</tbody>
+            </table></div>
+          </details></td>
           <td>{row.requested_by_name}</td><td>{statusLabel[row.status]}</td>
           <td>{row.status === "pending" ? canManage ? <div className="table-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void decide(row, "approve")}>اعتماد</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void decide(row, "reject")}>رفض</button></div> : "بانتظار قرار المدير" : <span>{row.decided_by_name || "—"}{row.decision_note ? ` · ${row.decision_note}` : ""}</span>}</td>
         </tr>)}
-        {!requests.length && <tr><td colSpan={8}>لا توجد طلبات موافقة خصم لهذه الشركة.</td></tr>}</tbody>
+        {!requests.length && <tr><td colSpan={10}>لا توجد طلبات موافقة خصم لهذه الشركة.</td></tr>}</tbody>
       </table>
     </div>
     <p className="inventory-report-note">لا يمكن لمُنشئ طلب الخصم اعتماده بنفسه. قرارات الموافقة والرفض نهائية ومحفوظة في سجل التدقيق، ولا يمكن حذف طلب الموافقة.</p>
