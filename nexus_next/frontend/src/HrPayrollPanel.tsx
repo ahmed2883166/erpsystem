@@ -194,12 +194,14 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const exportEmployeePayReport = () => {
     if (!payReport) return;
     const rows = [
-      ["كود الموظف","الموظف","الفرع","القسم","العملة","عدد الدورات","الاستحقاقات","استقطاعات الموظف","حصة صاحب العمل","صافي المرتب","تكلفة الشركة"],
+      ["كود الموظف","الموظف","الفرع","القسم","العملة","عدد الدورات",...reportColumns.map(column=>column.name),"الاستحقاقات","استقطاعات الموظف","حصة صاحب العمل","صافي المرتب","تكلفة الشركة"],
       ...payReport.employees.map(employee=>[
-        employee.employee_code,employee.employee_name,employee.branch,employee.department,employee.currency,
-        employee.cycle_count,employee.earnings,employee.employee_deductions,employee.employer_share,employee.net_pay,employee.company_cost
+        employee.employee_code,employee.employee_name,employee.branch,employee.department,employee.currency,employee.cycle_count,
+        ...reportColumns.map(column=>employee.components.filter(item=>item.code===column.code&&item.kind===column.kind).reduce((sum,item)=>sum+Number(item.amount),0)),
+        employee.earnings,employee.employee_deductions,employee.employer_share,employee.net_pay,employee.company_cost
       ])
     ];
+    if (payReport.totals) rows.push(["","الإجمالي","","","",...Array(reportColumns.length).fill(""),payReport.totals.earnings,payReport.totals.employee_deductions,payReport.totals.employer_share,payReport.totals.net_pay,payReport.totals.company_cost]);
     const csv = rows.map(row=>row.map(value=>`"${String(value??"").replace(/"/g,'""')}"`).join(",")).join("\r\n");
     const blob = new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"});
     const url = URL.createObjectURL(blob);
