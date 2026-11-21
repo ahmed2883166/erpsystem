@@ -136,3 +136,63 @@ class CompanySetupApiTests(APITestCase):
         response = self.client.get("/api/setup/branches/")
         self.assertEqual(response.status_code, 200)
         self.assertNotIn(foreign_branch.pk, [row["id"] for row in response.data])
+
+
+    def test_company_admin_can_manage_membership_role_and_branch_scope(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        target = get_user_model().objects.create_user(username="new-accountant", password="test-password")
+        branch = Branch.objects.create(company=self.company, code="ROLE-BR", name_ar="فرع الصلاحيات")
+        self.client.force_authenticate(self.user)
+        created = self.client.post("/api/setup/memberships/", {
+            "company": self.company.pk, "user": target.pk, "role": "accountant",
+            "all_branches": False, "branches": [branch.pk], "is_active": True,
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["role"], "accountant")
+        self.assertEqual(created.data["branches"], [branch.pk])
+
+    def test_non_admin_cannot_change_company_membership_roles(self):
+        admin = get_user_model().objects.create_user(username="role-admin", password="test-password")
+        accountant = get_user_model().objects.create_user(username="role-accountant", password="test-password")
+        target = get_user_model().objects.create_user(username="role-target", password="test-password")
+        CompanyMembership.objects.create(user=admin, company=self.company, role="admin", all_branches=True)
+        membership = CompanyMembership.objects.create(user=target, company=self.company, role="viewer")
+        CompanyMembership.objects.create(user=accountant, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(accountant)
+        response = self.client.patch(
+            f"/api/setup/memberships/{membership.pk}/", {"role": "admin"}, format="json"
+        )
+        self.assertEqual(response.status_code, 403)
+        membership.refresh_from_db()
+        self.assertEqual(membership.role, "viewer")
+
+    def test_last_active_company_admin_cannot_be_disabled_or_demoted(self):
+        membership = CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/memberships/{membership.pk}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        membership.refresh_from_db()
+        self.assertTrue(membership.is_active)
+        self.assertEqual(membership.role, "admin")
+
+    def test_membership_rejects_branch_from_another_company(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        foreign_branch = Branch.objects.create(
+            company=self.other_company, code="FOREIGN-ROLE", name_ar="فرع خارجي"
+        )
+        target = get_user_model().objects.create_user(username="foreign-branch-target", password="test-password")
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/setup/memberships/", {
+            "company": self.company.pk, "user": target.pk, "role": "accountant",
+            "all_branches": False, "branches": [foreign_branch.pk], "is_active": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+
