@@ -35,7 +35,7 @@ Changing the policy affects newly created invoices; it does not rewrite approval
 - PostgreSQL guards approval identity fields, disallows deletion, and prevents changing a final decision.
 - API mutations are captured by the existing audit middleware.
 - Company membership changes, discount policy changes, and approval decisions are company-scoped and role-checked.
-- Django Admin exposes these approval records as read-only; business decisions must use the audited API.
+- Django Admin exposes company memberships, discount policies, and approval records as read-only; changes and decisions must use the audited API. Discount policies cannot be deleted at the PostgreSQL layer; update the limit instead.
 
 ## Current role-model boundary
 
