@@ -54,6 +54,8 @@ class AccountingViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         self._validate_scope(serializer.validated_data)
         company = serializer.validated_data.get("company", serializer.instance.company)
+        if company.pk != serializer.instance.company_id:
+            raise ValidationError("لا يمكن نقل سجل محاسبي إلى شركة أخرى بعد إنشائه.")
         self._require_write_role(company.pk)
         serializer.save()
 
