@@ -35,6 +35,7 @@ class FixedAsset(models.Model):
     disposed_at = models.DateField(null=True, blank=True)
     disposal_proceeds = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     disposal_journal = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="disposed_fixed_asset")
+    disposal_treasury_transaction = models.OneToOneField("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_disposal")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
