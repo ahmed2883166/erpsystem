@@ -82,16 +82,37 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     finally { setValuationIntegrityBusy(false); }
   };
   const filteredProducts = useMemo(() => products.filter((p) => `${p.code} ${p.barcode} ${p.name_ar}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
+  const inventoryIndexes = useMemo(() => {
+    const byWarehouse = new Map<number, { quantity: number; value: number; products: Set<number> }>();
+    const byWarehouseProduct = new Map<string, { quantity: number; value: number }>();
+    for (const balance of balances) {
+      const warehouse = byWarehouse.get(balance.warehouse) ?? { quantity: 0, value: 0, products: new Set<number>() };
+      warehouse.quantity += Number(balance.quantity);
+      warehouse.value += Number(balance.inventory_value);
+      warehouse.products.add(balance.product);
+      byWarehouse.set(balance.warehouse, warehouse);
+      const key = `${balance.warehouse}:${balance.product}`;
+      const productBalance = byWarehouseProduct.get(key) ?? { quantity: 0, value: 0 };
+      productBalance.quantity += Number(balance.quantity);
+      productBalance.value += Number(balance.inventory_value);
+      byWarehouseProduct.set(key, productBalance);
+    }
+    return { byWarehouse, byWarehouseProduct };
+  }, [balances]);
+  const warehouseSettingIndex = useMemo(() => new Map(
+    warehouseSettings.filter((item) => item.is_active).map((item) => [`${item.warehouse}:${item.product}`, item])
+  ), [warehouseSettings]);
   const warehouseValuation = useMemo(() => warehouses.map((warehouse) => {
-    const rows = balances.filter((balance) => balance.warehouse === warehouse.id);
-    return { warehouse, quantity: rows.reduce((sum, row) => sum + Number(row.quantity), 0), value: rows.reduce((sum, row) => sum + Number(row.inventory_value), 0), products: new Set(rows.map((row) => row.product)).size };
-  }).filter((row) => row.products > 0), [warehouses, balances]);
-  const reorderAlerts = warehouses.filter((warehouse) => warehouse.is_active).flatMap((warehouse) => products.filter((product) => product.product_type === "goods" && product.is_active).map((product) => {
-    const setting = warehouseSettings.find((item) => item.product === product.id && item.warehouse === warehouse.id && item.is_active);
+    const totals = inventoryIndexes.byWarehouse.get(warehouse.id);
+    return { warehouse, quantity: totals?.quantity ?? 0, value: totals?.value ?? 0, products: totals?.products.size ?? 0 };
+  }).filter((row) => row.products > 0), [warehouses, inventoryIndexes]);
+  const reorderAlerts = useMemo(() => warehouses.filter((warehouse) => warehouse.is_active).flatMap((warehouse) => products.filter((product) => product.product_type === "goods" && product.is_active).map((product) => {
+    const setting = warehouseSettingIndex.get(`${warehouse.id}:${product.id}`);
     const threshold = setting ? Number(setting.min_stock) : Number(product.min_stock);
-    const quantity = balances.filter((balance) => balance.product === product.id && balance.warehouse === warehouse.id).reduce((sum, balance) => sum + Number(balance.quantity), 0);
-    return { product, warehouse, quantity, threshold, value: balances.filter((balance) => balance.product === product.id && balance.warehouse === warehouse.id).reduce((sum, balance) => sum + Number(balance.inventory_value), 0), isCustom: Boolean(setting) };
-  })).filter((row) => row.threshold > 0 && row.quantity <= row.threshold);
+    const totals = inventoryIndexes.byWarehouseProduct.get(`${warehouse.id}:${product.id}`);
+    const quantity = totals?.quantity ?? 0;
+    return { product, warehouse, quantity, threshold, value: totals?.value ?? 0, isCustom: Boolean(setting) };
+  })).filter((row) => row.threshold > 0 && row.quantity <= row.threshold), [warehouses, products, warehouseSettingIndex, inventoryIndexes]);
   const expiryAlerts = balances.filter((row) => row.expiry_date && Number(row.quantity) > 0).map((row) => {
     const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
     return { ...row, days };
