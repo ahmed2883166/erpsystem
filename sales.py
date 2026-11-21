@@ -2767,7 +2767,7 @@ def edit_invoice_workflow(workflow_id):
                     request.form.getlist("product_id"), request.form.getlist("quantity"),
                     request.form.getlist("unit_price"), request.form.getlist("description"),
                     request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
-                    request.form.getlist("uom_id")):
+                    request.form.getlist("uom_id"), request.form.getlist("line_tax_category")):
                 if pid or desc.strip():
                     selected_price = price
                     if pid:
@@ -2784,6 +2784,7 @@ def edit_invoice_workflow(workflow_id):
                         "product_id": int(pid) if pid else None, "quantity": qty,
                         "unit_price": selected_price, "uom_id": uom_id, "description": desc,
                         "tax_rate": line_rate, "tax_treatment": treatment,
+                        "tax_category": tax_category,
                     })
             customer = execute_compat(c, """SELECT discount_type,discount_value FROM customers
                 WHERE id=? AND active=1""", (int(request.form["customer_id"]),)).fetchone()
@@ -2835,11 +2836,12 @@ def edit_invoice_workflow(workflow_id):
                 "items": [{
                     "product_id": p, "quantity": q, "unit_price": price, "description": desc,
                     "uom_id": uom, "tax_rate": rate, "tax_treatment": treatment,
-                } for p,q,price,desc,rate,treatment,uom in zip(
+                    "tax_category": category,
+                } for p,q,price,desc,rate,treatment,uom,category in zip(
                     request.form.getlist("product_id"), request.form.getlist("quantity"),
                     request.form.getlist("unit_price"), request.form.getlist("description"),
                     request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
-                    request.form.getlist("uom_id"))],
+                    request.form.getlist("uom_id"), request.form.getlist("line_tax_category"))],
                 "dimensions": {key: request.form.get(key) for key in
                     ("branch_id", "cost_center_id", "project_id", "salesperson_id")},
             }
@@ -2850,10 +2852,12 @@ def edit_invoice_workflow(workflow_id):
     settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(c,
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','default_vat_rate','tax_country')")}
     dimension_options = active_dimension_options(c)
+    sales_tax_categories = tax_category_options(settings.get("tax_country", "EG"), "sale")
     c.close()
     return render_template("sales_invoice_workflow_edit.html", workflow=workflow, payload=payload,
         customers=customers, products=products, product_uoms=product_uoms, warehouses=warehouses,
-        settings=settings, dimension_options=dimension_options, today=date.today().isoformat())
+        settings=settings, dimension_options=dimension_options, sales_tax_categories=sales_tax_categories,
+        today=date.today().isoformat())
 
 
 @sales_bp.route("/invoices/workflow/<int:workflow_id>/submit", methods=["POST"])
