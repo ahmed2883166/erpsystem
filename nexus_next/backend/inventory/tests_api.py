@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class InventoryApiTests(APITestCase):
@@ -264,6 +264,35 @@ class InventoryApiTests(APITestCase):
         response = self._movement("EXP-R2", "receipt", destination=warehouse)
         self.assertEqual(response.status_code, 400, response.data)
 
+
+    def test_warehouse_product_reorder_setting_is_scoped_and_persisted(self):
+        product = Product.objects.create(company=self.company, unit=self.unit, code="MIN-1", name_ar="حد مخزن")
+        warehouse = self._warehouse("MIN-WH")
+        created = self.client.post("/api/inventory/warehouse-product-settings/", {
+            "product": product.pk, "warehouse": warehouse.pk, "min_stock": "7.5000",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        setting = WarehouseProductSetting.objects.get(product=product, warehouse=warehouse)
+        self.assertEqual(setting.min_stock, 7.5)
+        listed = self.client.get("/api/inventory/warehouse-product-settings/")
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual(len(listed.data), 1)
+        updated = self.client.patch(f"/api/inventory/warehouse-product-settings/{setting.pk}/", {
+            "min_stock": "12.0000",
+        }, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        setting.refresh_from_db()
+        self.assertEqual(setting.min_stock, 12)
+
+    def test_warehouse_product_reorder_setting_rejects_cross_company_product(self):
+        foreign_unit = UnitOfMeasure.objects.create(company=self.other_company, code="PCS", name_ar="قطعة")
+        foreign_product = Product.objects.create(company=self.other_company, unit=foreign_unit, code="FOREIGN-MIN", name_ar="صنف شركة أخرى")
+        warehouse = self._warehouse("MIN-WH2")
+        response = self.client.post("/api/inventory/warehouse-product-settings/", {
+            "product": foreign_product.pk, "warehouse": warehouse.pk, "min_stock": "3",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(WarehouseProductSetting.objects.filter(product=foreign_product, warehouse=warehouse).exists())
 
     def test_multi_line_receipt_posts_all_products_and_balanced_total(self):
         first = Product.objects.create(company=self.company, unit=self.unit, code="ML-1", name_ar="صنف متعدد 1")
