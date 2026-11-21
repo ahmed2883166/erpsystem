@@ -9,6 +9,13 @@ export type Account = {
   parent_code: string | null; nature: string; is_group: boolean; allow_posting: boolean; is_active: boolean;
 };
 export type AccountTemplateInfo = { company: number; activity: Company["activity"]; activity_label: string; template_account_count: number; existing_account_count: number; has_accounts: boolean };
+export type AccountImportPreview = {
+  detail?: string;
+  rows: { excel_row:number; code:string; name_ar:string; parent_code:string|null; nature:string|null; is_group:boolean; status:string; errors:string[] }[];
+  errors: string[];
+  summary: { total:number; ready_to_create:number; already_exists:number; blocked:number };
+};
+export type AccountImportResult = { detail:string; created_accounts:string[]; skipped_existing:number; summary:AccountImportPreview["summary"] };
 export type AccountTemplateApplyResult = {
   detail: string; company: number; activity: string; created_accounts: string[]; reused_accounts: string[];
   role_assignments_created: string[]; role_conflicts: {role: string; existing_account_code: string; template_account_code: string}[];
@@ -224,6 +231,22 @@ export const api = {
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   accountTemplateInfo: (companyId: number) => request<AccountTemplateInfo>(`/api/accounting/account-templates/?company=${companyId}`),
   applyAccountTemplate: async (companyId: number) => { await request<{detail:string}>("/api/csrf/"); return request<AccountTemplateApplyResult>("/api/accounting/account-templates/", {method:"POST", body:JSON.stringify({company:companyId})}); },
+  importAccountWorkbook: async (companyId: number, file: File, action: "preview" | "import") => {
+    await request<{detail:string}>("/api/csrf/");
+    const form = new FormData();
+    form.append("company", String(companyId));
+    form.append("action", action);
+    form.append("file", file);
+    const response = await fetch("/api/accounting/account-import/", {
+      method: "POST", credentials: "same-origin", headers: { Accept: "application/json", "X-CSRFToken": csrfToken() }, body: form,
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      const message = typeof body.detail === "string" ? body.detail : (body.errors || []).join(" ");
+      throw Object.assign(new Error(message || `تعذر استيراد الملف (HTTP ${response.status}).`), { data: body });
+    }
+    return body as AccountImportPreview | AccountImportResult;
+  },
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
   journalDetail: (id: number) => request<Journal>(`/api/accounting/journal-entries/${id}/`),
   vatReturn: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => {
