@@ -40,7 +40,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "branch", "fiscal_year", "source_account", "source_name",
                   "destination_account", "destination_name", "counter_account", "counter_account_code",
                   "kind", "status", "document_number", "transaction_date", "amount", "description",
-                  "reference", "journal_entry", "journal_number", "created_at", "posted_at")
+                  "reference", "cash_flow_category", "journal_entry", "journal_number", "created_at", "posted_at")
         read_only_fields = ("status", "journal_entry", "created_at", "posted_at")
 
     def validate(self, attrs):
