@@ -144,7 +144,9 @@ def post_customer_receipt(receipt_id, user):
         raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
     receivable = _account(receipt.company, AccountRole.Role.ACCOUNTS_RECEIVABLE)
     cash_role = AccountRole.Role.CASH if receipt.method == CustomerReceipt.Method.CASH else AccountRole.Role.BANK
-    cash = _account(receipt.company, cash_role)
+    cash = receipt.payment_account or _account(receipt.company, cash_role)
+    if cash.company_id != receipt.company_id or cash.nature != "asset" or not cash.is_active or cash.is_group or not cash.allow_posting:
+        raise ValidationError("حساب التحصيل يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
     if receivable.pk == cash.pk:
         raise ValidationError("حساب العملاء وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
     branch, year = _branch_and_year(invoice.delivery, receipt.receipt_date)
