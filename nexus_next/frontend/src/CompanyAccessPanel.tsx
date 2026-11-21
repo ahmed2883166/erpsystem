@@ -10,6 +10,7 @@ const roleNames: Record<CompanyMembership["role"], string> = {
   admin: "مدير الشركة", accountant: "محاسب", viewer: "مشاهد",
 };
 
+// شاشة إدارة مستخدمي الشركة وتحديد الأدوار ونطاق الفروع المسموح بها.
 export default function CompanyAccessPanel({ companyId }: Props) {
   const [rows, setRows] = useState<CompanyMembership[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -29,7 +30,8 @@ export default function CompanyAccessPanel({ companyId }: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const refresh = async () => {
+  // تحميل عضويات الشركة والفروع وصلاحية إدارة المستخدمين.
+const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -47,7 +49,8 @@ export default function CompanyAccessPanel({ companyId }: Props) {
     void refresh();
   }, [companyId]);
 
-  const findUsers = async (event: FormEvent) => {
+  // البحث عن حسابات المستخدمين لإضافتها إلى عضوية الشركة.
+const findUsers = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId || search.trim().length < 2) return;
     setBusy(true); setError("");
@@ -56,7 +59,8 @@ export default function CompanyAccessPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const create = async (event: FormEvent) => {
+  // إنشاء عضوية مستخدم جديدة بالدور والفروع المحددة.
+const create = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId || !selectedUser) return;
     setBusy(true); setError(""); setNotice("");
@@ -72,11 +76,13 @@ export default function CompanyAccessPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const beginEdit = (row: CompanyMembership) => {
+  // تجهيز نموذج تعديل العضوية بالقيم الحالية للمستخدم المختار.
+const beginEdit = (row: CompanyMembership) => {
     setEditing(row.id); setEditRole(row.role); setEditActive(row.is_active);
     setEditAllBranches(row.all_branches); setEditBranches(row.branches);
   };
-  const saveEdit = async (row: CompanyMembership) => {
+  // حفظ تغييرات الدور ونطاق الفروع وحالة عضوية المستخدم.
+const saveEdit = async (row: CompanyMembership) => {
     setBusy(true); setError(""); setNotice("");
     try {
       await api.updateMembership(row.id, {
@@ -88,7 +94,8 @@ export default function CompanyAccessPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحديث الصلاحيات."); }
     finally { setBusy(false); }
   };
-  const toggle = (items: number[], id: number, setter: (value: number[]) => void) =>
+  // إضافة فرع إلى الاختيارات أو إزالته دون تكرار المعرفات.
+const toggle = (items: number[], id: number, setter: (value: number[]) => void) =>
     setter(items.includes(id) ? items.filter(x => x !== id) : [...items, id]);
 
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر الشركة لإدارة المستخدمين والصلاحيات.</div></section>;
