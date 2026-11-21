@@ -18,7 +18,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [search, setSearch] = useState("");
   const [receiptForm, setReceiptForm] = useState({ supplier: "", warehouse: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), supplier_delivery_ref: "", notes: "" });
   const [receiptLines, setReceiptLines] = useState<ReceiptDraftLine[]>([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
-  const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "14", notes: "" });
+  const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", notes: "" });
 
   const refresh = async () => {
     if (!companyId) return;
@@ -119,7 +119,7 @@ export default function PurchasingPanel({ companyId }: Props) {
       <label className="inventory-wide">إذن الاستلام المرحّل<select required value={invoiceForm.receipt} onChange={(e) => setInvoiceForm({ ...invoiceForm, receipt: e.target.value })}><option value="">اختر إذن الاستلام</option>{invoiceableReceipts.map((x) => <option key={x.id} value={x.id}>{x.receipt_number} - {x.supplier_name} - {x.receipt_date}</option>)}</select></label>
       <label>رقم فاتورة المورد<input required value={invoiceForm.invoice_number} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></label>
       <label>تاريخ الفاتورة<input required type="date" value={invoiceForm.invoice_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })} /></label>
-      <label>نسبة الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={invoiceForm.tax_rate} onChange={(e) => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })} /></label>
+      <label>نسبة الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={invoiceForm.tax_rate} onChange={(e) => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })} /><small>أدخل النسبة المعتمدة للمعاملة؛ تُحسب الضريبة على قيمة الأصناف غير شاملة الضريبة.</small></label>
       {invoiceForm.receipt && <div className="inventory-wide data-table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>صافي القيمة</th></tr></thead><tbody>{receipts.find((x) => x.id === Number(invoiceForm.receipt))?.line_items.map((line) => <tr key={line.id}><td>{line.product_code} - {line.product_name}</td><td>{line.quantity}</td><td>{money(line.unit_cost)}</td><td>{money(String(Number(line.quantity) * Number(line.unit_cost)))}</td></tr>)}</tbody></table><p>سيتم احتساب الضريبة على قيمة الأصناف، ويجب أن يطابق صافي الفاتورة قيمة الاستلام حتى لا تتغير قيمة المخزون.</p></div>}
       <label className="inventory-wide">ملاحظات<textarea value={invoiceForm.notes} onChange={(e) => setInvoiceForm({ ...invoiceForm, notes: e.target.value })} /></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ فاتورة المورد كمسودة"}</button></div>
