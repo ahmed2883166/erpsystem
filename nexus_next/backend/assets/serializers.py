@@ -37,6 +37,10 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         life = attrs.get("useful_life_months", getattr(self.instance, "useful_life_months", 0))
         if cost <= 0 or salvage < 0 or salvage > cost or life <= 0:
             raise serializers.ValidationError("راجع التكلفة والقيمة التخريدية والعمر الإنتاجي.")
+        acquisition_date = attrs.get("acquisition_date", getattr(self.instance, "acquisition_date", None))
+        depreciation_start = attrs.get("depreciation_start_date", getattr(self.instance, "depreciation_start_date", None))
+        if acquisition_date and depreciation_start and depreciation_start < acquisition_date:
+            raise serializers.ValidationError({"depreciation_start_date": "بداية الإهلاك لا تسبق تاريخ الاقتناء."})
         if self.instance and self.instance.acquisition_journal_id:
             raise serializers.ValidationError("لا يمكن تعديل أصل تم تسجيل قيد اقتنائه.")
         return attrs
