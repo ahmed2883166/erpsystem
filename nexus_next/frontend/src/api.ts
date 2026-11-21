@@ -154,10 +154,17 @@ export const accountRoleApi = {
 export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null }[]; created_at: string };
 export type SalesInvoice = { id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
+export type CustomerAging = {
+  company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
+  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
+  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
+    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; balance_due: string }[] }[];
+};
 export const salesApi = {
   deliveries: (companyId: number) => request<SalesDelivery[]>(`/api/sales-documents/deliveries/?company=${companyId}&ordering=-delivery_date`),
   invoices: (companyId: number) => request<SalesInvoice[]>(`/api/sales-documents/invoices/?company=${companyId}&ordering=-invoice_date`),
   receipts: (companyId: number) => request<CustomerReceipt[]>(`/api/sales-documents/receipts/?company=${companyId}&ordering=-receipt_date`),
+  customerAging: (companyId: number, asOf = "", customerId?: number, branchId?: number) => request<CustomerAging>(`/api/sales-documents/invoices/customer-aging/?company=${companyId}${asOf ? `&as_of=${asOf}` : ""}${customerId ? `&customer=${customerId}` : ""}${branchId ? `&branch=${branchId}` : ""}`),
   createDelivery: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SalesDelivery>("/api/sales-documents/deliveries/", { method: "POST", body: JSON.stringify(payload) }); },
   postDelivery: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SalesDelivery>(`/api/sales-documents/deliveries/${id}/post/`, { method: "POST" }); },
   createInvoice: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SalesInvoice>("/api/sales-documents/invoices/", { method: "POST", body: JSON.stringify(payload) }); },
