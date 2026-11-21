@@ -81,6 +81,15 @@ def validate_tax_category(country, document_kind, category_code, treatment):
     return item.code
 
 
+def validate_tax_document_reference(category_code, reference):
+    """Require a customs declaration/payment reference for import VAT claims."""
+    category_code = str(category_code or "").strip()
+    reference = str(reference or "").strip()[:200]
+    if category_code.endswith("_customs_vat") and not reference:
+        raise ValueError("رقم البيان الجمركي أو مرجع مستند سداد ضريبة الاستيراد مطلوب لهذا التصنيف.")
+    return reference
+
+
 def tax_category_label(country, document_kind, category_code):
     """Return an Arabic label for a stored category, or an empty string for legacy data."""
     country = str(country or "").strip().upper()
