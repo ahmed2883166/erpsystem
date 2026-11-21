@@ -25,6 +25,43 @@ async function call<T>(method = "GET", body?: unknown, endpoint = "/api/backup/c
   return data as T;
 }
 
+const resetLabels: Record<string,string> = {
+  "approvals.SalesInvoiceApproval":"موافقات فواتير المبيعات",
+  "approvals.FinancialApprovalRequest":"طلبات الموافقة المالية",
+  "treasury.BankStatementLine":"سطور كشوف البنوك",
+  "purchasing.SupplierPayment":"مدفوعات الموردين",
+  "sales.CustomerReceipt":"تحصيلات العملاء",
+  "purchasing.PurchaseInvoiceLine":"تفاصيل فواتير المشتريات",
+  "sales.SalesInvoiceLine":"تفاصيل فواتير المبيعات",
+  "purchasing.PurchaseOrderReceiptLine":"روابط استلام أوامر الشراء",
+  "inventory.StockMovementJournalLink":"روابط حركات المخزون بالقيود",
+  "inventory.StockCostLayer":"طبقات تكلفة المخزون",
+  "inventory.StockBalance":"أرصدة المخزون",
+  "assets.AssetDepreciation":"إهلاكات الأصول",
+  "hr.PayrollResultLine":"تفاصيل نتائج المرتبات",
+  "hr.PayrollResult":"نتائج المرتبات",
+  "hr.PayrollPosting":"ترحيلات المرتبات",
+  "hr.LoanInstallment":"أقساط سلف الموظفين",
+  "hr.AttendanceRecord":"سجلات الحضور والانصراف",
+  "hr.LeaveRequest":"طلبات الإجازات",
+  "hr.EmployeeSalaryHistory":"تاريخ تغييرات الرواتب",
+  "hr.EmployeeLoan":"سلف الموظفين",
+  "hr.PayrollCycle":"دورات المرتبات",
+  "purchasing.PurchaseInvoice":"فواتير المشتريات",
+  "sales.SalesInvoice":"فواتير المبيعات",
+  "purchasing.PurchaseReceipt":"استلامات المشتريات",
+  "sales.SalesDelivery":"تسليمات المبيعات",
+  "purchasing.PurchaseOrderLine":"تفاصيل أوامر الشراء",
+  "purchasing.PurchaseOrder":"أوامر الشراء",
+  "treasury.BankReconciliation":"التسويات البنكية",
+  "assets.FixedAsset":"سجل الأصول الثابتة",
+  "treasury.TreasuryTransaction":"حركات الخزينة والبنوك",
+  "inventory.StockMovementLine":"تفاصيل حركات المخزون",
+  "inventory.StockMovement":"حركات المخزون",
+  "accounting.JournalLine":"تفاصيل قيود اليومية",
+  "accounting.JournalEntry":"قيود اليومية",
+};
+
 export default function BackupPanel() {
   const [config, setConfig] = useState<BackupConfig | null>(null);
   const [path, setPath] = useState("");
@@ -118,7 +155,7 @@ export default function BackupPanel() {
         {resetPreview && <>
           <div className="review-meta"><div><span>السجلات المحددة للتصفير</span><strong>{resetPreview.total_records.toLocaleString("ar-EG")}</strong></div><div><span>آخر نسخة ناجحة</span><strong>{resetPreview.last_backup_at ? new Date(resetPreview.last_backup_at).toLocaleString("ar-EG") : "لا توجد"}</strong></div></div>
           <h4>ما سيتم الاحتفاظ به</h4><ul>{resetPreview.preserved.map(x=><li key={x}>{x}</li>)}</ul>
-          <h4>ما سيتم تصفيره</h4><div className="data-table-wrap"><table><thead><tr><th>نوع السجلات</th><th>العدد</th></tr></thead><tbody>{Object.entries(resetPreview.counts).map(([name,count])=><tr key={name}><td>{name}</td><td>{count.toLocaleString("ar-EG")}</td></tr>)}</tbody></table></div>
+          <h4>ما سيتم تصفيره</h4><div className="data-table-wrap"><table><thead><tr><th>نوع السجلات</th><th>العدد</th></tr></thead><tbody>{Object.entries(resetPreview.counts).map(([name,count])=><tr key={name}><td>{resetLabels[name] || name}</td><td>{count.toLocaleString("ar-EG")}</td></tr>)}</tbody></table></div>
           <form className="journal-form" onSubmit={executeReset}>
             <label>كلمة مرور مدير النظام<input type="password" autoComplete="current-password" required value={resetPassword} onChange={e=>setResetPassword(e.target.value)}/></label>
             <label>اكتب عبارة التأكيد حرفيًا<input required value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="تصفير الحركات"/></label>
