@@ -80,6 +80,9 @@ class SalesWorkflowTests(APITestCase):
         alternate_bank = ChartOfAccount.objects.create(
             company=self.company, code="1110", name_ar="البنك الفرعي", nature=ChartOfAccount.Nature.ASSET
         )
+        from treasury.models import TreasuryAccount
+        TreasuryAccount.objects.create(company=self.company, account=alternate_bank, kind=TreasuryAccount.Kind.BANK,
+            code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
         receipt_response = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
             "receipt_number": "RC-001", "receipt_date": "2026-03-11",
