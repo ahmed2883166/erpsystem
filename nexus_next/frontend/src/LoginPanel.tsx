@@ -30,7 +30,7 @@ export default function LoginPanel({ onLogin }: Props) {
     <main className="auth-screen" dir="rtl">
       <form className="auth-card" onSubmit={submit}>
         <div className="auth-brand-mark">N</div>
-        <p className="auth-eyebrow">NEXUS ERP</p>
+        <p className="auth-eyebrow">Admrail ERP v2</p>
         <h1>تسجيل الدخول</h1>
         <p className="auth-description">أدخل بيانات حسابك للوصول إلى نظام إدارة الشركة.</p>
         <label>
