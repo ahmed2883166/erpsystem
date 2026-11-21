@@ -63,6 +63,40 @@ def initialize_tax_schema(conn):
     execute_compat(conn, """CREATE INDEX IF NOT EXISTS idx_tax_document_audit_document
         ON tax_document_reference_audit(document_kind,document_id,created_at,id)""")
 
+    # Separate storage for special tax mechanisms. These rows are deliberately
+    # independent of standard VAT columns and do not rewrite historical invoices.
+    # The composite key makes retries idempotent without requiring engine-specific
+    # auto-increment syntax; document references remain polymorphic by design.
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS tax_document_mechanisms(
+        country_code TEXT NOT NULL,
+        document_kind TEXT NOT NULL,
+        document_id INTEGER NOT NULL,
+        mechanism_code TEXT NOT NULL,
+        tax_type TEXT,
+        taxable_base TEXT NOT NULL DEFAULT '0',
+        tax_rate TEXT,
+        quantity TEXT,
+        amount_per_unit TEXT,
+        deductible_percent TEXT,
+        output_tax TEXT NOT NULL DEFAULT '0',
+        recoverable_input_tax TEXT NOT NULL DEFAULT '0',
+        nonrecoverable_input_tax TEXT NOT NULL DEFAULT '0',
+        tax_amount TEXT NOT NULL DEFAULT '0',
+        tax_reference TEXT NOT NULL DEFAULT '',
+        journal_entry_id INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_by INTEGER,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT,
+        PRIMARY KEY(country_code,document_kind,document_id,mechanism_code),
+        CHECK(country_code IN ('EG','SA')),
+        CHECK(document_kind IN ('sale','purchase')),
+        CHECK(mechanism_code IN ('eg_table_tax_t2','eg_table_tax_t3','sa_reverse_charge')),
+        CHECK(status IN ('pending','posted','void'))
+    )""")
+    execute_compat(conn, """CREATE INDEX IF NOT EXISTS idx_tax_mechanisms_period_lookup
+        ON tax_document_mechanisms(country_code,document_kind,status,created_at)""")
+
 
 def _authorized(fn):
     @wraps(fn)
