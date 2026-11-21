@@ -212,6 +212,7 @@ class StockMovementLine(models.Model):
     expiry_date = models.DateField(null=True, blank=True)
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0.0001)])
     unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
+    cost_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     adjustment_direction = models.CharField(max_length=3, choices=AdjustmentDirection.choices, blank=True)
 
     class Meta:
