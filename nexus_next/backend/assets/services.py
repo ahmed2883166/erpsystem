@@ -28,7 +28,10 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     asset = FixedAsset.objects.select_for_update().get(pk=asset_id)
     if asset.acquisition_journal_id:
         raise ValidationError("تم تسجيل قيد اقتناء الأصل بالفعل.")
-    year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    try:
+        year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    except (FiscalYear.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
     if not (year.start_date <= asset.acquisition_date <= year.end_date):
         raise ValidationError("تاريخ الاقتناء خارج السنة المالية المفتوحة.")
     entry = _post_entry(asset, year, f"FA-ACQ-{asset.pk}", asset.acquisition_date,
@@ -54,7 +57,10 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         raise ValidationError("تاريخ الإهلاك يسبق بداية الإهلاك المحددة.")
     if AssetDepreciation.objects.filter(asset=asset, period_date=period_date).exists():
         raise ValidationError("تم تسجيل إهلاك هذا الأصل لهذه الفترة من قبل.")
-    year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    try:
+        year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    except (FiscalYear.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
     posted_total = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
