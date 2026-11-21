@@ -62,6 +62,8 @@ class InventoryApiTests(APITestCase):
         CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
         self.client.force_authenticate(viewer)
         response = self.client.post("/api/inventory/products/", {
-            "company": self.company.pk, "unit": self.unit.pk, "code": "P-005", "name_ar": "ممنوع"
+            "company": self.company.pk, "unit": self.unit.pk, "category": self.category.pk,
+            "code": "P-005", "name_ar": "ممنوع", "product_type": "goods",
+            "purchase_price": "0", "sale_price": "0", "min_stock": "0"
         }, format="json")
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 403, response.data)
