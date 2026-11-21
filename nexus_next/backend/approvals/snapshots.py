@@ -3,9 +3,13 @@ from decimal import Decimal
 
 def invoice_discount_snapshot(invoice):
     """Return a deterministic, JSON-safe snapshot of every invoiced line."""
-    rows = invoice.lines.select_related(
-        "delivery_line__product", "tax_code"
-    ).order_by("delivery_line_id", "pk")
+    prefetched = getattr(invoice, "_prefetched_objects_cache", {}).get("lines")
+    if prefetched is not None:
+        rows = sorted(prefetched, key=lambda line: (line.delivery_line_id, line.pk))
+    else:
+        rows = invoice.lines.select_related(
+            "delivery_line__product", "tax_code"
+        ).order_by("delivery_line_id", "pk")
     snapshot = []
     for line in rows:
         product = line.delivery_line.product
