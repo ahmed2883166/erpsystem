@@ -103,6 +103,13 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
+    def perform_update(self, serializer):
+        receipt = serializer.instance
+        self._check_write(receipt.company_id)
+        if receipt.stock_movement.status != StockMovement.Status.DRAFT:
+            raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل؛ أنشئ مستند تسوية مستقلًا بدل تغيير حركة المخزون.")
+        raise ValidationError("تعديل إذن الاستلام غير متاح حاليًا؛ أنشئ إذن استلام مسودة جديدًا.")
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         receipt = self.get_object()
