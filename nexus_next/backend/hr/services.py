@@ -14,6 +14,14 @@ def money(value):
     return Decimal(value).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def salary_for_date(employee, target_date):
+    history = employee.salary_history.filter(effective_date__lte=target_date).order_by("-effective_date", "-id").first()
+    if history:
+        return history.new_salary
+    first = employee.salary_history.order_by("effective_date", "id").first()
+    return first.previous_salary if first else employee.basic_salary
+
+
 def calculate_component(component, assigned_value, basic_salary, payable_days, overtime_hours):
     value = assigned_value if assigned_value is not None else component.default_value
     if component.method == component.Method.FIXED:
@@ -61,7 +69,8 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         daily_divisor = Decimal(str((cycle.rule_set.configuration if cycle.rule_set_id else {}).get("monthly_daily_divisor", 30)))
         if daily_divisor <= 0:
             raise ValidationError("مقسم الراتب اليومي يجب أن يكون أكبر من صفر.")
-        basic_amount = money(employee.basic_salary * payable_days / daily_divisor)
+        effective_basic_salary = salary_for_date(employee, cycle.period_end)
+        basic_amount = money(effective_basic_salary * payable_days / daily_divisor)
         earnings = basic_amount
         overtime_hours = attendance.aggregate(total=Sum("overtime_hours"))["total"] or Decimal("0")
         deductions = Decimal("0")
@@ -88,7 +97,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             calculation_snapshot={
                 "period_start": cycle.period_start.isoformat(), "period_end": cycle.period_end.isoformat(),
                 "country": cycle.company.country, "rule_set_id": cycle.rule_set_id,
-                "basic_salary": str(employee.basic_salary), "payable_days": str(payable_days),
+                "basic_salary": str(effective_basic_salary), "payable_days": str(payable_days),
             },
         )
         for code, name, kind, amount, display_only, snapshot in lines:
