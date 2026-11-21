@@ -17,14 +17,17 @@ class CustomerSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
 
     def validate_code(self, value):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         return value.strip().upper()
 
     def validate_name_ar(self, value):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         if not value.strip():
             raise serializers.ValidationError("اسم العميل مطلوب.")
         return value.strip()
 
     def validate_credit_limit(self, value):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         if value < 0:
             raise serializers.ValidationError("حد الائتمان لا يمكن أن يكون سالبًا.")
         return value
