@@ -15,6 +15,7 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "opening_journal_entry")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         account = attrs.get("account", getattr(self.instance, "account", None))
@@ -49,6 +50,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "journal_entry", "created_at", "posted_at")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         for key in ("source_account", "destination_account", "counter_account"):
             obj = attrs.get(key, getattr(self.instance, key, None))
@@ -83,6 +85,7 @@ class BankStatementLineSerializer(serializers.ModelSerializer):
         read_only_fields = ("matched_transaction", "matched_at")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         recon = attrs.get("reconciliation", getattr(self.instance, "reconciliation", None))
         line_date = attrs.get("transaction_date", getattr(self.instance, "transaction_date", None))
         amount = attrs.get("amount", getattr(self.instance, "amount", None))
@@ -106,6 +109,7 @@ class BankReconciliationSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "created_at", "reconciled_at", "line_count")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         bank = attrs.get("bank_account", getattr(self.instance, "bank_account", None))
         if bank and company and bank.company_id != company.id:
