@@ -1,7 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
-from django.db.models import Q, Sum
+from django.db.models import F, Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -13,7 +13,7 @@ from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from companies.models import Branch, CompanyMembership
 
-from .models import Product, ProductCategory, StockBalance, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
@@ -407,6 +407,145 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         return queryset.filter(
             Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches)
         )
+
+    @action(detail=False, methods=("get",), url_path="valuation-integrity")
+    def valuation_integrity(self, request):
+        company_id = request.query_params.get("company")
+        if not company_id:
+            return Response({"detail": "حدد الشركة لفحص سلامة تقييم المخزون."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company_id = int(company_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "معرّف الشركة غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        has_all_branch_access = request.user.is_superuser or CompanyMembership.objects.filter(
+            user=request.user, company_id=company_id, is_active=True, all_branches=True
+        ).exists()
+        if has_all_branch_access:
+            branch_ids = list(Branch.objects.filter(company_id=company_id).values_list("id", flat=True))
+        else:
+            branch_ids = list(accessible_branches(request.user, company_id).values_list("id", flat=True))
+
+        requested_branch = request.query_params.get("branch")
+        if requested_branch:
+            try:
+                requested_branch_id = int(requested_branch)
+            except (TypeError, ValueError):
+                return Response({"detail": "معرّف الفرع غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+            selected_branch = Branch.objects.filter(pk=requested_branch_id, company_id=company_id, is_active=True).first()
+            if selected_branch is None:
+                return Response({"detail": "الفرع المحدد غير موجود أو موقوف."}, status=status.HTTP_400_BAD_REQUEST)
+            if selected_branch.pk not in branch_ids:
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            branch_ids = [selected_branch.pk]
+        else:
+            selected_branch = None
+
+        default_branch = Branch.objects.filter(
+            company_id=company_id, is_active=True, is_head_office=True
+        ).first()
+        if default_branch is None:
+            default_branch = Branch.objects.filter(company_id=company_id, is_active=True).order_by("code").first()
+        include_unassigned = bool(default_branch and default_branch.pk in branch_ids)
+
+        warehouse_scope = Q(warehouse__branch_id__in=branch_ids)
+        if include_unassigned:
+            warehouse_scope |= Q(warehouse__branch__isnull=True)
+
+        balances = list(
+            StockBalance.objects.filter(
+                warehouse__company_id=company_id,
+                product__costing_method=Product.CostingMethod.FIFO,
+            ).filter(warehouse_scope).values(
+                "product_id", "warehouse_id", "location_id", "expiry_date", "quantity", "inventory_value",
+                "product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar",
+            )
+        )
+        layers = StockCostLayer.objects.filter(
+            product__company_id=company_id,
+            product__costing_method=Product.CostingMethod.FIFO,
+            warehouse__company_id=company_id,
+        ).filter(warehouse_scope).values(
+            "product_id", "warehouse_id", "location_id", "expiry_date",
+        ).annotate(
+            quantity=Sum("quantity_remaining"),
+            value=Sum(F("quantity_remaining") * F("unit_cost")),
+        )
+
+        def dimension_key(row):
+            return (row["product_id"], row["warehouse_id"], row["location_id"], row["expiry_date"])
+
+        balance_map = {dimension_key(row): row for row in balances}
+        layer_map = {dimension_key(row): row for row in layers}
+        mismatches = []
+        for key in set(balance_map) | set(layer_map):
+            balance = balance_map.get(key, {})
+            layer = layer_map.get(key, {})
+            balance_quantity = balance.get("quantity", Decimal("0")) or Decimal("0")
+            balance_value = balance.get("inventory_value", Decimal("0")) or Decimal("0")
+            layer_quantity = layer.get("quantity", Decimal("0")) or Decimal("0")
+            layer_value = layer.get("value", Decimal("0")) or Decimal("0")
+            quantity_difference = balance_quantity - layer_quantity
+            value_difference = balance_value - layer_value
+            if abs(quantity_difference) > Decimal("0.0001") or abs(value_difference) > Decimal("0.0001"):
+                mismatches.append({
+                    "product": key[0],
+                    "product_code": balance.get("product__code") or Product.objects.get(pk=key[0]).code,
+                    "product_name": balance.get("product__name_ar") or Product.objects.get(pk=key[0]).name_ar,
+                    "warehouse": key[1],
+                    "warehouse_code": balance.get("warehouse__code") or Warehouse.objects.get(pk=key[1]).code,
+                    "warehouse_name": balance.get("warehouse__name_ar") or Warehouse.objects.get(pk=key[1]).name_ar,
+                    "location": key[2],
+                    "expiry_date": key[3].isoformat() if key[3] else None,
+                    "balance_quantity": str(balance_quantity),
+                    "layer_quantity": str(layer_quantity),
+                    "quantity_difference": str(quantity_difference),
+                    "balance_value": str(balance_value),
+                    "layer_value": str(layer_value),
+                    "value_difference": str(value_difference),
+                })
+
+        movement_scope = (
+            Q(source_warehouse__branch_id__in=branch_ids)
+            | Q(destination_warehouse__branch_id__in=branch_ids)
+        )
+        if include_unassigned:
+            movement_scope |= (
+                Q(source_warehouse__isnull=True) | Q(source_warehouse__branch__isnull=True)
+                | Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch__isnull=True)
+            )
+        pending = StockMovement.objects.filter(
+            company_id=company_id, status=StockMovement.Status.DRAFT
+        ).filter(movement_scope).select_related(
+            "source_warehouse", "destination_warehouse", "created_by"
+        ).prefetch_related("lines").order_by("movement_date", "id")
+        pending_count = pending.count()
+        pending_rows = [{
+            "id": movement.pk,
+            "movement_number": movement.movement_number,
+            "movement_type": movement.movement_type,
+            "movement_date": movement.movement_date.isoformat(),
+            "created_at": movement.created_at.isoformat(),
+            "source_warehouse": movement.source_warehouse.name_ar if movement.source_warehouse_id else "",
+            "destination_warehouse": movement.destination_warehouse.name_ar if movement.destination_warehouse_id else "",
+            "lines_count": len(movement.lines.all()),
+            "created_by": movement.created_by.get_full_name() or movement.created_by.username if movement.created_by_id else "",
+        } for movement in pending[:100]]
+
+        return Response({
+            "company": company_id,
+            "branch": selected_branch.pk if selected_branch else None,
+            "branch_name": selected_branch.name_ar if selected_branch else "",
+            "fifo_mismatch_count": len(mismatches),
+            "fifo_mismatches": mismatches[:200],
+            "pending_movements_count": pending_count,
+            "pending_movements": pending_rows,
+            "pending_movements_truncated": pending_count > len(pending_rows),
+            "scope_branch_ids": branch_ids,
+            "scope_note": "يشمل الفروع المسموح بها فقط؛ المخازن غير المرتبطة بفرع تُدرج مع المركز الرئيسي.",
+        })
 
     @action(detail=False, methods=("get",), url_path="reconciliation")
     def reconciliation(self, request):
