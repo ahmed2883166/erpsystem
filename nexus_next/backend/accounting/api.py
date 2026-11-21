@@ -105,6 +105,10 @@ class JournalEntryViewSet(AccountingViewSet):
         if date_from and date_to and date_from > date_to:
             raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
         date_filter = Q(journal_lines__entry__status=JournalEntry.Status.POSTED)
+        if not request.user.is_superuser:
+            date_filter &= Q(
+                journal_lines__entry__branch__in=accessible_branches(request.user, int(company_id))
+            )
         if date_from:
             date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
         if date_to:
