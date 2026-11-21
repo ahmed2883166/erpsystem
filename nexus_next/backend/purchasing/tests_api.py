@@ -34,14 +34,14 @@ class PurchasingWorkflowTests(APITestCase):
             AccountRole.objects.create(company=self.company, role=role, account=account)
 
     def _create_and_post_receipt(self):
-        response = self.client.post("/api/purchases/receipts/", {
+        response = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
             "receipt_number": "GR-001", "receipt_date": "2026-03-10",
             "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "100"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         receipt_id = response.data["id"]
-        response = self.client.post(f"/api/purchases/receipts/{receipt_id}/post/", {}, format="json")
+        response = self.client.post(f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         return receipt_id
 
@@ -52,43 +52,45 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(balance.inventory_value, Decimal("200.0000"))
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY, status="posted").count(), 1)
 
-        response = self.client.post("/api/purchases/invoices/", {
+        response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-S-001", "invoice_date": "2026-03-10",
             "lines": [{"receipt_line": 1, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         invoice_id = response.data["id"]
-        response = self.client.post(f"/api/purchases/invoices/{invoice_id}/post/", {}, format="json")
+        response = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["net_total"], "200.0000")
         self.assertEqual(response.data["tax_total"], "28.0000")
         self.assertEqual(response.data["grand_total"], "228.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(), 1)
-        purchase_lines = list(JournalLine.objects.filter(entry__source_type=JournalEntry.Source.PURCHASES))\n        self.assertEqual(sum((line.debit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))\n        self.assertEqual(sum((line.credit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
+        purchase_lines = list(JournalLine.objects.filter(entry__source_type=JournalEntry.Source.PURCHASES))
+        self.assertEqual(sum((line.debit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
+        self.assertEqual(sum((line.credit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
 
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id = self._create_and_post_receipt()
-        response = self.client.post("/api/purchases/invoices/", {
+        response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-S-002", "invoice_date": "2026-03-10",
             "lines": [{"receipt_line": 1, "unit_price": "95", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
-        response = self.client.post(f"/api/purchases/invoices/{response.data['id']}/post/", {}, format="json")
+        response = self.client.post(f"/api/purchasing/invoices/{response.data['id']}/post/", {}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
         self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).exists())
 
     def test_invoice_cannot_be_created_before_receipt_is_posted(self):
-        response = self.client.post("/api/purchases/receipts/", {
+        response = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
             "receipt_number": "GR-002", "receipt_date": "2026-03-11",
             "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "100"}],
         }, format="json")
         self.assertEqual(response.status_code, 201)
-        response = self.client.post("/api/purchases/invoices/", {
+        response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": response.data["id"],
             "invoice_number": "INV-S-003", "invoice_date": "2026-03-11",
             "lines": [{"receipt_line": 2, "unit_price": "100", "tax_rate": "0"}],
@@ -96,7 +98,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_viewer_cannot_post_receipt(self):
-        receipt_response = self.client.post("/api/purchases/receipts/", {
+        receipt_response = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
             "receipt_number": "GR-003", "receipt_date": "2026-03-12",
             "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "100"}],
@@ -105,5 +107,5 @@ class PurchasingWorkflowTests(APITestCase):
         viewer = get_user_model().objects.create_user(username="buyer_viewer", password="test-password")
         CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
         self.client.force_authenticate(viewer)
-        response = self.client.post(f"/api/purchases/receipts/{receipt_response.data['id']}/post/", {}, format="json")
+        response = self.client.post(f"/api/purchasing/receipts/{receipt_response.data['id']}/post/", {}, format="json")
         self.assertEqual(response.status_code, 403)
