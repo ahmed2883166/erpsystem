@@ -41,14 +41,54 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             qs = qs.filter(Q(branch__isnull=True) | Q(branch__in=accessible_branches(self.request.user)))
         return qs
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        company_id = serializer.validated_data["company"].pk
+        company = serializer.validated_data["company"]
+        company_id = company.pk
         branch = serializer.validated_data.get("branch")
         self._scope(company_id)
         self._write(company_id)
         if branch and not can_access_branch(self.request.user, branch.pk, company_id):
             raise PermissionDenied("لا تملك صلاحية إدارة حساب خزينة في هذا الفرع.")
-        serializer.save()
+        account = serializer.save()
+        if account.opening_balance > 0:
+            from accounting.models import JournalEntry, JournalLine
+            from accounting.services import get_account_for_role, post_journal
+            from companies.models import Branch, FiscalYear
+
+            posting_branch = account.branch
+            if not posting_branch:
+                accessible_ids = accessible_branches(self.request.user, company_id).values_list("id", flat=True)
+                posting_branch = Branch.objects.filter(
+                    company=company, is_active=True, pk__in=accessible_ids
+                ).order_by("-is_head_office", "code").first()
+            if not posting_branch:
+                raise ValidationError("لا يوجد فرع نشط ومتاح لتسجيل القيد الافتتاحي للخزينة.")
+            year = FiscalYear.objects.filter(
+                company=company, status=FiscalYear.Status.OPEN
+            ).order_by("start_date").first()
+            if not year:
+                raise ValidationError("لا توجد سنة مالية مفتوحة لتسجيل الرصيد الافتتاحي.")
+            retained_earnings = get_account_for_role(company, "retained_earnings")
+            entry = JournalEntry.objects.create(
+                company=company, branch=posting_branch, fiscal_year=year,
+                entry_number=f"TR-OPEN-{account.pk}", entry_date=year.start_date,
+                description=f"الرصيد الافتتاحي للخزينة {account.name_ar}",
+                source_type=JournalEntry.Source.OPENING, created_by=self.request.user,
+            )
+            JournalLine.objects.bulk_create([
+                JournalLine(
+                    entry=entry, account=account.account, debit=account.opening_balance,
+                    credit=0, description=f"رصيد افتتاحي - {account.name_ar}",
+                ),
+                JournalLine(
+                    entry=entry, account=retained_earnings, debit=0,
+                    credit=account.opening_balance, description=f"مقابل الرصيد الافتتاحي - {account.name_ar}",
+                ),
+            ])
+            posted = post_journal(entry.pk)
+            account.opening_journal_entry = posted
+            account.save(update_fields=("opening_journal_entry",))
 
     def perform_update(self, serializer):
         instance = serializer.instance
