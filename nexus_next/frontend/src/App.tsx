@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance } from "./api";
+import { api, salesApi, purchasingApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging } from "./api";
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
@@ -40,6 +40,10 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
+  const [customerAging, setCustomerAging] = useState<CustomerAging | null>(null);
+  const [supplierAging, setSupplierAging] = useState<SupplierAging | null>(null);
+  const [agingLoading, setAgingLoading] = useState(false);
+  const [agingError, setAgingError] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -83,6 +87,21 @@ export default function App() {
       setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active && row.company === companyId)?.id || ""), fiscal_year: String(yearRows.find((row) => row.company === companyId && row.status === "open")?.id || "") }));
     }).catch((reason: Error) => setJournalError(reason.message));
   }, [companyId]);
+
+  useEffect(() => {
+    if (active !== "overview" || !companyId) return;
+    let cancelled = false;
+    setAgingLoading(true); setAgingError("");
+    Promise.all([
+      salesApi.customerAging(companyId),
+      purchasingApi.supplierAging(companyId),
+    ]).then(([customers, suppliers]) => {
+      if (!cancelled) { setCustomerAging(customers); setSupplierAging(suppliers); }
+    }).catch((reason: Error) => {
+      if (!cancelled) setAgingError(reason.message || "تعذر تحميل أرصدة العملاء والموردين.");
+    }).finally(() => { if (!cancelled) setAgingLoading(false); });
+    return () => { cancelled = true; };
+  }, [active, companyId]);
 
   const debitTotal = journalLines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
   const creditTotal = journalLines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
@@ -175,6 +194,22 @@ export default function App() {
                 { label: "القيود المسودة", value: journals.filter((item) => item.status === "draft").length.toLocaleString("ar-EG"), note: "تحتاج إلى مراجعة وترحيل", icon: "◷", tone: "purple" },
               ].map((metric) => <article className="metric-card" key={metric.label}><div className="metric-top"><span>{metric.label}</span><i className={`metric-icon ${metric.tone}`}>{metric.icon}</i></div>
                 <strong className="metric-value">{loading ? "…" : metric.value}</strong><small>{metric.note}</small></article>)}
+            </div>
+            <div className="section-heading module-heading"><div><h2>موقف الذمم المدينة والدائنة</h2><p>أرصدة الفواتير المرحلة حتى تاريخ اليوم، مع تفاصيل أعمار الاستحقاق</p></div><span className="module-count">{agingLoading ? "جارٍ التحديث…" : customerAging && supplierAging ? "محدث" : "—"}</span></div>
+            {agingError && <div className="error-banner">{agingError}</div>}
+            <div className="metrics-grid receivables-payables-grid">
+              <button type="button" className="metric-card aging-metric-card" onClick={() => setActive("sales-workflow")}>
+                <div className="metric-top"><span>مديونية العملاء</span><i className="metric-icon violet">↗</i></div>
+                <strong className="metric-value">{agingLoading ? "…" : Number(customerAging?.totals.total_due || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong>
+                <small>اضغط لفتح تقرير أعمار مديونية العملاء</small>
+                <div className="aging-buckets"><span>غير مستحق {Number(customerAging?.totals.not_due || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })}</span><span>متأخر {Number((Number(customerAging?.totals.total_due || 0) - Number(customerAging?.totals.not_due || 0))).toLocaleString("ar-EG", { maximumFractionDigits: 0 })}</span></div>
+              </button>
+              <button type="button" className="metric-card aging-metric-card" onClick={() => setActive("purchasing")}>
+                <div className="metric-top"><span>مستحقات الموردين</span><i className="metric-icon orange">↙</i></div>
+                <strong className="metric-value">{agingLoading ? "…" : Number(supplierAging?.totals.total_due || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong>
+                <small>اضغط لفتح تقرير أعمار مديونية الموردين</small>
+                <div className="aging-buckets"><span>غير مستحق {Number(supplierAging?.totals.not_due || 0).toLocaleString("ar-EG", { maximumFractionDigits: 0 })}</span><span>متأخر {Number((Number(supplierAging?.totals.total_due || 0) - Number(supplierAging?.totals.not_due || 0))).toLocaleString("ar-EG", { maximumFractionDigits: 0 })}</span></div>
+              </button>
             </div>
             <div className="section-heading module-heading"><div><h2>وحدات النظام</h2><p>البنية الأساسية للوحدات الرئيسية</p></div><span className="module-count">6 وحدات أساسية</span></div>
             <div className="modules-grid">{modules.map((module) => <button className="module-card" key={module.title} onClick={() => setActive(module.section)}>
