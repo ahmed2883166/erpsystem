@@ -164,7 +164,7 @@ export default function App() {
               {!loading && !filteredAccounts.length && <div className="table-empty">لا توجد حسابات مطابقة للبحث.</div>}</div></section>}
 
           {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
-            <div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
+            {journalError && <div className="error-banner">{journalError}</div>}<div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead>
               <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td></tr>)}</tbody></table>
               {!loading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div></section>}
