@@ -81,7 +81,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
 @transaction.atomic
 def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None):
     from datetime import timedelta
-    from accounting.models import ChartOfAccount
+    from treasury.models import TreasuryAccount, TreasuryTransaction
 
     if isinstance(disposal_date, str):
         disposal_date = dateparse.parse_date(disposal_date)
@@ -113,11 +113,14 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         raise ValidationError("تاريخ الاستبعاد خارج السنة المالية المفتوحة.")
 
     try:
-        cash_account = ChartOfAccount.objects.get(pk=cash_account_id, company=asset.company)
-    except (ChartOfAccount.DoesNotExist, TypeError, ValueError):
-        raise ValidationError("حساب البنك أو الخزينة غير موجود في الشركة.")
+        treasury_account = TreasuryAccount.objects.select_related("account").get(pk=cash_account_id, company=asset.company, is_active=True)
+    except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("اختر حساب بنك أو خزينة نشطًا من دليل الخزينة.")
+    cash_account = treasury_account.account
     if not cash_account.is_active or cash_account.is_group or not cash_account.allow_posting or cash_account.nature != "asset":
-        raise ValidationError("اختر حساب بنك أو خزينة نشطًا وتفصيليًا من طبيعة الأصول.")
+        raise ValidationError("الحساب المحاسبي المرتبط بالخزينة غير صالح.")
+    if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
+        raise ValidationError("الخزينة المختارة لا تتبع فرع الأصل.")
 
     last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
     previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1)
@@ -166,12 +169,23 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         asset, year, f"FA-DISP-{asset.pk}", disposal_date,
         f"بيع / استبعاد الأصل: {asset.name_ar}", lines, user,
     )
+    treasury_doc = None
+    if proceeds > 0:
+        treasury_doc = TreasuryTransaction.objects.create(
+            company=asset.company, branch=asset.branch, fiscal_year=year, source_account=treasury_account,
+            counter_account=gain_loss_account, kind=TreasuryTransaction.Kind.RECEIPT,
+            status=TreasuryTransaction.Status.POSTED, document_number=f"FA-DISP-{asset.pk}",
+            transaction_date=disposal_date, amount=proceeds,
+            description=f"متحصلات بيع / استبعاد الأصل: {asset.name_ar}",
+            journal_entry=entry, created_by=user, posted_at=timezone.now(),
+        )
     asset.status = FixedAsset.Status.DISPOSED
     asset.disposed_at = disposal_date
     asset.disposal_proceeds = proceeds
     asset.disposal_journal = entry
-    asset.save(update_fields=("status", "disposed_at", "disposal_proceeds", "disposal_journal"))
+    asset.disposal_treasury_transaction = treasury_doc
+    asset.save(update_fields=("status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction"))
     return {
-        "asset_id": asset.pk, "disposal_journal": entry.pk, "accumulated_depreciation": accumulated,
+        "asset_id": asset.pk, "disposal_journal": entry.pk, "treasury_transaction": treasury_doc.pk if treasury_doc else None, "accumulated_depreciation": accumulated,
         "net_book_value": net_book_value, "proceeds": proceeds, "gain": gain, "loss": loss,
     }
