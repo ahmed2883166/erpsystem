@@ -1,7 +1,8 @@
 from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.utils import timezone
+from django.utils import timezone, dateparse
+from django.db.models import Sum
 
 from accounting.models import JournalEntry, JournalLine
 from accounting.services import post_journal
@@ -42,6 +43,10 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
 
 @transaction.atomic
 def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
+    if isinstance(period_date, str):
+        period_date = dateparse.parse_date(period_date)
+    if not period_date:
+        raise ValidationError("أدخل تاريخ فترة إهلاك صحيحًا.")
     asset = FixedAsset.objects.select_for_update().get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("الأصل غير نشط أو لم يتم تسجيل اقتنائه.")
@@ -52,7 +57,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
     year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
-    posted_total = asset.depreciations.aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("amount"))["total"] or Decimal("0")
+    posted_total = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
     remaining = asset.depreciable_amount - posted_total
     if remaining <= 0:
         raise ValidationError("تم استهلاك كامل القيمة القابلة للإهلاك.")
