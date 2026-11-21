@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -130,7 +131,7 @@ def post_supplier_payment(payment_id, user):
 
     paid_before = SupplierPayment.objects.filter(
         invoice=invoice, status=SupplierPayment.Status.POSTED
-    ).exclude(pk=payment.pk).aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("amount"))["total"] or Decimal("0")
+    ).exclude(pk=payment.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
     if paid_before + payment.amount > invoice.grand_total:
         remaining = max(Decimal("0"), invoice.grand_total - paid_before)
         raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
