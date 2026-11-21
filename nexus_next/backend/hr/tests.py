@@ -8,8 +8,8 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency
 
-from hr.models import Employee, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
-from hr.services import calculate_component, money
+from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
+from hr.services import calculate_component, money, salary_for_date
 
 
 class PayrollCalculationTests(SimpleTestCase):
@@ -171,3 +171,59 @@ class EmployeePayrollReportApiTests(TestCase):
             "&date_from=2026-01-01&date_to=2026-01-31"
         )
         self.assertEqual(response.status_code, 403)
+
+    def test_salary_history_records_previous_salary_and_updates_current_salary(self):
+        response = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk,
+            "effective_date": "2026-02-01",
+            "new_salary": "11000",
+            "change_type": "annual_raise",
+            "reason": "زيادة سنوية",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.employee.refresh_from_db()
+        self.assertEqual(response.data["previous_salary"], Decimal("10000"))
+        self.assertEqual(self.employee.basic_salary, Decimal("11000"))
+
+    def test_salary_history_rejects_negative_salary_and_duplicate_effective_date(self):
+        negative = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2026-02-01",
+            "new_salary": "-1", "change_type": "adjustment",
+        }, format="json")
+        self.assertEqual(negative.status_code, 400)
+        first = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2026-03-01",
+            "new_salary": "10500", "change_type": "annual_raise",
+        }, format="json")
+        duplicate = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2026-03-01",
+            "new_salary": "10800", "change_type": "adjustment",
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(duplicate.status_code, 400)
+
+    def test_future_salary_change_does_not_change_current_employee_salary(self):
+        response = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2099-01-01",
+            "new_salary": "12000", "change_type": "annual_raise",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.basic_salary, Decimal("10000"))
+        self.assertEqual(salary_for_date(self.employee, date(2098, 12, 31)), Decimal("10000"))
+        self.assertEqual(salary_for_date(self.employee, date(2099, 1, 1)), Decimal("12000"))
+
+    def test_backdated_salary_change_preserves_latest_salary_as_of_today(self):
+        future = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2099-01-01",
+            "new_salary": "13000", "change_type": "annual_raise",
+        }, format="json")
+        past = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2026-02-01",
+            "new_salary": "11000", "change_type": "annual_raise",
+        }, format="json")
+        self.assertEqual(future.status_code, 201, future.data)
+        self.assertEqual(past.status_code, 201, past.data)
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.basic_salary, Decimal("11000"))
+
