@@ -1,3 +1,7 @@
+/*
+ * دورة المشتريات: أوامر الشراء والاستلام وفواتير الموردين والمدفوعات وكشوف الموردين.
+ * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode } from "./api";
 
