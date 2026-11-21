@@ -609,7 +609,7 @@ export default function App() {
         <div className="page-content">
           <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
-            {active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
+            {companyId !== null && active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
           {active === "overview" && <>
