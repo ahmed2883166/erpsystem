@@ -298,3 +298,51 @@ class IndirectCashFlowApiTests(TestCase):
         self.assertEqual(response.data["operating_cash_flow"], Decimal("600.0000"))
         self.assertEqual(response.data["ledger_cash_change"], Decimal("600.0000"))
         self.assertEqual(response.data["reconciliation_difference"], Decimal("0.0000"))
+
+
+class FinancialStatementsApiTests(TestCase):
+    def test_balance_sheet_includes_unclosed_profit_and_income_statement_excludes_opening(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(code="FS", name_ar="شركة القوائم", country="EG",
+            activity="commercial", base_currency=currency)
+        branch = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        year = FiscalYear.objects.create(company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
+        capital = ChartOfAccount.objects.create(company=company, code="3000", name_ar="رأس المال", nature="equity")
+        revenue = ChartOfAccount.objects.create(company=company, code="4000", name_ar="الإيرادات", nature="revenue")
+        expense = ChartOfAccount.objects.create(company=company, code="5000", name_ar="المصروفات", nature="expense")
+        opening = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="OPEN-FS", entry_date=date(2026, 1, 1), description="افتتاحي",
+            source_type=JournalEntry.Source.OPENING)
+        JournalLine.objects.create(entry=opening, account=cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("100"))
+        post_journal(opening.pk)
+        operations = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="OPS-FS", entry_date=date(2026, 1, 2), description="تشغيل")
+        JournalLine.objects.create(entry=operations, account=cash, debit=Decimal("200"))
+        JournalLine.objects.create(entry=operations, account=revenue, credit=Decimal("200"))
+        JournalLine.objects.create(entry=operations, account=expense, debit=Decimal("50"))
+        JournalLine.objects.create(entry=operations, account=cash, credit=Decimal("50"))
+        post_journal(operations.pk)
+
+        user = User.objects.create_user(username="financial_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+        balance_response = client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={company.pk}&as_of=2026-01-31"
+        )
+        income_response = client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(balance_response.status_code, 200)
+        self.assertEqual(income_response.status_code, 200)
+        self.assertEqual(balance_response.data["total_assets"], Decimal("250.0000"))
+        self.assertEqual(balance_response.data["total_equity"], Decimal("250.0000"))
+        self.assertEqual(balance_response.data["difference"], Decimal("0.0000"))
+        self.assertEqual(income_response.data["revenue_total"], Decimal("200.0000"))
+        self.assertEqual(income_response.data["expenses_total"], Decimal("50.0000"))
+        self.assertEqual(income_response.data["net_profit"], Decimal("150.0000"))
