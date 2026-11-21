@@ -175,3 +175,18 @@ class StockMovementSerializer(serializers.ModelSerializer):
             StockMovementLine(movement=movement, **line) for line in lines
         ])
         return movement
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        if instance.status != StockMovement.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل حركة مرحلة.")
+        lines = validated_data.pop("lines", None)
+        for key, value in validated_data.items():
+            setattr(instance, key, value)
+        instance.save()
+        if lines is not None:
+            instance.lines.all().delete()
+            StockMovementLine.objects.bulk_create([
+                StockMovementLine(movement=instance, **line) for line in lines
+            ])
+        return instance
