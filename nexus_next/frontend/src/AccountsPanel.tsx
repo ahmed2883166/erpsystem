@@ -166,7 +166,7 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
         <span className={`account-tree-kind ${item.is_group ? "group-kind" : "detail-kind"}`}>{item.is_group ? "▦" : "◦"}</span>
         <span className="account-tree-code" dir="ltr">{item.code}</span>
         <span className="account-tree-name">{item.name_ar}</span>
-        {mappedRoles.map(role => <span className="account-role-chip" key={role.id}>{roleNames[role.role] || role.role}</span>)}
+        <span className="account-role-chips">{mappedRoles.map(role => <span className="account-role-chip" key={role.id}>{roleNames[role.role] || role.role}</span>)}</span>
         <span className={`account-tree-type ${item.is_group ? "group-type" : "detail-type"}`}>{item.is_group ? "مجموعة" : "تفصيلي"}</span>
         <span className={`account-tree-status ${item.is_active ? "active" : "inactive"}`}>{item.is_active ? "نشط" : "موقوف"}</span>
       </div>
