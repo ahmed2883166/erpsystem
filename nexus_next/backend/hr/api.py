@@ -198,13 +198,17 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
         amounts = []
         normalized = []
         from django.utils.dateparse import parse_date
+        previous_due_date = None
         for row in schedule:
             due_date = parse_date(str(row.get("due_date", "")))
             amount = Decimal(str(row.get("amount", "0")))
             if not due_date or amount <= 0:
                 raise ValidationError({"installments": "كل قسط يحتاج تاريخ استحقاق وقيمة موجبة."})
+            if due_date < serializer.validated_data["issue_date"] or (previous_due_date and due_date <= previous_due_date):
+                raise ValidationError({"installments": "تواريخ الأقساط يجب أن تكون بعد تاريخ السلفة ومرتبة تصاعديًا."})
             amounts.append(amount)
             normalized.append((due_date, amount))
+            previous_due_date = due_date
         principal = serializer.validated_data["principal"]
         if abs(sum(amounts, Decimal("0")) - principal) > Decimal("0.0001"):
             raise ValidationError({"installments": "مجموع الأقساط يجب أن يساوي أصل السلفة."})
