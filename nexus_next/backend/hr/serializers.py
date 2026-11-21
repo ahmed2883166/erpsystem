@@ -167,6 +167,60 @@ class PayrollRuleSetSerializer(serializers.ModelSerializer):
         country = attrs.get("country", getattr(self.instance, "country", None))
         if company and country and company.country != country:
             raise serializers.ValidationError({"country": "بلد مجموعة القواعد يجب أن يطابق بلد الشركة."})
+
+        configuration = attrs.get("configuration", getattr(self.instance, "configuration", {}))
+        if not isinstance(configuration, dict):
+            raise serializers.ValidationError({"configuration": "إعدادات المرتبات يجب أن تكون كائن إعدادات صحيحًا."})
+
+        def numeric(value, field, *, minimum=None, maximum=None):
+            try:
+                number = Decimal(str(value))
+            except (InvalidOperation, TypeError, ValueError):
+                raise serializers.ValidationError({"configuration": f"القيمة {field} يجب أن تكون رقمًا صحيحًا."})
+            if not number.is_finite() or (minimum is not None and number < minimum) or (maximum is not None and number > maximum):
+                raise serializers.ValidationError({"configuration": f"القيمة {field} خارج النطاق المسموح."})
+            return number
+
+        divisor = configuration.get("monthly_daily_divisor")
+        if divisor is not None:
+            numeric(divisor, "monthly_daily_divisor", minimum=Decimal("0.0001"))
+
+        insurance = configuration.get("insurance", {})
+        if insurance is not None:
+            if not isinstance(insurance, dict):
+                raise serializers.ValidationError({"configuration": "قسم insurance يجب أن يكون كائنًا."})
+            min_base = numeric(insurance["min_base"], "insurance.min_base", minimum=Decimal("0")) if "min_base" in insurance else None
+            max_base = numeric(insurance["max_base"], "insurance.max_base", minimum=Decimal("0")) if "max_base" in insurance else None
+            if min_base is not None and max_base is not None and min_base > max_base:
+                raise serializers.ValidationError({"configuration": "حد التأمين الأدنى لا يمكن أن يتجاوز الحد الأعلى."})
+            for key in ("employee_rate", "employer_rate"):
+                if key in insurance:
+                    numeric(insurance[key], f"insurance.{key}", minimum=Decimal("0"), maximum=Decimal("100"))
+
+        tax = configuration.get("tax", {})
+        if tax is not None:
+            if not isinstance(tax, dict):
+                raise serializers.ValidationError({"configuration": "قسم tax يجب أن يكون كائنًا."})
+            if "annual_personal_exemption" in tax:
+                numeric(tax["annual_personal_exemption"], "tax.annual_personal_exemption", minimum=Decimal("0"))
+            if "annual_brackets" in tax:
+                brackets = tax["annual_brackets"]
+                if not isinstance(brackets, list) or not brackets:
+                    raise serializers.ValidationError({"configuration": "شرائح الضريبة يجب أن تكون قائمة غير فارغة."})
+                previous_limit = Decimal("0")
+                for index, bracket in enumerate(brackets):
+                    if not isinstance(bracket, dict) or "rate" not in bracket or "up_to" not in bracket:
+                        raise serializers.ValidationError({"configuration": f"شريحة الضريبة رقم {index + 1} غير مكتملة."})
+                    numeric(bracket["rate"], f"tax.annual_brackets[{index}].rate", minimum=Decimal("0"), maximum=Decimal("100"))
+                    upper = bracket["up_to"]
+                    if upper is None:
+                        if index != len(brackets) - 1:
+                            raise serializers.ValidationError({"configuration": "الشريحة المفتوحة يجب أن تكون آخر شريحة."})
+                    else:
+                        limit = numeric(upper, f"tax.annual_brackets[{index}].up_to", minimum=Decimal("0.0001"))
+                        if limit <= previous_limit:
+                            raise serializers.ValidationError({"configuration": "حدود شرائح الضريبة يجب أن تكون تصاعدية."})
+                        previous_limit = limit
         return attrs
 
 
