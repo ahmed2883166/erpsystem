@@ -75,3 +75,61 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 400)
         self.assertIn("الرصيد المتاح غير كافٍ", str(posted.data))
         self.assertEqual(JournalEntry.objects.count(), 0)
+
+
+    def test_bank_reconciliation_matches_statement_and_posts_no_extra_journal(self):
+        payload = {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.bank.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": "BANK-REC-001", "transaction_date": "2026-03-10",
+            "amount": "250.0000", "description": "تحصيل بنكي",
+        }
+        created = self.client.post("/api/treasury/transactions/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "ST-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "250.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        line = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/add_line/", {
+            "line_number": 1, "transaction_date": "2026-03-10", "description": "تحصيل",
+            "reference": "REF-1", "amount": "250.0000",
+        }, format="json")
+        self.assertEqual(line.status_code, 201, line.data)
+        matched = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/match/", {
+            "line_id": line.data["id"], "transaction_id": created.data["id"],
+        }, format="json")
+        self.assertEqual(matched.status_code, 200, matched.data)
+        summary = self.client.get(f"/api/treasury/reconciliations/{recon.data['id']}/summary/")
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["unexplained_difference"], "0.0000")
+        completed = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/reconcile/", {}, format="json")
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertEqual(completed.data["status"], "reconciled")
+        self.assertEqual(JournalEntry.objects.count(), 1)
+
+    def test_bank_reconciliation_rejects_wrong_amount_and_unmatched_lines(self):
+        payload = {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.bank.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": "BANK-REC-002", "transaction_date": "2026-03-10",
+            "amount": "100.0000", "description": "تحصيل",
+        }
+        created = self.client.post("/api/treasury/transactions/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.client.post(f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json")
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "ST-002",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "110.0000",
+        }, format="json")
+        line = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/add_line/", {
+            "line_number": 1, "transaction_date": "2026-03-10", "amount": "110.0000",
+        }, format="json")
+        mismatch = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/match/", {
+            "line_id": line.data["id"], "transaction_id": created.data["id"],
+        }, format="json")
+        self.assertEqual(mismatch.status_code, 400)
+        finalize = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/reconcile/", {}, format="json")
+        self.assertEqual(finalize.status_code, 400)
