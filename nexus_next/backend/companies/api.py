@@ -12,6 +12,7 @@ from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanyS
 
 class ReadOnlyOrAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
+        """تنفيذ وظيفة has_permission ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         if request.method in permissions.SAFE_METHODS:
             return bool(request.user and request.user.is_authenticated)
         return bool(request.user and request.user.is_staff)
@@ -19,6 +20,7 @@ class ReadOnlyOrAdmin(permissions.BasePermission):
 
 class CompanyAdminOrReadOnly(permissions.BasePermission):
     def has_permission(self, request, view):
+        """تنفيذ وظيفة has_permission ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         return bool(request.user and request.user.is_authenticated)
 
 
@@ -33,9 +35,11 @@ class CompanyViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         return accessible_companies(self.request.user).select_related("base_currency")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         if not self.request.user.is_staff:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("إنشاء شركة جديدة يتطلب صلاحية مسؤول النظام.")
@@ -46,12 +50,14 @@ class CompanyViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         if not has_company_role(self.request.user, self.get_object().pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("إدارة بيانات الشركة متاحة لمدير الشركة فقط.")
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         from rest_framework.exceptions import PermissionDenied, ValidationError
         if not has_company_role(self.request.user, instance.pk, ("admin",)):
             raise PermissionDenied("حذف الشركة متاح لمدير الشركة فقط.")
@@ -67,6 +73,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
     http_method_names = ("get", "post", "patch", "head", "options")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = CompanyMembership.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related("company", "user").prefetch_related("branches")
@@ -83,16 +90,19 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         return qs.filter(company_id=company_id) if company_id else qs
 
     def _require_admin(self, company_id):
+        """تنفيذ وظيفة _require_admin ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         from rest_framework.exceptions import PermissionDenied
         if not has_company_role(self.request.user, company_id, ("admin",)):
             raise PermissionDenied("إدارة المستخدمين والصلاحيات متاحة لمدير الشركة فقط.")
 
     def get_object(self):
+        """تنفيذ وظيفة get_object ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         instance = super().get_object()
         self._require_admin(instance.company_id)
         return instance
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         from rest_framework.exceptions import ValidationError
         try:
             company_id = int(request.data.get("company", ""))
@@ -102,6 +112,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def _protect_last_admin(self, membership, new_role, new_active):
+        """تنفيذ وظيفة _protect_last_admin ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         from rest_framework.exceptions import ValidationError
         remains_admin = (
             membership.is_active and membership.role == CompanyMembership.Role.ADMIN
@@ -117,6 +128,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="current")
     def current(self, request):
+        """إرجاع سياق الشركة والفرع الحاليين المسموح بهما للمستخدم."""
         from rest_framework.exceptions import NotFound, ValidationError
         try:
             company_id = int(request.query_params.get("company", ""))
@@ -133,6 +145,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="users")
     def users(self, request):
+        """عرض المستخدمين المرتبطين بالشركة ضمن حدود صلاحيات الإدارة."""
         from rest_framework.exceptions import ValidationError
         try:
             company_id = int(request.query_params.get("company", ""))
@@ -152,12 +165,14 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         ])
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         company = serializer.validated_data["company"]
         self._require_admin(company.pk)
         serializer.save()
 
     @transaction.atomic
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         instance = serializer.instance
         Company.objects.select_for_update().get(pk=instance.company_id)
         locked = CompanyMembership.objects.select_for_update().get(pk=instance.pk)
@@ -169,6 +184,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         from rest_framework.exceptions import PermissionDenied
         raise PermissionDenied("لا تحذف عضويات المستخدمين؛ عطّل العضوية للاحتفاظ بسجل الصلاحيات.")
 
@@ -178,9 +194,11 @@ class BranchViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         return accessible_branches(self.request.user).select_related("company")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         company = serializer.validated_data["company"]
         if not has_company_role(self.request.user, company.pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
@@ -188,6 +206,7 @@ class BranchViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         from rest_framework.exceptions import PermissionDenied
         current_company_id = serializer.instance.company_id
         target_company = serializer.validated_data.get("company", serializer.instance.company)
@@ -198,6 +217,7 @@ class BranchViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         from rest_framework.exceptions import PermissionDenied, ValidationError
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف الفروع متاح لمدير الشركة فقط.")
@@ -211,11 +231,13 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         return FiscalYear.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related("company")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         company = serializer.validated_data["company"]
         if not has_company_role(self.request.user, company.pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
@@ -223,6 +245,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         from rest_framework.exceptions import PermissionDenied
         current_company_id = serializer.instance.company_id
         target_company = serializer.validated_data.get("company", serializer.instance.company)
@@ -233,6 +256,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         from rest_framework.exceptions import PermissionDenied
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف السنوات المالية متاح لمدير الشركة فقط.")
