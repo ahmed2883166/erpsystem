@@ -70,9 +70,9 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
     if not created:
         return
     action_by_flag = {
-        LogEntry.ADDITION: AuditEvent.Action.CREATE,
-        LogEntry.CHANGE: AuditEvent.Action.UPDATE,
-        LogEntry.DELETION: AuditEvent.Action.DELETE,
+        LogEntry.ActionFlag.ADDITION: AuditEvent.Action.CREATE,
+        LogEntry.ActionFlag.CHANGE: AuditEvent.Action.UPDATE,
+        LogEntry.ActionFlag.DELETION: AuditEvent.Action.DELETE,
     }
     action = action_by_flag.get(instance.action_flag, AuditEvent.Action.ACTION)
     if instance.content_type_id is None:
@@ -80,7 +80,7 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
     model = instance.content_type.model_class()
     company = None
     branch = None
-    if model is not None and instance.action_flag != LogEntry.DELETION:
+    if model is not None and instance.action_flag != LogEntry.ActionFlag.DELETION:
         obj = model._default_manager.filter(pk=instance.object_id).first()
         if obj is not None:
             from companies.models import Branch, Company
