@@ -3,8 +3,8 @@ from .api import BranchViewSet, CompanyViewSet, CurrencyViewSet, FiscalYearViewS
 
 router = DefaultRouter()
 router.register("currencies", CurrencyViewSet)
-router.register("companies", CompanyViewSet)
-router.register("branches", BranchViewSet)
-router.register("fiscal-years", FiscalYearViewSet)
+router.register("companies", CompanyViewSet, basename="company")
+router.register("branches", BranchViewSet, basename="branch")
+router.register("fiscal-years", FiscalYearViewSet, basename="fiscal-year")
 
 urlpatterns = router.urls
