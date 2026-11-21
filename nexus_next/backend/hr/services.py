@@ -48,8 +48,10 @@ def calculate_payroll_cycle(cycle_id, actor=None):
     employees = Employee.objects.filter(
         company=cycle.company,
         hire_date__lte=cycle.period_end,
-        status__in=(Employee.Status.ACTIVE, Employee.Status.LEAVE, Employee.Status.UNPAID_LEAVE),
-    ).exclude(termination_date__lt=cycle.period_start).select_related("currency", "branch", "department")
+    ).filter(
+        Q(status__in=(Employee.Status.ACTIVE, Employee.Status.LEAVE, Employee.Status.UNPAID_LEAVE))
+        | Q(status__in=(Employee.Status.RESIGNED, Employee.Status.RETIRED), termination_date__gte=cycle.period_start)
+    ).select_related("currency", "branch", "department")
     PayrollResultLine.objects.filter(result__cycle=cycle).delete()
     cycle.results.all().delete()
     totals = {"earnings": Decimal("0"), "employee_deductions": Decimal("0"), "employer_share": Decimal("0"), "net": Decimal("0"), "company_cost": Decimal("0")}
