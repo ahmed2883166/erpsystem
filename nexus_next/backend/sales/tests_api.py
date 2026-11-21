@@ -62,8 +62,8 @@ class SalesWorkflowTests(APITestCase):
         return delivery_id, line_id
 
     def test_branch_limited_user_cannot_use_unassigned_sales_warehouse_outside_default_branch(self):
-        Branch.objects.create(
-            company=self.company, code="00-HQ", name_ar="مركز رئيسي آخر", is_head_office=True,
+        restricted_branch = Branch.objects.create(
+            company=self.company, code="SEC", name_ar="فرع محدود",
         )
         shared = Warehouse.objects.create(
             company=self.company, branch=None, code="WH-GLOBAL", name_ar="مخزن غير مسند",
@@ -72,7 +72,7 @@ class SalesWorkflowTests(APITestCase):
         membership = CompanyMembership.objects.create(
             user=limited, company=self.company, role="accountant", all_branches=False,
         )
-        membership.branches.add(self.branch)
+        membership.branches.add(restricted_branch)
         self.client.force_authenticate(limited)
         created = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": shared.pk,
