@@ -27,26 +27,31 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         if self.request.user.is_superuser:
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
     def check_company_write(self, company_id, roles=("admin", "accountant")):
+        """التحقق من دور المستخدم قبل تعديل بيانات الشركة أو المرتبات."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, company_id, roles):
             raise PermissionDenied("تحتاج إلى صلاحية مدير الشركة أو المحاسب.")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         self.check_company_write(serializer.validated_data["company"].pk)
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         company = serializer.validated_data.get("company", serializer.instance.company)
         self.check_company_write(company.pk)
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self.check_company_write(instance.company_id, roles=("admin",))
         if hasattr(instance, "status") and instance.status not in ("draft", "pending"):
             raise ValidationError("لا يمكن حذف سجل معتمد أو مرحّل؛ استخدم إجراء تصحيح موثق.")
@@ -57,6 +62,7 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAuthenticated,)
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset
         if not self.request.user.is_superuser:
             qs = qs.filter(
@@ -69,6 +75,7 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
         return qs
 
     def check_employee_write(self, employee, admin_only=False):
+        """التحقق من صلاحية المستخدم لتعديل ملف الموظف أو مستنداته."""
         roles = ("admin",) if admin_only else ("admin", "accountant")
         if not can_access_company(self.request.user, employee.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
@@ -78,15 +85,18 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الموظف.")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         self.check_employee_write(serializer.validated_data["employee"])
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         employee = serializer.validated_data.get("employee", serializer.instance.employee)
         self.check_employee_write(employee)
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self.check_employee_write(instance.employee, admin_only=True)
         instance.delete()
 
@@ -114,12 +124,14 @@ class EmployeeViewSet(CompanyScopedViewSet):
     ordering_fields = ("code", "full_name_ar", "hire_date", "basic_salary")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = super().get_queryset()
         if not self.request.user.is_superuser:
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
         return qs
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         company = serializer.validated_data["company"]
         branch = serializer.validated_data["branch"]
         self.check_company_write(company.pk)
@@ -128,6 +140,7 @@ class EmployeeViewSet(CompanyScopedViewSet):
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         company = serializer.validated_data.get("company", serializer.instance.company)
         branch = serializer.validated_data.get("branch", serializer.instance.branch)
         self.check_company_write(company.pk)
@@ -136,6 +149,7 @@ class EmployeeViewSet(CompanyScopedViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self.check_company_write(instance.company_id, roles=("admin",))
         related = (
             ("عناصر الأجر", instance.compensation_items.exists()),
@@ -170,6 +184,7 @@ class AttendanceViewSet(EmployeeScopedViewSet):
     ordering_fields = ("work_date", "worked_hours", "overtime_hours")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         self.check_employee_write(serializer.validated_data["employee"])
         serializer.save(entered_by=self.request.user)
 
@@ -181,6 +196,7 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def approve(self, request, pk=None):
+        """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
         leave = self.get_object()
         self.check_employee_write(leave.employee, admin_only=True)
         if leave.status != LeaveRequest.Status.PENDING:
@@ -192,6 +208,7 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def reject(self, request, pk=None):
+        """رفض الطلب وتسجيل قرار الرفض وسببه."""
         leave = self.get_object()
         self.check_employee_write(leave.employee, admin_only=True)
         if leave.status != LeaveRequest.Status.PENDING:
@@ -209,12 +226,14 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
     http_method_names = ("get", "post", "head", "options")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         employee = serializer.validated_data["employee"]
         self.check_employee_write(employee)
         serializer.save(outstanding_balance=serializer.validated_data["principal"])
 
     @decorators.action(detail=False, methods=("post",), url_path="create-with-schedule")
     def create_with_schedule(self, request):
+        """تنفيذ وظيفة create_with_schedule ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         employee = serializer.validated_data["employee"]
@@ -255,6 +274,7 @@ class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
     http_method_names = ("get", "post", "head", "options")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         from datetime import timedelta
         from django.db import transaction
         from .services import salary_for_date
@@ -285,6 +305,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
     ordering_fields = ("period_start", "payment_date", "status")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = super().get_queryset()
         if not self.request.user.is_superuser:
             from companies.models import CompanyMembership
@@ -296,6 +317,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         return qs
 
     def check_company_write(self, company_id, roles=("admin", "accountant")):
+        """التحقق من دور المستخدم قبل تعديل بيانات الشركة أو المرتبات."""
         super().check_company_write(company_id, roles=roles)
         if not self.request.user.is_superuser:
             from companies.models import CompanyMembership
@@ -307,11 +329,13 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
                 raise PermissionDenied("إدارة دورة المرتبات تتطلب صلاحية على جميع فروع الشركة.")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         self.check_company_write(serializer.validated_data["company"].pk)
         serializer.save(created_by=self.request.user)
 
     @decorators.action(detail=True, methods=("post",))
     def calculate(self, request, pk=None):
+        """تشغيل احتساب دورة المرتبات وفق الإعدادات المعتمدة."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id)
         try:
@@ -325,6 +349,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def send_to_review(self, request, pk=None):
+        """إرسال دورة المرتبات للمراجعة قبل اعتمادها."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id)
         if cycle.status != PayrollCycle.Status.CALCULATED:
@@ -335,6 +360,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def approve(self, request, pk=None):
+        """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id, roles=("admin",))
         if cycle.status != PayrollCycle.Status.REVIEW:
@@ -347,12 +373,14 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
     @decorators.action(detail=True, methods=("get",))
     def results(self, request, pk=None):
+        """عرض نتائج احتساب المرتبات وتفاصيل الموظفين."""
         cycle = self.get_object()
         rows = cycle.results.select_related("employee").prefetch_related("lines")
         return response.Response(PayrollResultSerializer(rows, many=True).data)
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
         try:
@@ -366,6 +394,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def prepare_payment(self, request, pk=None):
+        """إعداد عملية صرف المرتبات وربط حساب الخزينة."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
         treasury_account_id = request.data.get("treasury_account_id")
@@ -382,6 +411,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def complete_payment(self, request, pk=None):
+        """إتمام صرف المرتبات وتحديث حالة السداد."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
         try:
@@ -396,6 +426,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="employee-pay-report")
     def employee_pay_report(self, request):
+        """إعداد تقرير مدفوعات الموظفين للفترة المحددة."""
         company_raw = request.query_params.get("company", "")
         date_from_raw = request.query_params.get("date_from", "")
         date_to_raw = request.query_params.get("date_to", "")
@@ -509,6 +540,7 @@ class LoanInstallmentViewSet(viewsets.ModelViewSet):
     filterset_fields = ("loan", "loan__employee", "loan__employee__company", "due_date", "status")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset
         if not self.request.user.is_superuser:
             qs = qs.filter(
@@ -521,6 +553,7 @@ class LoanInstallmentViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         loan = serializer.validated_data["loan"]
         if not can_access_company(self.request.user, loan.employee.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
