@@ -1,19 +1,19 @@
+import ipaddress
 import json
 import logging
-import re
 import uuid
 
 from companies.models import Branch, Company
 from .models import AuditEvent
 
 logger = logging.getLogger(__name__)
-_ID_RE = re.compile(r"^\\d+$")
 _ACTIONS = {
     "POST": AuditEvent.Action.CREATE,
     "PUT": AuditEvent.Action.UPDATE,
     "PATCH": AuditEvent.Action.UPDATE,
     "DELETE": AuditEvent.Action.DELETE,
 }
+_ACTION_ENDPOINTS = {"post", "reverse", "dispose", "depreciate", "approve", "reject", "transfer", "confirm", "cancel", "reconcile"}
 
 
 def _numeric_id(value):
@@ -21,7 +21,7 @@ def _numeric_id(value):
         value = value.get("id") or value.get("pk")
     if isinstance(value, int) and not isinstance(value, bool):
         return value
-    if isinstance(value, str) and _ID_RE.fullmatch(value):
+    if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
 
@@ -71,9 +71,13 @@ class AuditTrailMiddleware:
             if "json" in content_type.lower() and not getattr(response, "streaming", False):
                 response_data = _json_object(response.content)
             object_id = _numeric_id(response_data.get("id"))
-            if object_id is None:
-                path_parts = [part for part in request.path.rstrip("/").split("/") if part]
-                object_id = _numeric_id(path_parts[-1]) if path_parts else None
+            path_parts = [part for part in request.path.rstrip("/").split("/") if part]
+            if object_id is None and path_parts:
+                object_id = _numeric_id(path_parts[-1])
+
+            action = _ACTIONS[method]
+            if method == "POST" and path_parts and path_parts[-1].lower() in _ACTION_ENDPOINTS:
+                action = AuditEvent.Action.ACTION
 
             user = getattr(request, "user", None)
             actor = user if getattr(user, "is_authenticated", False) else None
@@ -84,12 +88,10 @@ class AuditTrailMiddleware:
                 request_id = uuid.uuid4()
 
             ip_address = request.META.get("REMOTE_ADDR")
-            if ip_address:
-                import ipaddress
-                try:
-                    ip_address = str(ipaddress.ip_address(ip_address))
-                except ValueError:
-                    ip_address = None
+            try:
+                ip_address = str(ipaddress.ip_address(ip_address)) if ip_address else None
+            except ValueError:
+                ip_address = None
 
             resource = request.path.removeprefix("/api/").strip("/")[:180] or "api"
             AuditEvent.objects.create(
@@ -97,7 +99,7 @@ class AuditTrailMiddleware:
                 actor=actor,
                 company=company,
                 branch=branch,
-                action=_ACTIONS[method],
+                action=action,
                 resource=resource,
                 object_id=str(object_id or ""),
                 http_method=method,
