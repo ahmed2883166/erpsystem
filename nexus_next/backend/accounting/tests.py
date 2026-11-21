@@ -477,6 +477,19 @@ class TaxCodeConfigurationApiTests(TestCase):
         self.assertEqual(before.status_code, 200)
         self.assertEqual(len(before.data), 0)
 
+    def test_tax_code_rejects_overlapping_effective_periods(self):
+        base = {
+            "company": self.company.pk, "country": "EG", "code": "VAT-VERSIONED",
+            "name_ar": "ضريبة قياسية", "category": "standard", "rate": "14",
+            "effective_from": "2026-01-01", "input_tax_recoverable": True, "is_active": True,
+        }
+        first = self.client.post("/api/accounting/tax-codes/", base, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        overlapping = {**base, "effective_from": "2026-06-01", "effective_to": "2026-12-31", "rate": "15"}
+        second = self.client.post("/api/accounting/tax-codes/", overlapping, format="json")
+        self.assertEqual(second.status_code, 400)
+        self.assertIn("effective_from", second.data)
+
     def test_tax_code_rejects_country_mismatch_and_nonzero_exempt_rate(self):
         wrong_country = self.client.post("/api/accounting/tax-codes/", {
             "company": self.company.pk, "country": "SA", "code": "SA-STD",
