@@ -389,3 +389,46 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(approval.requested_limit, Decimal("0.0000"))
         self.assertEqual(approval.status, SalesInvoiceApproval.Status.PENDING)
 
+
+    def test_discount_policy_can_only_be_managed_by_company_admin(self):
+        manager = get_user_model().objects.create_user(username="policy-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(self.user)
+        denied = self.client.post("/api/approvals/discount-policies/", {
+            "company": self.company.pk, "max_discount_percent": "5",
+        }, format="json")
+        self.assertEqual(denied.status_code, 403, denied.data)
+
+        self.client.force_authenticate(manager)
+        created = self.client.post("/api/approvals/discount-policies/", {
+            "company": self.company.pk, "max_discount_percent": "5",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        updated = self.client.patch(
+            f"/api/approvals/discount-policies/{created.data['id']}/",
+            {"max_discount_percent": "7.5"}, format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["max_discount_percent"], "7.5000")
+
+    def test_invoice_creator_who_is_company_admin_cannot_approve_own_discount_request(self):
+        manager = get_user_model().objects.create_user(username="self-approval-manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("0"),
+            created_by=manager, updated_by=manager,
+        )
+        self.client.force_authenticate(manager)
+        delivery_id, line_id = self._create_delivery("DEL-SELF-APPROVAL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-SELF-APPROVAL", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "1"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        response = self.client.post(
+            f"/api/approvals/requests/{approval.pk}/approve/", {"note": "اعتماد ذاتي"}, format="json"
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+
