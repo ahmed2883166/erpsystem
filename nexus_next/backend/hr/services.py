@@ -78,7 +78,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         lines = [("BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
         for assignment in assignments:
             component = assignment.component
-            amount = calculate_component(component, assignment.value, employee.basic_salary, payable_days, overtime_hours)
+            amount = calculate_component(component, assignment.value, effective_basic_salary, payable_days, overtime_hours)
             if component.kind == component.Kind.EARNING:
                 earnings += amount
             elif component.kind == component.Kind.DEDUCTION:
@@ -87,7 +87,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
                 employer_share += amount
             lines.append((component.code, component.name_ar, component.kind, amount, False, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
         result = PayrollResult.objects.create(
-            cycle=cycle, employee=employee, basic_salary_snapshot=employee.basic_salary,
+            cycle=cycle, employee=employee, basic_salary_snapshot=effective_basic_salary,
             earnings_total=money(earnings), employee_deductions_total=money(deductions),
             employer_share_total=money(employer_share),
             employer_share_display_addition=money(employer_share),
