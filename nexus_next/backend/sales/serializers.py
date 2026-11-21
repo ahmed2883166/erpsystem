@@ -246,6 +246,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        instance = SalesInvoice.objects.select_for_update().get(pk=instance.pk)
+        self.instance = instance
+        if instance.status != SalesInvoice.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
         lines = validated_data.pop("lines", None)
         if lines is not None:
             existing = {line.delivery_line_id: line for line in instance.lines.all()}
