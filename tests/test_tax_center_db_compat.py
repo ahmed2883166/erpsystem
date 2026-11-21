@@ -74,6 +74,10 @@ class SpecialTaxPeriodReaderTests(unittest.TestCase):
             self.assertEqual(totals["egypt_table_tax"], Decimal("22"))
             self.assertEqual(totals["saudi_reverse_charge_output"], Decimal("0"))
             self.assertEqual(rows[0]["tax_amount"], Decimal("10"))
+            sa_rows, sa_totals = _special_tax_mechanisms_for_period(conn, "SA", "2026-Q4")
+            self.assertEqual(len(sa_rows), 1)
+            self.assertEqual(sa_totals["saudi_reverse_charge_output"], Decimal("150"))
+            self.assertEqual(sa_totals["saudi_reverse_charge_recoverable"], Decimal("90"))
         finally:
             conn.close()
 
