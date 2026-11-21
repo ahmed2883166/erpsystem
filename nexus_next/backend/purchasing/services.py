@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import F, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -12,7 +12,7 @@ from companies.models import Branch, FiscalYear
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseReceipt
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseReceipt
 
 
 def _account(company, role):
@@ -55,6 +55,24 @@ def post_purchase_receipt(receipt_id, user):
     if receipt.supplier.company_id != receipt.company_id or receipt.warehouse.company_id != receipt.company_id:
         raise ValidationError("بيانات المورد أو المخزن لا تتبع الشركة.")
     post_stock_movement(receipt.stock_movement_id, user)
+    if receipt.purchase_order_id:
+        order = PurchaseOrder.objects.select_for_update().get(pk=receipt.purchase_order_id)
+        if order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED):
+            raise ValidationError("أمر الشراء غير متاح للاستلام.")
+        links = list(PurchaseOrderReceiptLine.objects.select_for_update().filter(
+            receipt_line__movement_id=receipt.stock_movement_id
+        ).select_related("order_line"))
+        if not links:
+            raise ValidationError("يجب ربط أصناف الاستلام ببنود أمر الشراء.")
+        for link in links:
+            line = link.order_line
+            if line.received_quantity + link.quantity > line.quantity:
+                raise ValidationError("الكمية المستلمة تتجاوز كمية أمر الشراء.")
+            line.received_quantity += link.quantity
+            line.save(update_fields=("received_quantity",))
+        remaining_exists = order.lines.filter(received_quantity__lt=F("quantity")).exists()
+        order.status = PurchaseOrder.Status.PARTIALLY_RECEIVED if remaining_exists else PurchaseOrder.Status.RECEIVED
+        order.save(update_fields=("status",))
     return PurchaseReceipt.objects.select_related("stock_movement").get(pk=receipt.pk)
 
 
