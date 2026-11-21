@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Product, ProductCategory, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -190,3 +190,14 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 StockMovementLine(movement=instance, **line) for line in lines
             ])
         return instance
+
+
+
+class StockBalanceSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+
+    class Meta:
+        model = StockBalance
+        fields = ("id", "product", "product_code", "product_name", "warehouse", "warehouse_name", "quantity", "average_cost", "inventory_value", "updated_at")
