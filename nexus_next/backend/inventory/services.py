@@ -9,9 +9,8 @@ from .models import StockBalance, StockMovement, StockMovementLine
 
 @transaction.atomic
 def post_stock_movement(movement_id, user):
-    movement = StockMovement.objects.select_for_update().select_related(
-        "company", "source_warehouse", "destination_warehouse"
-    ).get(pk=movement_id)
+    # Lock only the movement row; nullable warehouse joins cannot be locked in PostgreSQL.
+    movement = StockMovement.objects.select_for_update().get(pk=movement_id)
     if movement.status != StockMovement.Status.DRAFT:
         raise ValidationError("الحركة مرحلة بالفعل أو غير قابلة للترحيل.")
     lines = list(movement.lines.select_related("product").order_by("product_id", "id"))
