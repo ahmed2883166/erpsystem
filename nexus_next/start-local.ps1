@@ -35,6 +35,10 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Frontend." }
   Start-Process powershell.exe -WorkingDirectory $Backend -ArgumentList @("-NoExit", "-Command", ".\.venv\Scripts\Activate.ps1; python manage.py runserver 127.0.0.1:8000")
   Start-Process powershell.exe -WorkingDirectory $Frontend -ArgumentList @("-NoExit", "-Command", "npm run dev -- --host 127.0.0.1")
+  $SuperuserCount = & $Python (Join-Path $Backend "manage.py") shell -c "from django.contrib.auth import get_user_model; print(get_user_model().objects.filter(is_superuser=True).count())"
+  if ($LASTEXITCODE -ne 0) { throw "تعذر التحقق من مستخدم الإدارة." }
+  if ([int]($SuperuserCount | Select-Object -Last 1) -eq 0) {
+    Start-Process powershell.exe -WorkingDirectory $Backend -ArgumentList @("-NoExit", "-Command", ".\.venv\Scripts\Activate.ps1; python manage.py createsuperuser")
+  }
   Write-Host "NEXUS Next بدأ محليًا: http://127.0.0.1:5173" -ForegroundColor Green
-  Write-Host "لأول تشغيل، أنشئ مستخدم مدير من نافذة Backend: python manage.py createsuperuser"
 } finally { Pop-Location }
