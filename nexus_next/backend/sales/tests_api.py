@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.db import connection, DatabaseError, transaction
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
@@ -358,4 +359,33 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(rejected.data["status"], "rejected")
         posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
         self.assertEqual(posted.status_code, 400, posted.data)
+
+
+    def test_approval_request_identity_and_history_are_protected_in_postgresql(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("0"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-IMMUTABLE")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DISCOUNT-IMMUTABLE", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "1"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE approvals_salesinvoiceapproval SET requested_limit = %s WHERE id = %s",
+                        ["99", approval.pk],
+                    )
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute("DELETE FROM approvals_salesinvoiceapproval WHERE id = %s", [approval.pk])
+        approval.refresh_from_db()
+        self.assertEqual(approval.requested_limit, Decimal("0.0000"))
+        self.assertEqual(approval.status, SalesInvoiceApproval.Status.PENDING)
 
