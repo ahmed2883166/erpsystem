@@ -19,8 +19,6 @@ class TaxCategory:
 _CATEGORIES = {
     ("EG", "sale"): (
         TaxCategory("eg_sales_standard", "مبيعات محلية خاضعة للسعر العام", "standard"),
-        TaxCategory("eg_sales_table_tax", "مبيعات خاضعة لضريبة الجدول", "standard",
-                    "تُستخدم فقط مع نسبة جدول معتمدة ومراجعة؛ لا تستنتج النسبة تلقائيًا."),
         TaxCategory("eg_sales_zero_export", "صادرات بسعر صفر", "zero_rated",
                     "يلزم الاحتفاظ بمستندات التصدير المؤيدة."),
         TaxCategory("eg_sales_exempt", "مبيعات معفاة", "exempt"),
@@ -30,8 +28,6 @@ _CATEGORIES = {
         TaxCategory("eg_purchase_standard", "مشتريات محلية خاضعة", "standard"),
         TaxCategory("eg_purchase_customs_vat", "واردات سُددت ضريبتها بالجمارك", "standard",
                     "يلزم مستند الإفراج/السداد الجمركي قبل المطالبة بالخصم."),
-        TaxCategory("eg_purchase_table_tax", "مشتريات خاضعة لضريبة الجدول", "standard",
-                    "لا تُعامل تلقائيًا كضريبة مدخلات قابلة للخصم."),
         TaxCategory("eg_purchase_zero", "مشتريات بسعر صفر", "zero_rated"),
         TaxCategory("eg_purchase_exempt", "مشتريات معفاة", "exempt"),
         TaxCategory("eg_purchase_out_of_scope", "مشتريات خارج نطاق الضريبة", "out_of_scope"),
