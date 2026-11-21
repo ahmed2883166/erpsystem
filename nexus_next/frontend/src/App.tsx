@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
 const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
@@ -71,7 +71,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أكواد الضرائب."); }
   };
   useEffect(() => { setError(""); setNotice(""); void load(); }, [companyId]);
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId || !country) return;
     setBusy(true); setError(""); setNotice("");
