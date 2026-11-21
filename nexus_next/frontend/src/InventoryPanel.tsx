@@ -100,7 +100,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     return { byWarehouse, byWarehouseProduct };
   }, [balances]);
   const warehouseSettingIndex = useMemo(() => new Map(
-    warehouseSettings.filter((item) => item.is_active).map((item) => [`${item.warehouse}:${item.product}`, item])
+    warehouseSettings.filter((item) => item.is_active).map((item) => [`${item.warehouse}:${item.product}`, item] as const)
   ), [warehouseSettings]);
   const warehouseValuation = useMemo(() => warehouses.map((warehouse) => {
     const totals = inventoryIndexes.byWarehouse.get(warehouse.id);
