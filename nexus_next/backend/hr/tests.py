@@ -6,7 +6,9 @@ from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry
+from hr.services import post_payroll_cycle
 
 from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
 from hr.services import calculate_component, money, salary_for_date
@@ -226,4 +228,61 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(past.status_code, 201, past.data)
         self.employee.refresh_from_db()
         self.assertEqual(self.employee.basic_salary, Decimal("11000"))
+
+
+class PayrollTaxPostingTests(TestCase):
+    def test_progressive_tax_without_component_account_uses_company_tax_payable_role(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="HR-TAX", name_ar="شركة اختبار ضريبة المرتبات", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="HQ", name_ar="المركز الرئيسي", is_head_office=True,
+        )
+        FiscalYear.objects.create(
+            company=company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        actor = User.objects.create_user(username="payroll-tax-poster", password="test-password")
+        employee = Employee.objects.create(
+            company=company, code="EMP-TAX", full_name_ar="موظف ضريبة",
+            branch=branch, hire_date=date(2026, 1, 1), basic_salary=Decimal("1000"), currency=currency,
+        )
+        cycle = PayrollCycle.objects.create(
+            company=company, period_start=date(2026, 1, 1), period_end=date(2026, 1, 31),
+            payment_date=date(2026, 2, 1), status=PayrollCycle.Status.APPROVED,
+        )
+        accounts = {
+            "payroll_expense": ("6100", "مصروف المرتبات", ChartOfAccount.Nature.EXPENSE),
+            "payroll_payable": ("2200", "مرتبات مستحقة", ChartOfAccount.Nature.LIABILITY),
+            "payroll_tax_payable": ("2210", "ضريبة المرتبات المستحقة", ChartOfAccount.Nature.LIABILITY),
+        }
+        for role, (code, name, nature) in accounts.items():
+            account = ChartOfAccount.objects.create(company=company, code=code, name_ar=name, nature=nature)
+            AccountRole.objects.create(company=company, role=role, account=account)
+        tax_account = AccountRole.objects.get(company=company, role="payroll_tax_payable").account
+        tax_component = PayrollComponent.objects.create(
+            company=company, code="TAX", name_ar="ضريبة المرتبات",
+            kind=PayrollComponent.Kind.DEDUCTION,
+            method=PayrollComponent.Method.PROGRESSIVE_TAX,
+        )
+        result = PayrollResult.objects.create(
+            cycle=cycle, employee=employee, basic_salary_snapshot=Decimal("1000"),
+            earnings_total=Decimal("1000"), employee_deductions_total=Decimal("100"),
+            net_pay=Decimal("900"), company_cost=Decimal("1000"),
+        )
+        PayrollResultLine.objects.create(
+            result=result, code_snapshot="BASIC", name_snapshot="الراتب الأساسي",
+            kind_snapshot="earning", amount=Decimal("1000"),
+        )
+        PayrollResultLine.objects.create(
+            result=result, component=tax_component, code_snapshot="TAX",
+            name_snapshot="ضريبة المرتبات", kind_snapshot="deduction", amount=Decimal("100"),
+        )
+
+        posted = post_payroll_cycle(cycle.pk, actor)
+        self.assertEqual(posted["status"], PayrollCycle.Status.POSTED)
+        tax_line = JournalEntry.objects.get(pk=posted["postings"][0]["journal_entry_id"]).lines.get(account=tax_account)
+        self.assertEqual(tax_line.credit, Decimal("100.0000"))
+        self.assertEqual(tax_line.debit, Decimal("0.0000"))
 
