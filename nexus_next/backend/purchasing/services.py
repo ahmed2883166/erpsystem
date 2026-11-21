@@ -172,7 +172,9 @@ def post_supplier_payment(payment_id, user):
 
     payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
-    payment_account = _account(payment.company, cash_role)
+    payment_account = payment.payment_account or _account(payment.company, cash_role)
+    if payment_account.company_id != payment.company_id or payment_account.nature != "asset" or not payment_account.is_active or payment_account.is_group or not payment_account.allow_posting:
+        raise ValidationError("حساب الصرف يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
