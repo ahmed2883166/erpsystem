@@ -12,7 +12,7 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhos
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
-    "rest_framework", "django_filters", "corsheaders", "core", "accounts", "companies",
+    "rest_framework", "django_filters", "corsheaders", "axes", "core", "accounts", "companies",
     "accounting", "customers", "inventory", "suppliers", "purchasing", "sales",
     "treasury", "assets", "audit", "approvals", "hr",
 ]
@@ -24,6 +24,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "axes.middleware.AxesMiddleware",
     "audit.middleware.AuditTrailMiddleware",
     "core.performance.PerformanceMetricsMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -53,6 +54,17 @@ DATABASES = {"default": {
     "CONN_MAX_AGE": 60,
     "OPTIONS": {"connect_timeout": 5},
 }}
+
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 1
+AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_RESET_ON_SUCCESS = True
+AXES_ENABLE_ACCESS_FAILURE_LOG = True
+AXES_SENSITIVE_PARAMETERS = ["password"]
 
 AUTH_USER_MODEL = "accounts.User"
 AUTH_PASSWORD_VALIDATORS = [
