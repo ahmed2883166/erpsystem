@@ -9,10 +9,7 @@ From the `nexus_next` directory, run:
 ```
 The helper starts the PostgreSQL 16 container bound to `127.0.0.1`, installs backend/frontend dependencies, applies the committed migrations, seeds reference currencies, and starts both development servers. It never connects to the legacy SQLite database.
 
-On first use, create the administrator in the Backend PowerShell window:
-```powershell
-python manage.py createsuperuser
-```
+If no administrator exists, the startup helper opens a separate PowerShell window and runs the administrator creation prompt.
 
 To stop the database container:
 ```powershell
