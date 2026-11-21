@@ -376,3 +376,95 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
   .setup-company-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .setup-subform { padding: 12px; }
 }
+
+
+/* Premium chart of accounts tree */
+.accounts-premium-panel{padding:0;overflow:hidden;background:#f8fafd}
+.accounts-hero{position:relative;display:flex;align-items:center;justify-content:space-between;gap:20px;overflow:hidden;padding:30px 32px;background:linear-gradient(115deg,#14243b 0%,#1b385b 58%,#244d78 100%);color:#fff}
+.accounts-hero:before,.accounts-hero:after{content:"";position:absolute;border:1px solid #ffffff13;border-radius:50%;pointer-events:none}
+.accounts-hero:before{width:330px;height:330px;left:8%;top:-235px}
+.accounts-hero:after{width:250px;height:250px;left:22%;bottom:-205px}
+.accounts-hero-copy{position:relative;z-index:1}
+.accounts-eyebrow{font-size:9px;letter-spacing:2px;color:#9bb8da;font-weight:700}
+.accounts-hero h2{font-size:25px!important;color:#fff!important;margin:8px 0 6px!important;letter-spacing:-.4px}
+.accounts-hero p{font-size:11px;color:#c0d0e3;margin:0;line-height:1.8}
+.accounts-company-line{display:flex;align-items:center;gap:9px;margin-top:15px}
+.accounts-company-line strong{font-size:11px;color:#fff}
+.accounts-company-line span{border:1px solid #ffffff30;background:#ffffff12;border-radius:20px;padding:5px 10px;color:#d9e8f8;font-size:9px}
+.accounts-hero-mark{position:relative;z-index:1;width:88px;height:88px;flex:0 0 88px;border:1px solid #ffffff32;border-radius:26px;display:grid;place-items:center;background:linear-gradient(145deg,#ffffff20,#ffffff08);box-shadow:inset 0 1px #ffffff30,0 15px 30px #09172b30;transform:rotate(-7deg)}
+.accounts-hero-mark span{font-family:Georgia,serif;font-size:50px;color:#d8eaff}
+.accounts-hero-mark i{position:absolute;right:12px;top:8px;color:#9fc5f2;font-size:18px;font-style:normal}
+.accounts-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:18px 22px 4px}
+.accounts-stat-grid article{background:#fff;border:1px solid #e7edf5;border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:4px;box-shadow:0 5px 15px #233b5a06;min-width:0}
+.accounts-stat-grid article span{font-size:9px;color:#7d8ca1}
+.accounts-stat-grid article strong{font-size:22px;line-height:1.35;color:#233d5d;font-variant-numeric:tabular-nums}
+.accounts-stat-grid article small{font-size:9px;color:#a0aaba}
+.account-template-card{display:flex;align-items:center;gap:15px;margin:14px 22px 18px;padding:16px 18px;background:linear-gradient(110deg,#f1f6ff,#f8fbff);border:1px solid #dce8f8;border-radius:13px}
+.template-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:12px;background:#e1edff;color:#3973bb;font-size:23px}
+.template-copy{flex:1;min-width:0}
+.template-copy strong{display:block;color:#284466;font-size:12px}
+.template-copy p{font-size:10px;color:#5d7593;margin:4px 0}
+.template-copy small{font-size:9px;color:#8799ae;line-height:1.7}
+.template-apply-button{white-space:nowrap;min-width:155px}
+.accounts-premium-panel>.error-banner,.accounts-premium-panel>.success-banner{margin:0 22px 12px}
+.account-tree-toolbar{padding:18px 22px 12px;border-top:1px solid #e9eef5}
+.account-tree-toolbar-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.account-tree-toolbar-title h3{font-size:14px;color:#263b56;margin:0}
+.account-tree-toolbar-title p{font-size:10px;color:#91a0b3;margin:4px 0 0}
+.account-tree-toolbar-title>span,.account-roles-footer>span{font-size:9px;color:#52749d;background:#edf4fd;border:1px solid #e0ebf8;border-radius:20px;padding:6px 10px;white-space:nowrap}
+.account-tree-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
+.account-tree-search{display:flex;align-items:center;gap:8px;flex:1 1 230px;min-width:170px;height:38px;padding:0 11px;background:#fff;border:1px solid #e3eaf2;border-radius:9px;color:#91a1b5}
+.account-tree-search span{font-size:18px}
+.account-tree-search input{border:0;outline:0;box-shadow:none!important;background:transparent;width:100%;min-width:0;color:#33465f;font:inherit;font-size:10px}
+.account-tree-controls>select{height:38px;min-width:145px;padding:0 10px;border:1px solid #e3eaf2;border-radius:9px;background:#fff;color:#5c6f88;font:inherit;font-size:10px}
+.account-tree-inactive{display:flex;align-items:center;gap:6px;font-size:9px;color:#718198;white-space:nowrap}
+.account-tree-inactive input{accent-color:#3475c4}
+.account-tree-controls .subtle-button{height:36px}
+.account-tree-legend{display:flex;gap:14px;flex-wrap:wrap;padding:0 22px 12px;color:#7b8ba0;font-size:9px}
+.account-tree-legend span{display:flex;align-items:center;gap:6px}
+.nature-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.nature-dot.asset{background:#3b82c4}.nature-dot.liability{background:#d18a52}.nature-dot.equity{background:#8b75c7}.nature-dot.revenue{background:#2b9c7b}.nature-dot.expense{background:#c46f79}
+.account-tree-shell{margin:0 22px 18px;background:#fff;border:1px solid #e5ebf3;border-radius:12px;overflow:hidden;box-shadow:0 5px 18px #233b5a06}
+.account-tree-columns{display:grid;grid-template-columns:minmax(115px,.65fr) minmax(180px,2fr) 95px 65px;gap:10px;padding:11px 14px;background:#f2f6fb;border-bottom:1px solid #e5ebf3;color:#8190a4;font-size:9px;font-weight:700}
+.account-tree-root,.account-tree-children{list-style:none;margin:0;padding:0}
+.account-tree-node{border-bottom:1px solid #f0f3f7}
+.account-tree-node:last-child{border-bottom:0}
+.account-tree-children{position:relative;margin-right:19px;border-right:1px solid #e2eaf3}
+.account-tree-row{min-height:45px;display:grid;grid-template-columns:22px 22px minmax(78px,.55fr) minmax(140px,1.7fr) auto 75px 55px;align-items:center;gap:8px;padding:5px 12px 5px 12px;transition:background .14s ease}
+.account-tree-row:hover{background:#f7faff}
+.account-tree-toggle{width:21px;height:21px;border:0;border-radius:6px;background:transparent;color:#7890ad;font-size:18px;line-height:1}
+.account-tree-toggle:not(:disabled):hover{background:#eaf2fc;color:#2f6bb1}
+.account-tree-toggle:disabled{cursor:default;color:#b8c4d2}
+.account-tree-kind{width:21px;height:21px;display:grid;place-items:center;border-radius:6px;font-size:12px}
+.group-kind{background:#eaf2fd;color:#3978bc}.detail-kind{background:#f2f5f8;color:#8998aa}
+.account-tree-code{font-size:10px;font-weight:800;color:#47698f;font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.account-tree-name{font-size:10px;color:#354961;min-width:0;overflow-wrap:anywhere}
+.is-group>.account-tree-row .account-tree-name{font-weight:800;color:#253e5b}
+.account-role-chip{font-size:8px;color:#2865a9;background:#edf5ff;border:1px solid #dceafd;border-radius:20px;padding:4px 7px;white-space:nowrap}
+.account-tree-type,.account-tree-status{justify-self:start;font-size:8px;border-radius:20px;padding:4px 7px;white-space:nowrap}
+.group-type{color:#56769c;background:#edf3fa}.detail-type{color:#7c8999;background:#f4f6f8}
+.account-tree-status.active{color:#25835e;background:#eaf7f1}.account-tree-status.inactive{color:#a26e2d;background:#fff5e7}
+.account-tree-node.is-inactive>.account-tree-row{opacity:.62}
+.account-tree-empty{padding:48px 16px;text-align:center;color:#91a0b3}
+.account-tree-empty>span{font-size:26px;color:#b4c2d2}
+.account-tree-empty strong{display:block;font-size:12px;color:#5b6e85;margin-top:8px}
+.account-tree-empty p{font-size:10px;margin:5px 0}
+.account-roles-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 22px;padding:16px 0 10px;border-top:1px solid #e8edf4}
+.account-roles-footer strong{font-size:11px;color:#304761}
+.account-roles-footer p{font-size:9px;color:#8c9aae;margin:4px 0 0}
+.account-role-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:0 22px 20px}
+.account-role-item{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0;padding:9px 10px;border:1px solid #e8eef5;border-radius:9px;background:#fff}
+.account-role-item span{font-size:9px;color:#71839a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-role-item strong{font-size:9px;color:#3b6592;background:#f0f5fb;padding:4px 6px;border-radius:5px}
+@media(max-width:1000px){.account-role-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.account-tree-row{grid-template-columns:22px 22px 75px minmax(120px,1.5fr) auto 68px 52px}.account-tree-columns{grid-template-columns:95px minmax(150px,2fr) 80px 55px}}
+@media(max-width:700px){
+ .accounts-hero{padding:23px 19px}.accounts-hero h2{font-size:21px!important}.accounts-hero-mark{width:65px;height:65px;flex-basis:65px;border-radius:20px}.accounts-hero-mark span{font-size:38px}
+ .accounts-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:13px 13px 3px;gap:8px}.accounts-stat-grid article{padding:11px}.accounts-stat-grid article strong{font-size:19px}
+ .account-template-card{margin:12px 13px 15px;align-items:flex-start;flex-wrap:wrap;padding:13px}.template-copy{flex:1 1 calc(100% - 60px)}.template-apply-button{width:100%}
+ .account-tree-toolbar{padding:15px 13px 10px}.account-tree-legend{padding:0 13px 10px;gap:9px}.account-tree-shell{margin:0 13px 15px;overflow-x:auto}
+ .account-tree-columns{min-width:590px}.account-tree-root{min-width:590px}.account-tree-row{grid-template-columns:22px 22px 78px minmax(145px,1fr) auto 65px 50px;gap:6px;padding-inline:8px}
+ .account-tree-children{margin-right:14px}.account-role-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 13px 16px}.account-roles-footer{margin:0 13px}
+ .accounts-premium-panel>.error-banner,.accounts-premium-panel>.success-banner{margin:0 13px 12px}
+ .account-tree-controls>select{flex:1;min-width:130px}.account-tree-inactive{margin-inline-start:auto}
+}
+@media(max-width:390px){.accounts-hero-mark{display:none}.account-tree-toolbar-title{align-items:flex-start}.account-tree-controls .subtle-button{flex:1}.account-role-grid{grid-template-columns:1fr}}
