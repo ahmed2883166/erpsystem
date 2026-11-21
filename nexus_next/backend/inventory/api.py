@@ -5,7 +5,7 @@ from django.db.models import F, Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
