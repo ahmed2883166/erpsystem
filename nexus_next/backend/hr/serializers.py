@@ -270,4 +270,12 @@ class LoanInstallmentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"due_date": "تاريخ القسط لا يمكن أن يسبق تاريخ السلفة."})
         if amount <= 0:
             raise serializers.ValidationError({"amount": "قيمة القسط يجب أن تكون موجبة."})
+        if loan:
+            from django.db.models import Sum
+            existing = LoanInstallment.objects.filter(loan=loan)
+            if self.instance:
+                existing = existing.exclude(pk=self.instance.pk)
+            scheduled_total = existing.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            if scheduled_total + amount > loan.principal:
+                raise serializers.ValidationError({"amount": "إجمالي الأقساط يتجاوز أصل السلفة."})
         return attrs
