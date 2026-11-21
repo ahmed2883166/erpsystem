@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, treasuryApi, bankReconciliationApi, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary } from "./api";
+import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -21,6 +21,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [rec,setRec]=useState({bank_account:"",statement_number:"",statement_date:today(),opening_balance:"0",closing_balance:"0"});
   const [line,setLine]=useState({line_number:"1",transaction_date:today(),description:"",reference:"",amount:""});
   const [matchIds,setMatchIds]=useState<Record<number,string>>({});
+  const [csvFile,setCsvFile]=useState<File|null>(null);
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
@@ -51,6 +52,7 @@ export default function TreasuryPanel({companyId}: Props) {
     await bankReconciliationApi.addLine(Number(selectedRecon),{line_number:Number(line.line_number),transaction_date:line.transaction_date,description:line.description,reference:line.reference,amount:line.amount});
     setLine(old=>({...old,line_number:String(Number(old.line_number)+1),description:"",reference:"",amount:""}));await refreshSummary(selectedRecon);await load();
   }catch(e){setError((e as Error).message||"تعذر إضافة سطر الكشف.");}finally{setBusy(false);}};
+  const importCsv=async()=>{if(!selectedRecon||!csvFile)return;setBusy(true);setError("");try{const result=await importBankStatementCsv(Number(selectedRecon),csvFile);setCsvFile(null);setError(result.message);await refreshSummary(selectedRecon);await load();}catch(e){setError((e as Error).message||"تعذر استيراد كشف البنك.");}finally{setBusy(false);}};
   const match=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.match(Number(selectedRecon),lineId,Number(matchIds[lineId]));await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذرت المطابقة.");}finally{setBusy(false);}};
   const unmatch=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.unmatch(Number(selectedRecon),lineId);await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر فك المطابقة.");}finally{setBusy(false);}};
   const finalize=async()=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.reconcile(Number(selectedRecon));await load();await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر اعتماد التسوية.");}finally{setBusy(false);}};
@@ -107,6 +109,7 @@ export default function TreasuryPanel({companyId}: Props) {
           <div><small>حركات دفترية معلقة</small><strong>{money(summary.outstanding_total)}</strong></div>
           <div><small>الفرق غير المفسر</small><strong>{money(summary.unexplained_difference)}</strong></div>
         </div>
+        {summary.reconciliation.status==="draft"&&<div className="treasury-csv-import"><div><strong>استيراد كشف البنك من CSV</strong><small>UTF-8 · الأعمدة المطلوبة: date, amount · الاختياري: description, reference</small></div><input type="file" accept=".csv,text/csv" onChange={e=>setCsvFile(e.target.files?.[0]||null)}/><button className="primary-button" type="button" disabled={busy||!csvFile||summary.lines.length>0} onClick={()=>void importCsv()}>استيراد الحركات</button>{summary.lines.length>0&&<small>الاستيراد متاح قبل إدخال أي سطور فقط حتى لا يتم استبدال بيانات موجودة.</small>}</div>}
         {summary.reconciliation.status==="draft"&&<form className="treasury-form" onSubmit={addLine}>
           <label>رقم السطر<input required type="number" min="1" value={line.line_number} onChange={e=>setLine({...line,line_number:e.target.value})}/></label>
           <label>تاريخ الحركة<input required type="date" value={line.transaction_date} onChange={e=>setLine({...line,transaction_date:e.target.value})}/></label>
