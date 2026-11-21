@@ -282,6 +282,48 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError(detail) from exc
         return response.Response(self.get_serializer(entry).data, status=status.HTTP_200_OK)
 
+    @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
+    def reverse(self, request, pk=None):
+        original = self.get_object()
+        self._require_write_role(original.company_id)
+        if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
+            raise ValidationError("يمكن عكس قيد مرحّل أصلي فقط؛ لا يمكن عكس مسودة أو قيد عكسي.")
+        if JournalEntry.objects.filter(reversal_of=original).exists():
+            raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
+        entry_date_raw = request.data.get("entry_date")
+        entry_date = parse_date(entry_date_raw) if entry_date_raw else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        fiscal_year = FiscalYear.objects.filter(
+            company=original.company, status=FiscalYear.Status.OPEN,
+            start_date__lte=entry_date, end_date__gte=entry_date,
+        ).order_by("-start_date").first()
+        if not fiscal_year:
+            raise ValidationError("لا توجد سنة مالية مفتوحة تغطي تاريخ العكس.")
+        reversal = JournalEntry.objects.create(
+            company=original.company, branch=original.branch, fiscal_year=fiscal_year,
+            entry_number=f"REV-{original.pk}", entry_date=entry_date,
+            description=f"عكس القيد {original.entry_number}: {original.description}"[:500],
+            source_type=JournalEntry.Source.MANUAL, reversal_of=original,
+            created_by=request.user,
+        )
+        original_lines = list(original.lines.all())
+        JournalLine.objects.bulk_create([
+            JournalLine(
+                entry=reversal, account=line.account, cost_center=line.cost_center,
+                debit=line.credit, credit=line.debit,
+                description=f"عكس: {line.description}"[:300],
+            )
+            for line in original_lines
+        ])
+        try:
+            reversal = post_journal(reversal.pk)
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            raise ValidationError(detail) from exc
+        return response.Response(self.get_serializer(reversal).data, status=status.HTTP_201_CREATED)
+
     @decorators.action(detail=False, methods=("get",), url_path="trial-balance")
     def trial_balance(self, request):
         company_id = request.query_params.get("company")
