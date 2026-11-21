@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, fixedAssetsApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule } from "./api";
 
 type Props = { companyId: number | null };
@@ -48,7 +48,7 @@ export default function FixedAssetsPanel({ companyId }: Props) {
       <option value="">اختر الحساب</option>{rows.map(a => <option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}
     </select></label>
   );
-  const create = async (event: React.FormEvent) => {
+  const create = async (event: FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setSaving(true); setError("");
     try {
