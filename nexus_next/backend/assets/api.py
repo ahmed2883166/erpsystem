@@ -19,6 +19,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction").prefetch_related("depreciations").all()
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         company_id = self.request.query_params.get("company")
         if company_id:
@@ -30,10 +31,12 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         return qs
 
     def _write(self, company_id):
+        """التحقق من صلاحية الكتابة على حسابات وحركات الخزينة."""
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب.")
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         if not can_access_company(self.request.user, data["company"].pk) or not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
             raise PermissionDenied("لا تملك صلاحية الوصول للشركة أو الفرع.")
@@ -48,12 +51,14 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             raise ValidationError(detail) from exc
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         if serializer.instance.acquisition_journal_id:
             raise ValidationError("الأصل المثبت محاسبيًا لا يمكن تعديل بيانات تكلفته أو حساباته.")
         self._write(serializer.instance.company_id)
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
         if instance.acquisition_journal_id or instance.depreciations.exists():
             raise ValidationError("لا يمكن حذف أصل له أثر محاسبي؛ استخدم إجراء الاستبعاد.")
@@ -61,6 +66,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def depreciate(self, request, pk=None):
+        """تنفيذ إهلاك الأصل عن الفترة المحددة وترحيل أثره."""
         asset = self.get_object()
         self._write(asset.company_id)
         try:
@@ -72,6 +78,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=True, methods=("get",))
     def schedule(self, request, pk=None):
+        """عرض جدول الإهلاك المتوقع للأصل الثابت."""
         asset = self.get_object()
         rows = asset.depreciations.select_related("journal_entry").order_by("period_date")
         accumulated = sum((row.amount for row in rows), start=0)
@@ -83,6 +90,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
 
     def _report_assets(self, request):
+        """تجهيز نطاق الأصول المستخدمة في التقرير."""
         company_id = request.query_params.get("company")
         if not company_id or not company_id.isdigit():
             raise ValidationError({"company": "حدد الشركة لعرض تقارير الأصول."})
@@ -99,6 +107,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="register")
     def register(self, request):
+        """تسجيل أصل ثابت جديد وربطه بحساباته وبيانات اقتنائه."""
         assets = self._report_assets(request)
         as_of_raw = request.query_params.get("as_of")
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
@@ -134,6 +143,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="depreciation-report")
     def depreciation_report(self, request):
+        """إعداد تقرير الإهلاك للفترة والأصول المحددة."""
         assets = self._report_assets(request)
         date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
         date_from = dateparse.parse_date(date_from_raw) if date_from_raw else None
@@ -169,6 +179,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
     def movement_report(self, request):
+        """إعداد تقرير حركة الأصول والإضافات والاستبعادات."""
         assets = self._report_assets(request).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations")
         asset_id = request.query_params.get("asset")
         if asset_id:
@@ -216,6 +227,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def dispose(self, request, pk=None):
+        """تسجيل بيع الأصل أو استبعاده ومعالجة أثره المحاسبي."""
         asset = self.get_object()
         self._write(asset.company_id)
         if not can_access_branch(request.user, asset.branch_id, asset.company_id):
