@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse
 
 
 class InventoryApiTests(APITestCase):
@@ -263,3 +263,42 @@ class InventoryApiTests(APITestCase):
         warehouse = self._warehouse("EXP-WH2")
         response = self._movement("EXP-R2", "receipt", destination=warehouse)
         self.assertEqual(response.status_code, 400, response.data)
+
+
+    def test_receipt_posts_balanced_inventory_journal(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-R1", name_ar="استلام محاسبي")
+        warehouse = self._warehouse("GL-WH1")
+        created = self._movement("GL-RCV1", "receipt", destination=warehouse, quantity="4", cost="12.5")
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        link = StockMovementJournalLink.objects.get(movement_id=created.data["id"])
+        entry = link.journal_entry
+        self.assertEqual(entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(entry.source_type, JournalEntry.Source.INVENTORY)
+        self.assertEqual(entry.fiscal_year_id, self.fiscal_year.pk)
+        lines = list(entry.lines.select_related("account"))
+        self.assertEqual(sum((line.debit for line in lines), 0), 50)
+        self.assertEqual(sum((line.credit for line in lines), 0), 50)
+        self.assertEqual({line.account.code for line in lines}, {"1000", "2100"})
+
+    def test_cross_branch_transfer_creates_two_balanced_branch_entries(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-T1", name_ar="تحويل فروع")
+        source = self._warehouse("GL-SRC")
+        other_branch = Branch.objects.create(company=self.company, code="B2", name_ar="الفرع الثاني")
+        destination = Warehouse.objects.create(company=self.company, branch=other_branch, code="GL-DST", name_ar="مخزن الفرع الثاني")
+        receipt = self._movement("GL-RCV2", "receipt", destination=source, quantity="5", cost="8")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code, 200)
+        transfer = self._movement("GL-TRF1", "transfer", destination=destination, source=source, quantity="2")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        response = self.client.post(f"/api/inventory/movements/{transfer.data['id']}/post/", {}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        links = StockMovementJournalLink.objects.filter(movement_id=transfer.data["id"]).select_related("journal_entry")
+        self.assertEqual(links.count(), 2)
+        self.assertEqual({link.journal_entry.branch_id for link in links}, {self.branch.pk, other_branch.pk})
+        for link in links:
+            lines = list(link.journal_entry.lines.select_related("account"))
+            self.assertEqual(sum((line.debit for line in lines), 0), 16)
+            self.assertEqual(sum((line.credit for line in lines), 0), 16)
+            self.assertIn("2300", {line.account.code for line in lines})
