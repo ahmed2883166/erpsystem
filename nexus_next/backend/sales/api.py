@@ -72,7 +72,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
 
 class SalesInvoiceViewSet(SalesBaseViewSet):
     serializer_class = SalesInvoiceSerializer
-    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "journal_entry").prefetch_related("lines__delivery_line__product", "receipts")
+    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "journal_entry").prefetch_related("lines__delivery_line__product", "receipts", "approval_requests")
     filterset_fields = ("company", "customer", "status", "invoice_date")
     search_fields = ("invoice_number", "customer__name_ar", "delivery__delivery_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
