@@ -1,4 +1,4 @@
-export type Company = { id: number; code: string; name_ar: string; base_currency_code: string };
+export type Company = { id: number; code: string; name_ar: string; country: "EG" | "SA"; base_currency_code: string };
 export type Branch = { id: number; company: number; code: string; name_ar: string; is_active: boolean };
 export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
 export type Account = {
