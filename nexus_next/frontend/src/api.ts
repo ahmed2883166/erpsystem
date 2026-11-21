@@ -194,3 +194,17 @@ export const salesApi = {
   createReceipt: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>("/api/sales-documents/receipts/", { method: "POST", body: JSON.stringify(payload) }); },
   postReceipt: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/post/`, { method: "POST" }); },
 };
+
+
+export type BankReconciliation = { id: number; company: number; bank_account: number; bank_name: string; bank_code: string; statement_number: string; statement_date: string; opening_balance: string; closing_balance: string; status: "draft" | "reconciled"; line_count: number; created_at: string; reconciled_at: string | null };
+export type BankStatementLine = { id: number; reconciliation: number; line_number: number; transaction_date: string; description: string; reference: string; amount: string; matched_transaction: number | null; matched_document: string; matched_amount: string | null; matched_at: string | null };
+export type BankReconciliationSummary = { reconciliation: BankReconciliation; statement_calculated: string; statement_difference: string; book_balance: string; outstanding_total: string; expected_book_balance: string; unexplained_difference: string; matched_lines: number; unmatched_lines: number; lines: BankStatementLine[]; outstanding_transactions: { id: number; date: string; document_number: string; description: string; amount: string }[] };
+export const bankReconciliationApi = {
+  list: (companyId: number) => request<BankReconciliation[]>(`/api/treasury/reconciliations/?company=${companyId}&ordering=-statement_date`),
+  create: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>("/api/treasury/reconciliations/", { method: "POST", body: JSON.stringify(payload) }); },
+  summary: (id: number) => request<BankReconciliationSummary>(`/api/treasury/reconciliations/${id}/summary/`),
+  addLine: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/add_line/`, { method: "POST", body: JSON.stringify(payload) }); },
+  match: async (id: number, lineId: number, transactionId: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/match/`, { method: "POST", body: JSON.stringify({line_id:lineId,transaction_id:transactionId}) }); },
+  unmatch: async (id: number, lineId: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/unmatch/`, { method: "POST", body: JSON.stringify({line_id:lineId}) }); },
+  reconcile: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>(`/api/treasury/reconciliations/${id}/reconcile/`, { method: "POST" }); },
+};
