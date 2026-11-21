@@ -101,18 +101,19 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
   };
   const submitLoan = async (event:FormEvent) => {
     event.preventDefault();if(!loanDraft.employee)return;
+    const count=Number(loanDraft.installment_count), principal=Number(loanDraft.principal), regular=Number(loanDraft.installment_amount);
+    if(count<1||regular<=0||regular*(count-1)>=principal){setError("قيمة الأقساط غير متوافقة مع أصل السلفة.");return;}
     setBusy(true);setError("");setNotice("");
     try {
-      const loan=await hrApi.createEmployeeLoan({...loanDraft,employee:Number(loanDraft.employee),principal:loanDraft.principal,installment_count:Number(loanDraft.installment_count),installment_amount:loanDraft.installment_amount});
-      const count=Number(loanDraft.installment_count), principal=Number(loanDraft.principal), regular=Number(loanDraft.installment_amount);
-      if(count<1||regular<=0||regular*(count-1)>=principal) throw new Error("قيمة الأقساط غير متوافقة مع أصل السلفة.");
       const first=new Date(loanDraft.first_due_date+"T12:00:00");
-      for(let i=0;i<count;i++){
-        const due=new Date(first);due.setMonth(first.getMonth()+i);
+      const installments=Array.from({length:count},(_,i)=>{
+        const due=new Date(first);const day=first.getDate();due.setDate(1);due.setMonth(first.getMonth()+i);
+        const lastDay=new Date(due.getFullYear(),due.getMonth()+1,0).getDate();due.setDate(Math.min(day,lastDay));
         const amount=i===count-1?principal-regular*(count-1):regular;
-        await hrApi.createLoanInstallment({loan:loan.id,due_date:due.toISOString().slice(0,10),amount:amount.toFixed(2)});
-      }
-      setNotice("تم تسجيل السلفة وإنشاء جدول أقساطها.");await load();
+        return {due_date:due.toISOString().slice(0,10),amount:amount.toFixed(4)};
+      });
+      await hrApi.createEmployeeLoanWithSchedule({...loanDraft,employee:Number(loanDraft.employee),principal:principal.toFixed(4),installment_count:count,installment_amount:regular.toFixed(4),installments});
+      setNotice("تم تسجيل السلفة وإنشاء جدول أقساطها دفعة واحدة.");await load();
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل السلفة أو جدول أقساطها.");}
     finally{setBusy(false);}
   };
