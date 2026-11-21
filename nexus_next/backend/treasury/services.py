@@ -71,10 +71,14 @@ def post_treasury_transaction(transaction_id, user=None):
             raise ValidationError("التحويل بين عملتين مختلفتين غير مدعوم قبل إضافة فروق العملة.")
         debit_account, credit_account = destination.account, source.account
 
+    from assets.models import FixedAsset
+    asset_acquisition = FixedAsset.objects.filter(acquisition_treasury_transaction_id=doc.pk).first()
     entry = JournalEntry.objects.create(
         company=doc.company, branch=doc.branch, fiscal_year=doc.fiscal_year,
-        entry_number=f"TR-{doc.pk}", entry_date=doc.transaction_date,
-        description=doc.description, source_type=JournalEntry.Source.MANUAL,
+        entry_number=f"FA-ACQ-{asset_acquisition.pk}" if asset_acquisition else f"TR-{doc.pk}",
+        entry_date=doc.transaction_date,
+        description=doc.description,
+        source_type=JournalEntry.Source.ASSETS if asset_acquisition else JournalEntry.Source.MANUAL,
         created_by=user or doc.created_by,
     )
     JournalLine.objects.bulk_create([
@@ -87,4 +91,7 @@ def post_treasury_transaction(transaction_id, user=None):
     doc.journal_entry = entry
     doc.posted_at = timezone.now()
     doc.save(update_fields=("status", "journal_entry", "posted_at"))
+    if asset_acquisition and not asset_acquisition.acquisition_journal_id:
+        asset_acquisition.acquisition_journal = entry
+        asset_acquisition.save(update_fields=("acquisition_journal",))
     return doc
