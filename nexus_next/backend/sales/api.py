@@ -11,9 +11,24 @@ from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.models import Branch
+from inventory.models import StockMovement
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
+
+def _sales_warehouse_accessible(user, warehouse):
+    if user.is_superuser:
+        return True
+    branch = warehouse.branch
+    if branch is None:
+        branch = Branch.objects.filter(
+            company_id=warehouse.company_id, is_active=True
+        ).order_by("-is_head_office", "code").first()
+    return bool(branch and can_access_branch(user, branch.pk, warehouse.company_id))
+
+
+
 
 
 class SalesBaseViewSet(viewsets.ModelViewSet):
@@ -40,7 +55,16 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
-        return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=accessible_branches(self.request.user)))
+        branches = accessible_branches(self.request.user)
+        default_company_ids = []
+        for company_id in accessible_companies(self.request.user).values_list("id", flat=True):
+            default_branch = Branch.objects.filter(company_id=company_id, is_active=True).order_by("-is_head_office", "code").first()
+            if default_branch and can_access_branch(self.request.user, default_branch.pk, company_id):
+                default_company_ids.append(company_id)
+        return qs.filter(
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
+        )
 
     def create(self, request, *args, **kwargs):
         try:
@@ -52,20 +76,34 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
     def perform_create(self, serializer):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        if data["warehouse"].branch_id and not can_access_branch(self.request.user, data["warehouse"].branch_id, data["company"].pk):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if not _sales_warehouse_accessible(self.request.user, data["warehouse"]):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
     def perform_update(self, serializer):
-        self._check_write(serializer.instance.company_id)
-        raise ValidationError("لا يمكن تعديل إذن التسليم بعد إنشائه؛ أنشئ إذنًا جديدًا قبل الترحيل.")
+        instance = serializer.instance
+        self._check_write(instance.company_id)
+        warehouse = serializer.validated_data.get("warehouse", instance.warehouse)
+        if not _sales_warehouse_accessible(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_write(instance.company_id)
+        if instance.stock_movement.status != StockMovement.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف إذن تسليم مرحّل.")
+        if hasattr(instance, "invoice"):
+            raise ValidationError("لا يمكن حذف إذن تسليم مرتبط بفاتورة.")
+        movement = instance.stock_movement
+        instance.delete()
+        movement.delete()
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         delivery = self.get_object()
         self._check_write(delivery.company_id)
-        if delivery.warehouse.branch_id and not can_access_branch(request.user, delivery.warehouse.branch_id, delivery.company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if not _sales_warehouse_accessible(request.user, delivery.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
         delivery = post_sales_delivery(delivery.pk, request.user)
         return Response(self.get_serializer(delivery).data, status=status.HTTP_200_OK)
 
