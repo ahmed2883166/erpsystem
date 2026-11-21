@@ -14,7 +14,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
     queryset = FixedAsset.objects.select_related("company", "branch", "asset_account",
         "accumulated_depreciation_account", "depreciation_expense_account",
-        "acquisition_counter_account", "disposal_gain_loss_account", "acquisition_journal").prefetch_related("depreciations").all()
+        "acquisition_counter_account", "disposal_gain_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction").prefetch_related("depreciations").all()
 
     def get_queryset(self):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
