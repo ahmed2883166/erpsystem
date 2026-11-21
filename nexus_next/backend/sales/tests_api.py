@@ -504,3 +504,18 @@ class SalesWorkflowTests(APITestCase):
         posted = self.client.post(f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json")
         self.assertEqual(posted.status_code, 200, posted.data)
 
+
+    def test_discount_policy_cannot_be_deleted_directly_from_postgresql(self):
+        policy = DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("5"),
+            created_by=self.user, updated_by=self.user,
+        )
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM approvals_discountapprovalpolicy WHERE id = %s",
+                        [policy.pk],
+                    )
+        self.assertTrue(DiscountApprovalPolicy.objects.filter(pk=policy.pk).exists())
+
