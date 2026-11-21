@@ -303,7 +303,7 @@ export const accountRoleApi = {
 export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null }[]; created_at: string };
 export type SalesInvoice = { id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; status: "draft" | "posted"; net_total: string; discount_total: string; discount_approval_limit: string | null; invoice_approval_limit: string | null; approval_status: "not_required" | "pending" | "approved" | "rejected" | "superseded"; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: number | null; discount_percent: string; discount_amount: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 
-export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; created_at: string; updated_at: string };
+export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
   delivery_line_id: number; product_id: number; product_code: string; product_name: string;
   quantity: string; unit_price: string; tax_code_id: number | null; tax_code: string | null;
@@ -318,6 +318,17 @@ export type SalesInvoiceApproval = {
   decided_by: number | null; decided_by_name: string | null; decision_note: string;
   requested_at: string; decided_at: string | null;
 };
+export type FinancialApprovalRequest = {
+  id: number; company: number;
+  document_type: "purchase_invoice" | "supplier_payment" | "treasury_payment";
+  purchase_invoice: number | null; supplier_payment: number | null; treasury_transaction: number | null;
+  document_number: string; document_total: string;
+  requested_by: number; requested_by_name: string; requested_limit: string; requested_amount: string;
+  requested_snapshot: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected" | "superseded";
+  decided_by: number | null; decided_by_name: string | null; decision_note: string;
+  requested_at: string; decided_at: string | null;
+};
 export const approvalsApi = {
   policies: (companyId: number) => request<DiscountApprovalPolicy[]>(`/api/approvals/discount-policies/?company=${companyId}`),
   createPolicy: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<DiscountApprovalPolicy>("/api/approvals/discount-policies/", {method:"POST",body:JSON.stringify(payload)}); },
@@ -325,6 +336,9 @@ export const approvalsApi = {
   requests: (companyId: number) => request<SalesInvoiceApproval[]>(`/api/approvals/requests/?company=${companyId}&ordering=-requested_at`),
   approve: async (id: number, note = "") => { await request<{detail:string}>("/api/csrf/"); return request<SalesInvoiceApproval>(`/api/approvals/requests/${id}/approve/`, {method:"POST",body:JSON.stringify({note})}); },
   reject: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<SalesInvoiceApproval>(`/api/approvals/requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
+  financialRequests: (companyId: number) => request<FinancialApprovalRequest[]>(`/api/approvals/financial-requests/?company=${companyId}&ordering=-requested_at`),
+  approveFinancial: async (id: number, note = "") => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/approve/`, {method:"POST",body:JSON.stringify({note})}); },
+  rejectFinancial: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
 };
 
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
