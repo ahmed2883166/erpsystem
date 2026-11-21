@@ -107,7 +107,7 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         response = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["stock_value"], "175.0000")
-        self.assertEqual(response.data["gl_balance"], "170.0000")
+        self.assertEqual(response.data["gl_balance"], "175.0000")
         self.assertEqual(response.data["difference"], "0.0000")
         self.assertCountEqual(
             response.data["scope_branch_ids"], [self.head_office.pk, self.second_branch.pk, self.archived_branch.pk],
