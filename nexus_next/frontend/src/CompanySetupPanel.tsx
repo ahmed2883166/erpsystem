@@ -1,3 +1,7 @@
+/*
+ * إعداد الشركة: إنشاء الشركة وتحديد النشاط والعملة والفروع والسنوات المالية.
+ * يرسل تغييرات الهيكل إلى الخادم ويبلغ التطبيق عند إنشاء شركة أو تحديث إعداداتها.
+ */
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type Branch, type Company, type Currency, type FiscalYear } from "./api";
 
