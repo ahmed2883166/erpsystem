@@ -214,3 +214,13 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .danger-button{align-self:flex-start;border:1px solid #e7b8b8;border-radius:7px;background:#fff0f0;color:#a33b3b;padding:9px 14px;font-size:11px;font-weight:700;cursor:pointer}
 .danger-button:disabled{opacity:.55;cursor:not-allowed}
 @media(max-width:650px){.asset-disposal-fields{grid-template-columns:1fr}}
+.asset-reports{margin-top:24px;padding-top:18px;border-top:1px solid #e5eaf1}
+.asset-report-tabs{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+.asset-report-tabs button{border:1px solid #dce3ed;border-radius:7px;background:#f7f9fc;color:#536278;padding:8px 12px;font-size:11px;cursor:pointer}
+.asset-report-tabs button.active{background:#e8eef8;border-color:#aebed5;color:#253d60;font-weight:700}
+.asset-report-filters{display:flex;align-items:end;flex-wrap:wrap;gap:10px;margin:12px 0 16px}
+.asset-report-filters label{display:flex;flex-direction:column;gap:5px;min-width:150px;color:#66758a;font-size:10px}
+.asset-report-filters input,.asset-report-filters select{border:1px solid #dce3ed;border-radius:7px;background:#fff;padding:8px;color:#29384d;font:inherit;font-size:11px}
+.asset-cashflow-totals{display:flex;flex-wrap:wrap;gap:12px;padding:12px;background:#f6f8fb;border-radius:8px;margin-bottom:12px;font-size:11px}
+.asset-cashflow-totals span,.asset-cashflow-totals b{padding:5px 8px}
+.asset-report-note{color:#78869a;font-size:10px;margin:8px 0 12px}
