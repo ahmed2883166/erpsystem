@@ -105,6 +105,15 @@ class EmployeePayrollReportApiTests(TestCase):
             result=self.result, code_snapshot="BONUS", name_snapshot="حافز",
             kind_snapshot="earning", amount=Decimal("2000"),
         )
+        employer_component = PayrollComponent.objects.create(
+            company=self.company, code="ER-SHARE", name_ar="حصة صاحب العمل",
+            kind=PayrollComponent.Kind.EMPLOYER_SHARE, method=PayrollComponent.Method.FIXED,
+        )
+        PayrollResultLine.objects.create(
+            result=self.result, component=employer_component,
+            code_snapshot="ER-SHARE", name_snapshot="حصة صاحب العمل",
+            kind_snapshot="employer_share", amount=Decimal("1800"), display_only=True,
+        )
         PayrollResultLine.objects.create(
             result=self.result, code_snapshot="EMPLOYER_SHARE_DISPLAY",
             name_snapshot="حصة صاحب العمل للعرض", kind_snapshot="earning",
@@ -134,7 +143,7 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(employee["company_cost"], Decimal("13800"))
         self.assertEqual(
             {line["code"] for line in employee["components"]},
-            {"BASIC", "BONUS"},
+            {"BASIC", "BONUS", "ER-SHARE"},
         )
         self.assertEqual(len(employee["periods"]), 1)
 
