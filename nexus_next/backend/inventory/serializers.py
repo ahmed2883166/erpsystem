@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -89,6 +89,26 @@ class WarehouseSerializer(serializers.ModelSerializer):
 
     def validate_code(self, value):
         return value.strip().upper()
+
+
+class WarehouseProductSettingSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+
+    class Meta:
+        model = WarehouseProductSetting
+        fields = ("id", "product", "product_code", "product_name", "warehouse", "warehouse_name", "min_stock", "is_active", "updated_at")
+        read_only_fields = ("updated_at",)
+
+    def validate(self, attrs):
+        product = attrs.get("product", getattr(self.instance, "product", None))
+        warehouse = attrs.get("warehouse", getattr(self.instance, "warehouse", None))
+        if product and warehouse and product.company_id != warehouse.company_id:
+            raise serializers.ValidationError({"warehouse": "المخزن والصنف يجب أن يتبعا نفس الشركة."})
+        if product and product.product_type != Product.ProductType.GOODS:
+            raise serializers.ValidationError({"product": "حد إعادة الطلب يطبق على الأصناف المخزنية فقط."})
+        return attrs
 
 
 class StorageLocationSerializer(serializers.ModelSerializer):
