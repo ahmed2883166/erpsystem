@@ -1,8 +1,10 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.views import APIView
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from companies.models import Company, FiscalYear
@@ -12,6 +14,7 @@ from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, Journ
 from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer, TaxCodeSerializer
 from .services import post_journal
+from .account_templates import ACTIVITY_LABELS, apply_activity_template, build_activity_template
 
 
 class AccountingViewSet(viewsets.ModelViewSet):
@@ -51,6 +54,57 @@ class AccountingViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         self._require_write_role(instance.company_id, delete=True)
         instance.delete()
+
+
+class AccountTemplateView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def _company(self, company_id):
+        company = Company.objects.filter(pk=company_id).first()
+        if not company:
+            raise ValidationError({"company": "الشركة المحددة غير موجودة."})
+        if not can_access_company(self.request.user, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        return company
+
+    def get(self, request):
+        company_id = request.query_params.get("company")
+        if not company_id or not company_id.isdigit():
+            raise ValidationError({"company": "حدد الشركة المطلوبة."})
+        company = self._company(int(company_id))
+        rows = build_activity_template(company.activity)
+        return response.Response({
+            "company": company.pk,
+            "activity": company.activity,
+            "activity_label": ACTIVITY_LABELS[company.activity],
+            "template_account_count": len(rows),
+            "existing_account_count": ChartOfAccount.objects.filter(company=company).count(),
+            "has_accounts": ChartOfAccount.objects.filter(company=company).exists(),
+        })
+
+    def post(self, request):
+        company_id = request.data.get("company")
+        if not str(company_id or "").isdigit():
+            raise ValidationError({"company": "حدد الشركة المطلوبة."})
+        company = self._company(int(company_id))
+        if not has_company_role(request.user, company.pk, ("admin",)):
+            raise PermissionDenied("تطبيق قالب دليل الحسابات متاح لمدير الشركة فقط.")
+        activity = request.data.get("activity", company.activity)
+        if activity != company.activity:
+            raise ValidationError({"activity": "قالب النشاط يجب أن يطابق نشاط الشركة المسجل في الإعدادات."})
+        with transaction.atomic():
+            result = apply_activity_template(company, activity)
+        if result["code_conflicts"]:
+            return response.Response({
+                "detail": "توجد أكواد حسابات مستخدمة بمعانٍ مختلفة. لم يتم إنشاء أو تعديل أي حساب.",
+                **result,
+            }, status=status.HTTP_409_CONFLICT)
+        return response.Response({
+            "detail": "تم تجهيز دليل الحسابات وربط الأدوار المتاحة دون تغيير الحسابات الموجودة.",
+            "company": company.pk,
+            "activity": activity,
+            **result,
+        }, status=status.HTTP_200_OK)
 
 
 class ChartOfAccountViewSet(AccountingViewSet):
