@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, inventoryApi, salesApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse, type CustomerAging, type TaxCode } from "./api";
+import { api, inventoryApi, salesApi, type Account, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse, type CustomerAging, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
@@ -11,6 +11,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [deliveries, setDeliveries] = useState<SalesDelivery[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
@@ -26,17 +27,18 @@ export default function SalesPanel({ companyId }: Props) {
   const [invoiceForm, setInvoiceForm] = useState({ delivery: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10) });
   const [invoiceLines, setInvoiceLines] = useState<InvoiceDraftLine[]>([]);
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
-  const [receiptForm, setReceiptForm] = useState({ invoice: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", amount: "", reference: "" });
+  const [receiptForm, setReceiptForm] = useState({ invoice: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "" });
 
   const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, d, i, r, t] = await Promise.all([
+      const [c, p, w, d, i, r, t, a] = await Promise.all([
         api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), api.taxCodes(companyId),
+        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), api.taxCodes(companyId), api.accounts(companyId),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge"));
+      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setAccounts(a.filter(x => x.is_active && x.allow_posting && !x.is_group && x.nature === "asset"));
+      setReceiptForm((old) => ({ ...old, payment_account: old.payment_account || String(a.find(x => x.is_active && x.allow_posting && !x.is_group && x.nature === "asset")?.id || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
   };
@@ -105,7 +107,7 @@ export default function SalesPanel({ companyId }: Props) {
     try {
       await salesApi.createReceipt({ company: companyId, customer: invoice.customer, invoice: invoice.id,
         receipt_number: receiptForm.receipt_number, receipt_date: receiptForm.receipt_date,
-        method: receiptForm.method, amount: receiptForm.amount, reference: receiptForm.reference });
+        method: receiptForm.method, payment_account: Number(receiptForm.payment_account), amount: receiptForm.amount, reference: receiptForm.reference });
       setShowForm(false); setReceiptForm(old => ({ ...old, invoice: "", receipt_number: "", amount: "", reference: "" }));
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند القبض."); }
@@ -188,6 +190,7 @@ export default function SalesPanel({ companyId }: Props) {
       <label>رقم السند<input required value={receiptForm.receipt_number} onChange={e => setReceiptForm({...receiptForm, receipt_number:e.target.value})} /></label>
       <label>التاريخ<input required type="date" value={receiptForm.receipt_date} onChange={e => setReceiptForm({...receiptForm, receipt_date:e.target.value})} /></label>
       <label>طريقة التحصيل<select value={receiptForm.method} onChange={e => setReceiptForm({...receiptForm, method:e.target.value as "cash" | "bank"})}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
+      <label className="inventory-wide">حساب الخزينة / البنك<select required value={receiptForm.payment_account} onChange={e => setReceiptForm({...receiptForm, payment_account:e.target.value})}><option value="">اختر الحساب</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.code} - {account.name_ar}</option>)}</select></label>
       <label>المبلغ<input required type="number" min="0.0001" step="0.0001" value={receiptForm.amount} onChange={e => setReceiptForm({...receiptForm, amount:e.target.value})} /></label>
       <label>مرجع التحويل/الإيصال<input value={receiptForm.reference} onChange={e => setReceiptForm({...receiptForm, reference:e.target.value})} /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !receiptForm.invoice}>{busy ? "جارٍ الحفظ…" : "حفظ سند القبض كمسودة"}</button></div>
