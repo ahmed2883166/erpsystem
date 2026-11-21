@@ -24,6 +24,7 @@ A company administrator configures a maximum line discount percentage in **ال�
 - The invoice creator cannot approve their own request, even if they are a company administrator.
 - Rejection requires a reason. Approved/rejected decisions are final.
 - Rejected draft invoices can be revised and resubmitted. Each attempt keeps its own immutable discount snapshot and decision; older pending attempts are marked superseded rather than deleted.
+- Each attempt stores an immutable snapshot of all invoice lines, including quantity, price, tax code/rate, discount, and calculated amounts.
 - Editing line values after approval invalidates that approval and creates a fresh request when the revised discount still exceeds the threshold. Editing notes alone does not invalidate the approval.
 - Discount is calculated before VAT, so VAT is calculated on the discounted taxable base. The journal posts net sales after discount and the resulting VAT separately.
 
