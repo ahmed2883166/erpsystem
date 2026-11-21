@@ -20,10 +20,12 @@ from .reset_service import reset_preview, reset_operational_data
 
 
 def _config():
+    """استرجاع إعدادات النسخ الاحتياطي التشغيلية."""
     return BackupConfiguration.objects.first() or BackupConfiguration.objects.create()
 
 
 def _serialize(config, can_manage):
+    """تحويل إعدادات النسخ الاحتياطي إلى بيانات آمنة للعرض في الواجهة."""
     return {
         "backup_path": config.backup_path,
         "schedule": config.schedule,
@@ -40,6 +42,7 @@ class BackupConfigurationView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
+        """عرض معاينة عملية إعادة الضبط والبيانات التي ستتأثر دون تنفيذها."""
         config = _config()
         payload = _serialize(config, request.user.is_superuser)
         payload["history"] = [{
@@ -53,6 +56,7 @@ class BackupConfigurationView(APIView):
         return Response(payload)
 
     def post(self, request):
+        """تنفيذ إعادة الضبط التشغيلية بعد التحقق من الصلاحية والتأكيد المطلوب."""
         if not request.user.is_superuser:
             raise PermissionDenied("تنفيذ النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
         config = _config()
@@ -107,6 +111,7 @@ class BackupConfigurationView(APIView):
 
     @transaction.atomic
     def patch(self, request):
+        """تحديث إعدادات النسخ الاحتياطي مع الحفاظ على الحقول غير المرسلة."""
         if not request.user.is_superuser:
             raise PermissionDenied("تغيير إعدادات النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
         config = _config()
@@ -173,6 +178,7 @@ class OperationalResetPreviewView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
+        """عرض معاينة عملية إعادة الضبط والبيانات التي ستتأثر دون تنفيذها."""
         if not request.user.is_superuser:
             raise PermissionDenied("معاينة التصفير متاحة لمدير النظام الأعلى فقط.")
         counts = reset_preview()
@@ -210,6 +216,7 @@ class OperationalResetView(APIView):
 
     @transaction.atomic
     def post(self, request):
+        """تنفيذ إعادة الضبط التشغيلية بعد التحقق من الصلاحية والتأكيد المطلوب."""
         if not request.user.is_superuser:
             raise PermissionDenied("تصفير الحركات متاح لمدير النظام الأعلى فقط.")
         if request.data.get("confirmation") != "تصفير الحركات":
