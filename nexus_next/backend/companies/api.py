@@ -47,9 +47,11 @@ class CompanyViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        from rest_framework.exceptions import PermissionDenied, ValidationError
         if not has_company_role(self.request.user, instance.pk, ("admin",)):
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("حذف الشركة متاح لمدير الشركة فقط.")
+        if instance.audit_events.exists():
+            raise ValidationError("لا يمكن حذف شركة لها سجل تدقيق؛ أوقف الشركة بدل حذفها.")
         instance.delete()
 
 
@@ -78,9 +80,11 @@ class BranchViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
-        from rest_framework.exceptions import PermissionDenied
+        from rest_framework.exceptions import PermissionDenied, ValidationError
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف الفروع متاح لمدير الشركة فقط.")
+        if instance.audit_events.exists():
+            raise ValidationError("لا يمكن حذف فرع له سجل تدقيق؛ عطّل الفرع بدل حذفه.")
         instance.delete()
 
 
