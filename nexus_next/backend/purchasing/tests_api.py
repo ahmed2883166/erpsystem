@@ -123,8 +123,8 @@ class PurchasingWorkflowTests(APITestCase):
             company=self.company, code="1110", name_ar="البنك الفرعي", nature=ChartOfAccount.Nature.ASSET
         )
         from treasury.models import TreasuryAccount
-        TreasuryAccount.objects.create(company=self.company, account=alternate_bank, kind=TreasuryAccount.Kind.BANK,
-            code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
+        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=alternate_bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
         payment_response = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-001", "payment_date": "2026-03-15",
@@ -159,6 +159,47 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(
             JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
             2,
+        )
+
+    def test_supplier_payment_rejects_treasury_account_from_another_branch(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-BRANCH-PAY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        other_branch = Branch.objects.create(company=self.company, code="BR2", name_ar="فرع آخر")
+        other_bank = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك الفرع الآخر", nature=ChartOfAccount.Nature.ASSET
+        )
+        from treasury.models import TreasuryAccount
+        TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-BR2", name_ar="بنك الفرع الآخر",
+            currency_code="EGP",
+        )
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "payment_number": "PAY-WRONG-BRANCH", "payment_date": "2026-03-15",
+            "method": "bank", "payment_account": other_bank.pk, "amount": "25.0000",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+
+        rejected = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(
+            JournalEntry.objects.filter(
+                source_type=JournalEntry.Source.PURCHASES, status=JournalEntry.Status.POSTED
+            ).count(),
+            1,
         )
 
     def test_supplier_statement_reports_opening_balance_and_running_payable(self):
