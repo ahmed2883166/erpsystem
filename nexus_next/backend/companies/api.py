@@ -91,6 +91,22 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
             if active_admins <= 1:
                 raise ValidationError("لا يمكن تعطيل أو تخفيض صلاحية آخر مدير نشط للشركة.")
 
+    @action(detail=False, methods=("get",), url_path="current")
+    def current(self, request):
+        from rest_framework.exceptions import NotFound, ValidationError
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة أولًا."})
+        membership = CompanyMembership.objects.filter(
+            user=request.user, company_id=company_id, is_active=True,
+        ).first()
+        if not membership and not request.user.is_superuser:
+            raise NotFound("لا توجد عضوية نشطة للمستخدم في الشركة.")
+        if request.user.is_superuser:
+            return Response({"role": "admin", "all_branches": True, "branches": []})
+        return Response(self.get_serializer(membership).data)
+
     @action(detail=False, methods=("get",), url_path="users")
     def users(self, request):
         from rest_framework.exceptions import ValidationError
