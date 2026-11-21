@@ -487,6 +487,11 @@ export type HrPayrollResult = {
   displayed_earnings_total:string; displayed_deductions_total:string; net_pay:string; company_cost:string;
   lines:{code:string;name:string;kind:string;amount:string;display_only:boolean;calculation:Record<string,unknown>}[];
 };
+export type HrSalaryHistory = {
+  id:number; employee:number; employee_name:string; effective_date:string;
+  previous_salary:string; new_salary:string;
+  change_type:"annual_raise"|"promotion"|"adjustment"; reason:string; created_at:string;
+};
 export type HrEmployeePayReport = {
   company:number; date_from:string; date_to:string; branch:number|null; currency_note:string; employee_count:number;
   totals:{earnings:string;employee_deductions:string;employer_share:string;net_pay:string;company_cost:string}|null;
@@ -513,8 +518,8 @@ export const hrApi = {
   createEmployeeLoan: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeLoan>("/api/hr/employee-loans/", {method:"POST",body:JSON.stringify(payload)}); },
   createEmployeeLoanWithSchedule: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeLoan>("/api/hr/employee-loans/create-with-schedule/", {method:"POST",body:JSON.stringify(payload)}); },
   createLoanInstallment: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>("/api/hr/loan-installments/", {method:"POST",body:JSON.stringify(payload)}); },
-  salaryHistory: (employeeId:number) => request<Record<string,unknown>[]>(`/api/hr/salary-history/?employee=${employeeId}`),
-  createSalaryChange: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>("/api/hr/salary-history/", {method:"POST",body:JSON.stringify(payload)}); },
+  salaryHistory: (employeeId:number) => request<HrSalaryHistory[]>(`/api/hr/salary-history/?employee=${employeeId}&ordering=-effective_date`),
+  createSalaryChange: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrSalaryHistory>("/api/hr/salary-history/", {method:"POST",body:JSON.stringify(payload)}); },
   employees: (companyId:number) => request<HrEmployee[]>(`/api/hr/employees/?company=${companyId}&ordering=code`),
   createEmployee: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployee>("/api/hr/employees/", {method:"POST",body:JSON.stringify(payload)}); },
   payrollRuleSets: (companyId:number) => request<HrPayrollRuleSet[]>(`/api/hr/payroll-rule-sets/?company=${companyId}&ordering=-effective_from`),
