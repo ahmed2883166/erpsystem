@@ -50,6 +50,10 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(JournalEntry.objects.filter(pk=entry.pk).count(), 1)
 
     def test_transfer_posts_between_separate_cash_and_bank_ledgers(self):
+        receipt = self._create(document_number="TR-SEED-001")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        seeded = self.client.post(f"/api/treasury/transactions/{receipt.data['id']}/post/", {}, format="json")
+        self.assertEqual(seeded.status_code, 200, seeded.data)
         response = self._create(
             kind="transfer", counter_account=None, destination_account=self.bank.pk,
             document_number="TR-DOC-002",
@@ -63,3 +67,11 @@ class TreasuryWorkflowTests(APITestCase):
     def test_payment_requires_counter_account_and_positive_amount(self):
         invalid = self._create(kind="payment", amount="0")
         self.assertEqual(invalid.status_code, 400)
+
+    def test_payment_posting_blocks_negative_treasury_balance(self):
+        response = self._create(kind="payment", document_number="TR-PAY-001")
+        self.assertEqual(response.status_code, 201, response.data)
+        posted = self.client.post(f"/api/treasury/transactions/{response.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 400)
+        self.assertIn("الرصيد المتاح غير كافٍ", str(posted.data))
+        self.assertEqual(JournalEntry.objects.count(), 0)
