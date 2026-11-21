@@ -24,7 +24,7 @@ def _account(company, role):
     return account
 
 
-def _branch_and_year(receipt):
+def _branch_and_year(receipt, entry_date):
     warehouse = receipt.warehouse
     branch = warehouse.branch if warehouse.branch_id else None
     if branch and not branch.is_active:
@@ -37,7 +37,7 @@ def _branch_and_year(receipt):
         raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المشتريات.")
     year = FiscalYear.objects.filter(
         company=receipt.company, status=FiscalYear.Status.OPEN,
-        start_date__lte=receipt.receipt_date, end_date__gte=receipt.receipt_date,
+        start_date__lte=entry_date, end_date__gte=entry_date,
     ).order_by("-start_date").first()
     if not year:
         raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ إذن الاستلام.")
@@ -87,7 +87,7 @@ def post_purchase_invoice(invoice_id, user):
     if len({account.pk for account in (payable, grni, *([vat_input] if vat_input else []))}) != (3 if vat_input else 2):
         raise ValidationError("يجب ربط حسابات الموردين والبضاعة غير المفوترة وضريبة المدخلات بحسابات مختلفة.")
 
-    branch, year = _branch_and_year(receipt)
+    branch, year = _branch_and_year(receipt, invoice.invoice_date)
     entry = JournalEntry.objects.create(
         company=invoice.company, branch=branch, fiscal_year=year,
         entry_number=f"PUR-INV-{invoice.pk}", entry_date=invoice.invoice_date,
