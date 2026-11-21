@@ -271,3 +271,16 @@ class StockCostLayer(models.Model):
         ordering = ("created_at", "id")
         indexes = [models.Index(fields=("product", "warehouse", "location", "created_at"), name="inv_fifo_layer_order_idx")]
         constraints = [models.CheckConstraint(condition=Q(quantity_remaining__gte=0), name="ck_fifo_layer_nonnegative")]
+
+
+
+class StockMovementJournalLink(models.Model):
+    movement = models.ForeignKey(StockMovement, on_delete=models.PROTECT, related_name="journal_links")
+    journal_entry = models.ForeignKey("accounting.JournalEntry", on_delete=models.PROTECT, related_name="stock_movement_links")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("movement", "journal_entry"), name="uq_stock_movement_journal_link"),
+        ]
+        ordering = ("id",)
