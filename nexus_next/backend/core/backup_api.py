@@ -1,5 +1,7 @@
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path, PureWindowsPath
 
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -7,9 +9,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
+from django.conf import settings
 from audit.models import AuditEvent
 
-from .models import BackupConfiguration
+from .models import BackupConfiguration, BackupRun
 
 
 def _config():
@@ -34,7 +37,69 @@ class BackupConfigurationView(APIView):
 
     def get(self, request):
         config = _config()
-        return Response(_serialize(config, request.user.is_superuser))
+        payload = _serialize(config, request.user.is_superuser)
+        payload["history"] = [{
+            "id": run.pk,
+            "status": run.status,
+            "backup_file": run.backup_file,
+            "size_bytes": run.size_bytes,
+            "details": run.details,
+            "created_at": run.created_at,
+        } for run in BackupRun.objects.select_related("started_by")[:50]]
+        return Response(payload)
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            raise PermissionDenied("تنفيذ النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
+        config = _config()
+        if not config.enabled or not config.backup_path:
+            raise ValidationError({"detail": "فعّل النسخ وحدد مجلدًا خارجيًا أولًا."})
+        if sys.platform != "win32":
+            from rest_framework.exceptions import APIException
+            raise APIException("تنفيذ النسخ الاحتياطي متاح على جهاز Windows المستضيف للنظام.")
+        script = settings.BASE_DIR.parent / "scripts" / "backup-postgres.ps1"
+        if not script.is_file():
+            raise ValidationError({"detail": "ملف تشغيل النسخ الاحتياطي غير موجود."})
+        try:
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                cwd=str(settings.BASE_DIR.parent),
+                capture_output=True,
+                text=True,
+                timeout=7200,
+                check=False,
+            )
+            output = (result.stdout or "")[-6000:]
+            error = (result.stderr or "")[-2000:]
+            match = re.search(r"Backup verified:\\s*(.+)", output)
+            backup_file = match.group(1).strip() if match else ""
+            file_path = Path(backup_file) if backup_file else None
+            success = result.returncode == 0 and file_path is not None and file_path.is_file() and file_path.stat().st_size >= 1024
+            details = output if success else (error or output or "تعذر التحقق من ملف النسخة الاحتياطية.")
+            run = BackupRun.objects.create(
+                status=BackupRun.Status.SUCCESS if success else BackupRun.Status.FAILURE,
+                backup_file=str(file_path) if success else "",
+                size_bytes=file_path.stat().st_size if success else 0,
+                details=details,
+                started_by=request.user,
+            )
+            AuditEvent.objects.create(
+                actor=request.user, action=AuditEvent.Action.ACTION,
+                resource="core.BackupRun", object_id=str(run.pk),
+                http_method="POST", status_code=200 if success else 500,
+                succeeded=success, metadata={"status": run.status, "backup_file": run.backup_file},
+            )
+            if not success:
+                return Response({"detail": "فشل النسخ أو التحقق من الملف.", "run_id": run.pk, "details": details}, status=502)
+            return Response({
+                "id": run.pk, "status": run.status, "backup_file": run.backup_file,
+                "size_bytes": run.size_bytes, "created_at": run.created_at,
+                "detail": "تم إنشاء النسخة والتحقق من سلامة الأرشيف.",
+            }, status=201)
+        except subprocess.TimeoutExpired:
+            run = BackupRun.objects.create(status=BackupRun.Status.FAILURE, details="انتهت مهلة النسخ الاحتياطي بعد ساعتين.", started_by=request.user)
+            AuditEvent.objects.create(actor=request.user, action=AuditEvent.Action.ACTION, resource="core.BackupRun", object_id=str(run.pk), http_method="POST", status_code=500, succeeded=False, metadata={"status": run.status})
+            return Response({"detail": "انتهت مهلة النسخ الاحتياطي؛ راجع سجل التشغيل."}, status=504)
 
     @transaction.atomic
     def patch(self, request):
