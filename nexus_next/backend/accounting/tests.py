@@ -2,6 +2,7 @@ from datetime import date
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from rest_framework.test import APIClient
 
 from accounts.models import User
 from companies.models import Branch, Company, Currency, FiscalYear
@@ -84,3 +85,25 @@ class PostingEngineTests(TestCase):
         JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal("10"))
         with self.assertRaises(ValidationError):
             post_journal(entry.pk)
+
+
+
+class AccountingApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(code="API", name_ar="شركة API", country="EG",
+            activity="commercial", base_currency=self.currency)
+        self.account = ChartOfAccount.objects.create(company=self.company, code="1000",
+            name_ar="النقدية", nature="asset")
+
+    def test_account_api_requires_authentication(self):
+        response = self.client.get("/api/accounting/accounts/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_authenticated_user_can_read_accounts(self):
+        user = User.objects.create_user(username="reader", password="test-password")
+        self.client.force_authenticate(user=user)
+        response = self.client.get("/api/accounting/accounts/?company=" + str(self.company.pk))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 1)
