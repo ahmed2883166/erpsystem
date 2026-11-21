@@ -399,8 +399,10 @@ def save_pending_special_tax_mechanism(conn, document_kind, document_id, mechani
         tax_amount = result["tax_amount"]
         taxable_base_value = result["taxable_base"]
     elif code == "sa_reverse_charge":
-        if country != "SA" or kind != "purchase":
-            raise ValueError("الاحتساب العكسي متاح للمشتريات في الملف الضريبي السعودي فقط.")
+        if country != "SA":
+            raise ValueError("الاحتساب العكسي غير متاح للملف الضريبي المصري؛ هو متاح للسعودية فقط.")
+        if kind != "purchase":
+            raise ValueError("الاحتساب العكسي متاح للمشتريات فقط.")
         result = calculate_saudi_reverse_charge(
             country, taxable_base, tax_rate, deductible_percent
         )
