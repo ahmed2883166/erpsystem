@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport } from "./api";
+import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport } from "./api";
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
@@ -62,6 +62,55 @@ function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
       <div className="asset-cashflow-totals">{report.categories.map(item=><span key={item.category}>{item.label}: صافي {Number(item.net).toLocaleString("ar-EG",{maximumFractionDigits:2})} · داخل {Number(item.inflows).toLocaleString("ar-EG",{maximumFractionDigits:2})} · خارج {Number(item.outflows).toLocaleString("ar-EG",{maximumFractionDigits:2})}</span>)}<b>صافي التدفق: {Number(report.net_cash_flow).toLocaleString("ar-EG",{maximumFractionDigits:2})}</b></div>
       <p className="asset-report-note">{report.note}</p>
       <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>المستند</th><th>البيان</th><th>الفرع</th><th>النشاط</th><th>القيمة</th><th>القيد</th></tr></thead><tbody>{report.rows.map(row=><tr key={row.id}><td>{row.date}</td><td>{row.document_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{row.category==="investing"?"استثماري":row.category==="financing"?"تمويلي":"تشغيلي"}</td><td>{Number(row.signed_amount).toLocaleString("ar-EG",{maximumFractionDigits:2})}</td><td>{row.journal_entry||"—"}</td></tr>)}</tbody></table>{!report.rows.length&&<div className="table-empty">لا توجد حركات نقدية مرحلة في الفترة المحددة.</div>}</div>
+    </>}
+  </div>;
+}
+
+
+function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }) {
+  const today = new Date().toISOString().slice(0,10);
+  const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [to, setTo] = useState(today);
+  const [report, setReport] = useState<IndirectCashFlowReport|null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try { setReport(await treasuryApi.indirectCashFlow(companyId, from, to)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل القائمة غير المباشرة."); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { void load(); }, [companyId]);
+  const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+  return <div className="asset-reports">
+    <div className="work-panel-head"><div><h2>قائمة التدفقات النقدية — الطريقة غير المباشرة</h2><p>صافي الربح والتعديلات غير النقدية ورأس المال العامل ثم الاستثمار والتمويل</p></div><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القائمة"}</button></div>
+    <div className="asset-report-filters">
+      <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
+      <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+    </div>
+    {error && <div className="error-banner">{error}</div>}
+    {report && <>
+      <div className="asset-cashflow-totals">
+        <span>صافي الربح: {money(report.net_profit)}</span>
+        <span>تعديلات تشغيلية: {money(report.operating_adjustments)}</span>
+        <b>صافي التشغيل: {money(report.operating_cash_flow)}</b>
+        <span>الاستثمار: {money(report.investing_cash_flow)}</span>
+        <span>التمويل: {money(report.financing_cash_flow)}</span>
+        <b>صافي التغير النقدي: {money(report.net_change_in_cash)}</b>
+      </div>
+      <div className="asset-cashflow-totals">
+        <span>تغير النقدية بالدفاتر: {money(report.ledger_cash_change)}</span>
+        <b>فرق المطابقة: {money(report.reconciliation_difference)}</b>
+      </div>
+      <div className="asset-report-note">{report.note}</div>
+      {!!report.missing_account_roles.length && <div className="error-banner">أدوار حسابات غير مربوطة: {report.missing_account_roles.join("، ")}</div>}
+      <h3>تسويات رأس المال العامل</h3>
+      <div className="data-table-wrap"><table><thead><tr><th>الدور</th><th>الحساب</th><th>رصيد أول المدة</th><th>رصيد آخر المدة</th><th>التغير</th><th>تأثيره النقدي</th></tr></thead><tbody>
+        {report.working_capital.map(row=><tr key={row.role}><td>{row.role}</td><td>{row.account_code} — {row.account_name}</td><td>{money(row.opening_balance)}</td><td>{money(row.closing_balance)}</td><td>{money(row.change)}</td><td>{money(row.cash_flow_adjustment)}</td></tr>)}
+      </tbody></table>{!report.working_capital.length&&<div className="table-empty">اربط أدوار الحسابات أولًا لعرض تسويات رأس المال العامل.</div>}</div>
+      <h3>التعديلات غير النقدية</h3>
+      <div className="asset-cashflow-totals"><span>الإهلاك: {money(report.non_cash_adjustments.depreciation)}</span><span>خسائر الاستبعاد: {money(report.non_cash_adjustments.disposal_loss)}</span><span>أرباح الاستبعاد: {money(report.non_cash_adjustments.disposal_gain)}</span><b>صافي التعديلات: {money(report.non_cash_adjustments.net)}</b></div>
     </>}
   </div>;
 }
@@ -274,7 +323,7 @@ export default function App() {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
-            <CashFlowReportPanel companyId={companyId} /></section>}
+            <CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
           {active === "customers" && <CustomersPanel companyId={companyId} />}
           {active === "sales-workflow" && <SalesPanel companyId={companyId} />}
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
