@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from companies.models import Company
@@ -22,9 +24,18 @@ class SalesInvoiceApprovalSerializer(serializers.ModelSerializer):
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     customer_name = serializers.CharField(source="invoice.customer.name_ar", read_only=True)
     invoice_date = serializers.DateField(source="invoice.invoice_date", read_only=True)
-    invoice_total = serializers.DecimalField(source="invoice.grand_total", max_digits=20, decimal_places=4, read_only=True)
+    invoice_total = serializers.SerializerMethodField()
     requested_by_name = serializers.CharField(source="requested_by.username", read_only=True)
     decided_by_name = serializers.CharField(source="decided_by.username", read_only=True, allow_null=True)
+
+    def get_invoice_total(self, obj):
+        if obj.requested_lines_snapshot:
+            total = sum(
+                (Decimal(line.get("total_amount", "0")) for line in obj.requested_lines_snapshot),
+                Decimal("0"),
+            )
+            return str(total)
+        return str(obj.invoice.grand_total)
 
     class Meta:
         model = SalesInvoiceApproval
