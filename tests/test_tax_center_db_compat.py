@@ -43,6 +43,51 @@ class TaxMechanismSchemaSQLiteTests(unittest.TestCase):
             conn.close()
 
 
+class SpecialTaxPeriodReaderTests(unittest.TestCase):
+    def test_reads_only_posted_rows_for_exact_country_and_period(self):
+        from tax_center import _special_tax_mechanisms_for_period
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("""CREATE TABLE tax_document_mechanisms(
+                country_code TEXT, document_kind TEXT, document_id INTEGER,
+                tax_period TEXT, mechanism_code TEXT, tax_type TEXT,
+                taxable_base TEXT, tax_rate TEXT, quantity TEXT, amount_per_unit TEXT,
+                deductible_percent TEXT, output_tax TEXT,
+                recoverable_input_tax TEXT, nonrecoverable_input_tax TEXT,
+                tax_amount TEXT, tax_reference TEXT, journal_entry_id INTEGER,
+                status TEXT
+            )""")
+            conn.executemany("""INSERT INTO tax_document_mechanisms VALUES(
+                ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+            )""", [
+                ("EG","sale",1,"2026-11","eg_table_tax_t2","T2","100","10",None,None,None,"0","0","0","10","EG-T2",11,"posted"),
+                ("EG","sale",2,"2026-11","eg_table_tax_t3","T3","200",None,"3","4",None,"0","0","0","12","EG-T3",12,"posted"),
+                ("EG","sale",3,"2026-11","eg_table_tax_t2","T2","100","10",None,None,None,"0","0","0","10","PENDING",None,"pending"),
+                ("EG","sale",4,"2026-10","eg_table_tax_t2","T2","100","10",None,None,None,"0","0","0","10","OTHER-PERIOD",13,"posted"),
+                ("SA","purchase",5,"2026-11","sa_reverse_charge",None,"1000","15",None,None,"60","150","90","60","0","SA-RCM",14,"posted"),
+            ])
+            rows, totals = _special_tax_mechanisms_for_period(conn, "EG", "2026-11")
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(totals["egypt_table_tax"], Decimal("22"))
+            self.assertEqual(totals["saudi_reverse_charge_output"], Decimal("0"))
+            self.assertEqual(rows[0]["tax_amount"], Decimal("10"))
+        finally:
+            conn.close()
+
+    def test_missing_special_tax_table_returns_empty_totals(self):
+        from tax_center import _special_tax_mechanisms_for_period
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        try:
+            rows, totals = _special_tax_mechanisms_for_period(conn, "SA", "2026-Q4")
+            self.assertEqual(rows, [])
+            self.assertEqual(totals["saudi_reverse_charge_output"], Decimal("0"))
+        finally:
+            conn.close()
+
+
 class TaxMetadataSQLiteTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
