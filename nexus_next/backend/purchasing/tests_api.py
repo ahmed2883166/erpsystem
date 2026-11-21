@@ -71,6 +71,37 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(sum((line.debit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
         self.assertEqual(sum((line.credit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
 
+    def test_reposting_receipt_or_invoice_does_not_duplicate_stock_or_journals(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(first_balance.quantity, Decimal("2"))
+        duplicate_receipt = self.client.post(
+            f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json"
+        )
+        self.assertEqual(duplicate_receipt.status_code, 400)
+
+        invoice_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-RETRY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        invoice_id = invoice_response.data["id"]
+        first_post = self.client.post(
+            f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(first_post.status_code, 200, first_post.data)
+        duplicate_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(duplicate_invoice.status_code, 400)
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity,
+            Decimal("2"),
+        )
+        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).count(), 1)
+        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 1)
+
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         response = self.client.post("/api/purchasing/invoices/", {
