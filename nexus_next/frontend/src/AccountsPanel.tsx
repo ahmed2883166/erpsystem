@@ -1,3 +1,7 @@
+/*
+ * دليل الحسابات: عرض الحسابات في شكل شجري، وإدارة الحسابات والأدوار المحاسبية.
+ * يستقبل بيانات الشركة والنشاط والحسابات، ويبلغ الشاشة الرئيسية عند تحديث الدليل.
+ */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { accountRoleApi, api, type Account, type AccountRole, type AccountTemplateInfo, type AccountImportPreview, type AccountImportResult } from "./api";
 
