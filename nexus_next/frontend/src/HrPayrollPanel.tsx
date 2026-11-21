@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan } from "./api";
+import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet } from "./api";
 
 const statusLabels: Record<string, string> = {
   active: "نشط", leave: "إجازة", unpaid_leave: "إجازة بدون راتب",
@@ -10,10 +10,10 @@ const cycleLabels: Record<string, string> = {
   approved: "معتمدة", posted: "مرحّلة", paid: "تم الصرف",
 };
 
-export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyId: number | null; baseCurrencyId?: number }) {
-  const [tab, setTab] = useState<"employees" | "components" | "attendance" | "assignments" | "leaveLoans" | "payroll">("employees");
+export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: { companyId: number | null; baseCurrencyId?: number; country?: "EG" | "SA" }) {
+  const [tab, setTab] = useState<"employees" | "components" | "attendance" | "assignments" | "leaveLoans" | "rules" | "payroll">("employees");
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
-  const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);
+  const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);\n  const [ruleSets, setRuleSets] = useState<HrPayrollRuleSet[]>([]);
   const [components, setComponents] = useState<HrPayrollComponent[]>([]);
   const [attendance, setAttendance] = useState<HrAttendance[]>([]);
   const [employeeComponents, setEmployeeComponents] = useState<HrEmployeeComponent[]>([]);
@@ -33,16 +33,16 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
   const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
   const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),principal:"0",installment_count:"1",installment_amount:"0",notes:""});
   const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),new_salary:"0",change_type:"annual_raise",reason:""});
-  const [cycleDraft, setCycleDraft] = useState({period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
+  const [ruleSetDraft, setRuleSetDraft] = useState({name:"",effective_from:new Date().toISOString().slice(0,10),effective_to:"",monthly_daily_divisor:"30",min_base:"",max_base:"",employee_rate:"",employer_rate:"",annual_personal_exemption:"",annual_brackets:"[]"});\n  const [cycleDraft, setCycleDraft] = useState({rule_set:"",period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
 
   const load = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows, assignmentRows, leaveRows, loanRows] = await Promise.all([
-        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId), hrApi.employeeComponents(companyId), hrApi.leaveRequests(companyId), hrApi.employeeLoans(companyId),
+      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows, assignmentRows, leaveRows, loanRows, ruleRows] = await Promise.all([
+        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId), hrApi.employeeComponents(companyId), hrApi.leaveRequests(companyId), hrApi.employeeLoans(companyId), hrApi.payrollRuleSets(companyId),
       ]);
-      setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows);
+      setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows); setRuleSets(ruleRows);
       setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows);
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
@@ -126,11 +126,27 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل تغيير الراتب.");}
     finally{setBusy(false);}
   };
+  const submitRuleSet = async (event:FormEvent) => {
+    event.preventDefault();if(!companyId||!country)return;
+    setBusy(true);setError("");setNotice("");
+    try {
+      const brackets=JSON.parse(ruleSetDraft.annual_brackets);
+      if(!Array.isArray(brackets)) throw new Error("شرائح الضريبة يجب أن تكون مصفوفة JSON.");
+      const configuration={
+        monthly_daily_divisor:Number(ruleSetDraft.monthly_daily_divisor),
+        insurance:{min_base:Number(ruleSetDraft.min_base),max_base:Number(ruleSetDraft.max_base),employee_rate:Number(ruleSetDraft.employee_rate),employer_rate:Number(ruleSetDraft.employer_rate)},
+        tax:{annual_personal_exemption:Number(ruleSetDraft.annual_personal_exemption),annual_brackets:brackets},
+      };
+      await hrApi.createPayrollRuleSet({company:companyId,country,name:ruleSetDraft.name,effective_from:ruleSetDraft.effective_from,effective_to:ruleSetDraft.effective_to||null,configuration,is_active:true});
+      setNotice("تم حفظ مجموعة القواعد بتاريخ سريان محدد. راجع القيم القانونية قبل استخدامها.");await load();
+    } catch(reason){setError(reason instanceof Error?reason.message:"تعذر حفظ مجموعة القواعد.");}
+    finally{setBusy(false);}
+  };
   const submitCycle = async (event:FormEvent) => {
     event.preventDefault();if(!companyId)return;
     setBusy(true);setError("");setNotice("");
     try {
-      await hrApi.createPayrollCycle({...cycleDraft,company:companyId,rule_set:null});
+      await hrApi.createPayrollCycle({...cycleDraft,company:companyId,rule_set:cycleDraft.rule_set?Number(cycleDraft.rule_set):null});
       setNotice("تم إنشاء دورة المرتبات كمسودة دون ترحيل محاسبي.");await load();
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إنشاء دورة المرتبات."); }
     finally { setBusy(false); }
@@ -162,7 +178,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
       <button type="button" className={tab==="attendance"?"primary-button":"subtle-button"} onClick={()=>setTab("attendance")}>الحضور</button>
       <button type="button" className={tab==="assignments"?"primary-button":"subtle-button"} onClick={()=>setTab("assignments")}>عناصر الموظفين</button>
       <button type="button" className={tab==="leaveLoans"?"primary-button":"subtle-button"} onClick={()=>setTab("leaveLoans")}>الإجازات والسلف</button>
-      <button type="button" className={tab==="payroll"?"primary-button":"subtle-button"} onClick={()=>setTab("payroll")}>دورات المرتبات</button>
+      <button type="button" className={tab==="rules"?"primary-button":"subtle-button"} onClick={()=>setTab("rules")}>القواعد القانونية</button>\n      <button type="button" className={tab==="payroll"?"primary-button":"subtle-button"} onClick={()=>setTab("payroll")}>دورات المرتبات</button>
       <button type="button" className="subtle-button" onClick={()=>void load()} disabled={busy}>تحديث البيانات</button>
     </div>
     {error&&<div className="error-banner">{error}</div>}{notice&&<div className="success-banner">{notice}</div>}
@@ -252,11 +268,29 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId }: { companyI
       </form>
       <div className="data-table-wrap"><table><thead><tr><th>رقم السلفة</th><th>الموظف</th><th>الأصل</th><th>الرصيد</th><th>قيمة القسط</th><th>الحالة</th></tr></thead><tbody>{loans.map(x=><tr key={x.id}><td>{x.reference}</td><td>{x.employee_name}</td><td>{money(x.principal)}</td><td>{money(x.outstanding_balance)}</td><td>{money(x.installment_amount)}</td><td>{x.status}</td></tr>)}</tbody></table>{!loans.length&&<div className="table-empty">لا توجد سلف مسجلة.</div>}</div>
     </>}
+    {tab==="rules"&&<>
+      <div className="asset-report-note">لا توجد نسب قانونية افتراضية. أدخل القيم المعتمدة للشركة والسنة من مستنداتك الرسمية. محرك الحساب لن يستخدم قواعد ناقصة.</div>
+      <form className="journal-form" onSubmit={submitRuleSet}>
+        <label>اسم مجموعة القواعد<input required value={ruleSetDraft.name} onChange={e=>setRuleSetDraft({...ruleSetDraft,name:e.target.value})}/></label>
+        <label>الدولة<input readOnly value={country==="SA"?"السعودية":"مصر"}/></label>
+        <label>تاريخ السريان<input type="date" required value={ruleSetDraft.effective_from} onChange={e=>setRuleSetDraft({...ruleSetDraft,effective_from:e.target.value})}/></label>
+        <label>تاريخ الانتهاء<input type="date" value={ruleSetDraft.effective_to} onChange={e=>setRuleSetDraft({...ruleSetDraft,effective_to:e.target.value})}/></label>
+        <label>مقسم اليوم الشهري<input type="number" min="1" step="1" required value={ruleSetDraft.monthly_daily_divisor} onChange={e=>setRuleSetDraft({...ruleSetDraft,monthly_daily_divisor:e.target.value})}/></label>
+        <label>الحد الأدنى لوعاء التأمين<input type="number" min="0" step="0.01" required value={ruleSetDraft.min_base} onChange={e=>setRuleSetDraft({...ruleSetDraft,min_base:e.target.value})}/></label>
+        <label>الحد الأقصى لوعاء التأمين<input type="number" min="0" step="0.01" required value={ruleSetDraft.max_base} onChange={e=>setRuleSetDraft({...ruleSetDraft,max_base:e.target.value})}/></label>
+        <label>نسبة الموظف %<input type="number" min="0" max="100" step="0.0001" required value={ruleSetDraft.employee_rate} onChange={e=>setRuleSetDraft({...ruleSetDraft,employee_rate:e.target.value})}/></label>
+        <label>نسبة صاحب العمل %<input type="number" min="0" max="100" step="0.0001" required value={ruleSetDraft.employer_rate} onChange={e=>setRuleSetDraft({...ruleSetDraft,employer_rate:e.target.value})}/></label>
+        <label>الإعفاء الضريبي السنوي<input type="number" min="0" step="0.01" required value={ruleSetDraft.annual_personal_exemption} onChange={e=>setRuleSetDraft({...ruleSetDraft,annual_personal_exemption:e.target.value})}/></label>
+        <label className="form-wide">شرائح الضريبة السنوية — JSON<textarea rows={4} value={ruleSetDraft.annual_brackets} onChange={e=>setRuleSetDraft({...ruleSetDraft,annual_brackets:e.target.value})}/></label>
+        <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!country}>حفظ مجموعة القواعد</button></div>
+      </form>
+      <div className="data-table-wrap"><table><thead><tr><th>الاسم</th><th>الدولة</th><th>من</th><th>إلى</th><th>الحالة</th></tr></thead><tbody>{ruleSets.map(x=><tr key={x.id}><td>{x.name}</td><td>{x.country}</td><td>{x.effective_from}</td><td>{x.effective_to||"مستمرة"}</td><td>{x.is_active?"نشطة":"غير نشطة"}</td></tr>)}</tbody></table>{!ruleSets.length&&<div className="table-empty">لا توجد مجموعات قواعد محفوظة.</div>}</div>
+    </>}
     {tab==="payroll"&&<>
       <form className="journal-form" onSubmit={submitCycle}>
         <label>بداية الفترة<input required type="date" value={cycleDraft.period_start} onChange={e=>setCycleDraft({...cycleDraft,period_start:e.target.value})}/></label>
         <label>نهاية الفترة<input required type="date" value={cycleDraft.period_end} onChange={e=>setCycleDraft({...cycleDraft,period_end:e.target.value})}/></label>
-        <label>تاريخ الصرف<input required type="date" value={cycleDraft.payment_date} onChange={e=>setCycleDraft({...cycleDraft,payment_date:e.target.value})}/></label>
+        <label>تاريخ الصرف<input required type="date" value={cycleDraft.payment_date} onChange={e=>setCycleDraft({...cycleDraft,payment_date:e.target.value})}/></label>\n        <label>مجموعة القواعد القانونية<select value={cycleDraft.rule_set} onChange={e=>setCycleDraft({...cycleDraft,rule_set:e.target.value})}><option value="">بدون مجموعة (للعناصر غير القانونية فقط)</option>{ruleSets.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.name} · {x.effective_from}</option>)}</select></label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy}>إنشاء دورة جديدة</button></div>
       </form>
       <div className="section-heading" style={{marginTop:24}}><div><h2>دورات المرتبات</h2><p>لا يتم إنشاء قيود أو صرف أموال في هذه المرحلة قبل استكمال المراجعة المحاسبية</p></div><span className="module-count">{cycles.length} دورة</span></div>
