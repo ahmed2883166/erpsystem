@@ -120,7 +120,7 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
     serializer_class = StorageLocationSerializer
     permission_classes = (CompanyRolePermission,)
     queryset = StorageLocation.objects.select_related("warehouse", "warehouse__company", "parent")
-    filterset_fields = ("warehouse", "location_type", "is_active")
+    filterset_fields = ("warehouse", "warehouse__company", "location_type", "is_active")
     search_fields = ("code", "name_ar", "warehouse__name_ar")
     ordering_fields = ("code", "name_ar")
 
