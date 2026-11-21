@@ -112,15 +112,17 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     if not (year.start_date <= disposal_date <= year.end_date):
         raise ValidationError("تاريخ الاستبعاد خارج السنة المالية المفتوحة.")
 
-    try:
-        treasury_account = TreasuryAccount.objects.select_related("account").get(pk=cash_account_id, company=asset.company, is_active=True)
-    except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
-        raise ValidationError("اختر حساب بنك أو خزينة نشطًا من دليل الخزينة.")
-    cash_account = treasury_account.account
-    if not cash_account.is_active or cash_account.is_group or not cash_account.allow_posting or cash_account.nature != "asset":
-        raise ValidationError("الحساب المحاسبي المرتبط بالخزينة غير صالح.")
-    if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
-        raise ValidationError("الخزينة المختارة لا تتبع فرع الأصل.")
+    treasury_account = None
+    if proceeds > 0:
+        try:
+            treasury_account = TreasuryAccount.objects.select_related("account").get(pk=cash_account_id, company=asset.company, is_active=True)
+        except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
+            raise ValidationError("اختر حساب بنك أو خزينة نشطًا لمتحصلات البيع.")
+        cash_account = treasury_account.account
+        if not cash_account.is_active or cash_account.is_group or not cash_account.allow_posting or cash_account.nature != "asset":
+            raise ValidationError("الحساب المحاسبي المرتبط بالخزينة غير صالح.")
+        if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
+            raise ValidationError("الخزينة المختارة لا تتبع فرع الأصل.")
 
     last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
     previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1)
@@ -156,10 +158,11 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         raise ValidationError("طبيعة حساب أرباح/خسائر الاستبعاد لا تتوافق مع نتيجة البيع؛ راجع ربط الحساب.")
 
     lines = [
-        {"account": cash_account, "debit": proceeds, "credit": 0, "description": f"متحصلات استبعاد {asset.name_ar}"},
         {"account": asset.accumulated_depreciation_account, "debit": accumulated, "credit": 0, "description": f"إقفال مجمع إهلاك {asset.name_ar}"},
         {"account": asset.asset_account, "debit": 0, "credit": asset.original_cost, "description": f"استبعاد تكلفة {asset.name_ar}"},
     ]
+    if proceeds > 0:
+        lines.insert(0, {"account": cash_account, "debit": proceeds, "credit": 0, "description": f"متحصلات استبعاد {asset.name_ar}"})
     if gain > 0:
         lines.append({"account": gain_loss_account, "debit": 0, "credit": gain, "description": f"ربح استبعاد {asset.name_ar}"})
     elif loss > 0:
