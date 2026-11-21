@@ -229,8 +229,11 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     @decorators.action(detail=True, methods=("post",))
     def reconcile(self, request, pk=None):
         with transaction.atomic():
-            recon = BankReconciliation.objects.select_for_update().get(pk=pk)
+            scoped = self.get_object()
+            recon = BankReconciliation.objects.select_for_update().get(pk=scoped.pk)
             self._write(recon.company_id)
+            if recon.bank_account.branch_id and not can_access_branch(request.user, recon.bank_account.branch_id, recon.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
             if recon.status != BankReconciliation.Status.DRAFT:
                 raise ValidationError("التسوية معتمدة بالفعل.")
             if recon.lines.filter(matched_transaction__isnull=True).exists():
