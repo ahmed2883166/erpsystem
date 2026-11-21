@@ -280,8 +280,8 @@ def post_payroll_cycle(cycle_id, actor=None):
         raise ValidationError("لا توجد نتائج احتساب لترحيلها.")
     fiscal_year = FiscalYear.objects.filter(
         company=cycle.company,
-        start_date__lte=cycle.payment_date,
-        end_date__gte=cycle.payment_date,
+        start_date__lte=cycle.period_end,
+        end_date__gte=cycle.period_end,
     ).first()
     if not fiscal_year or fiscal_year.status != FiscalYear.Status.OPEN:
         raise ValidationError("لا توجد سنة مالية مفتوحة تغطي تاريخ صرف المرتبات.")
@@ -307,7 +307,7 @@ def post_payroll_cycle(cycle_id, actor=None):
             branch=branch,
             fiscal_year=fiscal_year,
             entry_number=f"PAY{cycle.pk}-{branch.pk}",
-            entry_date=cycle.payment_date,
+            entry_date=cycle.period_end,
             description=f"استحقاق مرتبات الفترة {cycle.period_start} إلى {cycle.period_end}",
             source_type=JournalEntry.Source.PAYROLL,
             created_by=actor,
