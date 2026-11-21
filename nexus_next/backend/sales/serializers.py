@@ -143,7 +143,15 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         if limit is None or not obj.lines.filter(discount_percent__gt=limit).exists():
             return "not_required"
         approval = obj.approval_requests.order_by("-requested_at", "-pk").first()
-        return approval.status if approval else "pending"
+        if not approval:
+            return "pending"
+        max_discount = max(obj.lines.values_list("discount_percent", flat=True), default=Decimal("0"))
+        if (
+            approval.requested_discount_total != obj.discount_total
+            or approval.requested_max_discount_percent != max_discount
+        ):
+            return "pending"
+        return approval.status
 
     def validate(self, attrs):
         instance = self.instance
