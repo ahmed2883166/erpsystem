@@ -18,6 +18,7 @@ from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, Sal
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
 def _sales_warehouse_accessible(user, warehouse):
+    """تنفيذ وظيفة _sales_warehouse_accessible ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
     if user.is_superuser:
         return True
     branch = warehouse.branch
@@ -35,12 +36,14 @@ class SalesBaseViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
     def _check_write(self, company_id):
+        """التحقق من صلاحية تنفيذ عملية تعديل داخل نطاق الشركة."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("إجراءات المبيعات متاحة لمدير الشركة والمحاسب فقط.")
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         raise PermissionDenied("لا يمكن حذف مستندات المبيعات؛ استخدم الإلغاء المعتمد بعد إضافته.")
 
 
@@ -52,6 +55,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
     ordering_fields = ("delivery_date", "delivery_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
@@ -67,6 +71,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         )
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
@@ -74,6 +79,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         if not _sales_warehouse_accessible(self.request.user, data["warehouse"]):
@@ -81,6 +87,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         instance = serializer.instance
         self._check_write(instance.company_id)
         warehouse = serializer.validated_data.get("warehouse", instance.warehouse)
@@ -89,6 +96,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         self._check_write(instance.company_id)
         if instance.stock_movement.status != StockMovement.Status.DRAFT:
             raise ValidationError("لا يمكن حذف إذن تسليم مرحّل.")
@@ -100,6 +108,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         delivery = self.get_object()
         self._check_write(delivery.company_id)
         if not _sales_warehouse_accessible(request.user, delivery.warehouse):
@@ -116,6 +125,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
@@ -131,6 +141,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         )
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
@@ -138,6 +149,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         warehouse = data["delivery"].warehouse
@@ -146,6 +158,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         invoice = serializer.instance
         self._check_write(invoice.company_id)
         if invoice.status != SalesInvoice.Status.DRAFT:
@@ -157,6 +170,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
         warehouse = invoice.delivery.warehouse
@@ -168,6 +182,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
 
     @action(detail=False, methods=("get",), url_path="customer-aging")
     def customer_aging(self, request):
+        """تجميع أرصدة العملاء حسب شرائح أعمار الديون."""
         try:
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
@@ -282,12 +297,14 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
     ordering_fields = ("receipt_date", "receipt_number", "amount", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
         return qs.filter(Q(invoice__delivery__warehouse__branch__isnull=True) | Q(invoice__delivery__warehouse__branch__in=accessible_branches(self.request.user)))
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
@@ -295,6 +312,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         warehouse = data["invoice"].delivery.warehouse
@@ -303,15 +321,18 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند القبض غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند القبض غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
         warehouse = receipt.invoice.delivery.warehouse
