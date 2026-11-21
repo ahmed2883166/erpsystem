@@ -55,4 +55,8 @@ class CompanyMembershipSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"company": "لا يمكن نقل عضوية المستخدم بين الشركات؛ أنشئ عضوية مستقلة."})
         if self.instance and "user" in attrs and attrs["user"].pk != self.instance.user_id:
             raise serializers.ValidationError({"user": "لا يمكن تغيير هوية المستخدم داخل عضوية قائمة."})
+        role = attrs.get("role", self.instance.role if self.instance else CompanyMembership.Role.VIEWER)
+        all_branches = attrs.get("all_branches", self.instance.all_branches if self.instance else False)
+        if role == CompanyMembership.Role.ADMIN and not all_branches:
+            raise serializers.ValidationError({"all_branches": "مدير الشركة يجب أن يمتلك نطاق الوصول إلى جميع الفروع."})
         return attrs
