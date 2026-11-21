@@ -12,7 +12,7 @@ from companies.models import Branch, FiscalYear
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseReceipt
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt
 
 
 def _account(company, role):
@@ -68,11 +68,9 @@ def post_purchase_receipt(receipt_id, user):
             line = link.order_line
             if line.received_quantity + link.quantity > line.quantity:
                 raise ValidationError("الكمية المستلمة تتجاوز كمية أمر الشراء.")
-            line.received_quantity += link.quantity
-            line.save(update_fields=("received_quantity",))
+            PurchaseOrderLine.objects.filter(pk=line.pk).update(received_quantity=line.received_quantity + link.quantity)
         remaining_exists = order.lines.filter(received_quantity__lt=F("quantity")).exists()
-        order.status = PurchaseOrder.Status.PARTIALLY_RECEIVED if remaining_exists else PurchaseOrder.Status.RECEIVED
-        order.save(update_fields=("status",))
+        PurchaseOrder.objects.filter(pk=order.pk).update(status=PurchaseOrder.Status.PARTIALLY_RECEIVED if remaining_exists else PurchaseOrder.Status.RECEIVED)
     return PurchaseReceipt.objects.select_related("stock_movement").get(pk=receipt.pk)
 
 
