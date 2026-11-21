@@ -1,4 +1,15 @@
 {% extends "base.html" %}{% block title %}فاتورة بيع جديدة | NEXUS ERP{% endblock %}{% block scripts %}<script>
+document.addEventListener('change',event=>{
+ if(event.target.name!=='line_tax_category')return;
+ const option=event.target.selectedOptions[0];
+ const treatment=option?.dataset.treatment;
+ const row=event.target.closest('tr');
+ if(!row||!treatment)return;
+ const treatmentSelect=row.querySelector('[name="line_tax_treatment"]');
+ const rateInput=row.querySelector('[name="line_tax_rate"]');
+ if(treatmentSelect)treatmentSelect.value=treatment;
+ if(rateInput&&treatment!=='standard')rateInput.value='0';
+});
 const customerSelect=document.querySelector('[name="customer_id"]'),creditAlert=document.getElementById('creditAlert');
 function checkCredit(){const o=customerSelect.options[customerSelect.selectedIndex];if(!o||!o.value){creditAlert.hidden=true;creditAlert.classList.remove('is-over');return;}const limit=Number(o.dataset.limit||0),due=Number(o.dataset.outstanding||0);if(limit>0){creditAlert.hidden=false;creditAlert.classList.toggle('is-over',due>limit);creditAlert.replaceChildren();const heading=document.createElement('span');heading.className='credit-limit-heading';heading.textContent=due>limit?'تنبيه تجاوز الحد الائتماني':'الحد الائتماني للعميل';const value=document.createElement('strong');value.className='credit-limit-value';value.textContent=limit.toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2});const balance=document.createElement('span');balance.className='credit-limit-balance';balance.textContent='المديونية الحالية: '+due.toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2});const hint=document.createElement('small');hint.textContent=due>limit?'العميل تجاوز الحد المحدد. راجع المديونية قبل اعتماد الفاتورة.':'سيتم إعادة فحص الحد الائتماني عند ترحيل الفاتورة.';creditAlert.append(heading,value,balance,hint);}else{creditAlert.hidden=true;creditAlert.classList.remove('is-over');}}
 customerSelect.addEventListener('change',checkCredit);checkCredit();
