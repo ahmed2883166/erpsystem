@@ -322,6 +322,118 @@ def _special_tax_mechanisms_for_period(conn, country, period):
     return rows, totals
 
 
+def save_pending_special_tax_mechanism(conn, document_kind, document_id, mechanism_code, *,
+                                          taxable_base, tax_reference,
+                                          tax_type=None, tax_rate=None, quantity=None,
+                                          amount_per_unit=None, deductible_percent=100,
+                                          created_by=None):
+    """Save a validated, unposted special-tax workpaper linked to an invoice.
+
+    This function never changes invoice totals, VAT fields, journal lines, or
+    posted entries. Existing posted mechanism rows are immutable here.
+    """
+    from tax_mechanisms import (
+        calculate_egypt_table_tax, calculate_saudi_reverse_charge,
+    )
+
+    kind = str(document_kind or "").strip().lower()
+    code = str(mechanism_code or "").strip().lower()
+    reference = str(tax_reference or "").strip()
+    try:
+        document_id = int(document_id)
+    except (TypeError, ValueError):
+        raise ValueError("رقم المستند غير صحيح.") from None
+    if document_id <= 0:
+        raise ValueError("رقم المستند غير صحيح.")
+    if kind not in {"sale", "purchase"}:
+        raise ValueError("الآلية الخاصة يجب أن ترتبط بفاتورة بيع أو شراء.")
+    if not reference or len(reference) > 200:
+        raise ValueError("أدخل مرجع المستند/المعاملة الضريبية بحد أقصى 200 حرف.")
+
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(
+        conn, "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='tax_country'"
+    ).fetchall()}
+    country = str(settings.get("tax_country") or "EG").upper()
+    document_table = "sales_invoices" if kind == "sale" else "supplier_bills"
+    document_date_column = "invoice_date" if kind == "sale" else "bill_date"
+    if not _table_exists(conn, document_table):
+        raise ValueError("جدول الفواتير المطلوب غير متاح.")
+    document = execute_compat(conn,
+        f"SELECT id,status,{document_date_column} document_date FROM {document_table} WHERE id=?",
+        (document_id,)).fetchone()
+    if not document or str(document["status"] or "").lower() not in {"draft", "posted"}:
+        raise ValueError("الفاتورة غير موجودة أو حالتها لا تسمح بتسجيل ورقة ضريبية.")
+    period, _, _ = _period(document["document_date"], country=country)
+
+    result = None
+    tax_rate_value = quantity_value = unit_value = deduction_value = None
+    output_tax = recoverable = nonrecoverable = Decimal("0.00")
+    tax_amount = Decimal("0.00")
+    stored_tax_type = None
+    if code in {"eg_table_tax_t2", "eg_table_tax_t3"}:
+        if country != "EG":
+            raise ValueError("ضريبة الجدول T2/T3 متاحة للملف الضريبي المصري فقط.")
+        expected_type = "T2" if code.endswith("t2") else "T3"
+        if str(tax_type or "").strip().upper() != expected_type:
+            raise ValueError("نوع ضريبة الجدول لا يطابق الآلية المختارة.")
+        result = calculate_egypt_table_tax(
+            expected_type, taxable_base, rate=tax_rate,
+            quantity=quantity, amount_per_unit=amount_per_unit,
+        )
+        stored_tax_type = result["tax_type"]
+        tax_rate_value = str(result["rate"]) if result["rate"] is not None else None
+        quantity_value = str(result["quantity"]) if result["quantity"] is not None else None
+        unit_value = str(result["amount_per_unit"]) if result["amount_per_unit"] is not None else None
+        tax_amount = result["tax_amount"]
+        taxable_base_value = result["taxable_base"]
+    elif code == "sa_reverse_charge":
+        if country != "SA" or kind != "purchase":
+            raise ValueError("الاحتساب العكسي متاح للمشتريات في الملف الضريبي السعودي فقط.")
+        result = calculate_saudi_reverse_charge(
+            country, taxable_base, tax_rate, deductible_percent
+        )
+        taxable_base_value = result["taxable_base"]
+        tax_rate_value = str(result["rate"])
+        deduction_value = str(result["deductible_percent"])
+        output_tax = result["output_tax"]
+        recoverable = result["recoverable_input_tax"]
+        nonrecoverable = result["non_recoverable_input_tax"]
+    else:
+        raise ValueError("آلية الضريبة الخاصة غير معروفة.")
+
+    initialize_tax_schema(conn)
+    values = (
+        country, kind, document_id, period, code, stored_tax_type,
+        str(taxable_base_value), tax_rate_value, quantity_value, unit_value,
+        deduction_value, str(output_tax), str(recoverable), str(nonrecoverable),
+        str(tax_amount), reference, created_by,
+    )
+    cursor = execute_compat(conn, """INSERT INTO tax_document_mechanisms(
+        country_code,document_kind,document_id,tax_period,mechanism_code,tax_type,
+        taxable_base,tax_rate,quantity,amount_per_unit,deductible_percent,
+        output_tax,recoverable_input_tax,nonrecoverable_input_tax,tax_amount,
+        tax_reference,created_by,status,journal_entry_id
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',NULL)
+    ON CONFLICT(country_code,document_kind,document_id,mechanism_code) DO UPDATE SET
+        tax_period=excluded.tax_period,tax_type=excluded.tax_type,
+        taxable_base=excluded.taxable_base,tax_rate=excluded.tax_rate,
+        quantity=excluded.quantity,amount_per_unit=excluded.amount_per_unit,
+        deductible_percent=excluded.deductible_percent,output_tax=excluded.output_tax,
+        recoverable_input_tax=excluded.recoverable_input_tax,
+        nonrecoverable_input_tax=excluded.nonrecoverable_input_tax,
+        tax_amount=excluded.tax_amount,tax_reference=excluded.tax_reference,
+        created_by=excluded.created_by,updated_at=CURRENT_TIMESTAMP
+    WHERE tax_document_mechanisms.status='pending'""", values)
+    if getattr(cursor, "rowcount", 1) == 0:
+        raise ValueError("الآلية مرتبطة بقيد مرحّل؛ لا يمكن تعديلها من شاشة التسجيل.")
+    return {"country_code": country, "document_kind": kind,
+            "document_id": document_id, "tax_period": period,
+            "mechanism_code": code, "status": "pending",
+            "tax_amount": tax_amount, "output_tax": output_tax,
+            "recoverable_input_tax": recoverable,
+            "nonrecoverable_input_tax": nonrecoverable}
+
+
 def _special_tax_quality_issues(rows, country):
     """Validate special-tax report rows without changing accounting data."""
     issues = []
