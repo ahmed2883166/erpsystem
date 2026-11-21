@@ -45,3 +45,34 @@ class CompanySetupApiTests(APITestCase):
         response = self.client.get("/api/setup/companies/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, [])
+
+
+    def test_company_list_only_shows_assigned_companies(self):
+        allowed = Company.objects.create(
+            code="ALLOWED", name_ar="الشركة المسموحة", country="SA",
+            activity="service", base_currency=self.currency,
+        )
+        hidden = Company.objects.create(
+            code="HIDDEN", name_ar="الشركة المخفية", country="EG",
+            activity="commercial", base_currency=self.currency,
+        )
+        CompanyMembership.objects.create(user=self.user, company=allowed, all_branches=True)
+        self.client.force_authenticate(self.user)
+        response = self.client.get("/api/setup/companies/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data], [allowed.pk])
+        self.assertNotIn(hidden.pk, [row["id"] for row in response.data])
+
+    def test_branch_access_can_be_limited_to_selected_branches(self):
+        company = Company.objects.create(
+            code="BRANCH", name_ar="شركة الفروع", country="EG",
+            activity="commercial", base_currency=self.currency,
+        )
+        first = Branch.objects.create(company=company, code="A", name_ar="فرع أ")
+        Branch.objects.create(company=company, code="B", name_ar="فرع ب")
+        membership = CompanyMembership.objects.create(user=self.user, company=company)
+        membership.branches.add(first)
+        self.client.force_authenticate(self.user)
+        response = self.client.get("/api/setup/branches/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data], [first.pk])
