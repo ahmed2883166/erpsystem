@@ -477,7 +477,7 @@ export type HrEmployee = {
 export type HrPayrollRuleSet = {id:number;company:number;country:"EG"|"SA";name:string;effective_from:string;effective_to:string|null;configuration:Record<string,unknown>;is_active:boolean};
 export type HrPayrollCycle = {
   id:number; company:number; period_start:string; period_end:string; payment_date:string;
-  status:"draft"|"calculated"|"review"|"approved"|"posted"|"paid";
+  status:"draft"|"calculated"|"review"|"approved"|"posted"|"payment_pending"|"paid";
   rule_set:number|null; results_count:number; journal_entry:number|null;
 };
 export type HrPayrollResult = {
@@ -514,6 +514,8 @@ export const hrApi = {
   sendPayrollToReview: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>(`/api/hr/payroll-cycles/${id}/send_to_review/`, {method:"POST"}); },
   approvePayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>(`/api/hr/payroll-cycles/${id}/approve/`, {method:"POST"}); },
   postPayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/post/`, {method:"POST"}); },
+  preparePayrollPayment: async (id:number, treasuryAccountId:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/prepare_payment/`, {method:"POST",body:JSON.stringify({treasury_account_id:treasuryAccountId})}); },
+  completePayrollPayment: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/complete_payment/`, {method:"POST"}); },
   payrollResults: (id:number) => request<HrPayrollResult[]>(`/api/hr/payroll-cycles/${id}/results/`),
 };
 
