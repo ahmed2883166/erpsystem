@@ -18,6 +18,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                             "disposal_journal", "disposal_treasury_transaction", "acquisition_treasury_transaction", "accumulated_depreciation", "net_book_value", "created_at")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if company and branch and branch.company_id != company.id:
