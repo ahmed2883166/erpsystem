@@ -167,6 +167,19 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             "journal_number", "paid_total", "balance_due", "created_at", "posted_at", "invoice_lines",
         )
 
+    def get_paid_total(self, obj):
+        return str(sum(
+            (payment.amount for payment in obj.payments.filter(status="posted")),
+            Decimal("0"),
+        ))
+
+    def get_balance_due(self, obj):
+        paid = sum(
+            (payment.amount for payment in obj.payments.filter(status="posted")),
+            Decimal("0"),
+        )
+        return str(max(obj.grand_total - paid, Decimal("0")))
+
     def validate(self, attrs):
         company = attrs.get("company")
         supplier = attrs.get("supplier")
