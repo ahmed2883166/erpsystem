@@ -2,9 +2,7 @@ from pathlib import Path
 import environ
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-env = environ.Env(
-    DJANGO_DEBUG=(bool, False),
-)
+env = environ.Env(DJANGO_DEBUG=(bool, False))
 environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY", default="unsafe-local-only-change-me")
@@ -12,15 +10,9 @@ DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
-    "django.contrib.auth",
-    "django.contrib.contenttypes",
-    "django.contrib.sessions",
-    "django.contrib.messages",
-    "django.contrib.staticfiles",
-    "rest_framework",
-    "corsheaders",
-    "core",
+    "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
+    "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
+    "rest_framework", "corsheaders", "core", "accounts", "companies",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -46,19 +38,18 @@ TEMPLATES = [{
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": env("POSTGRES_DB", default="nexus_dev"),
-        "USER": env("POSTGRES_USER", default="nexus_app"),
-        "PASSWORD": env("POSTGRES_PASSWORD", default="change-me"),
-        "HOST": env("POSTGRES_HOST", default="127.0.0.1"),
-        "PORT": env("POSTGRES_PORT", default="5432"),
-        "CONN_MAX_AGE": 60,
-        "OPTIONS": {"connect_timeout": 5},
-    }
-}
+DATABASES = {"default": {
+    "ENGINE": "django.db.backends.postgresql",
+    "NAME": env("POSTGRES_DB", default="nexus_dev"),
+    "USER": env("POSTGRES_USER", default="nexus_app"),
+    "PASSWORD": env("POSTGRES_PASSWORD", default="change-me"),
+    "HOST": env("POSTGRES_HOST", default="127.0.0.1"),
+    "PORT": env("POSTGRES_PORT", default="5432"),
+    "CONN_MAX_AGE": 60,
+    "OPTIONS": {"connect_timeout": 5},
+}}
 
+AUTH_USER_MODEL = "accounts.User"
 LANGUAGE_CODE = "ar"
 TIME_ZONE = "Africa/Cairo"
 USE_I18N = True
@@ -67,13 +58,7 @@ STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:5173"])
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework.authentication.SessionAuthentication",
-    ],
-    "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
-    ],
-    "DEFAULT_RENDERER_CLASSES": [
-        "rest_framework.renderers.JSONRenderer",
-    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
 }
