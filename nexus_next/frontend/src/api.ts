@@ -490,6 +490,9 @@ export const hrApi = {
 
   payrollComponents: (companyId:number) => request<HrPayrollComponent[]>(`/api/hr/payroll-components/?company=${companyId}&ordering=kind,code`),
   createPayrollComponent: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollComponent>("/api/hr/payroll-components/", {method:"POST",body:JSON.stringify(payload)}); },
+  employeeComponents: (companyId:number) => request<HrEmployeeComponent[]>(`/api/hr/employee-components/?company=${companyId}`),
+  createEmployeeComponent: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeComponent>("/api/hr/employee-components/", {method:"POST",body:JSON.stringify(payload)}); },
+  approveLeave: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrLeaveRequest>(`/api/hr/leave-requests/${id}/approve/`, {method:"POST"}); },
   attendance: (companyId:number) => request<HrAttendance[]>(`/api/hr/attendance/?company=${companyId}&ordering=-work_date`),
   createAttendance: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrAttendance>("/api/hr/attendance/", {method:"POST",body:JSON.stringify(payload)}); },
   leaveRequests: (companyId:number) => request<HrLeaveRequest[]>(`/api/hr/leave-requests/?company=${companyId}&ordering=-start_date`),
@@ -510,6 +513,7 @@ export const hrApi = {
 };
 
 export type HrPayrollComponent = {id:number;company:number;code:string;name_ar:string;kind:"earning"|"deduction"|"employer_share";method:"fixed"|"percent_basic"|"per_day"|"per_hour"|"friday_double_day"|"manual";default_value:string;affects_taxable_base:boolean;affects_insurance_base:boolean;requires_approval:boolean;is_active:boolean;expense_account:number|null;payable_account:number|null};
+export type HrEmployeeComponent = {id:number;employee:number;component:number;component_name:string;value:string|null;effective_from:string;effective_to:string|null;is_active:boolean};
 export type HrAttendance = {id:number;employee:number;employee_code:string;employee_name:string;work_date:string;status:"present"|"absent"|"leave"|"unpaid_leave"|"holiday";worked_hours:string;overtime_hours:string;friday_worked:boolean;late_minutes:number;notes:string};
 export type HrLeaveRequest = {id:number;employee:number;employee_name:string;kind:"annual"|"sick"|"emergency"|"unpaid";start_date:string;end_date:string;days:string;reason:string;status:"pending"|"approved"|"rejected"};
 export type HrEmployeeLoan = {id:number;employee:number;employee_name:string;reference:string;issue_date:string;principal:string;installment_count:number;installment_amount:string;outstanding_balance:string;status:"active"|"settled"|"suspended";notes:string};
