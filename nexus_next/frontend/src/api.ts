@@ -71,3 +71,22 @@ export const inventoryApi = {
 };
 
 export type InventoryLocation = { id: number; warehouse: number; warehouse_name: string; code: string; name_ar: string; location_type: "floor" | "area" | "rack" | "bin"; parent: number | null; is_active: boolean };
+
+
+export type StockMovementLine = { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; adjustment_direction: "in" | "out" | "" };
+export type StockMovement = {
+  id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "transfer" | "adjustment";
+  movement_date: string; source_warehouse: number | null; source_warehouse_name: string | null;
+  destination_warehouse: number | null; destination_warehouse_name: string | null;
+  status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; created_at: string; posted_at: string | null;
+};
+export type StockBalance = {
+  id: number; product: number; product_code: string; product_name: string; warehouse: number;
+  warehouse_name: string; quantity: string; average_cost: string; inventory_value: string; updated_at: string;
+};
+export const stockApi = {
+  movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/?company=${companyId}&ordering=-movement_date`),
+  balances: (companyId: number) => request<StockBalance[]>(`/api/inventory/balances/?warehouse__company=${companyId}&ordering=product__code`),
+  createMovement: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<StockMovement>("/api/inventory/movements/", { method: "POST", body: JSON.stringify(payload) }); },
+  postMovement: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<StockMovement>(`/api/inventory/movements/${id}/post/`, { method: "POST" }); },
+};
