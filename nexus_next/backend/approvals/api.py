@@ -67,6 +67,18 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
             raise ValidationError("تم اتخاذ قرار على هذا الطلب بالفعل.")
         if approval.invoice.status != "draft":
             raise ValidationError("لا يمكن اعتماد طلب فاتورة ليست مسودة.")
+        latest = approval.invoice.approval_requests.order_by("-requested_at", "-pk").first()
+        if not latest or latest.pk != approval.pk:
+            raise ValidationError("هذا الطلب لم يعد الأحدث؛ راجع طلب الموافقة الحالي.")
+        current_max = max(
+            approval.invoice.lines.values_list("discount_percent", flat=True),
+            default=0,
+        )
+        if (
+            approval.requested_discount_total != approval.invoice.discount_total
+            or approval.requested_max_discount_percent != current_max
+        ):
+            raise ValidationError("تغيرت تفاصيل الخصم بعد إنشاء الطلب؛ يجب مراجعة الطلب الأحدث.")
 
     @action(detail=True, methods=("post",))
     @transaction.atomic
