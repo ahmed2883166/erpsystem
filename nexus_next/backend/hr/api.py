@@ -1,4 +1,7 @@
-from decimal import Decimal\n\nfrom django.db import transaction\nfrom django.utils import timezone
+from decimal import Decimal
+
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import decorators, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
