@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, inventoryApi, salesApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse, type CustomerAging } from "./api";
+import { api, inventoryApi, salesApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type Warehouse, type CustomerAging, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
-type InvoiceDraftLine = { delivery_line: number; product_name: string; quantity: string; unit_price: string; tax_rate: string };
+type InvoiceDraftLine = { delivery_line: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
 export default function SalesPanel({ companyId }: Props) {
   const [tab, setTab] = useState<"deliveries" | "invoices" | "receipts" | "aging">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [deliveries, setDeliveries] = useState<SalesDelivery[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
@@ -30,11 +31,11 @@ export default function SalesPanel({ companyId }: Props) {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, d, i, r] = await Promise.all([
+      const [c, p, w, d, i, r, t] = await Promise.all([
         api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId),
+        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), api.taxCodes(companyId),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r);
+      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge"));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
   };
@@ -75,7 +76,7 @@ export default function SalesPanel({ companyId }: Props) {
       await salesApi.createInvoice({
         company: companyId, customer, delivery: delivery.id, invoice_number: invoiceForm.invoice_number,
         invoice_date: invoiceForm.invoice_date,
-        lines: invoiceLines.map(line => ({ delivery_line: line.delivery_line, unit_price: line.unit_price, tax_rate: line.tax_rate })),
+        lines: invoiceLines.map(line => ({ delivery_line: line.delivery_line, unit_price: line.unit_price, tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null })),
       });
       setShowForm(false); setInvoiceForm(old => ({ ...old, delivery: "", invoice_number: "" })); setInvoiceLines([]);
       await refresh();
@@ -157,13 +158,14 @@ export default function SalesPanel({ companyId }: Props) {
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ إذن التسليم كمسودة"}</button></div>
     </form>}
     {showForm && tab === "invoices" && <form className="inventory-form" onSubmit={createInvoice}>
-      <label>إذن التسليم<select required value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map(line => ({delivery_line:line.id, product_name:line.product_name, quantity:line.quantity, unit_price:products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:"0"})) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label>
+      <label>إذن التسليم<select required value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map(line => ({delivery_line:line.id, product_name:line.product_name, quantity:line.quantity, unit_price:products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:"0", tax_code:""})) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label>
       <label>رقم الفاتورة<input required value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({...invoiceForm, invoice_number:e.target.value})} /></label>
       <label>التاريخ<input required type="date" value={invoiceForm.invoice_date} onChange={e => setInvoiceForm({...invoiceForm, invoice_date:e.target.value})} /></label>
       {invoiceLines.map((line,index) => <div className="inventory-form-row" key={line.delivery_line}>
         <label>الصنف<input readOnly value={line.product_name} /></label><label>الكمية<input readOnly value={line.quantity} /></label>
         <label>سعر الوحدة<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))} /></label>
-        <label>الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))} /></label>
+        <label>كود الضريبة<select value={line.tax_code} onChange={e => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,tax_code:e.target.value,tax_rate:selected?.rate || "0"}:x)); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}%</option>)}</select></label>
+        {!line.tax_code && <label>الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))} /></label>}
       </div>)}
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceForm.delivery || !invoiceLines.length}>{busy ? "جارٍ الحفظ…" : "حفظ الفاتورة كمسودة"}</button></div>
     </form>}
