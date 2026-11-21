@@ -226,8 +226,11 @@ class LoanInstallmentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         loan = attrs.get("loan", getattr(self.instance, "loan", None))
         amount = attrs.get("amount", getattr(self.instance, "amount", 0))
+        due_date = attrs.get("due_date", getattr(self.instance, "due_date", None))
         if loan and loan.status != "active":
             raise serializers.ValidationError({"loan": "لا يمكن إضافة قسط إلى سلفة غير سارية."})
+        if loan and due_date and due_date < loan.issue_date:
+            raise serializers.ValidationError({"due_date": "تاريخ القسط لا يمكن أن يسبق تاريخ السلفة."})
         if amount <= 0:
             raise serializers.ValidationError({"amount": "قيمة القسط يجب أن تكون موجبة."})
         return attrs
