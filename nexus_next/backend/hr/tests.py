@@ -218,18 +218,19 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(salary_for_date(self.employee, date(2099, 1, 1)), Decimal("12000"))
 
     def test_backdated_salary_change_preserves_latest_salary_as_of_today(self):
-        future = self.client.post("/api/hr/salary-history/", {
-            "employee": self.employee.pk, "effective_date": "2099-01-01",
-            "new_salary": "13000", "change_type": "annual_raise",
+        newer = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk, "effective_date": "2026-03-01",
+            "new_salary": "12000", "change_type": "annual_raise",
         }, format="json")
-        past = self.client.post("/api/hr/salary-history/", {
+        older = self.client.post("/api/hr/salary-history/", {
             "employee": self.employee.pk, "effective_date": "2026-02-01",
             "new_salary": "11000", "change_type": "annual_raise",
         }, format="json")
-        self.assertEqual(future.status_code, 201, future.data)
-        self.assertEqual(past.status_code, 201, past.data)
+        self.assertEqual(newer.status_code, 201, newer.data)
+        self.assertEqual(older.status_code, 201, older.data)
         self.employee.refresh_from_db()
-        self.assertEqual(self.employee.basic_salary, Decimal("11000"))
+        self.assertEqual(self.employee.basic_salary, Decimal("12000"))
+        self.assertEqual(salary_for_date(self.employee, date(2026, 11, 22)), Decimal("12000"))
 
 
 class PayrollTaxPostingTests(TestCase):
