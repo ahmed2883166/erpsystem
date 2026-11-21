@@ -58,7 +58,10 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = self.queryset
         if not self.request.user.is_superuser:
-            qs = qs.filter(employee__company__in=accessible_companies(self.request.user))
+            qs = qs.filter(
+                employee__company__in=accessible_companies(self.request.user),
+                employee__branch__in=accessible_branches(self.request.user),
+            )
         company_id = self.request.query_params.get("company")
         if company_id:
             qs = qs.filter(employee__company_id=company_id)
@@ -70,6 +73,8 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
         if not has_company_role(self.request.user, employee.company_id, roles):
             raise PermissionDenied("لا تملك صلاحية تعديل سجلات الموظف.")
+        if not can_access_branch(self.request.user, employee.branch_id, employee.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الموظف.")
 
     def perform_create(self, serializer):
         self.check_employee_write(serializer.validated_data["employee"])
@@ -107,9 +112,27 @@ class EmployeeViewSet(CompanyScopedViewSet):
     search_fields = ("code", "full_name_ar", "full_name_en", "national_id", "insurance_number", "phone")
     ordering_fields = ("code", "full_name_ar", "hire_date", "basic_salary")
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_superuser:
+            qs = qs.filter(branch__in=accessible_branches(self.request.user))
+        return qs
+
     def perform_create(self, serializer):
-        self.check_company_write(serializer.validated_data["company"].pk)
+        company = serializer.validated_data["company"]
+        branch = serializer.validated_data["branch"]
+        self.check_company_write(company.pk)
+        if not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الموظف.")
         serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        branch = serializer.validated_data.get("branch", serializer.instance.branch)
+        self.check_company_write(company.pk)
+        if not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الموظف.")
+        serializer.save()
 
 
 class PayrollComponentViewSet(CompanyScopedViewSet):
@@ -228,6 +251,28 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
     filterset_fields = ("company", "status", "period_start", "period_end")
     ordering_fields = ("period_start", "payment_date", "status")
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if not self.request.user.is_superuser:
+            from companies.models import CompanyMembership
+            company_ids = CompanyMembership.objects.filter(
+                user=self.request.user, is_active=True, all_branches=True,
+                role__in=("admin", "accountant"),
+            ).values("company_id")
+            qs = qs.filter(company_id__in=company_ids)
+        return qs
+
+    def check_company_write(self, company_id, roles=("admin", "accountant")):
+        super().check_company_write(company_id, roles=roles)
+        if not self.request.user.is_superuser:
+            from companies.models import CompanyMembership
+            allowed = CompanyMembership.objects.filter(
+                user=self.request.user, company_id=company_id, is_active=True,
+                all_branches=True, role__in=roles,
+            ).exists()
+            if not allowed:
+                raise PermissionDenied("إدارة دورة المرتبات تتطلب صلاحية على جميع فروع الشركة.")
+
     def perform_create(self, serializer):
         self.check_company_write(serializer.validated_data["company"].pk)
         serializer.save(created_by=self.request.user)
@@ -283,7 +328,10 @@ class LoanInstallmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = self.queryset
         if not self.request.user.is_superuser:
-            qs = qs.filter(loan__employee__company__in=accessible_companies(self.request.user))
+            qs = qs.filter(
+                loan__employee__company__in=accessible_companies(self.request.user),
+                loan__employee__branch__in=accessible_branches(self.request.user),
+            )
         company_id = self.request.query_params.get("company")
         if company_id:
             qs = qs.filter(loan__employee__company_id=company_id)
@@ -295,5 +343,7 @@ class LoanInstallmentViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
         if not has_company_role(self.request.user, loan.employee.company_id, ("admin", "accountant")):
             raise PermissionDenied("لا تملك صلاحية إنشاء جدول أقساط السلفة.")
+        if not can_access_branch(self.request.user, loan.employee.branch_id, loan.employee.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الموظف.")
         serializer.save()
 
