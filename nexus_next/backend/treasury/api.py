@@ -60,11 +60,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         self._write(company_id)
         if branch and not can_access_branch(self.request.user, branch.pk, company_id):
             raise PermissionDenied("لا تملك صلاحية نقل حساب الخزينة إلى هذا الفرع.")
-        doc = serializer.save()
-        refresh_financial_approval(
-            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
-            doc, self.request.user,
-        )
+        serializer.save()
 
     def perform_destroy(self, instance):
         self._write(instance.company_id)
@@ -112,7 +108,11 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         self._write(company.pk)
         if not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية نقل مستند الخزينة إلى هذا الفرع.")
-        serializer.save()
+        doc = serializer.save()
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
+            doc, self.request.user,
+        )
 
     def perform_destroy(self, instance):
         self._write(instance.company_id)
