@@ -15,6 +15,7 @@ class DiscountApprovalPolicySerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         discount_limit = attrs.get(
             "max_discount_percent",
             self.instance.max_discount_percent if self.instance else None,
@@ -38,6 +39,7 @@ class DiscountApprovalPolicySerializer(serializers.ModelSerializer):
         return attrs
 
     def validate_company(self, company):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         if self.instance and company.pk != self.instance.company_id:
             raise serializers.ValidationError("لا يمكن نقل سياسة الخصم بين الشركات.")
         return company
@@ -52,6 +54,7 @@ class SalesInvoiceApprovalSerializer(serializers.ModelSerializer):
     decided_by_name = serializers.CharField(source="decided_by.username", read_only=True, allow_null=True)
 
     def get_invoice_total(self, obj):
+        """تجهيز قيمة محسوبة أو بيانات مرتبطة لعرضها بأمان في الواجهة."""
         if obj.requested_lines_snapshot:
             total = sum(
                 (Decimal(line.get("total_amount", "0")) for line in obj.requested_lines_snapshot),
@@ -91,6 +94,7 @@ class FinancialApprovalRequestSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_document_number(self, obj):
+        """تجهيز قيمة محسوبة أو بيانات مرتبطة لعرضها بأمان في الواجهة."""
         document = obj.purchase_invoice or obj.supplier_payment or obj.treasury_transaction
         if obj.document_type == "purchase_invoice":
             return document.invoice_number
@@ -99,4 +103,5 @@ class FinancialApprovalRequestSerializer(serializers.ModelSerializer):
         return document.document_number
 
     def get_document_total(self, obj):
+        """تجهيز قيمة محسوبة أو بيانات مرتبطة لعرضها بأمان في الواجهة."""
         return str(obj.requested_amount)
