@@ -19,7 +19,7 @@ from .serializers import (
     LeaveRequestSerializer, EmployeeSalaryHistorySerializer, PayrollComponentSerializer, PayrollCycleSerializer,
     PayrollResultSerializer, PayrollRuleSetSerializer,
 )
-from .services import calculate_payroll_cycle
+from .services import calculate_payroll_cycle, post_payroll_cycle
 
 
 class CompanyScopedViewSet(viewsets.ModelViewSet):
@@ -321,6 +321,19 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         cycle = self.get_object()
         rows = cycle.results.select_related("employee").prefetch_related("lines")
         return response.Response(PayrollResultSerializer(rows, many=True).data)
+
+    @decorators.action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        cycle = self.get_object()
+        self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
+        try:
+            result = post_payroll_cycle(cycle.pk, request.user)
+        except Exception as exc:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            if isinstance(exc, DjangoValidationError):
+                raise ValidationError(exc.messages) from exc
+            raise
+        return response.Response(result)
 
 class LoanInstallmentViewSet(viewsets.ModelViewSet):
     queryset = LoanInstallment.objects.select_related("loan", "loan__employee", "loan__employee__company").all()
