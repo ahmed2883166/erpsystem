@@ -13,11 +13,13 @@ _SLOW_REQUEST_MS = 1000.0
 
 
 def _record(event):
+    """تسجيل عينة أداء للطلب داخل ذاكرة العامل الحالي."""
     with _LOCK:
         _EVENTS.append(event)
 
 
 def _system_resources():
+    """قراءة مؤشرات استهلاك المعالج والذاكرة المتاحة."""
     try:
         memory = psutil.virtual_memory()
         return {
@@ -32,6 +34,7 @@ def _system_resources():
 
 
 def _postgres_resources():
+    """قراءة مؤشرات اتصالات PostgreSQL وحجم قاعدة البيانات."""
     if connection.vendor != "postgresql":
         return {"available": False, "reason": "postgresql_only"}
     try:
@@ -64,6 +67,7 @@ def _postgres_resources():
 
 
 def performance_snapshot():
+    """تجميع ملخص مؤشرات الأداء والطلبات المسجلة."""
     with _LOCK:
         events = list(_EVENTS)
     durations = sorted(item["duration_ms"] for item in events)
@@ -93,15 +97,18 @@ class PerformanceMetricsMiddleware:
     """Low-overhead, in-memory request and SQL timing; no SQL text or payloads are retained."""
 
     def __init__(self, get_response):
+        """تهيئة وسيط قياس الأداء وربطه بمعالج الطلب التالي."""
         self.get_response = get_response
 
     def __call__(self, request):
+        """قياس زمن الطلب وعدد استعلامات قاعدة البيانات وتسجيل النتائج."""
         started = perf_counter()
         query_count = 0
         query_duration = 0.0
         status_code = 500
 
         def track_execute(execute, sql, params, many, context):
+            """قياس زمن تنفيذ استعلام قاعدة البيانات دون تسجيل نصه أو بياناته الحساسة."""
             nonlocal query_count, query_duration
             query_count += 1
             query_started = perf_counter()
