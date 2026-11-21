@@ -2,6 +2,17 @@
 {% block title %}تعديل مسودة {{ workflow.workflow_no }} | ADMRAIL ERP{% endblock %}
 {% block scripts %}
 <script>
+document.addEventListener('change',event=>{
+ if(event.target.name!=='line_tax_category')return;
+ const option=event.target.selectedOptions[0];
+ const treatment=option?.dataset.treatment;
+ const row=event.target.closest('tr');
+ if(!row||!treatment)return;
+ const treatmentSelect=row.querySelector('[name="line_tax_treatment"]');
+ const rateInput=row.querySelector('[name="line_tax_rate"]');
+ if(treatmentSelect)treatmentSelect.value=treatment;
+ if(rateInput&&treatment!=='standard')rateInput.value='0';
+});
 document.querySelectorAll('tbody tr').forEach(function(row){
   const product=row.querySelector('select[name="product_id"]');
   const unit=row.querySelector('select[name="uom_id"]');
