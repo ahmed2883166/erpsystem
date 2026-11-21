@@ -342,6 +342,9 @@ class FinancialStatementsApiTests(TestCase):
             f"/api/accounting/journal-entries/general-ledger/?company={company.pk}"
             f"&account={cash.pk}&date_from=2026-01-01&date_to=2026-01-31"
         )
+        journal_detail_response = client.get(
+            f"/api/accounting/journal-entries/{operations.pk}/"
+        )
         equity_response = client.get(
             f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
             "&date_from=2026-01-01&date_to=2026-01-31"
@@ -349,6 +352,9 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(balance_response.status_code, 200)
         self.assertEqual(income_response.status_code, 200)
         self.assertEqual(ledger_response.status_code, 200)
+        self.assertEqual(journal_detail_response.status_code, 200)
+        self.assertEqual(journal_detail_response.data["entry_number"], "OPS-FS")
+        self.assertEqual(len(journal_detail_response.data["lines"]), 2)
         self.assertEqual(equity_response.status_code, 200)
         self.assertEqual(balance_response.data["total_assets"], Decimal("250.0000"))
         self.assertEqual(balance_response.data["total_equity"], Decimal("250.0000"))
