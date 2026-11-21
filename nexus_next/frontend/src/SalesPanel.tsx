@@ -25,6 +25,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [deliveryLines, setDeliveryLines] = useState<DeliveryDraftLine[]>([{ product: "", quantity: "1", expiry_date: "" }]);
   const [invoiceForm, setInvoiceForm] = useState({ delivery: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10) });
   const [invoiceLines, setInvoiceLines] = useState<InvoiceDraftLine[]>([]);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
   const [receiptForm, setReceiptForm] = useState({ invoice: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", amount: "", reference: "" });
 
   const refresh = async () => {
@@ -73,15 +74,27 @@ export default function SalesPanel({ companyId }: Props) {
     const deliveryLine = delivery.line_items[0];
     setBusy(true); setError("");
     try {
-      await salesApi.createInvoice({
+      const payload = {
         company: companyId, customer, delivery: delivery.id, invoice_number: invoiceForm.invoice_number,
         invoice_date: invoiceForm.invoice_date,
         lines: invoiceLines.map(line => ({ delivery_line: line.delivery_line, unit_price: line.unit_price, tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null, discount_percent: line.discount_percent })),
-      });
-      setShowForm(false); setInvoiceForm(old => ({ ...old, delivery: "", invoice_number: "" })); setInvoiceLines([]);
+      };
+      if (editingInvoiceId) await salesApi.updateInvoice(editingInvoiceId, { lines: payload.lines });
+      else await salesApi.createInvoice(payload);
+      setShowForm(false); setEditingInvoiceId(null); setInvoiceForm(old => ({ ...old, delivery: "", invoice_number: "" })); setInvoiceLines([]);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء فاتورة المبيعات."); }
     finally { setBusy(false); }
+  };
+  const beginEditInvoice = (invoice: SalesInvoice) => {
+    setTab("invoices"); setShowForm(true); setError(""); setEditingInvoiceId(invoice.id);
+    setInvoiceForm({ delivery: String(invoice.delivery), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date });
+    setInvoiceLines(invoice.invoice_lines.map(line => ({
+      delivery_line: line.delivery_line, product_name: line.product_name, quantity: line.quantity,
+      unit_price: line.unit_price, tax_rate: line.tax_rate,
+      tax_code: line.tax_code ? String(line.tax_code) : "",
+      discount_percent: line.discount_percent,
+    })));
   };
   const createReceipt = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -158,9 +171,9 @@ export default function SalesPanel({ companyId }: Props) {
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ إذن التسليم كمسودة"}</button></div>
     </form>}
     {showForm && tab === "invoices" && <form className="inventory-form" onSubmit={createInvoice}>
-      <label>إذن التسليم<select required value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map(line => ({delivery_line:line.id, product_name:line.product_name, quantity:line.quantity, unit_price:products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:"0", tax_code:"", discount_percent:"0"})) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label>
-      <label>رقم الفاتورة<input required value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({...invoiceForm, invoice_number:e.target.value})} /></label>
-      <label>التاريخ<input required type="date" value={invoiceForm.invoice_date} onChange={e => setInvoiceForm({...invoiceForm, invoice_date:e.target.value})} /></label>
+      <label>إذن التسليم<select required disabled={!!editingInvoiceId} value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map(line => ({delivery_line:line.id, product_name:line.product_name, quantity:line.quantity, unit_price:products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:"0", tax_code:"", discount_percent:"0"})) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label>
+      <label>رقم الفاتورة<input required disabled={!!editingInvoiceId} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({...invoiceForm, invoice_number:e.target.value})} /></label>
+      <label>التاريخ<input required type="date" disabled={!!editingInvoiceId} value={invoiceForm.invoice_date} onChange={e => setInvoiceForm({...invoiceForm, invoice_date:e.target.value})} /></label>
       {invoiceLines.map((line,index) => <div className="inventory-form-row" key={line.delivery_line}>
         <label>الصنف<input readOnly value={line.product_name} /></label><label>الكمية<input readOnly value={line.quantity} /></label>
         <label>سعر الوحدة<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))} /></label>
@@ -168,7 +181,7 @@ export default function SalesPanel({ companyId }: Props) {
         {!line.tax_code && <label>الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))} /></label>}
         <label>خصم %<input required type="number" min="0" max="100" step="0.0001" value={line.discount_percent} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,discount_percent:e.target.value}:x))} /></label>
       </div>)}
-      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceForm.delivery || !invoiceLines.length}>{busy ? "جارٍ الحفظ…" : "حفظ الفاتورة كمسودة"}</button></div>
+      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceForm.delivery || !invoiceLines.length}>{busy ? "جارٍ الحفظ…" : editingInvoiceId ? "حفظ تعديلات المسودة" : "حفظ الفاتورة كمسودة"}</button>{editingInvoiceId && <button type="button" className="subtle-button" onClick={() => { setEditingInvoiceId(null); setShowForm(false); setInvoiceLines([]); }}>إلغاء التعديل</button>}</div>
     </form>}
     {showForm && tab === "receipts" && <form className="inventory-form" onSubmit={createReceipt}>
       <label>الفاتورة<select required value={receiptForm.invoice} onChange={e => { const invoice=invoices.find(x=>x.id===Number(e.target.value)); setReceiptForm({...receiptForm, invoice:e.target.value, amount:invoice?.balance_due || ""}); }}><option value="">اختر فاتورة مستحقة</option>{payable.map(i => <option key={i.id} value={i.id}>{i.invoice_number} · {i.customer_name} · متبقي {money(i.balance_due)}</option>)}</select></label>
@@ -180,7 +193,7 @@ export default function SalesPanel({ companyId }: Props) {
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !receiptForm.invoice}>{busy ? "جارٍ الحفظ…" : "حفظ سند القبض كمسودة"}</button></div>
     </form>}
     {tab === "deliveries" && <div className="data-table-wrap"><table><thead><tr><th>رقم الإذن</th><th>العميل</th><th>المخزن</th><th>التاريخ</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{filteredDeliveries.map(d=><tr key={d.id}><td className="code-cell">{d.delivery_number}</td><td>{d.customer_name}</td><td>{d.warehouse_name}</td><td>{d.delivery_date}</td><td>{d.movement_status === "posted" ? "مرحّل" : "مسودة"}</td><td>{d.movement_status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postDelivery(d.id))}>ترحيل وصرف المخزون</button> : "تم الصرف"}</td></tr>)}</tbody></table>{!busy && !filteredDeliveries.length && <div className="table-empty">لا توجد أذون تسليم.</div>}</div>}
-    {tab === "invoices" && <div className="data-table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>إذن التسليم</th><th>التاريخ</th><th>الخصم</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredInvoices.map(i=><tr key={i.id}><td className="code-cell">{i.invoice_number}</td><td>{i.customer_name}</td><td>{i.delivery_number}</td><td>{i.invoice_date}</td><td>{money(i.discount_total)}</td><td>{money(i.net_total)}</td><td>{money(i.tax_total)}</td><td>{money(i.grand_total)}</td><td>{money(i.paid_total)}</td><td>{money(i.balance_due)}</td><td>{i.journal_number || "—"}</td><td>{i.status === "draft" ? i.approval_status === "pending" ? "بانتظار اعتماد المدير" : i.approval_status === "rejected" ? "الخصم مرفوض" : <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postInvoice(i.id))}>ترحيل الفاتورة</button> : "مرحّلة"}</td></tr>)}</tbody></table>{!busy && !filteredInvoices.length && <div className="table-empty">لا توجد فواتير مبيعات.</div>}</div>}
+    {tab === "invoices" && <div className="data-table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>إذن التسليم</th><th>التاريخ</th><th>الخصم</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredInvoices.map(i=><tr key={i.id}><td className="code-cell">{i.invoice_number}</td><td>{i.customer_name}</td><td>{i.delivery_number}</td><td>{i.invoice_date}</td><td>{money(i.discount_total)}</td><td>{money(i.net_total)}</td><td>{money(i.tax_total)}</td><td>{money(i.grand_total)}</td><td>{money(i.paid_total)}</td><td>{money(i.balance_due)}</td><td>{i.journal_number || "—"}</td><td>{i.status === "draft" ? <div className="table-actions">{(i.approval_status === "pending" || i.approval_status === "rejected") && <span>{i.approval_status === "pending" ? "بانتظار اعتماد المدير" : "الخصم مرفوض — يلزم تعديل"}</span>}<button type="button" className="subtle-button" disabled={busy} onClick={() => beginEditInvoice(i)}>تعديل المسودة</button>{(i.approval_status === "not_required" || i.approval_status === "approved") && <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postInvoice(i.id))}>ترحيل الفاتورة</button>}</div> : "مرحّلة"}</td></tr>)}</tbody></table>{!busy && !filteredInvoices.length && <div className="table-empty">لا توجد فواتير مبيعات.</div>}</div>}
     {tab === "receipts" && <div className="data-table-wrap"><table><thead><tr><th>رقم السند</th><th>العميل</th><th>الفاتورة</th><th>التاريخ</th><th>الطريقة</th><th>المبلغ</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredReceipts.map(r=><tr key={r.id}><td className="code-cell">{r.receipt_number}</td><td>{r.customer_name}</td><td>{r.invoice_number}</td><td>{r.receipt_date}</td><td>{r.method === "cash" ? "نقدي" : "بنكي"}</td><td>{money(r.amount)}</td><td>{r.journal_number || "—"}</td><td>{r.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postReceipt(r.id))}>ترحيل سند القبض</button> : "مرحّل"}</td></tr>)}</tbody></table>{!busy && !filteredReceipts.length && <div className="table-empty">لا توجد سندات قبض.</div>}</div>}
   </section>;
 }
