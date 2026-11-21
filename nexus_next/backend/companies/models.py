@@ -130,6 +130,7 @@ class CompanyMembership(models.Model):
             models.UniqueConstraint(fields=("user", "company"), name="uq_company_membership_user_company"),
         ]
         ordering = ("company__code", "user__username")
+        indexes = [models.Index(fields=("user", "is_active", "company"), name="companies_c_user_id_1b1dae_idx")]
         verbose_name = "صلاحية شركة"
         verbose_name_plural = "صلاحيات الشركات"
 
