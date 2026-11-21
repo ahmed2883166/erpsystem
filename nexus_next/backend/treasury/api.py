@@ -121,6 +121,9 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
 
     def perform_destroy(self, instance):
         self._write(instance.company_id)
+        from hr.models import PayrollPosting
+        if PayrollPosting.objects.filter(payment_treasury_transaction=instance).exists():
+            raise ValidationError("مستند صرف المرتبات مرتبط بدورة مرتبات ولا يمكن حذفه من شاشة الخزينة.")
         if not can_access_branch(self.request.user, instance.branch_id, instance.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المستند.")
         if instance.status == TreasuryTransaction.Status.POSTED:
