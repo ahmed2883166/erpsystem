@@ -89,6 +89,38 @@ class SpecialTaxPeriodReaderTests(unittest.TestCase):
             conn.close()
 
 
+class SpecialTaxQualityCheckTests(unittest.TestCase):
+    def test_reports_missing_journal_reference_and_unbalanced_reverse_charge(self):
+        from tax_center import _special_tax_quality_issues
+
+        rows = [{
+            "document_kind": "purchase", "document_id": 18,
+            "mechanism_code": "sa_reverse_charge", "tax_type": None,
+            "tax_reference": "", "journal_entry_id": None,
+            "output_tax": Decimal("150"), "recoverable_input_tax": Decimal("90"),
+            "nonrecoverable_input_tax": Decimal("50"),
+        }]
+        issues = _special_tax_quality_issues(rows, "SA")
+        self.assertEqual(len(issues), 3)
+        self.assertTrue(any("قيد يومية" in issue["issue"] for issue in issues))
+        self.assertTrue(any("مرجع" in issue["issue"] for issue in issues))
+        self.assertTrue(any("غير متوازنة" in issue["issue"] for issue in issues))
+
+    def test_rejects_mechanism_from_other_country(self):
+        from tax_center import _special_tax_quality_issues
+
+        rows = [{
+            "document_kind": "sale", "document_id": 9,
+            "mechanism_code": "eg_table_tax_t3", "tax_type": "T3",
+            "tax_reference": "EG-9", "journal_entry_id": 7,
+            "output_tax": Decimal("0"), "recoverable_input_tax": Decimal("0"),
+            "nonrecoverable_input_tax": Decimal("0"),
+        }]
+        issues = _special_tax_quality_issues(rows, "SA")
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]["severity"], "error")
+
+
 class TaxMetadataSQLiteTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
