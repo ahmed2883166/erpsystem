@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
+from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment
 
 from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
@@ -326,9 +327,14 @@ class PayrollTaxPostingTests(TestCase):
             result=result, code_snapshot="BASIC", name_snapshot="الراتب الأساسي",
             kind_snapshot="earning", amount=Decimal("1000"),
         )
+        deduction_component = PayrollComponent.objects.create(
+            company=company, code="OTHER-DEDUCTION", name_ar="خصم",
+            kind=PayrollComponent.Kind.DEDUCTION, method=PayrollComponent.Method.FIXED,
+            payable_account=AccountRole.objects.get(company=company, role="payroll_payable").account,
+        )
         PayrollResultLine.objects.create(
-            result=result, code_snapshot="OTHER-DEDUCTION", name_snapshot="خصم",
-            kind_snapshot="deduction", amount=Decimal("100"),
+            result=result, component=deduction_component, code_snapshot="OTHER-DEDUCTION",
+            name_snapshot="خصم", kind_snapshot="deduction", amount=Decimal("100"),
         )
         post_payroll_cycle(cycle.pk, actor)
         cycle.refresh_from_db()
