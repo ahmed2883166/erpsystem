@@ -492,3 +492,5 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .account-import-preview .data-table-wrap{max-height:360px;overflow:auto;border:1px solid var(--line,#263449);border-radius:12px}
 .account-import-preview table{min-width:680px}
 @media(max-width:640px){.account-import-card{padding:14px}.account-import-heading{align-items:flex-start}.account-import-controls{align-items:stretch}.account-import-controls input[type=file]{min-width:100%}.account-import-controls button{flex:1}}
+
+.import-row-warning{display:block;color:#e5bd76;font-size:11px;margin-top:4px;line-height:1.5}
