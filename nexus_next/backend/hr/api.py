@@ -19,7 +19,7 @@ from .serializers import (
     LeaveRequestSerializer, EmployeeSalaryHistorySerializer, PayrollComponentSerializer, PayrollCycleSerializer,
     PayrollResultSerializer, PayrollRuleSetSerializer,
 )
-from .services import calculate_payroll_cycle, post_payroll_cycle
+from .services import calculate_payroll_cycle, post_payroll_cycle, prepare_payroll_payment, complete_payroll_payment
 
 
 class CompanyScopedViewSet(viewsets.ModelViewSet):
@@ -328,6 +328,35 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
         try:
             result = post_payroll_cycle(cycle.pk, request.user)
+        except Exception as exc:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            if isinstance(exc, DjangoValidationError):
+                raise ValidationError(exc.messages) from exc
+            raise
+        return response.Response(result)
+
+    @decorators.action(detail=True, methods=("post",))
+    def prepare_payment(self, request, pk=None):
+        cycle = self.get_object()
+        self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
+        treasury_account_id = request.data.get("treasury_account_id")
+        if not treasury_account_id:
+            raise ValidationError({"treasury_account_id": "اختر حساب الخزينة أو البنك للصرف."})
+        try:
+            result = prepare_payroll_payment(cycle.pk, treasury_account_id, request.user)
+        except Exception as exc:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            if isinstance(exc, DjangoValidationError):
+                raise ValidationError(exc.messages) from exc
+            raise
+        return response.Response(result)
+
+    @decorators.action(detail=True, methods=("post",))
+    def complete_payment(self, request, pk=None):
+        cycle = self.get_object()
+        self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
+        try:
+            result = complete_payroll_payment(cycle.pk, request.user)
         except Exception as exc:
             from django.core.exceptions import ValidationError as DjangoValidationError
             if isinstance(exc, DjangoValidationError):
