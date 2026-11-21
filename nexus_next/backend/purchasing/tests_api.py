@@ -41,12 +41,13 @@ class PurchasingWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         receipt_id = response.data["id"]
+        receipt_line_id = response.data["line_items"][0]["id"]
         response = self.client.post(f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
-        return receipt_id
+        return receipt_id, receipt_line_id
 
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
-        receipt_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(balance.quantity, Decimal("2"))
         self.assertEqual(balance.inventory_value, Decimal("200.0000"))
@@ -55,7 +56,7 @@ class PurchasingWorkflowTests(APITestCase):
         response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-S-001", "invoice_date": "2026-03-10",
-            "lines": [{"receipt_line": 1, "unit_price": "100", "tax_rate": "14"}],
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         invoice_id = response.data["id"]
@@ -75,7 +76,7 @@ class PurchasingWorkflowTests(APITestCase):
         response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-S-002", "invoice_date": "2026-03-10",
-            "lines": [{"receipt_line": 1, "unit_price": "95", "tax_rate": "14"}],
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "95", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         response = self.client.post(f"/api/purchasing/invoices/{response.data['id']}/post/", {}, format="json")
