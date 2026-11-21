@@ -1,3 +1,7 @@
+/*
+ * لوحة المؤشرات المالية: تلخيص نتائج الفترة والميزانية وأعمار مديونيات العملاء والموردين.
+ * الفلاتر تحدد الفترة، والنقر على المؤشرات ينقل المستخدم إلى الشاشة التفصيلية المرتبطة.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { api, salesApi, purchasingApi, type BalanceSheetReport, type IncomeStatementReport, type CustomerAging, type SupplierAging } from "./api";
 
