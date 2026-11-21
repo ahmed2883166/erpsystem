@@ -163,10 +163,11 @@ export const api = {
   postJournal: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/" + id + "/post/", { method: "POST" }); },
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
-  trialBalance: (companyId: number, dateFrom?: string, dateTo?: string) => {
+  trialBalance: (companyId: number, dateFrom?: string, dateTo?: string, excludeClosing = false) => {
     const q = new URLSearchParams({company:String(companyId)});
     if (dateFrom) q.set("date_from", dateFrom);
     if (dateTo) q.set("date_to", dateTo);
+    if (excludeClosing) q.set("exclude_closing", "true");
     return request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?${q.toString()}`);
   },
   balanceSheet: (companyId: number, asOf: string) => request<BalanceSheetReport>(`/api/accounting/journal-entries/balance-sheet/?company=${companyId}&as_of=${asOf}`),
