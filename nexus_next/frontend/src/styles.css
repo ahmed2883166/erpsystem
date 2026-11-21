@@ -183,3 +183,10 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .treasury-recon-footer strong{color:#18865e}
 .treasury-panel h3{padding:14px 0 8px;color:#33465e;font-size:13px}
 @media(max-width:760px){.treasury-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.treasury-recon-footer{align-items:flex-start;flex-direction:column}}
+
+.treasury-csv-import{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0;padding:14px;border:1px dashed #8ca6c5;border-radius:10px;background:#f7faff}
+.treasury-csv-import>div{display:flex;flex-direction:column;gap:5px;min-width:220px}
+.treasury-csv-import strong{font-size:12px;color:#2b405a}
+.treasury-csv-import small{font-size:10px;color:#718096}
+.treasury-csv-import input[type=file]{max-width:260px;font-size:11px;color:#53657c}
+@media(max-width:600px){.treasury-csv-import{align-items:stretch;flex-direction:column}.treasury-csv-import input[type=file]{max-width:100%}}
