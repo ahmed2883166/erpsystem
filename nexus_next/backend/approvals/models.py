@@ -24,8 +24,17 @@ class DiscountApprovalPolicy(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "سياسة حد الخصم"
-        verbose_name_plural = "سياسات حدود الخصم"
+        verbose_name = "سياسة حدود الموافقات"
+        verbose_name_plural = "سياسات حدود الموافقات"
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(max_discount_percent__isnull=False)
+                    | models.Q(max_sales_invoice_amount__isnull=False)
+                ),
+                name="discount_policy_has_limit",
+            ),
+        ]
 
     def clean(self):
         super().clean()
