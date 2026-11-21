@@ -327,12 +327,13 @@ class PayrollCycle(CompanyScopedModel):
         REVIEW = "review", "تحت المراجعة"
         APPROVED = "approved", "معتمدة"
         POSTED = "posted", "مرحّلة"
+        PAYMENT_PENDING = "payment_pending", "بانتظار اعتماد الصرف"
         PAID = "paid", "تم الصرف"
 
     period_start = models.DateField()
     period_end = models.DateField()
     payment_date = models.DateField()
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
     rule_set = models.ForeignKey(PayrollRuleSet, null=True, blank=True, on_delete=models.PROTECT)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="created_payroll_cycles")
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_payroll_cycles")
@@ -369,6 +370,7 @@ class PayrollPosting(models.Model):
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="payroll_postings")
     journal_entry = models.OneToOneField("accounting.JournalEntry", on_delete=models.PROTECT, related_name="payroll_posting")
     payment_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="payroll_payment_posting")
+    payment_treasury_transaction = models.OneToOneField("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="payroll_posting")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
