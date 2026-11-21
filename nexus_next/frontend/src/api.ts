@@ -163,7 +163,12 @@ export const api = {
   postJournal: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/" + id + "/post/", { method: "POST" }); },
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
-  trialBalance: (companyId: number) => request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?company=${companyId}`),
+  trialBalance: (companyId: number, dateFrom?: string, dateTo?: string) => {
+    const q = new URLSearchParams({company:String(companyId)});
+    if (dateFrom) q.set("date_from", dateFrom);
+    if (dateTo) q.set("date_to", dateTo);
+    return request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?${q.toString()}`);
+  },
   balanceSheet: (companyId: number, asOf: string) => request<BalanceSheetReport>(`/api/accounting/journal-entries/balance-sheet/?company=${companyId}&as_of=${asOf}`),
   incomeStatement: (companyId: number, dateFrom: string, dateTo: string) => request<IncomeStatementReport>(`/api/accounting/journal-entries/income-statement/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}`),
   generalLedger: (companyId: number, accountId: number, dateFrom: string, dateTo: string) => request<GeneralLedgerReport>(`/api/accounting/journal-entries/general-ledger/?company=${companyId}&account=${accountId}&date_from=${dateFrom}&date_to=${dateTo}`),
