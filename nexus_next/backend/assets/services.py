@@ -63,12 +63,17 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
+    last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
+    previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - __import__("datetime").timedelta(days=1)
+    elapsed_days = (period_date - previous_date).days
+    if elapsed_days <= 0:
+        raise ValidationError("تاريخ الإهلاك يجب أن يكون بعد آخر فترة إهلاك مسجلة.")
     posted_total = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
     remaining = asset.depreciable_amount - posted_total
     if remaining <= 0:
         raise ValidationError("تم استهلاك كامل القيمة القابلة للإهلاك.")
-    monthly = (asset.depreciable_amount / Decimal(asset.useful_life_months)).quantize(MONEY, rounding=ROUND_HALF_UP)
-    amount = min(monthly, remaining)
+    daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
+    amount = min((daily_rate * Decimal(elapsed_days)).quantize(MONEY, rounding=ROUND_HALF_UP), remaining)
     entry = _post_entry(asset, year, f"FA-DEP-{asset.pk}-{period_date:%Y%m}", period_date,
         f"إهلاك الأصل: {asset.name_ar} - {period_date:%Y-%m}", [
             {"account": asset.depreciation_expense_account, "debit": amount, "credit": 0, "description": asset.name_ar},
