@@ -95,7 +95,7 @@ class InventoryApiTests(APITestCase):
     def _warehouse(self, code):
         return Warehouse.objects.create(company=self.company, branch=self.branch, code=code, name_ar=code)
 
-    def _movement(self, number, movement_type, destination=None, source=None, quantity="5", cost="10"):
+    def _movement(self, number, movement_type, destination=None, source=None, quantity="5", cost="10", source_location=None, destination_location=None, expiry_date=None, adjustment_direction=""):
         return self.client.post("/api/inventory/movements/", {
             "company": self.company.pk,
             "movement_number": number,
@@ -107,6 +107,10 @@ class InventoryApiTests(APITestCase):
                 "product": self.product.pk,
                 "quantity": quantity,
                 "unit_cost": cost,
+                "source_location": source_location.pk if source_location else None,
+                "destination_location": destination_location.pk if destination_location else None,
+                "expiry_date": expiry_date,
+                "adjustment_direction": adjustment_direction,
             }],
         }, format="json")
 
@@ -209,3 +213,34 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.product.refresh_from_db()
         self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
+
+
+    def test_expiry_tracked_receipt_updates_location_specific_balance(self):
+        from datetime import date
+        from .models import StorageLocation
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="EXP-1", name_ar="صنف صلاحية", track_expiry=True
+        )
+        warehouse = self._warehouse("EXP-WH")
+        location = StorageLocation.objects.create(
+            warehouse=warehouse, code="RACK-1", name_ar="رف 1", location_type="rack"
+        )
+        created = self._movement(
+            "EXP-R1", "receipt", destination=warehouse, quantity="6", cost="4",
+            destination_location=location, expiry_date="2027-05-01",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        balance = StockBalance.objects.get(
+            product=self.product, warehouse=warehouse, location=location, expiry_date=date(2027, 5, 1)
+        )
+        self.assertEqual(str(balance.quantity), "6.0000")
+
+    def test_expiry_tracked_product_requires_expiry_date(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="EXP-2", name_ar="صنف صلاحية 2", track_expiry=True
+        )
+        warehouse = self._warehouse("EXP-WH2")
+        response = self._movement("EXP-R2", "receipt", destination=warehouse)
+        self.assertEqual(response.status_code, 400, response.data)
