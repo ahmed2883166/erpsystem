@@ -1,4 +1,6 @@
 export type Company = { id: number; code: string; name_ar: string; base_currency_code: string };
+export type Branch = { id: number; company: number; code: string; name_ar: string; is_active: boolean };
+export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
 export type Account = {
   id: number; company: number; code: string; name_ar: string; parent: number | null;
   parent_code: string | null; nature: string; is_group: boolean; allow_posting: boolean; is_active: boolean;
@@ -10,8 +12,10 @@ export type Journal = {
   fiscal_year_name: string; entry_number: string; entry_date: string; description: string;
   source_type: string; status: string; lines: JournalLine[];
 };
-async function request<T>(path: string): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", headers: { Accept: "application/json" } });
+function csrfToken(): string { const item = document.cookie.split("; ").find((part) => part.startsWith("csrftoken=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || "GET").toUpperCase();
+  const response = await fetch(path, { credentials: "same-origin", ...options, headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-CSRFToken": csrfToken() } : {}), ...options.headers } });
   if (response.status === 403 || response.status === 401) {
     throw new Error("يلزم تسجيل الدخول ومنحك صلاحية عرض بيانات المحاسبة. افتح لوحة الإدارة ثم أعد المحاولة.");
   }
@@ -20,6 +24,10 @@ async function request<T>(path: string): Promise<T> {
 }
 export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
+  branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
+  fiscalYears: (id: number) => request<FiscalYear[]>("/api/setup/fiscal-years/?company=" + id),
+  createJournal: (payload: unknown) => request<Journal>("/api/accounting/journal-entries/", { method: "POST", body: JSON.stringify(payload) }),
+  postJournal: (id: number) => request<Journal>("/api/accounting/journal-entries/" + id + "/post/", { method: "POST" }),
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
   trialBalance: (companyId: number) => request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?company=${companyId}`),
