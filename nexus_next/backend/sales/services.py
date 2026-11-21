@@ -147,6 +147,7 @@ def post_customer_receipt(receipt_id, user):
     cash = receipt.payment_account or _account(receipt.company, cash_role)
     if cash.company_id != receipt.company_id or cash.nature != "asset" or not cash.is_active or cash.is_group or not cash.allow_posting:
         raise ValidationError("حساب التحصيل يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
+    branch, year = _branch_and_year(invoice.delivery, receipt.receipt_date)
     if receipt.payment_account_id:
         from treasury.models import TreasuryAccount
         expected_kind = TreasuryAccount.Kind.CASH if receipt.method == CustomerReceipt.Method.CASH else TreasuryAccount.Kind.BANK
@@ -156,7 +157,6 @@ def post_customer_receipt(receipt_id, user):
             raise ValidationError("حساب الخزينة المختار غير نشط أو لا يطابق فرع الفاتورة أو عملة الشركة أو طريقة التحصيل.")
     if receivable.pk == cash.pk:
         raise ValidationError("حساب العملاء وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
-    branch, year = _branch_and_year(invoice.delivery, receipt.receipt_date)
     entry = JournalEntry.objects.create(
         company=receipt.company, branch=branch, fiscal_year=year,
         entry_number=f"SALE-REC-{receipt.pk}", entry_date=receipt.receipt_date,
