@@ -1,3 +1,7 @@
+/*
+ * دورة المبيعات: تسليمات العملاء وفواتير البيع والتحصيل ومتابعة أعمار الديون.
+ * تربط مستندات البيع بالمخزون والإيراد والضريبة والذمم والتحصيلات.
+ */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode } from "./api";
 
