@@ -136,8 +136,8 @@ class PayrollComponent(CompanyScopedModel):
     affects_insurance_base = models.BooleanField(default=False)
     requires_approval = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
-    expense_account = models.ForeignKey("accounting.ChartOfAccount", null=True, blank=True, on_delete=models.PROTECT)
-    payable_account = models.ForeignKey("accounting.ChartOfAccount", null=True, blank=True, on_delete=models.PROTECT)
+    expense_account = models.ForeignKey("accounting.ChartOfAccount", null=True, blank=True, on_delete=models.PROTECT, related_name="payroll_components_expense")
+    payable_account = models.ForeignKey("accounting.ChartOfAccount", null=True, blank=True, on_delete=models.PROTECT, related_name="payroll_components_payable")
 
     class Meta:
         ordering = ("kind", "code")
