@@ -209,6 +209,16 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(leave.status, LeaveRequest.Status.REJECTED)
         self.assertEqual(leave.approved_by_id, manager.pk)
 
+    def test_payroll_rule_set_rejects_malformed_numeric_configuration(self):
+        response = self.client.post("/api/hr/payroll-rule-sets/", {
+            "company": self.company.pk, "country": self.company.country,
+            "name": "قواعد غير صالحة", "effective_from": "2026-01-01",
+            "configuration": {"monthly_daily_divisor": "abc"},
+            "is_active": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(self.company.payroll_rule_sets.filter(name="قواعد غير صالحة").exists())
+
     def test_employee_pay_report_respects_period_and_rejects_invalid_dates(self):
         outside = self.client.get(
             f"/api/hr/payroll-cycles/employee-pay-report/?company={self.company.pk}"
