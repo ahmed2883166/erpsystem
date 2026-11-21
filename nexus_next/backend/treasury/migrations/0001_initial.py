@@ -29,7 +29,7 @@ class Migration(migrations.Migration):
                 ("branch", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="treasury_accounts", to="companies.branch")),
                 ("company", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="treasury_accounts", to="companies.company")),
             ],
-            options={"ordering": ("kind", "code"), "indexes": [models.Index(fields=["company", "kind", "is_active"], name="treasury_tr_company_0e18f2_idx")], "constraints": [models.UniqueConstraint(fields=("company", "code"), name="uq_treasury_account_company_code")]},
+            options={"ordering": ("kind", "code"), "indexes": [models.Index(fields=["company", "kind", "is_active"], name="tr_co_kind_active_idx")], "constraints": [models.UniqueConstraint(fields=("company", "code"), name="uq_treasury_account_company_code")]},
         ),
         migrations.CreateModel(
             name="TreasuryTransaction",
@@ -53,6 +53,6 @@ class Migration(migrations.Migration):
                 ("journal_entry", models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="treasury_transaction", to="accounting.journalentry")),
                 ("source_account", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="outgoing_transactions", to="treasury.treasuryaccount")),
             ],
-            options={"ordering": ("-transaction_date", "-id"), "indexes": [models.Index(fields=["company", "status", "transaction_date"], name="treasury_tr_company_47ad01_idx")], "constraints": [models.UniqueConstraint(fields=("company", "document_number"), name="uq_treasury_doc_company_no")]},
+            options={"ordering": ("-transaction_date", "-id"), "indexes": [models.Index(fields=["company", "status", "transaction_date"], name="tr_co_status_date_idx")], "constraints": [models.UniqueConstraint(fields=("company", "document_number"), name="uq_treasury_doc_company_no")]},
         ),
     ]
