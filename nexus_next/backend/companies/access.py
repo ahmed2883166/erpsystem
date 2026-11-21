@@ -38,3 +38,15 @@ def can_access_company(user, company_id):
 
 def can_access_branch(user, branch_id, company_id=None):
     return accessible_branches(user, company_id).filter(pk=branch_id).exists()
+
+
+def has_company_role(user, company_id, roles):
+    if user.is_superuser:
+        return True
+    return CompanyMembership.objects.filter(
+        user=user,
+        company_id=company_id,
+        is_active=True,
+        company__is_active=True,
+        role__in=roles,
+    ).exists()
