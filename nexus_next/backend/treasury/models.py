@@ -58,6 +58,11 @@ class TreasuryTransaction(models.Model):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
 
+    class CashFlowCategory(models.TextChoices):
+        OPERATING = "operating", "تشغيلي"
+        INVESTING = "investing", "استثماري"
+        FINANCING = "financing", "تمويلي"
+
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="treasury_transactions")
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="treasury_transactions")
     fiscal_year = models.ForeignKey("companies.FiscalYear", on_delete=models.PROTECT, related_name="treasury_transactions")
@@ -71,6 +76,7 @@ class TreasuryTransaction(models.Model):
     amount = models.DecimalField(max_digits=20, decimal_places=4)
     description = models.CharField(max_length=500)
     reference = models.CharField(max_length=120, blank=True)
+    cash_flow_category = models.CharField(max_length=12, choices=CashFlowCategory.choices, default=CashFlowCategory.OPERATING)
     journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_transaction")
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_treasury_transactions")
     created_at = models.DateTimeField(auto_now_add=True)
