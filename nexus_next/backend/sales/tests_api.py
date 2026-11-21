@@ -61,6 +61,26 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         return delivery_id, line_id
 
+    def test_branch_limited_user_cannot_use_unassigned_sales_warehouse_outside_default_branch(self):
+        Branch.objects.create(
+            company=self.company, code="00-HQ", name_ar="مركز رئيسي آخر", is_head_office=True,
+        )
+        shared = Warehouse.objects.create(
+            company=self.company, branch=None, code="WH-GLOBAL", name_ar="مخزن غير مسند",
+        )
+        limited = get_user_model().objects.create_user(username="sales-branch-limited", password="test-password")
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        created = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk, "warehouse": shared.pk,
+            "delivery_number": "DEL-BRANCH-BLOCK", "delivery_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 403, created.data)
+
     def test_draft_delivery_can_be_corrected_and_deleted_safely(self):
         created = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": self.warehouse.pk,
