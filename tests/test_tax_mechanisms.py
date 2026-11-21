@@ -4,6 +4,7 @@ from decimal import Decimal
 from tax_mechanisms import (
     calculate_egypt_table_tax,
     calculate_saudi_reverse_charge,
+    build_saudi_reverse_charge_journal_lines,
 )
 
 
@@ -50,6 +51,37 @@ class SaudiReverseChargeTests(unittest.TestCase):
             calculate_saudi_reverse_charge("EG", "1000", "15", "100")
         with self.assertRaises(ValueError):
             calculate_saudi_reverse_charge("SA", "1000", "15", "101")
+
+
+    def test_reverse_charge_journal_plan_is_balanced_and_separates_components(self):
+        calculation = calculate_saudi_reverse_charge("SA", "1000", "15", "60")
+        lines = build_saudi_reverse_charge_journal_lines(calculation, 301, 302, 601)
+        self.assertEqual(
+            [(line["account_id"], line["debit"], line["credit"]) for line in lines],
+            [
+                (302, Decimal("90.00"), Decimal("0.00")),
+                (601, Decimal("60.00"), Decimal("0.00")),
+                (301, Decimal("0.00"), Decimal("150.00")),
+            ],
+        )
+        self.assertEqual(
+            sum((line["debit"] for line in lines), Decimal("0.00")),
+            sum((line["credit"] for line in lines), Decimal("0.00")),
+        )
+
+    def test_reverse_charge_journal_plan_requires_accounts_for_nonzero_legs(self):
+        calculation = calculate_saudi_reverse_charge("SA", "1000", "15", "100")
+        with self.assertRaises(ValueError):
+            build_saudi_reverse_charge_journal_lines(calculation, 301, None, None)
+        partial = calculate_saudi_reverse_charge("SA", "1000", "15", "60")
+        with self.assertRaises(ValueError):
+            build_saudi_reverse_charge_journal_lines(partial, 301, 302, None)
+
+    def test_reverse_charge_journal_plan_rejects_unbalanced_calculation(self):
+        calculation = calculate_saudi_reverse_charge("SA", "1000", "15", "60")
+        calculation["recoverable_input_tax"] = Decimal("89.00")
+        with self.assertRaises(ValueError):
+            build_saudi_reverse_charge_journal_lines(calculation, 301, 302, 601)
 
     def test_reverse_charge_rounds_each_reportable_tax_amount(self):
         result = calculate_saudi_reverse_charge("SA", "10.03", "15", "50")
