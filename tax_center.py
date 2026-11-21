@@ -314,12 +314,14 @@ def build_tax_report_snapshot(conn, period_value):
                 "document_type": "إشعار دائن", "document_kind": "sales_credit",
             })
     supplier_tax_number = _party_tax_number_expr(conn, "suppliers", "s")
+    supplier_bill_tax_columns = _columns(conn, "supplier_bills")
+    purchase_category_expr = "COALESCE(b.tax_category,'')" if "tax_category" in supplier_bill_tax_columns else "''"
     purchases = execute_compat(conn, f"""
         SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name, {supplier_tax_number} party_tax_number,
                b.subtotal taxable_base, b.tax_rate tax_rate,
                b.tax_amount tax_amount, b.total_amount total_amount,
                COALESCE(b.tax_treatment,'standard') tax_treatment,
-               COALESCE(b.tax_category,'') tax_category,
+               {purchase_category_expr} tax_category,
                COALESCE(b.tax_reference,'') tax_reference, COALESCE(b.tax_notes,'') tax_notes,
                COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
         FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
