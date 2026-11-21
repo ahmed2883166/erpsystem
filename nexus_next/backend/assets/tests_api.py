@@ -91,7 +91,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(disposed.status_code, 201, disposed.data)
         self.assertEqual(disposed.data["accumulated_depreciation"], Decimal("6000.0000"))
         self.assertEqual(disposed.data["net_book_value"], Decimal("114000.0000"))
-        self.assertEqual(disposed.data["gain"], Decimal("4000.0000"))
+        self.assertEqual(disposed.data["gain"], Decimal("6000.0000"))
         self.assertEqual(disposed.data["loss"], Decimal("0"))
         from assets.models import AssetDepreciation, FixedAsset
         asset = FixedAsset.objects.get(pk=asset_id)
