@@ -51,7 +51,7 @@ try {
     } finally { Pop-Location }
     Get-ChildItem $DailyRoot -Filter "nexus-*.dump" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$dailyKeep) } | Remove-Item -Force
     Get-ChildItem $MonthlyRoot -Filter "nexus-*.dump" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddMonths(-$monthlyKeep) } | Remove-Item -Force
-    Write-Host "Backup verified: $DailyFile" -ForegroundColor Green
+    Write-Output "Backup verified: $DailyFile"
 } finally {
     if ($ContainerId) { docker compose -f $Compose exec -T db sh -lc "rm -f '$ContainerPath'" 2>$null | Out-Null }
     Pop-Location
