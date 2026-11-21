@@ -204,3 +204,13 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .asset-depreciation-action{display:flex;align-items:end;gap:12px;margin:12px 0 16px}.asset-depreciation-action label{width:220px}
 @media(max-width:900px){.assets-panel .asset-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.assets-panel .asset-form{grid-template-columns:1fr}.asset-form-heading{display:block}.asset-form-heading small{display:block;margin-top:5px}.asset-description{grid-column:auto}.asset-depreciation-action{align-items:stretch;flex-direction:column}.asset-depreciation-action label{width:100%}}
+
+/* Fixed asset disposal form */
+.asset-disposal-form{margin-top:16px;padding:16px;border:1px solid #f0d8d8;border-radius:10px;background:#fffafa;display:flex;flex-direction:column;gap:12px}
+.asset-disposal-form>strong{font-size:12px;color:#783b3b}
+.asset-disposal-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.asset-disposal-fields label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#66758a}
+.asset-disposal-fields input,.asset-disposal-fields select{width:100%;min-width:0;border:1px solid #e1e7ef;border-radius:7px;background:#fff;padding:9px 10px;color:#29384d;font:inherit;font-size:11px}
+.danger-button{align-self:flex-start;border:1px solid #e7b8b8;border-radius:7px;background:#fff0f0;color:#a33b3b;padding:9px 14px;font-size:11px;font-weight:700;cursor:pointer}
+.danger-button:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:650px){.asset-disposal-fields{grid-template-columns:1fr}}
