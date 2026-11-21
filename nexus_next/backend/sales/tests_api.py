@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from customers.models import Customer
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
@@ -189,3 +189,35 @@ class SalesWorkflowTests(APITestCase):
             f"/api/sales-documents/invoices/customer-aging/?company={other.pk}&as_of=2026-06-30"
         )
         self.assertEqual(denied.status_code, 403)
+
+
+    def test_sales_invoice_uses_configured_tax_code_rate_and_validity(self):
+        delivery_id, line_id = self._create_delivery("DEL-TAX-1")
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-14", name_ar="قيمة مضافة",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=True,
+        )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-TAX-1", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["invoice_lines"][0]["tax_rate"], "14.0000")
+        self.assertEqual(invoice.data["invoice_lines"][0]["tax_code"], code.pk)
+        self.assertEqual(invoice.data["tax_total"], "28.0000")
+
+    def test_sales_invoice_rejects_tax_code_outside_effective_period(self):
+        delivery_id, line_id = self._create_delivery("DEL-TAX-2")
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-FUTURE", name_ar="ضريبة مستقبلية",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2027, 1, 1),
+        )
+        response = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-TAX-2", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
