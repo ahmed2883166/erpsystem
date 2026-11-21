@@ -14,6 +14,8 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import post_treasury_transaction
+from approvals.models import FinancialApprovalRequest
+from approvals.services import refresh_financial_approval
 
 
 class TreasuryBaseViewSet(viewsets.ModelViewSet):
@@ -58,7 +60,11 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         self._write(company_id)
         if branch and not can_access_branch(self.request.user, branch.pk, company_id):
             raise PermissionDenied("لا تملك صلاحية نقل حساب الخزينة إلى هذا الفرع.")
-        serializer.save()
+        doc = serializer.save()
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
+            doc, self.request.user,
+        )
 
     def perform_destroy(self, instance):
         self._write(instance.company_id)
@@ -88,7 +94,11 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         self._scope(data["company"].pk); self._write(data["company"].pk)
         if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع.")
-        serializer.save(created_by=self.request.user)
+        doc = serializer.save(created_by=self.request.user)
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
+            doc, self.request.user,
+        )
 
     def perform_update(self, serializer):
         instance = serializer.instance
