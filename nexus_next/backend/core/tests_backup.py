@@ -76,3 +76,9 @@ class BackupConfigurationApiTests(TestCase):
         self.assertIn("accounting.JournalEntry", response.data["counts"])
         self.assertIn("inventory.StockMovement", response.data["counts"])
         self.assertIn("hr.PayrollCycle", response.data["counts"])
+
+    def test_reset_service_runs_cleanly_when_no_operational_rows_exist(self):
+        from core.reset_service import reset_operational_data
+        deleted = reset_operational_data()
+        self.assertIn("accounting.JournalEntry", deleted)
+        self.assertTrue(all(value == 0 for value in deleted.values()))
