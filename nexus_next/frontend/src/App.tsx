@@ -64,8 +64,8 @@ export default function App() {
   useEffect(() => {
     if (!companyId) { setBranches([]); setFiscalYears([]); return; }
     Promise.all([api.branches(companyId), api.fiscalYears(companyId)]).then(([branchRows, yearRows]) => {
-      setBranches(branchRows.filter((row) => row.is_active)); setFiscalYears(yearRows);
-      setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active)?.id || ""), fiscal_year: String(yearRows.find((row) => row.status === "open")?.id || "") }));
+      setBranches(branchRows.filter((row) => row.is_active && row.company === companyId)); setFiscalYears(yearRows.filter((row) => row.company === companyId));
+      setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active && row.company === companyId)?.id || ""), fiscal_year: String(yearRows.find((row) => row.company === companyId && row.status === "open")?.id || "") }));
     }).catch((reason: Error) => setJournalError(reason.message));
   }, [companyId]);
 
