@@ -184,6 +184,36 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(statement.data["rows"][0]["document_type"], "payment")
         self.assertEqual(statement.data["rows"][0]["debit"], "50.0000")
 
+    def test_supplier_aging_groups_open_balance_by_days_past_due(self):
+        self.supplier.payment_terms_days = 0
+        self.supplier.save(update_fields=["payment_terms_days"])
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-AGE-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "payment_number": "PAY-AGE-001", "payment_date": "2026-03-20",
+            "method": "bank", "amount": "50.0000",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted_payment = self.client.post(f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+
+        aging = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-25"},
+        )
+        self.assertEqual(aging.status_code, 200, aging.data)
+        self.assertEqual(aging.data["totals"]["1_30"], "178.0000")
+        self.assertEqual(aging.data["totals"]["total_due"], "178.0000")
+        self.assertEqual(aging.data["suppliers"][0]["invoices"][0]["overdue_days"], 15)
+
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         response = self.client.post("/api/purchasing/invoices/", {
