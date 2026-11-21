@@ -24,3 +24,21 @@ class BackupConfiguration(models.Model):
     def save(self, *args, **kwargs):
         self.pk = 1
         super().save(*args, **kwargs)
+
+
+class BackupRun(models.Model):
+    class Status(models.TextChoices):
+        SUCCESS = "success", "ناجح"
+        FAILURE = "failure", "فشل"
+
+    status = models.CharField(max_length=10, choices=Status.choices, db_index=True)
+    backup_file = models.CharField(max_length=500, blank=True)
+    size_bytes = models.BigIntegerField(default=0)
+    details = models.TextField(blank=True)
+    started_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ("-created_at", "-pk")
+        verbose_name = "عملية نسخ احتياطي"
+        verbose_name_plural = "عمليات النسخ الاحتياطي"
