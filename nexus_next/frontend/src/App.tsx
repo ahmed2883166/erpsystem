@@ -150,7 +150,7 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
     reverse_charge: "احتساب عكسي", legacy_unclassified: "نسبة قديمة غير مصنفة",
   };
   const rows = report ? [
-    ...report.sales.by_code.map(row => ["مبيعات", row.tax_code || "بدون كود", categoryNames[row.category] || row.category, row.tax_rate, row.taxable_base, row.tax_amount, row.gross_amount]),
+    ...report.sales.by_code.map(row => ["مبيعات", row.tax_code || "بدون كود", categoryNames[row.category] || row.category, row.tax_rate, row.taxable_base, row.tax_amount, "—", row.gross_amount]),
     ...report.purchases.by_code.map(row => ["مشتريات", row.tax_code || "بدون كود", categoryNames[row.category] || row.category, row.tax_rate, row.taxable_base, row.tax_amount, row.recoverable_tax_amount, row.gross_amount]),
   ] : [];
   return <div className="asset-reports">
