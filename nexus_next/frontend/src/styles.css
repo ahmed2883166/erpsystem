@@ -61,3 +61,17 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(prefers-reduced-motion:reduce){
  *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+/* Journal entry workspace */
+.modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(10,20,36,.58);backdrop-filter:blur(5px);display:grid;place-items:center;padding:20px;overflow:auto}
+.journal-modal{width:min(760px,100%);max-height:min(92vh,900px);overflow:auto;background:var(--surface,#fff);color:var(--text,#17243a);border:1px solid var(--nx-border,#e5eaf1);border-radius:18px;padding:24px;box-shadow:0 24px 80px #081a3340}
+.modal-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px}
+.modal-heading h2{margin:0 0 6px;font-size:20px}.modal-heading p{margin:0;color:var(--muted,#7b8798);font-size:13px}
+.journal-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.journal-form label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;color:var(--text,#26364d);min-width:0}
+.journal-form input,.journal-form select{width:100%;min-height:43px;border:1px solid var(--nx-border,#dce3ed);border-radius:9px;padding:9px 12px;background:var(--input-bg,#fff);color:inherit;font:inherit;outline:none}
+.journal-form input:focus,.journal-form select:focus{border-color:var(--nx-primary,#2865c7);box-shadow:var(--nx-focus,0 0 0 3px #2865c72b)}
+.form-wide{grid-column:1/-1}.journal-lines-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--nx-border,#e5eaf1);padding:8px 0 10px}.journal-lines-head span{font-size:12px;color:var(--muted,#8290a3)}
+.balance-preview{display:flex;flex-direction:column;justify-content:center;gap:4px;border:1px dashed #b9cbe2;border-radius:10px;padding:10px 14px;background:#f6f9fd;color:#253c5d}.balance-preview span,.balance-preview small{font-size:11px;color:#6d7e95}.balance-preview strong{font-size:17px;font-variant-numeric:tabular-nums}
+.form-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:8px}.form-actions button{min-width:110px}
+@media(max-width:600px){.modal-backdrop{padding:8px;align-items:end}.journal-modal{max-height:94vh;border-radius:16px 16px 10px 10px;padding:17px}.journal-form{grid-template-columns:1fr;gap:12px}.form-wide{grid-column:auto}.balance-preview{min-height:76px}.form-actions{grid-column:auto}}
