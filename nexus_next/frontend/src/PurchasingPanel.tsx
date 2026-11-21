@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse } from "./api";
+import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse } from "./api";
 
 type Props = { companyId: number | null };
-type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string };
+type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"receipts" | "invoices" | "payments" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -23,8 +24,10 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
-  const [receiptForm, setReceiptForm] = useState({ supplier: "", warehouse: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), supplier_delivery_ref: "", notes: "" });
+  const [receiptForm, setReceiptForm] = useState({ supplier: "", warehouse: "", purchase_order: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), supplier_delivery_ref: "", notes: "" });
   const [receiptLines, setReceiptLines] = useState<ReceiptDraftLine[]>([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
+  const [orderForm, setOrderForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10), expected_date: "", notes: "" });
+  const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", notes: "" });
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", amount: "", reference: "" });
 
@@ -32,12 +35,14 @@ export default function PurchasingPanel({ companyId }: Props) {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, r, i, pay] = await Promise.all([
+      const [s, p, w, o, r, i, pay] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setReceipts(r); setInvoices(i); setPayments(pay);
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay);
+      setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
+      setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setReceiptLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المشتريات."); }
@@ -72,6 +77,24 @@ export default function PurchasingPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
+  const saveOrder = async (event: React.FormEvent) => {
+    event.preventDefault(); if (!companyId) return;
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createOrder({ company: companyId, supplier: Number(orderForm.supplier), warehouse: Number(orderForm.warehouse),
+        order_number: orderForm.order_number, order_date: orderForm.order_date, expected_date: orderForm.expected_date || null,
+        notes: orderForm.notes, lines: orderLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_price: line.unit_price, tax_rate: line.tax_rate })) });
+      setShowForm(false); await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء أمر الشراء."); }
+    finally { setBusy(false); }
+  };
+  const confirmOrder = async (id: number) => {
+    setBusy(true); setError("");
+    try { await purchasingApi.confirmOrder(id); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر اعتماد أمر الشراء."); }
+    finally { setBusy(false); }
+  };
+
   const saveReceipt = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setBusy(true); setError("");
@@ -79,9 +102,10 @@ export default function PurchasingPanel({ companyId }: Props) {
       if (!receiptForm.supplier || !receiptForm.warehouse || !receiptLines.length || receiptLines.some((line) => !line.product || Number(line.quantity) <= 0 || Number(line.unit_cost) < 0)) throw new Error("راجع المورد والمخزن والأصناف والكميات وتكلفة الوحدة.");
       await purchasingApi.createReceipt({
         company: companyId, supplier: Number(receiptForm.supplier), warehouse: Number(receiptForm.warehouse),
+        purchase_order: receiptForm.purchase_order ? Number(receiptForm.purchase_order) : null,
         receipt_number: receiptForm.receipt_number, receipt_date: receiptForm.receipt_date,
         supplier_delivery_ref: receiptForm.supplier_delivery_ref, notes: receiptForm.notes,
-        lines: receiptLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_cost: line.unit_cost, expiry_date: line.expiry_date || null })),
+        lines: receiptLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_cost: line.unit_cost, expiry_date: line.expiry_date || null, ...(line.purchase_order_line ? { purchase_order_line: Number(line.purchase_order_line) } : {}) })),
       });
       setShowForm(false); setReceiptForm((old) => ({ ...old, receipt_number: "", supplier_delivery_ref: "", notes: "" }));
       setReceiptLines([{ product: String(products[0]?.id || ""), quantity: "1", unit_cost: "0", expiry_date: "" }]);
