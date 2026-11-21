@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
@@ -308,3 +308,35 @@ class PurchasingWorkflowTests(APITestCase):
         self.client.force_authenticate(viewer)
         response = self.client.post(f"/api/purchasing/receipts/{receipt_response.data['id']}/post/", {}, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+    def test_purchase_invoice_uses_configured_recoverable_input_tax_code(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="INPUT-14", name_ar="ضريبة مدخلات",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=True,
+        )
+        response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-TAX-IN-1", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["invoice_lines"][0]["tax_rate"], "14.0000")
+        self.assertEqual(response.data["invoice_lines"][0]["tax_code"], code.pk)
+        self.assertEqual(response.data["tax_total"], "28.0000")
+
+    def test_purchase_invoice_rejects_nonrecoverable_tax_code_until_costing_support_exists(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="INPUT-NR", name_ar="ضريبة غير قابلة للخصم",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-TAX-IN-2", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
