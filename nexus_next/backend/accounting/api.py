@@ -62,6 +62,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        self.get_object()  # Enforce the same company scope before invoking the posting service.
         try:
             entry = post_journal(int(pk))
         except DjangoValidationError as exc:
