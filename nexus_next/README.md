@@ -20,6 +20,6 @@ Install Docker Desktop, Python 3.12, and Node.js 22, then run this from the `nex
 ```powershell
 .\start-local.ps1
 ```
-On first startup, create the administrator with `python manage.py createsuperuser` in the Backend PowerShell window. The database port is bound to localhost only.
+If no administrator exists, the startup helper opens a separate PowerShell window to create one. The database port is bound to localhost only.
 
 See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend/README.md) for details.
