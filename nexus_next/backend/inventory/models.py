@@ -230,9 +230,9 @@ class StockMovementLine(models.Model):
                 raise ValidationError({"source_location": "موقع الصرف لا يتبع مخزن المصدر."})
             if self.destination_location_id and self.destination_location.warehouse_id != self.movement.destination_warehouse_id:
                 raise ValidationError({"destination_location": "موقع الاستلام لا يتبع مخزن الوجهة."})
-            if self.product.track_expiry and not self.expiry_date:
+            if self.product_id and self.product.track_expiry and not self.expiry_date:
                 raise ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
-            if not self.product.track_expiry and self.expiry_date:
+            if self.product_id and not self.product.track_expiry and self.expiry_date:
                 raise ValidationError({"expiry_date": "الصنف لا يتطلب تتبع الصلاحية."})
 
 
