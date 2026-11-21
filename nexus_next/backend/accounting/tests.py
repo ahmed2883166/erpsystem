@@ -338,11 +338,26 @@ class FinancialStatementsApiTests(TestCase):
             f"/api/accounting/journal-entries/income-statement/?company={company.pk}"
             "&date_from=2026-01-01&date_to=2026-01-31"
         )
+        ledger_response = client.get(
+            f"/api/accounting/journal-entries/general-ledger/?company={company.pk}"
+            f"&account={cash.pk}&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        equity_response = client.get(
+            f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
         self.assertEqual(balance_response.status_code, 200)
         self.assertEqual(income_response.status_code, 200)
+        self.assertEqual(ledger_response.status_code, 200)
+        self.assertEqual(equity_response.status_code, 200)
         self.assertEqual(balance_response.data["total_assets"], Decimal("250.0000"))
         self.assertEqual(balance_response.data["total_equity"], Decimal("250.0000"))
         self.assertEqual(balance_response.data["difference"], Decimal("0.0000"))
         self.assertEqual(income_response.data["revenue_total"], Decimal("200.0000"))
         self.assertEqual(income_response.data["expenses_total"], Decimal("50.0000"))
         self.assertEqual(income_response.data["net_profit"], Decimal("150.0000"))
+        self.assertEqual(ledger_response.data["opening_balance"], Decimal("100.0000"))
+        self.assertEqual(ledger_response.data["closing_balance"], Decimal("250.0000"))
+        self.assertEqual(equity_response.data["opening_equity"], Decimal("100.0000"))
+        self.assertEqual(equity_response.data["period_net_profit"], Decimal("150.0000"))
+        self.assertEqual(equity_response.data["closing_equity"], Decimal("250.0000"))
