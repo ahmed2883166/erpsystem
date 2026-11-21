@@ -97,24 +97,6 @@ class SalesInvoiceApproval(models.Model):
             raise ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
 
     def save(self, *args, **kwargs):
-        relations = {
-            self.DocumentType.PURCHASE_INVOICE: ("purchase_invoice", self.purchase_invoice_id),
-            self.DocumentType.SUPPLIER_PAYMENT: ("supplier_payment", self.supplier_payment_id),
-            self.DocumentType.TREASURY_PAYMENT: ("treasury_transaction", self.treasury_transaction_id),
-        }
-        selected = relations.get(self.document_type)
-        if not selected or selected[1] is None:
-            raise ValidationError("نوع المستند ورابطه غير متطابقين.")
-        expected_relation = selected[0]
-        if any(
-            getattr(self, f"{field}_id") is not None
-            for field in ("purchase_invoice", "supplier_payment", "treasury_transaction")
-            if field != expected_relation
-        ):
-            raise ValidationError("طلب الموافقة يجب أن يرتبط بمستند واحد فقط.")
-        document = getattr(self, expected_relation)
-        if document.company_id != self.company_id:
-            raise ValidationError("المستند لا يتبع الشركة المحددة في طلب الموافقة.")
         if self.pk:
             old = type(self).objects.get(pk=self.pk)
             if old.status != self.Status.PENDING:
@@ -184,6 +166,24 @@ class FinancialApprovalRequest(models.Model):
         ]
 
     def save(self, *args, **kwargs):
+        relations = {
+            self.DocumentType.PURCHASE_INVOICE: ("purchase_invoice", self.purchase_invoice_id),
+            self.DocumentType.SUPPLIER_PAYMENT: ("supplier_payment", self.supplier_payment_id),
+            self.DocumentType.TREASURY_PAYMENT: ("treasury_transaction", self.treasury_transaction_id),
+        }
+        selected = relations.get(self.document_type)
+        if not selected or selected[1] is None:
+            raise ValidationError("نوع المستند ورابطه غير متطابقين.")
+        expected_relation = selected[0]
+        if any(
+            getattr(self, f"{field}_id") is not None
+            for field in ("purchase_invoice", "supplier_payment", "treasury_transaction")
+            if field != expected_relation
+        ):
+            raise ValidationError("طلب الموافقة يجب أن يرتبط بمستند واحد فقط.")
+        document = getattr(self, expected_relation)
+        if document.company_id != self.company_id:
+            raise ValidationError("المستند لا يتبع الشركة المحددة في طلب الموافقة.")
         if self.pk:
             old = type(self).objects.get(pk=self.pk)
             if old.status != self.Status.PENDING:
