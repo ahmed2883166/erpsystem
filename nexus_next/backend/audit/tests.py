@@ -71,13 +71,14 @@ class AuditTrailMiddlewareTests(TestCase):
 
     def test_delete_keeps_company_scope_after_target_row_is_removed(self):
         branch = self.branch
+        branch_id = branch.pk
 
         def delete_target(_request):
             branch.delete()
             return HttpResponse(status=204)
 
         middleware = AuditTrailMiddleware(delete_target)
-        request = self.factory.delete(f"/api/setup/branches/{branch.pk}/")
+        request = self.factory.delete(f"/api/setup/branches/{branch_id}/")
         request.user = self.user
         middleware(request)
 
@@ -85,7 +86,21 @@ class AuditTrailMiddlewareTests(TestCase):
         self.assertEqual(event.action, AuditEvent.Action.DELETE)
         self.assertEqual(event.company_id, self.company.pk)
         self.assertIsNone(event.branch_id)
-        self.assertEqual(event.object_id, str(branch.pk))
+        self.assertEqual(event.object_id, str(branch_id))
+
+    def test_real_api_write_is_audited_before_drf_consumes_body(self):
+        client = APIClient()
+        client.force_authenticate(self.user)
+        response = client.post("/api/setup/branches/", {
+            "company": self.company.pk, "code": "DENIED", "name_ar": "محاولة مرفوضة",
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        event = AuditEvent.objects.get()
+        self.assertEqual(event.company_id, self.company.pk)
+        self.assertEqual(event.action, AuditEvent.Action.CREATE)
+        self.assertFalse(event.succeeded)
+        self.assertEqual(event.status_code, 403)
+        self.assertNotIn("محاولة مرفوضة", str(event.metadata))
 
     def test_audit_events_cannot_be_changed_or_deleted(self):
         event = AuditEvent.objects.create(
