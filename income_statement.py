@@ -129,6 +129,7 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
     # tree flag. Treat those legacy rows as detail accounts rather than failing
     # the entire read-only report transaction.
     detail_account_filter = "a.is_group=0" if "is_group" in account_columns else "1=1"
+    active_account_filter = "a.active=1" if "active" in account_columns else "1=1"
     debit_sum_sql = decimal_sum_expression(
         conn, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END"
     )
@@ -142,7 +143,7 @@ def build_income_statement(conn, date_from, date_to, dimensions=None):
         FROM accounts a
         LEFT JOIN journal_lines jl ON jl.account_id=a.id
         LEFT JOIN journal_entries je ON je.id=jl.entry_id AND {' AND '.join(conditions)}
-        WHERE a.account_type IN ('revenue','expense') AND {detail_account_filter} AND a.active=1
+        WHERE a.account_type IN ('revenue','expense') AND {detail_account_filter} AND {active_account_filter}
         GROUP BY a.id ORDER BY a.account_type,a.code""",
         (date_from, date_to, *dimension_params)).fetchall()
 

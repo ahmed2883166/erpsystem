@@ -350,6 +350,51 @@ class IncomeStatementRouteTests(unittest.TestCase):
         self.assertEqual(pdf.status_code, 200)
         self.assertTrue(pdf.data.startswith(b"%PDF"))
 
+    def test_income_statement_supports_legacy_accounts_without_active_and_filters_when_present(self):
+        def snapshot_for_schema(include_active):
+            conn = sqlite3.connect(':memory:')
+            conn.row_factory = sqlite3.Row
+            register_decimal_aggregates(conn)
+            active_column = ', active INTEGER DEFAULT 1' if include_active else ''
+            conn.executescript(f'''
+                CREATE TABLE accounts(
+                    id INTEGER PRIMARY KEY, code TEXT, name_ar TEXT, account_type TEXT
+                    {active_column}
+                );
+                CREATE TABLE journal_entries(
+                    id INTEGER PRIMARY KEY, entry_date TEXT, status TEXT
+                );
+                CREATE TABLE journal_lines(
+                    id INTEGER PRIMARY KEY, entry_id INTEGER, account_id INTEGER,
+                    debit TEXT, credit TEXT
+                );
+                INSERT INTO journal_entries VALUES(1,'2026-11-10','posted');
+            ''')
+            if include_active:
+                conn.executescript('''
+                    INSERT INTO accounts VALUES
+                        (1,'4100','Active revenue','revenue',1),
+                        (2,'4200','Inactive revenue','revenue',0);
+                    INSERT INTO journal_lines VALUES
+                        (1,1,1,'0','100'),(2,1,2,'0','50');
+                ''')
+            else:
+                conn.executescript('''
+                    INSERT INTO accounts VALUES(1,'4100','Legacy revenue','revenue');
+                    INSERT INTO journal_lines VALUES(1,1,1,'0','100');
+                ''')
+            result = build_income_statement(conn, '2026-11-01', '2026-11-30')
+            conn.close()
+            return result
+
+        legacy = snapshot_for_schema(include_active=False)
+        self.assertEqual(legacy['revenue_total'], Decimal('100'))
+        self.assertEqual(len(legacy['revenue_rows']), 1)
+
+        modern = snapshot_for_schema(include_active=True)
+        self.assertEqual(modern['revenue_total'], Decimal('100'))
+        self.assertEqual([row['code'] for row in modern['revenue_rows']], ['4100'])
+
     def test_shared_calculation_returns_expected_sections(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
