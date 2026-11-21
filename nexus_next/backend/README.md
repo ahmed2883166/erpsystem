@@ -1,4 +1,4 @@
-# NEXUS backend
+# Admrail ERP v2 backend
 
 Python 3.12+ and Django 5.2 LTS. PostgreSQL is the only supported application database.
 
@@ -15,7 +15,7 @@ To stop the database container:
 ```powershell
 docker compose -f compose.yaml down
 ```
-To keep local database contents, do not pass `-v`. The named volume is dedicated to NEXUS Next.
+To keep local database contents, do not pass `-v`. The named volume is dedicated to Admrail ERP v2 Next.
 
 Run backend checks from this directory:
 ```powershell
