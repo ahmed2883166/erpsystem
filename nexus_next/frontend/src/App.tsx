@@ -247,6 +247,8 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
   const [to, setTo] = useState(today);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState("");
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [ledger, setLedger] = useState<GeneralLedgerReport|null>(null);
   const [equity, setEquity] = useState<EquityChangesReport|null>(null);
   const [busy, setBusy] = useState(false);
@@ -258,14 +260,16 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
       setAccountId(String(items.find(item=>!item.is_group)?.id || ""));
       setLedger(null); setEquity(null);
     }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الحسابات."));
+    api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
+      .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
   }, [companyId]);
   const load = async () => {
     if (!companyId || !accountId) return;
     setBusy(true); setError("");
     try {
       const [ledgerData, equityData] = await Promise.all([
-        api.generalLedger(companyId, Number(accountId), from, to),
-        api.changesInEquity(companyId, from, to),
+        api.generalLedger(companyId, Number(accountId), from, to, branchId ? Number(branchId) : undefined),
+        api.changesInEquity(companyId, from, to, branchId ? Number(branchId) : undefined),
       ]);
       setLedger(ledgerData); setEquity(equityData);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل دفتر الأستاذ والتغيرات في حقوق الملكية."); }
@@ -278,6 +282,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
       <label>الحساب<select value={accountId} onChange={e=>setAccountId(e.target.value)}><option value="">اختر الحساب</option>{accounts.filter(item=>!item.is_group).map(item=><option key={item.id} value={item.id}>{item.code} — {item.name_ar}</option>)}</select></label>
       <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
       <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+      <label>الفرع<select value={branchId} onChange={e=>setBranchId(e.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map(item=><option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label>
     </div>
     {error && <div className="error-banner">{error}</div>}
     {ledger && <>
