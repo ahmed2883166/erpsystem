@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
 
@@ -16,6 +17,10 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and company and parent.company_id != company.id:
             raise serializers.ValidationError({"parent": "الحساب الأب يجب أن يتبع نفس الشركة."})
+        if parent and not parent.is_group:
+            raise serializers.ValidationError({"parent": "الحساب الأب يجب أن يكون تجميعياً."})
+        if self.instance and parent and parent.pk == self.instance.pk:
+            raise serializers.ValidationError({"parent": "لا يمكن ربط الحساب بنفسه."})
         if attrs.get("is_group", getattr(self.instance, "is_group", False)) and attrs.get(
             "allow_posting", getattr(self.instance, "allow_posting", True)
         ):
@@ -106,6 +111,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({"lines": "مركز التكلفة لا يتبع نفس الشركة."})
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
         lines = validated_data.pop("lines")
         request = self.context.get("request")
@@ -115,6 +121,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         JournalLine.objects.bulk_create([JournalLine(entry=entry, **line) for line in lines])
         return entry
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         lines = validated_data.pop("lines", None)
         for key, value in validated_data.items():
