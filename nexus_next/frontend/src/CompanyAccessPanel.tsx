@@ -1,3 +1,7 @@
+/*
+ * صلاحيات مستخدمي الشركة: إدارة العضويات والأدوار ونطاق الفروع المسموح بها.
+ * تعتمد العمليات المتاحة على صلاحية المستخدم التي يرجعها الخادم.
+ */
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type Branch, type CompanyMembership, type CompanyUserLookup } from "./api";
 
