@@ -464,3 +464,35 @@ export const fixedAssetsApi = {
   schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
   dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
 };
+
+
+export type HrEmployee = {
+  id:number; company:number; code:string; full_name_ar:string; full_name_en:string;
+  national_id:string; insurance_number:string; email:string; phone:string; address:string;
+  branch:number; branch_name:string; department:number|null; department_name:string|null;
+  position:number|null; position_name:string|null; hire_date:string; termination_date:string|null;
+  status:"active"|"leave"|"unpaid_leave"|"suspended"|"resigned"|"retired";
+  basic_salary:string; currency:number; currency_code:string; payment_method:"bank"|"cash";
+};
+export type HrPayrollCycle = {
+  id:number; company:number; period_start:string; period_end:string; payment_date:string;
+  status:"draft"|"calculated"|"review"|"approved"|"posted"|"paid";
+  rule_set:number|null; results_count:number; journal_entry:number|null;
+};
+export type HrPayrollResult = {
+  id:number; employee:number; employee_code:string; employee_name:string;
+  basic_salary_snapshot:string; earnings_total:string; employee_deductions_total:string;
+  employer_share_total:string; employer_share_display_addition:string; employer_share_display_offset:string;
+  displayed_earnings_total:string; displayed_deductions_total:string; net_pay:string; company_cost:string;
+  lines:{code:string;name:string;kind:string;amount:string;display_only:boolean;calculation:Record<string,unknown>}[];
+};
+export const hrApi = {
+  employees: (companyId:number) => request<HrEmployee[]>(`/api/hr/employees/?company=${companyId}&ordering=code`),
+  createEmployee: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployee>("/api/hr/employees/", {method:"POST",body:JSON.stringify(payload)}); },
+  payrollCycles: (companyId:number) => request<HrPayrollCycle[]>(`/api/hr/payroll-cycles/?company=${companyId}&ordering=-period_start`),
+  createPayrollCycle: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>("/api/hr/payroll-cycles/", {method:"POST",body:JSON.stringify(payload)}); },
+  calculatePayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,string|number>>(`/api/hr/payroll-cycles/${id}/calculate/`, {method:"POST"}); },
+  sendPayrollToReview: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>(`/api/hr/payroll-cycles/${id}/send_to_review/`, {method:"POST"}); },
+  approvePayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>(`/api/hr/payroll-cycles/${id}/approve/`, {method:"POST"}); },
+  payrollResults: (id:number) => request<HrPayrollResult[]>(`/api/hr/payroll-cycles/${id}/results/`),
+};
