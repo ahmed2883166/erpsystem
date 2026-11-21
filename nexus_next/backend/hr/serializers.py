@@ -128,7 +128,7 @@ class LeaveRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = LeaveRequest
         fields = "__all__"
-        read_only_fields = ("approved_by", "created_at")
+        read_only_fields = ("status", "approved_by", "created_at")
 
 
 class EmployeeLoanSerializer(serializers.ModelSerializer):
