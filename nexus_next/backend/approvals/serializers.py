@@ -14,6 +14,21 @@ class DiscountApprovalPolicySerializer(serializers.ModelSerializer):
         fields = ("id", "company", "company_name", "max_discount_percent", "max_sales_invoice_amount", "created_at", "updated_at")
         read_only_fields = ("created_at", "updated_at")
 
+    def validate(self, attrs):
+        discount_limit = attrs.get(
+            "max_discount_percent",
+            self.instance.max_discount_percent if self.instance else None,
+        )
+        amount_limit = attrs.get(
+            "max_sales_invoice_amount",
+            self.instance.max_sales_invoice_amount if self.instance else None,
+        )
+        if discount_limit is None and amount_limit is None:
+            raise serializers.ValidationError(
+                "يجب تحديد حد للخصم أو حد لقيمة فاتورة المبيعات على الأقل."
+            )
+        return attrs
+
     def validate_company(self, company):
         if self.instance and company.pk != self.instance.company_id:
             raise serializers.ValidationError("لا يمكن نقل سياسة الخصم بين الشركات.")
