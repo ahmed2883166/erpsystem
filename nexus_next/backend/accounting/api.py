@@ -4,14 +4,15 @@ from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry
+from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
 from .services import post_journal
 
 
 class AccountingViewSet(viewsets.ModelViewSet):
-    permission_classes = (permissions.DjangoModelPermissions,)
+    permission_classes = (CompanyRolePermission,)
 
     def get_queryset(self):
         if self.request.user.is_superuser:
@@ -28,13 +29,25 @@ class AccountingViewSet(viewsets.ModelViewSet):
         ):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
 
+    def _require_write_role(self, company_id, *, delete=False):
+        roles = ("admin",) if delete else ("admin", "accountant")
+        if not has_company_role(self.request.user, company_id, roles):
+            raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب لتنفيذ هذا الإجراء.")
+
     def perform_create(self, serializer):
         self._validate_scope(serializer.validated_data)
+        self._require_write_role(serializer.validated_data["company"].pk)
         serializer.save()
 
     def perform_update(self, serializer):
         self._validate_scope(serializer.validated_data)
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        self._require_write_role(company.pk)
         serializer.save()
+
+    def perform_destroy(self, instance):
+        self._require_write_role(instance.company_id, delete=True)
+        instance.delete()
 
 
 class ChartOfAccountViewSet(AccountingViewSet):
@@ -82,6 +95,7 @@ class JournalEntryViewSet(AccountingViewSet):
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         entry = self.get_object()
+        self._require_write_role(entry.company_id)
         try:
             entry = post_journal(entry.pk)
         except DjangoValidationError as exc:
