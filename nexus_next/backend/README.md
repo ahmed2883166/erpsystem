@@ -10,12 +10,18 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 # Create the PostgreSQL database and user separately.
 python manage.py check
-python manage.py makemigrations accounts companies
+python manage.py makemigrations accounts companies accounting
 python manage.py migrate
 python manage.py seed_reference_data
 python manage.py createsuperuser
 python manage.py runserver 127.0.0.1:8000
 ```
+
+The setup API is under `/api/setup/` and the accounting API is under `/api/accounting/`:
+- `accounts/` — chart of accounts
+- `account-roles/` — semantic account mappings
+- `cost-centers/` — cost centers
+- `journal-entries/` — journal drafts, posting, and totals
 
 The setup API is under `/api/setup/`:
 - `currencies/`
