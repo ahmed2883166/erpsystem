@@ -15,6 +15,7 @@ from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer, TaxCodeSerializer
 from .services import post_journal
 from .account_templates import ACTIVITY_LABELS, apply_activity_template, build_activity_template
+from .account_imports import inspect_account_workbook, import_account_rows
 
 
 class AccountingViewSet(viewsets.ModelViewSet):
@@ -104,6 +105,46 @@ class AccountTemplateView(APIView):
             "company": company.pk,
             "activity": activity,
             **result,
+        }, status=status.HTTP_200_OK)
+
+
+class AccountImportView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request):
+        company_id = request.data.get("company")
+        if not str(company_id or "").isdigit():
+            raise ValidationError({"company": "حدد الشركة المطلوبة."})
+        company = Company.objects.filter(pk=int(company_id)).first()
+        if not company:
+            raise ValidationError({"company": "الشركة المحددة غير موجودة."})
+        if not can_access_company(request.user, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        action = request.data.get("action", "preview")
+        if action not in ("preview", "import"):
+            raise ValidationError({"action": "الإجراء يجب أن يكون preview أو import."})
+        if action == "import" and not has_company_role(request.user, company.pk, ("admin",)):
+            raise PermissionDenied("اعتماد استيراد دليل الحسابات متاح لمدير الشركة فقط.")
+        result = inspect_account_workbook(request.FILES.get("file"), company)
+        if result["errors"]:
+            return response.Response(result, status=status.HTTP_409_CONFLICT if action == "import" else status.HTTP_200_OK)
+        if action == "preview":
+            return response.Response({"detail": "اكتملت المعاينة. لم يتم حفظ أي حساب.", **result})
+        try:
+            with transaction.atomic():
+                created = import_account_rows(company, result["rows"])
+        except Exception as exc:
+            return response.Response({
+                "detail": "لم يتم استيراد أي حساب بسبب تعارض أثناء الاعتماد.",
+                "errors": [str(exc)],
+                "rows": result["rows"],
+                "summary": result["summary"],
+            }, status=status.HTTP_409_CONFLICT)
+        return response.Response({
+            "detail": "تم استيراد الحسابات الجديدة بأمان دون تعديل الحسابات الموجودة.",
+            "created_accounts": created,
+            "skipped_existing": result["summary"]["already_exists"],
+            "summary": result["summary"],
         }, status=status.HTTP_200_OK)
 
 
