@@ -52,12 +52,26 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
     def validate(self, attrs):
-        company, customer, warehouse = attrs.get("company"), attrs.get("customer"), attrs.get("warehouse")
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        customer = attrs.get("customer", instance.customer if instance else None)
+        warehouse = attrs.get("warehouse", instance.warehouse if instance else None)
+        if instance:
+            if instance.stock_movement.status != StockMovement.Status.DRAFT:
+                raise serializers.ValidationError("لا يمكن تعديل إذن تسليم مرحّل.")
+            if company.pk != instance.company_id:
+                raise serializers.ValidationError({"company": "لا يمكن نقل إذن التسليم إلى شركة أخرى."})
+            if hasattr(instance, "invoice") and "lines" in attrs:
+                raise serializers.ValidationError({"lines": "لا يمكن تغيير أصناف إذن تسليم مرتبط بفاتورة."})
         if customer and (customer.company_id != company.pk or not customer.is_active):
             raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
         if warehouse and (warehouse.company_id != company.pk or not warehouse.is_active):
             raise serializers.ValidationError({"warehouse": "اختر مخزنًا نشطًا تابعًا للشركة."})
-        lines = attrs.get("lines", [])
+        lines = attrs.get("lines")
+        if lines is None:
+            if instance:
+                return attrs
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         if not lines:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         for line in lines:
@@ -90,6 +104,30 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             ) for line in lines
         ])
         return SalesDelivery.objects.create(**validated_data, stock_movement=movement, created_by=user)
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        delivery = SalesDelivery.objects.select_for_update().select_related("stock_movement").get(pk=instance.pk)
+        movement = StockMovement.objects.select_for_update().get(pk=delivery.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل إذن تسليم مرحّل.")
+        lines = validated_data.pop("lines", None)
+        if lines is not None and hasattr(delivery, "invoice"):
+            raise serializers.ValidationError({"lines": "لا يمكن تغيير أصناف إذن تسليم مرتبط بفاتورة."})
+        delivery = super().update(delivery, validated_data)
+        movement.source_warehouse = delivery.warehouse
+        movement.movement_date = delivery.delivery_date
+        movement.notes = delivery.notes
+        movement.save(update_fields=("source_warehouse", "movement_date", "notes", "updated_at"))
+        if lines is not None:
+            movement.lines.all().delete()
+            StockMovementLine.objects.bulk_create([
+                StockMovementLine(
+                    movement=movement, product=line["product"], quantity=line["quantity"],
+                    source_location=line.get("source_location_obj"), expiry_date=line.get("expiry_date"),
+                ) for line in lines
+            ])
+        return delivery
 
 
 class SalesInvoiceLineInputSerializer(serializers.Serializer):
