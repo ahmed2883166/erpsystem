@@ -65,6 +65,54 @@ class TreasuryWorkflowTests(APITestCase):
         entry = JournalEntry.objects.get(pk=posted.data["journal_entry"])
         self.assertEqual(set(entry.lines.values_list("account_id", flat=True)), {self.cash_gl.pk, self.bank_gl.pk})
 
+
+    def test_limited_branch_user_cannot_reassign_treasury_account_to_another_branch(self):
+        other_branch = Branch.objects.create(company=self.company, code="OTHER", name_ar="فرع آخر")
+        limited = get_user_model().objects.create_user(username="treasury-branch-limited", password="test-password")
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.patch(
+            f"/api/treasury/accounts/{self.bank.pk}/",
+            {"branch": other_branch.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        self.bank.refresh_from_db()
+        self.assertEqual(self.bank.branch_id, self.branch.pk)
+
+    def test_limited_branch_user_cannot_reassign_draft_transaction_to_another_branch(self):
+        created = self._create(document_number="TR-BRANCH-LOCK-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        other_branch = Branch.objects.create(company=self.company, code="OTHER2", name_ar="فرع آخر")
+        limited = get_user_model().objects.create_user(username="treasury-branch-limited-2", password="test-password")
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.patch(
+            f"/api/treasury/transactions/{created.data['id']}/",
+            {"branch": other_branch.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        doc = TreasuryTransaction.objects.get(pk=created.data["id"])
+        self.assertEqual(doc.branch_id, self.branch.pk)
+
+    def test_posted_treasury_transaction_cannot_be_deleted(self):
+        created = self._create(document_number="TR-POSTED-DELETE-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        deleted = self.client.delete(f"/api/treasury/transactions/{created.data['id']}/")
+        self.assertEqual(deleted.status_code, 400, deleted.data)
+        self.assertTrue(TreasuryTransaction.objects.filter(pk=created.data["id"]).exists())
+
     def test_payment_requires_counter_account_and_positive_amount(self):
         invalid = self._create(kind="payment", amount="0")
         self.assertEqual(invalid.status_code, 400)
