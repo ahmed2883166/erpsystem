@@ -399,7 +399,10 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
 
         results = PayrollResult.objects.filter(cycle__in=cycles).select_related(
             "employee", "employee__branch", "employee__department", "cycle"
-        ).prefetch_related("lines").order_by("employee__code", "cycle__period_start")
+        ).prefetch_related("lines")
+        if branch_raw:
+            results = results.filter(employee__branch_id=int(branch_raw))
+        results = results.order_by("employee__code", "cycle__period_start")
         employees = {}
         totals = {
             "earnings": Decimal("0"), "employee_deductions": Decimal("0"),
