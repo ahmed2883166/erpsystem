@@ -1,13 +1,19 @@
+from decimal import Decimal
+
+from django.db import transaction
 from django.db.models import Q
-from rest_framework import viewsets
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 
-from .models import Product, ProductCategory, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse
 from .serializers import (
-    ProductCategorySerializer, ProductSerializer, StorageLocationSerializer,
+    ProductCategorySerializer, ProductSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseSerializer,
 )
 
@@ -132,15 +138,6 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         )
 
     def create(self, request, *args, **kwargs):
-        warehouse_id = request.data.get("warehouse")
-        if warehouse_id not in (None, ""):
-            warehouse = Warehouse.objects.filter(pk=warehouse_id).first()
-            if warehouse:
-                self._check_write(warehouse)
-        return super().create(request, *args, **kwargs)
-
-    def create(self, request, *args, **kwargs):
-        # Validate warehouse permissions before serializer validation.
         warehouse_id = request.data.get("warehouse")
         if warehouse_id not in (None, ""):
             warehouse = Warehouse.objects.filter(pk=warehouse_id).first()
