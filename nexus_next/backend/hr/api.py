@@ -440,7 +440,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
                 "net_pay": result.net_pay,
             })
             for line in result.lines.all():
-                if line.display_only:
+                if line.code_snapshot in ("EMPLOYER_SHARE_DISPLAY", "EMPLOYER_SHARE_OFFSET"):
                     continue
                 key = (line.code_snapshot, line.name_snapshot, line.kind_snapshot)
                 component = row["components"].setdefault(key, Decimal("0"))
