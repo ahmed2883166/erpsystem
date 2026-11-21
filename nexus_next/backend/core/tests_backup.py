@@ -44,3 +44,8 @@ class BackupConfigurationApiTests(TestCase):
         self.client.force_authenticate(self.user)
         response = self.client.patch(self.url, {"enabled": False}, format="json")
         self.assertEqual(response.status_code, 403)
+
+    def test_regular_user_cannot_start_backup(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(self.url, {}, format="json")
+        self.assertEqual(response.status_code, 403)
