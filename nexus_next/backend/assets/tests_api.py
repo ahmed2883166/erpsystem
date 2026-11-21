@@ -53,7 +53,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(depreciation.data["depreciation_amount"], Decimal("5000.0000"))
         schedule = self.client.get(f"/api/assets/fixed-assets/{asset_id}/schedule/")
         self.assertEqual(schedule.status_code, 200, schedule.data)
-        self.assertEqual(schedule.data["accumulated_depreciation"], Decimal("3000.0000"))
+        self.assertEqual(schedule.data["accumulated_depreciation"], Decimal("5000.0000"))
         self.assertEqual(schedule.data["net_book_value"], Decimal("115000.0000"))
         self.assertEqual(JournalEntry.objects.count(), 2)
 
