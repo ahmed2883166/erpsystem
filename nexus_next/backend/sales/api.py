@@ -99,8 +99,14 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
-        self._check_write(serializer.instance.company_id)
-        raise ValidationError("تعديل فاتورة المبيعات غير متاح؛ أنشئ مستندًا جديدًا إذا كانت مسودة.")
+        invoice = serializer.instance
+        self._check_write(invoice.company_id)
+        if invoice.status != SalesInvoice.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
+        warehouse = invoice.delivery.warehouse
+        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, invoice.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        serializer.save()
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
