@@ -55,8 +55,8 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         raise ValidationError("الأصل غير نشط أو لم يتم تسجيل اقتنائه.")
     if period_date < asset.depreciation_start_date:
         raise ValidationError("تاريخ الإهلاك يسبق بداية الإهلاك المحددة.")
-    if AssetDepreciation.objects.filter(asset=asset, period_date=period_date).exists():
-        raise ValidationError("تم تسجيل إهلاك هذا الأصل لهذه الفترة من قبل.")
+    if AssetDepreciation.objects.filter(asset=asset, period_date__year=period_date.year, period_date__month=period_date.month).exists():
+        raise ValidationError("تم تسجيل إهلاك هذا الأصل لهذا الشهر من قبل.")
     try:
         year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
     except (FiscalYear.DoesNotExist, TypeError, ValueError):
