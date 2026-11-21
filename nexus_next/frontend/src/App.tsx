@@ -677,7 +677,7 @@ export default function App() {
           {active === "inventory" && <Suspense fallback={panelFallback}><InventoryPanel companyId={companyId} /></Suspense>}
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
           {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
-          {active === "hr" && <Suspense fallback={panelFallback}><HrPayrollPanel companyId={companyId} baseCurrencyId={selectedCompany?.base_currency} /></Suspense>}
+          {active === "hr" && <Suspense fallback={panelFallback}><HrPayrollPanel companyId={companyId} baseCurrencyId={selectedCompany?.base_currency} country={selectedCompany?.country} /></Suspense>}
           {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
