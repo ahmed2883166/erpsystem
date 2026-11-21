@@ -69,7 +69,7 @@ def calculate_component(
         annual_taxable = max(Decimal("0"), taxable_base * Decimal("12") - exemption)
         lower = Decimal("0")
         annual_tax = Decimal("0")
-        has_open_ended_bracket = False
+        has_open_ended_bracket = False\n        covered = annual_taxable == 0
         for bracket in brackets:
             if not isinstance(bracket, dict) or "rate" not in bracket:
                 raise ValidationError("تعريف شريحة الضريبة غير صحيح.")
@@ -88,7 +88,7 @@ def calculate_component(
             if annual_taxable <= upper:
                 break
             lower = upper
-        if not has_open_ended_bracket and annual_taxable > lower:
+        if not has_open_ended_bracket and not covered and annual_taxable > lower:
             raise ValidationError("شرائح الضريبة لا تغطي كامل الوعاء السنوي.")
         amount = annual_tax / Decimal("12")
     else:
