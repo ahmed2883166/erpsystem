@@ -384,6 +384,13 @@ class SalesWorkflowTests(APITestCase):
         with self.assertRaises(DatabaseError):
             with transaction.atomic():
                 with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE approvals_salesinvoiceapproval SET requested_lines_snapshot = %s::jsonb WHERE id = %s",
+                        ["[]", approval.pk],
+                    )
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
                     cursor.execute("DELETE FROM approvals_salesinvoiceapproval WHERE id = %s", [approval.pk])
         approval.refresh_from_db()
         self.assertEqual(approval.requested_limit, Decimal("0.0000"))
