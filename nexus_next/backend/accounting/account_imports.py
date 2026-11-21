@@ -29,6 +29,13 @@ NATURES = {
 def _norm(value):
     return "".join(str(value or "").strip().lower().replace("_", " ").split())
 
+def _code_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)) and float(value).is_integer():
+        return str(int(value))
+    return str(value).strip()
+
 def _truthy_group(value):
     value = _norm(value)
     return value in {"group", "header", "مجموعه", "مجموعة", "تجميعي", "تجميعى", "1", "true"}
@@ -67,9 +74,9 @@ def inspect_account_workbook(upload, company):
             def cell(field):
                 idx = columns.get(field)
                 return values[idx] if idx is not None and idx < len(values) else None
-            code = str(cell("code") or "").strip()
+            code = _code_value(cell("code"))
             name = str(cell("name_ar") or "").strip()
-            parent_code = str(cell("parent_code") or "").strip() or None
+            parent_code = _code_value(cell("parent_code")) or None
             nature_raw = str(cell("nature") or "").strip()
             nature = NATURES.get(_norm(nature_raw)) or NATURES.get(nature_raw)
             kind_raw = cell("kind")
@@ -84,7 +91,7 @@ def inspect_account_workbook(upload, company):
             if not nature: errors.append(f"طبيعة الحساب غير معروفة: {nature_raw or 'فارغة'}.")
             if not is_group and not is_detail: errors.append("التصنيف يجب أن يكون مجموعة أو تفصيلي.")
             raw_rows.append({"excel_row": excel_row, "code": code, "name_ar": name, "parent_code": parent_code,
-                             "nature": nature, "is_group": is_group, "errors": errors, "status": "جاهز"})
+                             "nature": nature, "is_group": is_group, "errors": errors, "warnings": [], "status": "جاهز"})
         workbook.close()
     except Exception:
         return {"errors": ["تعذر قراءة الملف. تأكد أنه ملف Excel سليم وغير محمي بكلمة مرور."], "rows": [], "summary": {}}
@@ -137,12 +144,27 @@ def inspect_account_workbook(upload, company):
             seen.add(parent)
             parent = by_code[parent][0]["parent_code"]
 
+    # Similar names are warnings only; never merge or rename accounts automatically.
+    existing_names = {}
+    for account in existing.values():
+        existing_names.setdefault(_norm(account.name_ar), []).append(account.code)
+    uploaded_names = {}
+    for row in raw_rows:
+        if row["name_ar"]:
+            uploaded_names.setdefault(_norm(row["name_ar"]), []).append(row["code"])
+    for row in raw_rows:
+        name_key = _norm(row["name_ar"])
+        other_codes = [code for code in existing_names.get(name_key, []) if code != row["code"]]
+        other_codes += [code for code in uploaded_names.get(name_key, []) if code != row["code"]]
+        if other_codes:
+            row["warnings"].append("اسم مشابه/مكرر مع كود آخر (" + "، ".join(sorted(set(other_codes))) + ")؛ لن يتم الدمج تلقائيًا.")
     errors = [f"الصف {row['excel_row']} - {message}" for row in raw_rows for message in row["errors"]]
     ready = sum(1 for row in raw_rows if not row["errors"] and row["status"] == "جاهز")
     reused = sum(1 for row in raw_rows if not row["errors"] and row["status"].startswith("موجود"))
     return {"errors": errors, "rows": raw_rows, "summary": {
         "total": len(raw_rows), "ready_to_create": ready, "already_exists": reused,
         "blocked": sum(1 for row in raw_rows if row["errors"]),
+        "warnings": sum(1 for row in raw_rows if row["warnings"]),
     }}
 
 
