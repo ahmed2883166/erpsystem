@@ -16,3 +16,11 @@ def health(request):
             {"service": "nexus-api", "status": "degraded", "database": "unavailable"},
             status=503,
         )
+
+
+from django.http import JsonResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
+
+@ensure_csrf_cookie
+def csrf_token(request):
+    return JsonResponse({"detail": "CSRF cookie initialized."})
