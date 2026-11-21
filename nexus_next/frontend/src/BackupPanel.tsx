@@ -17,6 +17,7 @@ type BackupConfig = {
   history: {id:number;status:"success"|"failure";backup_file:string;size_bytes:number;details:string;created_at:string}[];
 };
 
+// عميل طلبات مخصص لواجهات النسخ الاحتياطي مع إرسال CSRF وقراءة أخطاء الخادم.
 async function call<T>(method = "GET", body?: unknown, endpoint = "/api/backup/configuration/"): Promise<T> {
   const csrf = document.cookie.split("; ").find(x => x.startsWith("csrftoken="))?.split("=").slice(1).join("=") || "";
   const response = await fetch(endpoint, {
@@ -66,6 +67,7 @@ const resetLabels: Record<string,string> = {
   "accounting.JournalEntry":"قيود اليومية",
 };
 
+// شاشة إعداد النسخ الاحتياطي ومراجعة السجل ومعاينة إعادة ضبط البيانات.
 export default function BackupPanel() {
   const [config, setConfig] = useState<BackupConfig | null>(null);
   const [path, setPath] = useState("");
@@ -82,7 +84,8 @@ export default function BackupPanel() {
   const [resetPhrase, setResetPhrase] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
 
-  const load = async () => {
+  // تحميل إعدادات النسخ وسجل التنفيذ وحالة المسار والصلاحيات.
+const load = async () => {
     try {
       const value = await call<BackupConfig>();
       setConfig(value); setPath(value.backup_path); setSchedule(value.schedule);
@@ -92,7 +95,8 @@ export default function BackupPanel() {
   };
   useEffect(() => { void load(); }, []);
 
-  const runBackup = async () => {
+  // طلب إنشاء نسخة احتياطية فورية وتحديث سجل النسخ بعد النتيجة.
+const runBackup = async () => {
     if (!window.confirm("بدء نسخة احتياطية الآن في المسار المعتمد؟")) return;
     setRunning(true); setError(""); setNotice("");
     try {
@@ -103,7 +107,8 @@ export default function BackupPanel() {
     finally { setRunning(false); }
   };
 
-  const executeReset = async (event: FormEvent) => {
+  // إرسال طلب إعادة ضبط البيانات بعد تأكيد المستخدم ومراجعة المعاينة.
+const executeReset = async (event: FormEvent) => {
     event.preventDefault();
     if (!window.confirm("تحذير نهائي: سيتم حذف كل الحركات التشغيلية من جميع الشركات. هل أنشأت وراجعت النسخة الاحتياطية؟")) return;
     setResetBusy(true); setError(""); setNotice("");
@@ -117,7 +122,8 @@ export default function BackupPanel() {
     finally { setResetBusy(false); }
   };
 
-  const save = async (event: FormEvent) => {
+  // حفظ إعدادات مسار وجدولة ومدة الاحتفاظ بالنسخ الاحتياطية.
+const save = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
       const value = await call<BackupConfig>("PATCH", {
