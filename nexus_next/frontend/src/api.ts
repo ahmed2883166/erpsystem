@@ -506,6 +506,7 @@ export const hrApi = {
   approveLeave: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrLeaveRequest>(`/api/hr/leave-requests/${id}/approve/`, {method:"POST"}); },
   attendance: (companyId:number) => request<HrAttendance[]>(`/api/hr/attendance/?company=${companyId}&ordering=-work_date`),
   createAttendance: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrAttendance>("/api/hr/attendance/", {method:"POST",body:JSON.stringify(payload)}); },
+  updateAttendance: async (id:number, payload:Partial<HrAttendance>) => { await request<{detail:string}>("/api/csrf/"); return request<HrAttendance>(`/api/hr/attendance/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
   leaveRequests: (companyId:number) => request<HrLeaveRequest[]>(`/api/hr/leave-requests/?company=${companyId}&ordering=-start_date`),
   createLeaveRequest: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrLeaveRequest>("/api/hr/leave-requests/", {method:"POST",body:JSON.stringify(payload)}); },
   employeeLoans: (companyId:number) => request<HrEmployeeLoan[]>(`/api/hr/employee-loans/?company=${companyId}`),
