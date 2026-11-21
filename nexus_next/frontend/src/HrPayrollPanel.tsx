@@ -21,7 +21,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [leaveRequests, setLeaveRequests] = useState<HrLeaveRequest[]>([]);
   const [loans, setLoans] = useState<HrEmployeeLoan[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [currencies, setCurrencies] = useState<Currency[]>([]);\n  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [results, setResults] = useState<HrPayrollResult[]>([]);
   const [selectedCycle, setSelectedCycle] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -264,7 +265,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <label>رقم السلفة<input required value={loanDraft.reference} onChange={e=>setLoanDraft({...loanDraft,reference:e.target.value})}/></label>
         <label>تاريخ السلفة<input type="date" required value={loanDraft.issue_date} onChange={e=>setLoanDraft({...loanDraft,issue_date:e.target.value})}/></label>
         <label>أول قسط<input type="date" required value={loanDraft.first_due_date} onChange={e=>setLoanDraft({...loanDraft,first_due_date:e.target.value})}/></label>
-        <label>حساب ذمم سلف الموظفين<select required value={loanDraft.receivable_account} onChange={e=>setLoanDraft({...loanDraft,receivable_account:e.target.value})}><option value="">اختر حساب أصل</option>{accounts.filter(a=>a.nature==="asset"&&a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} — {a.name_ar}</option>)}</select></label>\n        <label>قيمة السلفة<input type="number" min="0.01" step="0.01" value={loanDraft.principal} onChange={e=>setLoanDraft({...loanDraft,principal:e.target.value})}/></label>
+        <label>حساب ذمم سلف الموظفين<select required value={loanDraft.receivable_account} onChange={e=>setLoanDraft({...loanDraft,receivable_account:e.target.value})}><option value="">اختر حساب أصل</option>{accounts.filter(a=>a.nature==="asset"&&a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} — {a.name_ar}</option>)}</select></label>
+        <label>قيمة السلفة<input type="number" min="0.01" step="0.01" value={loanDraft.principal} onChange={e=>setLoanDraft({...loanDraft,principal:e.target.value})}/></label>
         <label>عدد الأقساط<input type="number" min="1" step="1" value={loanDraft.installment_count} onChange={e=>setLoanDraft({...loanDraft,installment_count:e.target.value})}/></label>
         <label>قيمة القسط<input type="number" min="0.01" step="0.01" value={loanDraft.installment_amount} onChange={e=>setLoanDraft({...loanDraft,installment_amount:e.target.value})}/></label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>إنشاء السلفة وجدول الأقساط</button></div>
