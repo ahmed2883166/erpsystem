@@ -398,11 +398,15 @@ class IndirectCashFlowApiTests(TestCase):
         cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
         receivable = ChartOfAccount.objects.create(company=company, code="1100", name_ar="العملاء", nature="asset")
         payable = ChartOfAccount.objects.create(company=company, code="2100", name_ar="الموردون", nature="liability")
+        payroll_payable = ChartOfAccount.objects.create(company=company, code="2110", name_ar="مرتبات مستحقة", nature="liability")
+        grni = ChartOfAccount.objects.create(company=company, code="2120", name_ar="بضاعة مستلمة غير مفوترة", nature="liability")
         capital = ChartOfAccount.objects.create(company=company, code="3000", name_ar="رأس المال", nature="equity")
         revenue = ChartOfAccount.objects.create(company=company, code="4000", name_ar="المبيعات", nature="revenue")
         expense = ChartOfAccount.objects.create(company=company, code="5000", name_ar="مصروفات", nature="expense")
         AccountRole.objects.create(company=company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE, account=receivable)
         AccountRole.objects.create(company=company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
+        AccountRole.objects.create(company=company, role=AccountRole.Role.PAYROLL_PAYABLE, account=payroll_payable)
+        AccountRole.objects.create(company=company, role=AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, account=grni)
         from treasury.models import TreasuryAccount
         TreasuryAccount.objects.create(company=company, account=cash, kind="cash", code="CASH",
             name_ar="الخزينة الرئيسية")
@@ -429,6 +433,18 @@ class IndirectCashFlowApiTests(TestCase):
         JournalLine.objects.create(entry=purchase_expense, account=payable, credit=Decimal("300"))
         post_journal(purchase_expense.pk)
 
+        payroll_accrual = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="PAYROLL-ACCRUAL-1", entry_date=date(2026, 1, 4), description="استحقاق مرتبات")
+        JournalLine.objects.create(entry=payroll_accrual, account=expense, debit=Decimal("200"))
+        JournalLine.objects.create(entry=payroll_accrual, account=payroll_payable, credit=Decimal("200"))
+        post_journal(payroll_accrual.pk)
+
+        grni_accrual = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="GRNI-1", entry_date=date(2026, 1, 5), description="بضاعة مستلمة غير مفوترة")
+        JournalLine.objects.create(entry=grni_accrual, account=expense, debit=Decimal("20"))
+        JournalLine.objects.create(entry=grni_accrual, account=grni, credit=Decimal("20"))
+        post_journal(grni_accrual.pk)
+
         user = User.objects.create_user(username="cashflow_reader", password="test-password")
         user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
         CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
@@ -439,8 +455,8 @@ class IndirectCashFlowApiTests(TestCase):
             "&date_from=2026-01-01&date_to=2026-12-31"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["net_profit"], Decimal("700.0000"))
-        self.assertEqual(response.data["operating_adjustments"], Decimal("-100.0000"))
+        self.assertEqual(response.data["net_profit"], Decimal("480.0000"))
+        self.assertEqual(response.data["operating_adjustments"], Decimal("120.0000"))
         self.assertEqual(response.data["operating_cash_flow"], Decimal("600.0000"))
         self.assertEqual(response.data["ledger_cash_change"], Decimal("600.0000"))
         self.assertEqual(response.data["reconciliation_difference"], Decimal("0.0000"))
