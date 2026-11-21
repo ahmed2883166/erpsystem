@@ -261,7 +261,7 @@ class AccountingApiTests(TestCase):
             activity="medical", base_currency=self.currency,
         )
         ChartOfAccount.objects.create(
-            company=company, code="2120", name_ar="حساب آخر", nature="asset",
+            company=company, code="2120", name_ar="ضريبة القيمة المضافة - مخرجات", nature="liability",
         )
         user = User.objects.create_user(username="chart_admin_3", password="test-password")
         CompanyMembership.objects.create(user=user, company=company, role="admin", all_branches=True)
