@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q, Sum
+from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import ValidationError
 
@@ -63,6 +64,12 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError({"company": "حدد الشركة لعرض ميزان المراجعة."})
         date_from = request.query_params.get("date_from")
         date_to = request.query_params.get("date_to")
+        if date_from and not parse_date(date_from):
+            raise ValidationError({"date_from": "صيغة تاريخ البداية يجب أن تكون YYYY-MM-DD."})
+        if date_to and not parse_date(date_to):
+            raise ValidationError({"date_to": "صيغة تاريخ النهاية يجب أن تكون YYYY-MM-DD."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
         date_filter = Q(journal_lines__entry__status=JournalEntry.Status.POSTED)
         if date_from:
             date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
