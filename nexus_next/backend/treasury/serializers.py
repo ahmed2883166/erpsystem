@@ -12,7 +12,7 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "branch", "branch_name", "account", "account_code", "account_name",
                   "kind", "code", "name_ar", "bank_name", "account_number", "iban", "currency_code",
                   "opening_balance", "is_active", "created_at")
-        read_only_fields = ("created_at",)
+        read_only_fields = ("created_at", "opening_balance")
 
     def validate(self, attrs):
         company = attrs.get("company", getattr(self.instance, "company", None))
@@ -24,6 +24,8 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"account": "الحساب لا يتبع الشركة."})
         if account and (account.is_group or not account.allow_posting or not account.is_active):
             raise serializers.ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا."})
+        if account and account.nature != account.Nature.ASSET:
+            raise serializers.ValidationError({"account": "يجب أن يكون حساب الخزينة من طبيعة الأصول."})
         return attrs
 
 
