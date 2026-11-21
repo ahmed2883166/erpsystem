@@ -1,5 +1,5 @@
 from datetime import timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -166,8 +166,11 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             payable_days = Decimal("0")
         else:
             payable_days = max(Decimal("0"), base_payable_days - Decimal(len(unpaid_dates)))
-        daily_divisor = Decimal(str((cycle.rule_set.configuration if cycle.rule_set_id else {}).get("monthly_daily_divisor", 30)))
-        if daily_divisor <= 0:
+        try:
+            daily_divisor = Decimal(str((cycle.rule_set.configuration if cycle.rule_set_id else {}).get("monthly_daily_divisor", 30)))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValidationError("مقسم الراتب اليومي في مجموعة القواعد غير صالح.") from exc
+        if not daily_divisor.is_finite() or daily_divisor <= 0:
             raise ValidationError("مقسم الراتب اليومي يجب أن يكون أكبر من صفر.")
         effective_basic_salary = salary_for_date(employee, cycle.period_end)
         basic_amount = money(effective_basic_salary * payable_days / daily_divisor)
@@ -180,6 +183,13 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         insurance_base = basic_amount
         lines = [(None, "BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
         rule_configuration = cycle.rule_set.configuration if cycle.rule_set_id else {}
+
+        def safe_component_amount(*args):
+            try:
+                return calculate_component(*args)
+            except (InvalidOperation, TypeError, ValueError, KeyError, IndexError) as exc:
+                raise ValidationError("إعدادات أحد مكونات المرتبات غير صالحة؛ راجع مجموعة القواعد السنوية.") from exc
+
         statutory_assignments = []
         for assignment in assignments:
             component = assignment.component
@@ -190,7 +200,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             ):
                 statutory_assignments.append(assignment)
                 continue
-            amount = calculate_component(
+            amount = safe_component_amount(
                 component, assignment.value, effective_basic_salary, payable_days,
                 overtime_hours, daily_divisor, friday_days, rule_configuration,
                 taxable_base, insurance_base,
