@@ -297,15 +297,24 @@ def _special_tax_mechanisms_for_period(conn, country, period):
     rows = []
     if not _table_exists(conn, "tax_document_mechanisms"):
         return rows, totals
-    records = execute_compat(conn, """
+    if len(str(period)) == 7 and str(period)[4:6] == "-Q":
+        year, quarter = int(str(period)[:4]), int(str(period)[6])
+        first_month = (quarter - 1) * 3 + 1
+        periods = tuple(f"{year:04d}-{month:02d}" for month in range(first_month, first_month + 3))
+        period_filter = "tax_period IN (?,?,?)"
+        period_params = periods
+    else:
+        period_filter = "tax_period=?"
+        period_params = (period,)
+    records = execute_compat(conn, f"""
         SELECT country_code,document_kind,document_id,mechanism_code,tax_type,
                taxable_base,tax_rate,quantity,amount_per_unit,deductible_percent,
                output_tax,recoverable_input_tax,nonrecoverable_input_tax,
                tax_amount,tax_reference,journal_entry_id,status
         FROM tax_document_mechanisms
-        WHERE country_code=? AND tax_period=? AND status='posted'
+        WHERE country_code=? AND {period_filter} AND status='posted'
         ORDER BY document_kind,document_id,mechanism_code
-    """, (country, period)).fetchall()
+    """, (country, *period_params)).fetchall()
     for record in records:
         item = dict(record)
         for field in ("taxable_base","tax_rate","quantity","amount_per_unit",
