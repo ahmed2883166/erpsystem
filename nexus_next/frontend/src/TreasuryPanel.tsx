@@ -21,7 +21,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [selectedRecon,setSelectedRecon]=useState("");
   const [summary,setSummary]=useState<BankReconciliationSummary|null>(null);
   const [loading,setLoading]=useState(true), [busy,setBusy]=useState(false), [error,setError]=useState("");
-  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP"});
+  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});
   const [doc,setDoc]=useState({branch:"",fiscal_year:"",source_account:"",destination_account:"",counter_account:"",kind:"receipt",document_number:"",transaction_date:today(),amount:"",description:"",reference:""});
   const [rec,setRec]=useState({bank_account:"",statement_number:"",statement_date:today(),opening_balance:"0",closing_balance:"0"});
   const [line,setLine]=useState({line_number:"1",transaction_date:today(),description:"",reference:"",amount:""});
@@ -42,8 +42,8 @@ export default function TreasuryPanel({companyId}: Props) {
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
 const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
-    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code});
-    setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP"});await load();
+    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code,opening_balance:acc.opening_balance});
+    setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ الحساب.");}finally{setBusy(false);}};
   // تسجيل مستند حركة نقدية أو بنكية حسب نوع العملية المختار.
 const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
@@ -89,6 +89,7 @@ const eligible=(lineAmount:string)=>transactions.filter(t=>t.status==="posted"&&
         <label>الحساب بدليل الحسابات<select required value={acc.account} onChange={e=>setAcc({...acc,account:e.target.value})}><option value="">اختر الحساب</option>{gl.filter(a=>a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         <label>الفرع<select value={acc.branch} onChange={e=>setAcc({...acc,branch:e.target.value})}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
         <label>العملة<input maxLength={3} value={acc.currency_code} onChange={e=>setAcc({...acc,currency_code:e.target.value.toUpperCase()})}/></label>
+        <label>الرصيد الافتتاحي<input type="number" min="0" step="0.0001" value={acc.opening_balance} onChange={e=>setAcc({...acc,opening_balance:e.target.value})}/></label>
         {acc.kind==="bank"&&<><label>اسم البنك<input value={acc.bank_name} onChange={e=>setAcc({...acc,bank_name:e.target.value})}/></label><label>رقم الحساب<input value={acc.account_number} onChange={e=>setAcc({...acc,account_number:e.target.value})}/></label><label>IBAN<input value={acc.iban} onChange={e=>setAcc({...acc,iban:e.target.value})}/></label></>}
         <div className="treasury-form-actions"><button className="primary-button" disabled={busy}>حفظ الحساب</button></div>
       </form>
