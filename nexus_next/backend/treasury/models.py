@@ -27,7 +27,7 @@ class TreasuryAccount(models.Model):
     class Meta:
         ordering = ("kind", "code")
         constraints = [models.UniqueConstraint(fields=("company", "code"), name="uq_treasury_account_company_code")]
-        indexes = [models.Index(fields=("company", "kind", "is_active"))]
+        indexes = [models.Index(fields=("company", "kind", "is_active"), name="tr_co_kind_active_idx")]
 
     @property
     def company_id_for_permission(self):
@@ -79,7 +79,7 @@ class TreasuryTransaction(models.Model):
     class Meta:
         ordering = ("-transaction_date", "-id")
         constraints = [models.UniqueConstraint(fields=("company", "document_number"), name="uq_treasury_doc_company_no")]
-        indexes = [models.Index(fields=("company", "status", "transaction_date"))]
+        indexes = [models.Index(fields=("company", "status", "transaction_date"), name="tr_co_status_date_idx")]
 
     @property
     def company_id_for_permission(self):
