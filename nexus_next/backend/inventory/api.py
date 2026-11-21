@@ -50,6 +50,8 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         company = serializer.validated_data.get("company", serializer.instance.company)
+        if company.pk != serializer.instance.company_id:
+            raise ValidationError("لا يمكن نقل سجل المخزون إلى شركة أخرى بعد إنشائه.")
         self._check_company_write(company.pk)
         self._check_related_scope(serializer.validated_data)
         serializer.save()
