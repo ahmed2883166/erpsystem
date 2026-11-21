@@ -276,6 +276,8 @@ export const api = {
   createJournal: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل قيد اليومية المحدد.
   postJournal: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/" + id + "/post/", { method: "POST" }); },
+  // إنشاء وترحيل قيد عكسي مطابق للقيد الأصلي بعد تأكيد المستخدم.
+  reverseJournal: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/" + id + "/reverse/", { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }); },
   // جلب حسابات الخزينة والبنوك للشركة.
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   // جلب معلومات قالب دليل الحسابات الملائم لنشاط الشركة.
