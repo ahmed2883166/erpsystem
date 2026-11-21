@@ -8,9 +8,9 @@ from rest_framework.response import Response
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role
 from sales.models import SalesInvoice
-from .models import DiscountApprovalPolicy, SalesInvoiceApproval
-from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer
-from .snapshots import invoice_discount_snapshot
+from .models import DiscountApprovalPolicy, SalesInvoiceApproval, FinancialApprovalRequest
+from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer, FinancialApprovalRequestSerializer
+from .snapshots import invoice_discount_snapshot, financial_document_snapshot
 
 
 class DiscountApprovalPolicyViewSet(viewsets.ModelViewSet):
@@ -108,6 +108,128 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         if not note:
             raise ValidationError({"note": "سبب رفض الخصم مطلوب."})
         approval.status = SalesInvoiceApproval.Status.REJECTED
+        approval.decided_by = request.user
+        approval.decision_note = note[:500]
+        approval.save()
+        return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
+
+
+class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = FinancialApprovalRequestSerializer
+    permission_classes = (CompanyRolePermission,)
+
+    def get_queryset(self):
+        qs = FinancialApprovalRequest.objects.filter(
+            company__in=accessible_companies(self.request.user)
+        ).select_related(
+            "company", "requested_by", "decided_by", "purchase_invoice",
+            "purchase_invoice__supplier", "supplier_payment", "supplier_payment__supplier",
+            "treasury_transaction", "treasury_transaction__source_account",
+            "treasury_transaction__counter_account",
+        )
+        if not self.request.user.is_superuser:
+            branches = accessible_branches(self.request.user)
+            qs = qs.filter(
+                Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
+                  purchase_invoice__receipt__warehouse__branch__isnull=True)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
+                    purchase_invoice__receipt__warehouse__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
+                    supplier_payment__invoice__receipt__warehouse__branch__isnull=True)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
+                    supplier_payment__invoice__receipt__warehouse__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
+                    treasury_transaction__branch__in=branches)
+            )
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        document_type = self.request.query_params.get("document_type")
+        if document_type:
+            qs = qs.filter(document_type=document_type)
+        return qs
+
+    def _locked_document(self, approval):
+        if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE:
+            from purchasing.models import PurchaseInvoice
+            return PurchaseInvoice.objects.select_for_update().select_related(
+                "supplier", "receipt"
+            ).prefetch_related("lines__receipt_line__product", "lines__tax_code").get(pk=approval.purchase_invoice_id)
+        if approval.document_type == FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT:
+            from purchasing.models import SupplierPayment
+            return SupplierPayment.objects.select_for_update().select_related(
+                "supplier", "invoice"
+            ).get(pk=approval.supplier_payment_id)
+        from treasury.models import TreasuryTransaction
+        return TreasuryTransaction.objects.select_for_update().select_related(
+            "source_account", "counter_account"
+        ).get(pk=approval.treasury_transaction_id)
+
+    def _validate_manager_decision(self, approval, document):
+        if not has_company_role(self.request.user, approval.company_id, ("admin",)):
+            raise PermissionDenied("اعتماد الطلبات المالية متاح لمدير الشركة فقط.")
+        if approval.requested_by_id == self.request.user.pk:
+            raise PermissionDenied("لا يجوز اعتماد الطلب بواسطة منشئه.")
+        if approval.status != FinancialApprovalRequest.Status.PENDING:
+            raise ValidationError("تم اتخاذ قرار على هذا الطلب بالفعل.")
+        relation = {
+            FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "purchase_invoice",
+            FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "supplier_payment",
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "treasury_transaction",
+        }[approval.document_type]
+        latest = FinancialApprovalRequest.objects.filter(
+            document_type=approval.document_type, **{f"{relation}_id": document.pk}
+        ).order_by("-requested_at", "-pk").first()
+        if not latest or latest.pk != approval.pk:
+            raise ValidationError("هذا الطلب لم يعد الأحدث؛ راجع طلب الموافقة الحالي.")
+        if document.status != "draft":
+            raise ValidationError("لا يمكن اعتماد مستند ليس مسودة.")
+        snapshot = financial_document_snapshot(approval.document_type, document)
+        amount = document.grand_total if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE else document.amount
+        policy = DiscountApprovalPolicy.objects.filter(company_id=approval.company_id).first()
+        field = {
+            FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "max_purchase_invoice_amount",
+            FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "max_payment_amount",
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "max_payment_amount",
+        }[approval.document_type]
+        limit = getattr(policy, field, None) if policy else None
+        if approval.document_type == FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT:
+            from treasury.models import TreasuryTransaction
+            if document.kind != TreasuryTransaction.Kind.PAYMENT:
+                limit = None
+        if (
+            snapshot != approval.requested_snapshot
+            or amount != approval.requested_amount
+            or limit != approval.requested_limit
+            or limit is None
+            or amount <= limit
+        ):
+            raise ValidationError("تغير المستند أو حد الاعتماد بعد الطلب؛ يجب إنشاء طلب جديد ومراجعة النسخة الحالية.")
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def approve(self, request, pk=None):
+        candidate = self.get_object()
+        approval = FinancialApprovalRequest.objects.select_for_update().get(pk=candidate.pk)
+        document = self._locked_document(approval)
+        self._validate_manager_decision(approval, document)
+        approval.status = FinancialApprovalRequest.Status.APPROVED
+        approval.decided_by = request.user
+        approval.decision_note = str(request.data.get("note", "")).strip()[:500]
+        approval.save()
+        return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def reject(self, request, pk=None):
+        candidate = self.get_object()
+        approval = FinancialApprovalRequest.objects.select_for_update().get(pk=candidate.pk)
+        document = self._locked_document(approval)
+        self._validate_manager_decision(approval, document)
+        note = str(request.data.get("note", "")).strip()
+        if not note:
+            raise ValidationError({"note": "سبب رفض الطلب المالي مطلوب."})
+        approval.status = FinancialApprovalRequest.Status.REJECTED
         approval.decided_by = request.user
         approval.decision_note = note[:500]
         approval.save()
