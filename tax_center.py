@@ -155,14 +155,31 @@ def _tax_ledger_reconciliation(conn, summary):
     return result
 
 
-def _period(value):
-    try:
-        start = date.fromisoformat(value + "-01")
-    except (TypeError, ValueError):
-        start = date.today().replace(day=1)
-        value = start.strftime("%Y-%m")
+def _period(value, country=None):
+    """Resolve a monthly period or Saudi quarterly period to a half-open date range."""
+    value = str(value or "").strip()
+    if len(value) == 7 and value[4] == "-":
+        try:
+            start = date.fromisoformat(value + "-01")
+        except ValueError:
+            start = None
+        if start is not None:
+            end = date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1)
+            return value, start, end
+    if len(value) == 7 and value[:4].isdigit() and value[4:6] == "-Q" and value[6] in "1234":
+        if country == "EG":
+            raise ValueError("الإقرار المصري في هذا المسار شهري؛ اختر شهرًا بصيغة YYYY-MM.")
+        year, quarter = int(value[:4]), int(value[6])
+        month = (quarter - 1) * 3 + 1
+        start = date(year, month, 1)
+        end_month = month + 3
+        end = date(year + (end_month > 12), 1 if end_month > 12 else end_month, 1)
+        return value, start, end
+    if value:
+        raise ValueError("الفترة الضريبية غير صحيحة. استخدم YYYY-MM أو YYYY-Q1 إلى YYYY-Q4.")
+    start = date.today().replace(day=1)
     end = date(start.year + (start.month == 12), 1 if start.month == 12 else start.month + 1, 1)
-    return value, start, end
+    return start.strftime("%Y-%m"), start, end
 
 
 def _build_saudi_tax_preparation(conn, period, summary):
@@ -234,132 +251,6 @@ def calculate_tax_input_totals(purchases):
     return gross, deductible, non_deductible
 
 def build_tax_report_snapshot(conn, period_value):
-    period, start, end = _period(period_value)
-    customer_tax_number = _party_tax_number_expr(conn, "customers", "c")
-    sales = execute_compat(conn, f"""
-        SELECT i.id, i.invoice_no document_no, i.invoice_date document_date, c.name party_name, {customer_tax_number} party_tax_number,
-               i.subtotal taxable_base, i.tax_rate tax_rate,
-               i.tax_amount tax_amount, i.total_amount total_amount,
-               COALESCE(i.tax_treatment,'standard') tax_treatment,
-               COALESCE(i.tax_reference,'') tax_reference, COALESCE(i.tax_notes,'') tax_notes
-        FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
-        WHERE i.status='posted' AND i.invoice_date>=? AND i.invoice_date<?
-        ORDER BY i.invoice_date,i.id
-    """, (start.isoformat(), end.isoformat())).fetchall()
-    # Posted sales credit notes reduce output VAT in the period of the credit note.
-    # Group by the original line tax treatment so mixed-treatment invoices remain classified correctly.
-    sales_credits = []
-    sales_credit_columns = _columns(conn, "sales_credit_notes")
-    sales_credit_line_columns = _columns(conn, "sales_credit_note_lines")
-    required_sales_credit = {"id", "credit_note_no", "credit_date", "invoice_id", "status"}
-    required_sales_credit_lines = {"credit_note_id", "line_total", "tax_amount", "tax_treatment"}
-    if required_sales_credit.issubset(sales_credit_columns) and required_sales_credit_lines.issubset(sales_credit_line_columns):
-        credit_reference = "COALESCE(cn.tax_reference,'')" if "tax_reference" in sales_credit_columns else "''"
-        credit_notes = "COALESCE(cn.tax_notes,cn.reason)" if "tax_notes" in sales_credit_columns else "COALESCE(cn.reason,'')"
-        credit_rows = execute_compat(conn, f"""
-            SELECT cn.id, cn.credit_note_no document_no, cn.credit_date document_date,
-                   c.name party_name, {customer_tax_number} party_tax_number,
-                   cl.line_total taxable_base, cl.tax_amount,
-                   cl.tax_treatment, {credit_reference} tax_reference,
-                   {credit_notes} tax_notes
-            FROM sales_credit_notes cn
-            JOIN sales_invoices i ON i.id=cn.invoice_id
-            JOIN customers c ON c.id=i.customer_id
-            JOIN sales_credit_note_lines cl ON cl.credit_note_id=cn.id
-            WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<?
-            ORDER BY cn.credit_date,cn.id,cl.id
-        """, (start.isoformat(), end.isoformat())).fetchall()
-        grouped = {}
-        for row in credit_rows:
-            key = (row["id"], row["document_no"], row["document_date"],
-                   row["party_name"], row["party_tax_number"], row["tax_treatment"] or "standard",
-                   row["tax_reference"], row["tax_notes"])
-            item = grouped.setdefault(key, {"taxable_base": Decimal("0"),
-                                             "tax_amount": Decimal("0")})
-            item["taxable_base"] += Decimal(row["taxable_base"] or "0")
-            item["tax_amount"] += Decimal(row["tax_amount"] or "0")
-        for key, amounts in grouped.items():
-            credit_id, doc_no, doc_date, party_name, party_tax_number, treatment, reference, notes = key
-            base, tax_value = amounts["taxable_base"], amounts["tax_amount"]
-            sales_credits.append({
-                "id": credit_id, "document_no": doc_no, "document_date": doc_date,
-                "party_name": party_name, "party_tax_number": party_tax_number, "taxable_base": -base,
-                "tax_amount": -tax_value,
-                "tax_rate": (tax_value * Decimal("100") / base).quantize(Decimal("0.01"))
-                            if base else Decimal("0"),
-                "total_amount": -(base + tax_value), "tax_treatment": treatment,
-                "tax_reference": str(reference or ""), "tax_notes": str(notes or ""),
-                "document_type": "إشعار دائن", "document_kind": "sales_credit",
-            })
-    supplier_tax_number = _party_tax_number_expr(conn, "suppliers", "s")
-    purchases = execute_compat(conn, f"""
-        SELECT b.id, b.bill_no document_no, b.bill_date document_date, s.name party_name, {supplier_tax_number} party_tax_number,
-               b.subtotal taxable_base, b.tax_rate tax_rate,
-               b.tax_amount tax_amount, b.total_amount total_amount,
-               COALESCE(b.tax_treatment,'standard') tax_treatment,
-               COALESCE(b.tax_reference,'') tax_reference, COALESCE(b.tax_notes,'') tax_notes,
-               COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
-        FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
-        WHERE b.status='posted' AND b.bill_date>=? AND b.bill_date<?
-        ORDER BY b.bill_date,b.id
-    """, (start.isoformat(), end.isoformat())).fetchall()
-    sales = [{
-        **dict(r),
-        "taxable_base": Decimal(r["taxable_base"] or "0"),
-        "tax_amount": Decimal(r["tax_amount"] or "0"),
-        "tax_rate": Decimal(r["tax_rate"] or "0"),
-        "total_amount": Decimal(r["total_amount"] or "0")
-    } for r in sales]
-    sales = [{**r, "document_type": "فاتورة بيع", "document_kind": "sale"} for r in sales] + sales_credits
-    purchases = [{**dict(r), "taxable_base": Decimal(r["taxable_base"] or "0"),
-                      "tax_rate": Decimal(r["tax_rate"] or "0"), "tax_amount": Decimal(r["tax_amount"] or "0"),
-                      "total_amount": Decimal(r["total_amount"] or "0"),
-                      "deductible_percent": Decimal(r["deductible_percent"] or "100"),
-                      "document_type": "فاتورة مشتريات", "document_kind": "purchase"} for r in purchases]
-    # Supplier credit notes reduce input VAT in their own posting period. The
-    # deductible percentage and tax treatment are inherited from the source bill.
-    purchase_credits = []
-    purchase_credit_columns = _columns(conn, "supplier_credit_notes")
-    required_purchase_credit = {"id", "credit_no", "credit_date", "supplier_id", "bill_id", "status"}
-    if required_purchase_credit.issubset(purchase_credit_columns):
-        pc_base = "cn.subtotal" if "subtotal" in purchase_credit_columns else "0"
-        pc_rate = "cn.tax_rate" if "tax_rate" in purchase_credit_columns else "0"
-        pc_tax = "cn.tax_amount" if "tax_amount" in purchase_credit_columns else "0"
-        pc_total = "cn.total_amount" if "total_amount" in purchase_credit_columns else f"({pc_base}+{pc_tax})"
-        pc_reference = "COALESCE(cn.tax_reference,'')" if "tax_reference" in purchase_credit_columns else "''"
-        pc_notes = "COALESCE(cn.tax_notes,cn.reason)" if "tax_notes" in purchase_credit_columns else "COALESCE(cn.reason,'')"
-        supplier_bill_columns = _columns(conn, "supplier_bills")
-        bill_treatment = "COALESCE(b.tax_treatment,'standard')" if "tax_treatment" in supplier_bill_columns else "'standard'"
-        bill_deductible = "COALESCE(b.input_vat_deductible_percent,'100')" if "input_vat_deductible_percent" in supplier_bill_columns else "'100'"
-        credit_rows = execute_compat(conn, f"""
-            SELECT cn.id, cn.credit_no document_no, cn.credit_date document_date,
-                   s.name party_name, {supplier_tax_number} party_tax_number,
-                   {pc_base} taxable_base, {pc_rate} tax_rate, {pc_tax} tax_amount, {pc_total} total_amount,
-                   {bill_treatment} tax_treatment, {pc_reference} tax_reference, {pc_notes} tax_notes,
-                   {bill_deductible} deductible_percent
-            FROM supplier_credit_notes cn
-            JOIN supplier_bills b ON b.id=cn.bill_id
-            JOIN suppliers s ON s.id=cn.supplier_id
-            WHERE cn.status='posted' AND cn.credit_date>=? AND cn.credit_date<?
-            ORDER BY cn.credit_date,cn.id
-        """, (start.isoformat(), end.isoformat())).fetchall()
-        for row in credit_rows:
-            item = dict(row)
-            item.update({
-                "taxable_base": -Decimal(row["taxable_base"] or "0"),
-                "tax_rate": Decimal(row["tax_rate"] or "0"),
-                "tax_amount": -Decimal(row["tax_amount"] or "0"),
-                "total_amount": -Decimal(row["total_amount"] or "0"),
-                "deductible_percent": Decimal(row["deductible_percent"] or "100"),
-                "document_type": "إشعار دائن للمورد", "document_kind": "purchase_credit",
-            })
-            purchase_credits.append(item)
-    purchases.extend(purchase_credits)
-    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(conn, 
-        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
-        "('company_name','tax_country','tax_regime','tax_number','base_currency')")}
-
-    country = settings.get("tax_country", "EG")
     tax_profile = {
         "country_code": country,
         "country_name": "مصر" if country == "EG" else "السعودية" if country == "SA" else "إعداد مخصص",
@@ -471,10 +362,13 @@ def build_tax_report_snapshot(conn, period_value):
 @tax_bp.route("/reports/tax")
 @_authorized
 def tax_report():
-    period, _, _ = _period(request.args.get("period", date.today().strftime("%Y-%m")))
+    requested_period = request.args.get("period", date.today().strftime("%Y-%m"))
     conn = _db()
     try:
-        snapshot = build_tax_report_snapshot(conn, period)
+        snapshot = build_tax_report_snapshot(conn, requested_period)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("tax.tax_report"))
     finally:
         conn.close()
     return render_template("tax_report.html", **snapshot, treatments=TREATMENTS)
