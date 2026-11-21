@@ -53,4 +53,6 @@ class CompanyMembershipSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"branches": "كل الفروع المحددة يجب أن تتبع الشركة نفسها."})
         if self.instance and company and company.pk != self.instance.company_id:
             raise serializers.ValidationError({"company": "لا يمكن نقل عضوية المستخدم بين الشركات؛ أنشئ عضوية مستقلة."})
+        if self.instance and "user" in attrs and attrs["user"].pk != self.instance.user_id:
+            raise serializers.ValidationError({"user": "لا يمكن تغيير هوية المستخدم داخل عضوية قائمة."})
         return attrs
