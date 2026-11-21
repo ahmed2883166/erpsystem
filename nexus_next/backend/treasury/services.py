@@ -11,6 +11,7 @@ from .models import TreasuryAccount, TreasuryTransaction
 
 @transaction.atomic
 def post_treasury_transaction(transaction_id, user=None):
+    """ترحيل حركة الخزينة إلى القيد المحاسبي وربطها بالحساب والفرع."""
     doc = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "fiscal_year", "source_account__account",
         "destination_account__account", "counter_account",
