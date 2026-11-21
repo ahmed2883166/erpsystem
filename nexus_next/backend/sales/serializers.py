@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework import serializers
 
-from accounting.models import TaxCode
+from accounting.models import ChartOfAccount, TaxCode
 
 from customers.models import Customer
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation, Warehouse
@@ -117,6 +117,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     delivery_number = serializers.CharField(source="delivery.delivery_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
     approval_status = serializers.SerializerMethodField()
@@ -289,6 +290,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
 
 class CustomerReceiptSerializer(serializers.ModelSerializer):
+    payment_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all(), required=False, allow_null=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
@@ -296,7 +298,7 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerReceipt
         fields = ("id", "company", "customer", "customer_name", "invoice", "invoice_number",
-                  "receipt_number", "receipt_date", "method", "amount", "reference", "status",
+                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "reference", "status",
                   "journal_entry", "journal_number", "created_at", "posted_at")
         read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
 
@@ -308,6 +310,9 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "اختر فاتورة مبيعات مرحلة."})
         if invoice.company_id != company.pk or invoice.customer_id != customer.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة."})
+        account = attrs.get("payment_account")
+        if account and (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET or not account.is_active or account.is_group or not account.allow_posting):
+            raise serializers.ValidationError({"payment_account": "اختر حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة."})
         return attrs
 
     def create(self, validated_data):
