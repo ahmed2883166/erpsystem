@@ -265,6 +265,30 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
 
 
+    def test_stock_card_returns_opening_period_and_running_balances(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="CARD-1", name_ar="بطاقة صنف")
+        warehouse = self._warehouse("CARD-WH")
+        receipt = self._movement("CARD-RCV", "receipt", destination=warehouse, quantity="4", cost="10")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code, 200)
+        issue = self._movement("CARD-ISS", "issue", source=warehouse, quantity="1")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        issue_record = StockMovement.objects.get(pk=issue.data["id"])
+        issue_record.movement_date = date(2026, 11, 23)
+        issue_record.save(update_fields=("movement_date",))
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code, 200)
+
+        response = self.client.get(
+            f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={warehouse.pk}&date_from=2026-11-22&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["opening_quantity"], "4.0000")
+        self.assertEqual(response.data["opening_value"], "40.0000")
+        self.assertEqual(len(response.data["rows"]), 1)
+        self.assertEqual(response.data["rows"][0]["quantity_out"], "1.0000")
+        self.assertEqual(response.data["closing_quantity"], "3.0000")
+        self.assertEqual(response.data["closing_value"], "30.0000")
+
     def test_warehouse_product_reorder_setting_is_scoped_and_persisted(self):
         product = Product.objects.create(company=self.company, unit=self.unit, code="MIN-1", name_ar="حد مخزن")
         warehouse = self._warehouse("MIN-WH")
