@@ -1,9 +1,8 @@
-"""Transparent qmark/SQLite-DDL adaptation for application PostgreSQL connections.
+"""Narrow SQL adaptation for NEXUS application connections using PostgreSQL.
 
-This wrapper lets existing connection.execute() and cursor.execute() call sites
-use the same narrow compatibility adapter while modules are migrated. It does
-not translate SQLite-only functions, PRAGMA, sqlite_master, or transaction
-semantics; those still require explicit module-level work.
+The adapter translates positional qmark parameters and selected legacy DDL.
+It deliberately does not translate SQLite-only functions, PRAGMA,
+sqlite_master, or transaction semantics; modules must handle those explicitly.
 """
 from db_sql import adapt_sql_for_postgresql, qmark_to_format
 
