@@ -2763,7 +2763,7 @@ def edit_invoice_workflow(workflow_id):
     if request.method == "POST":
         try:
             items = []
-            for pid, qty, price, desc, line_rate, treatment, uom_id in zip(
+            for pid, qty, price, desc, line_rate, treatment, uom_id, tax_category in zip(
                     request.form.getlist("product_id"), request.form.getlist("quantity"),
                     request.form.getlist("unit_price"), request.form.getlist("description"),
                     request.form.getlist("line_tax_rate"), request.form.getlist("line_tax_treatment"),
