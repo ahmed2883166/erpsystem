@@ -222,7 +222,7 @@ export type InventoryValuationIntegrity = {
   pending_movements: { id: number; movement_number: string; movement_type: string; movement_date: string; created_at: string; source_warehouse: string; destination_warehouse: string; lines_count: number; created_by: string }[];
   pending_movements_truncated: boolean; scope_note: string;
 };
-export type InventoryReconciliation = { company: number; branch: number | null; branch_code: string; branch_name: string; scope_branch_ids: number[]; scope_note: string; account_id: number; account_code: string; account_name: string; stock_value: string; gl_balance: string; difference: string; is_reconciled: boolean; basis: string };
+export type InventoryReconciliation = { company: number; currency: string; currency_decimal_places: number; rounding_tolerance: string; reconciliation_status: "matched" | "difference"; branch: number | null; branch_code: string; branch_name: string; scope_branch_ids: number[]; scope_note: string; account_id: number; account_code: string; account_name: string; stock_value: string; gl_balance: string; difference: string; is_reconciled: boolean; basis: string };
 export type StockBalance = {
   id: number; product: number; product_code: string; product_name: string; warehouse: number;
   warehouse_name: string; location: number | null; location_name: string | null; expiry_date: string | null; quantity: string; average_cost: string; inventory_value: string; updated_at: string;
