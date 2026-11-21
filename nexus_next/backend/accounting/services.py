@@ -5,6 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from companies.models import FiscalYear
+from audit.models import AuditEvent
 from .models import JournalEntry, JournalLine
 
 
@@ -63,8 +64,40 @@ def post_journal(entry_id: int) -> JournalEntry:
         if dict(expected) != dict(actual):
             raise ValidationError("القيد العكسي يجب أن يعكس حسابات ومبالغ القيد الأصلي بالكامل.")
         JournalEntry.objects.filter(pk=original.pk).update(status=JournalEntry.Status.REVERSED)
+        AuditEvent.objects.create(
+            actor=entry.created_by,
+            company=original.company,
+            branch=original.branch,
+            action=AuditEvent.Action.ACTION,
+            resource="accounting.journal_entry.reversed",
+            object_id=str(original.pk),
+            http_method="JOURNAL",
+            status_code=200,
+            succeeded=True,
+            metadata={
+                "entry_number": original.entry_number,
+                "reversal_entry_id": entry.pk,
+                "reversal_entry_number": entry.entry_number,
+            },
+        )
 
     entry.status = JournalEntry.Status.POSTED
     entry.posted_at = timezone.now()
     entry.save(update_fields=["status", "posted_at"])
+    AuditEvent.objects.create(
+        actor=entry.created_by,
+        company=entry.company,
+        branch=entry.branch,
+        action=AuditEvent.Action.ACTION,
+        resource="accounting.journal_entry.posted",
+        object_id=str(entry.pk),
+        http_method="JOURNAL",
+        status_code=200,
+        succeeded=True,
+        metadata={
+            "entry_number": entry.entry_number,
+            "source_type": entry.source_type,
+            "reversal_of_id": entry.reversal_of_id,
+        },
+    )
     return entry
