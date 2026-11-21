@@ -171,3 +171,15 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .treasury-form-actions{display:flex;align-items:end;justify-content:flex-start}
 @media(max-width:760px){.treasury-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:480px){.treasury-form{grid-template-columns:1fr}.treasury-form .form-wide{grid-column:auto}}
+
+.treasury-recon-select{max-width:520px;margin:12px 0 18px}
+.treasury-recon-select label{display:flex;flex-direction:column;gap:6px;color:#64748b;font-size:11px}
+.treasury-recon-select select,.treasury-panel td select{min-width:180px;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#26354b;padding:8px;font:inherit;font-size:11px}
+.treasury-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 18px}
+.treasury-summary-grid>div{display:flex;flex-direction:column;gap:8px;padding:14px;border:1px solid #e6edf5;border-radius:10px;background:#f8fafc}
+.treasury-summary-grid small{color:#718096;font-size:10px}
+.treasury-summary-grid strong{color:#24364d;font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.treasury-recon-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;color:#607086;font-size:11px}
+.treasury-recon-footer strong{color:#18865e}
+.treasury-panel h3{padding:14px 0 8px;color:#33465e;font-size:13px}
+@media(max-width:760px){.treasury-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.treasury-recon-footer{align-items:flex-start;flex-direction:column}}
