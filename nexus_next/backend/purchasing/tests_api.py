@@ -351,10 +351,25 @@ class PurchasingWorkflowTests(APITestCase):
             "lines": [{"receipt_line": receipt_line_id, "unit_price": "95", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
-        response = self.client.post(f"/api/purchasing/invoices/{response.data['id']}/post/", {}, format="json")
+        invoice_id = response.data["id"]
+        response = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
         self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).exists())
+
+        # A draft mismatch remains correctable; the corrected invoice can clear GRNI.
+        corrected = self.client.patch(
+            f"/api/purchasing/invoices/{invoice_id}/",
+            {"lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}]},
+            format="json",
+        )
+        self.assertEqual(corrected.status_code, 200, corrected.data)
+        self.assertEqual(corrected.data["net_total"], "200.0000")
+        posted = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], "posted")
+        self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
+        self.assertTrue(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").exists())
 
     def test_invoice_cannot_be_created_before_receipt_is_posted(self):
         response = self.client.post("/api/purchasing/receipts/", {
