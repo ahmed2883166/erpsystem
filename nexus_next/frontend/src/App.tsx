@@ -78,6 +78,9 @@ export default function App() {
   const saveDraft = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setJournalError("");
     if (!companyId || !draft.branch || !draft.fiscal_year) { setJournalError("حدد الشركة والفرع والسنة المالية."); return; }
+    const selectedYear = fiscalYears.find((year) => year.id === Number(draft.fiscal_year));
+    if (!selectedYear || selectedYear.status !== "open") { setJournalError("لا يمكن تسجيل القيد إلا في سنة مالية مفتوحة."); return; }
+    if (draft.entry_date < selectedYear.start_date || draft.entry_date > selectedYear.end_date) { setJournalError("تاريخ القيد خارج حدود السنة المالية المحددة."); return; }
     if (journalLines.length < 2 || journalLines.some((line) => !line.account || (Number(line.debit) > 0) === (Number(line.credit) > 0) || Number(line.debit) < 0 || Number(line.credit) < 0)) { setJournalError("راجع كل سطر: اختر الحساب وأدخل قيمة في خانة مدين أو دائن فقط."); return; }
     if (Math.abs(journalDifference) > 0.00005) { setJournalError("القيد غير متوازن. يجب أن يتساوى إجمالي المدين والدائن."); return; }
     setSaving(true);
@@ -141,7 +144,7 @@ export default function App() {
         <div className="page-content">
           <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
-            <button className="primary-button" onClick={() => { setActive("journals"); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button></section>
+            <button className="primary-button" onClick={() => { setActive("journals"); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button></section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
           {active === "overview" && <>
@@ -194,7 +197,7 @@ export default function App() {
                 <label>رقم القيد<input required value={draft.entry_number} onChange={(e) => setDraft({ ...draft, entry_number: e.target.value })} /></label>
                 <label>التاريخ<input required type="date" value={draft.entry_date} onChange={(e) => setDraft({ ...draft, entry_date: e.target.value })} /></label>
                 <label>الفرع<select required value={draft.branch} onChange={(e) => setDraft({ ...draft, branch: e.target.value })}><option value="">اختر الفرع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name_ar} ({b.code})</option>)}</select></label>
-                <label>السنة المالية<select required value={draft.fiscal_year} onChange={(e) => setDraft({ ...draft, fiscal_year: e.target.value })}><option value="">اختر السنة</option>{fiscalYears.map((y) => <option key={y.id} value={y.id}>{y.name} · {y.status === "open" ? "مفتوحة" : "مغلقة"}</option>)}</select></label>
+                <label>السنة المالية<select required value={draft.fiscal_year} onChange={(e) => setDraft({ ...draft, fiscal_year: e.target.value })}><option value="">اختر السنة</option>{fiscalYears.filter((y) => y.status === "open").map((y) => <option key={y.id} value={y.id}>{y.name} · مفتوحة</option>)}</select></label>
                 <label className="form-wide">البيان<input required value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
                 <div className="journal-lines-head form-wide"><div><strong>تفاصيل القيد</strong><span> أضف أي عدد من السطور حسب طبيعة العملية</span></div><button type="button" className="add-line-button" onClick={() => setJournalLines((rows) => [...rows, { account: "", debit: "", credit: "", description: "" }])}>＋ إضافة سطر</button></div>
                 <div className="journal-lines-wrap form-wide"><table className="journal-lines-table"><thead><tr><th>#</th><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th><th></th></tr></thead><tbody>
