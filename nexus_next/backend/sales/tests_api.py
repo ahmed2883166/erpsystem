@@ -81,7 +81,7 @@ class SalesWorkflowTests(APITestCase):
             company=self.company, code="1110", name_ar="البنك الفرعي", nature=ChartOfAccount.Nature.ASSET
         )
         from treasury.models import TreasuryAccount
-        TreasuryAccount.objects.create(company=self.company, account=alternate_bank, kind=TreasuryAccount.Kind.BANK,
+        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=alternate_bank, kind=TreasuryAccount.Kind.BANK,
             code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
         receipt_response = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
@@ -103,6 +103,26 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(invoice["balance_due"], "128.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("3"))
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.SALES, status="posted").count(), 2)
+
+        # A treasury account assigned to another branch must be rejected cleanly.
+        other_branch = Branch.objects.create(company=self.company, code="OTHER", name_ar="فرع آخر")
+        other_bank = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك الفرع الآخر", nature=ChartOfAccount.Nature.ASSET
+        )
+        TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=other_bank, kind=TreasuryAccount.Kind.BANK,
+            code="BANK-OTHER", name_ar="بنك الفرع الآخر", currency_code="EGP",
+        )
+        wrong_branch_receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": "RC-OTHER", "receipt_date": "2026-03-12",
+            "method": "bank", "payment_account": other_bank.pk, "amount": "10",
+        }, format="json")
+        self.assertEqual(wrong_branch_receipt.status_code, 201, wrong_branch_receipt.data)
+        wrong_branch_post = self.client.post(
+            f"/api/sales-documents/receipts/{wrong_branch_receipt.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(wrong_branch_post.status_code, 400, wrong_branch_post.data)
 
         # Delivery owns the inventory/COGS posting; invoice owns revenue/VAT/receivable.
         inventory_account = AccountRole.objects.get(company=self.company, role=AccountRole.Role.INVENTORY).account
