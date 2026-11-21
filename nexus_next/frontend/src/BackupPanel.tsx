@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 
+type ResetPreview = { counts: Record<string,number>; total_records:number; backup_ready:boolean; last_backup_at:string|null; preserved:string[]; removed:string[] };
 type BackupConfig = {
   backup_path: string;
   schedule: "daily" | "weekly" | "monthly";
@@ -12,9 +13,9 @@ type BackupConfig = {
   history: {id:number;status:"success"|"failure";backup_file:string;size_bytes:number;details:string;created_at:string}[];
 };
 
-async function call<T>(method = "GET", body?: unknown): Promise<T> {
+async function call<T>(method = "GET", body?: unknown, endpoint = "/api/backup/configuration/"): Promise<T> {
   const csrf = document.cookie.split("; ").find(x => x.startsWith("csrftoken="))?.split("=").slice(1).join("=") || "";
-  const response = await fetch("/api/backup/configuration/", {
+  const response = await fetch(endpoint, {
     method, credentials: "same-origin",
     headers: { Accept: "application/json", ...(body ? {"Content-Type":"application/json"} : {}), ...(method !== "GET" ? {"X-CSRFToken":decodeURIComponent(csrf)} : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
@@ -35,12 +36,17 @@ export default function BackupPanel() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [running, setRunning] = useState(false);
+  const [resetPreview, setResetPreview] = useState<ResetPreview | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPhrase, setResetPhrase] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
 
   const load = async () => {
     try {
       const value = await call<BackupConfig>();
       setConfig(value); setPath(value.backup_path); setSchedule(value.schedule);
       setEnabled(value.enabled); setDaily(value.daily_retention_days); setMonthly(value.monthly_retention_months);
+      if (value.can_manage) setResetPreview(await call<ResetPreview>("GET", undefined, "/api/backup/reset-preview/"));
     } catch (e) { setError(e instanceof Error ? e.message : "تعذر تحميل إعدادات النسخ."); }
   };
   useEffect(() => { void load(); }, []);
@@ -54,6 +60,17 @@ export default function BackupPanel() {
       await load();
     } catch (e) { setError(e instanceof Error ? e.message : "فشل تنفيذ النسخ الاحتياطي."); }
     finally { setRunning(false); }
+  };
+
+  const executeReset = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!window.confirm("تحذير نهائي: سيتم حذف كل الحركات التشغيلية من جميع الشركات. هل أنشأت وراجعت النسخة الاحتياطية؟")) return;
+    setResetBusy(true); setError(""); setNotice("");
+    try {
+      const result = await call<{detail:string}>("POST", {password:resetPassword, confirmation:resetPhrase}, "/api/backup/reset/");
+      setNotice(result.detail); setResetPassword(""); setResetPhrase(""); await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "تعذر تصفير الحركات."); }
+    finally { setResetBusy(false); }
   };
 
   const save = async (event: FormEvent) => {
@@ -96,6 +113,20 @@ export default function BackupPanel() {
         {!config.history.length && <tr><td colSpan={4}>لا توجد عمليات نسخ مسجلة بعد.</td></tr>}
       </tbody></table></div>
       <p className="asset-report-note">لا نعرض نسبة تقدم وهمية؛ أثناء التنفيذ تظهر حالة التشغيل، ولا تُسجل النسخة ناجحة إلا بعد التحقق من الأرشيف ووجود الملف بالحجم المتوقع. بعد تغيير الجدولة، أعد تشغيل scripts/install-backup-task.ps1 لتحديث مهمة Windows.</p>
+      {config.can_manage && <section className="work-panel reset-panel">
+        <div className="work-panel-head"><div><h3>تصفير الحركات التشغيلية</h3><p>إجراء نهائي لجميع الشركات؛ يحتفظ بالبيانات الأساسية وإعدادات النظام وسجل التدقيق.</p></div><span className="coming-soon">{resetPreview?.backup_ready ? "النسخة الاحتياطية جاهزة" : "يلزم نسخ احتياطي حديث"}</span></div>
+        {resetPreview && <>
+          <div className="review-meta"><div><span>السجلات المحددة للتصفير</span><strong>{resetPreview.total_records.toLocaleString("ar-EG")}</strong></div><div><span>آخر نسخة ناجحة</span><strong>{resetPreview.last_backup_at ? new Date(resetPreview.last_backup_at).toLocaleString("ar-EG") : "لا توجد"}</strong></div></div>
+          <h4>ما سيتم الاحتفاظ به</h4><ul>{resetPreview.preserved.map(x=><li key={x}>{x}</li>)}</ul>
+          <h4>ما سيتم تصفيره</h4><div className="data-table-wrap"><table><thead><tr><th>نوع السجلات</th><th>العدد</th></tr></thead><tbody>{Object.entries(resetPreview.counts).map(([name,count])=><tr key={name}><td>{name}</td><td>{count.toLocaleString("ar-EG")}</td></tr>)}</tbody></table></div>
+          <form className="journal-form" onSubmit={executeReset}>
+            <label>كلمة مرور مدير النظام<input type="password" autoComplete="current-password" required value={resetPassword} onChange={e=>setResetPassword(e.target.value)}/></label>
+            <label>اكتب عبارة التأكيد حرفيًا<input required value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="تصفير الحركات"/></label>
+            <div className="form-actions form-wide"><button className="danger-button" type="submit" disabled={resetBusy || !resetPreview.backup_ready || resetPhrase !== "تصفير الحركات"}>{resetBusy ? "جارٍ التصفير…" : "تصفير الحركات التشغيلية"}</button></div>
+          </form>
+          {!resetPreview.backup_ready && <p className="asset-report-note">زر التصفير سيظل معطلًا حتى إنشاء نسخة ناجحة والتحقق من وجود ملفها خلال آخر 24 ساعة.</p>}
+        </>}
+      </section>}
     </>}
   </section>;
 }
