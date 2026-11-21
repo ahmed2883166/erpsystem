@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def _safe_create_audit_event(**kwargs):
+    """تسجيل حدث تدقيق بأمان مع منع فشل العملية الأصلية بسبب سجل التدقيق."""
     try:
         AuditEvent.objects.create(**kwargs)
     except Exception:
@@ -19,12 +20,14 @@ def _safe_create_audit_event(**kwargs):
 
 
 def _request_details(request):
+    """استخراج بيانات الطلب غير الحساسة اللازمة لسجل التدقيق."""
     if request is None:
         return None, ""
     return request.META.get("REMOTE_ADDR") or None, request.META.get("HTTP_USER_AGENT", "")[:300]
 
 
 def _record_auth_event(*, request, user, event, succeeded, status_code):
+    """تسجيل حدث مصادقة مع النتيجة ورمز الاستجابة والفاعل."""
     ip_address, user_agent = _request_details(request)
     _safe_create_audit_event(
         actor=user,
@@ -42,6 +45,7 @@ def _record_auth_event(*, request, user, event, succeeded, status_code):
 
 @receiver(user_logged_in)
 def audit_login(sender, request, user, **kwargs):
+    """تسجيل نجاح تسجيل الدخول في سجل التدقيق."""
     _record_auth_event(
         request=request, user=user, event="login",
         succeeded=True, status_code=200,
@@ -50,6 +54,7 @@ def audit_login(sender, request, user, **kwargs):
 
 @receiver(user_logged_out)
 def audit_logout(sender, request, user, **kwargs):
+    """تسجيل خروج المستخدم في سجل التدقيق."""
     _record_auth_event(
         request=request, user=user, event="logout",
         succeeded=True, status_code=200,
@@ -58,6 +63,7 @@ def audit_logout(sender, request, user, **kwargs):
 
 @receiver(user_login_failed)
 def audit_failed_login(sender, credentials, request, **kwargs):
+    """تسجيل محاولة دخول فاشلة دون حفظ كلمة المرور."""
     # Never persist submitted credentials or attempted usernames.
     _record_auth_event(
         request=request, user=None, event="login_failed",
@@ -67,6 +73,7 @@ def audit_failed_login(sender, credentials, request, **kwargs):
 
 @receiver(post_save, sender=LogEntry)
 def audit_django_admin_change(sender, instance, created, **kwargs):
+    """تسجيل التغييرات التي تتم من لوحة إدارة Django."""
     if not created:
         return
     action_by_flag = {
