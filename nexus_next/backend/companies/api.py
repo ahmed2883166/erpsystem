@@ -46,6 +46,20 @@ class BranchViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return accessible_branches(self.request.user).select_related("company")
 
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        if not can_access_company(self.request.user, company.pk):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية إنشاء فرع في هذه الشركة.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        if not can_access_company(self.request.user, company.pk):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية نقل الفرع إلى هذه الشركة.")
+        serializer.save()
+
 
 class FiscalYearViewSet(viewsets.ModelViewSet):
     serializer_class = FiscalYearSerializer
@@ -55,3 +69,17 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         return FiscalYear.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related("company")
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        if not can_access_company(self.request.user, company.pk):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية إنشاء سنة مالية لهذه الشركة.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        if not can_access_company(self.request.user, company.pk):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("لا تملك صلاحية نقل السنة المالية إلى هذه الشركة.")
+        serializer.save()
