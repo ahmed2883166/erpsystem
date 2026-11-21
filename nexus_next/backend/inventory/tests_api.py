@@ -1,7 +1,10 @@
+from datetime import date
+
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from companies.models import Branch, Company, CompanyMembership, Currency
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, UnitOfMeasure, Warehouse
 
 
@@ -18,6 +21,22 @@ class InventoryApiTests(APITestCase):
         self.client.force_authenticate(self.user)
         self.unit = UnitOfMeasure.objects.create(company=self.company, code="PCS", name_ar="قطعة")
         self.category = ProductCategory.objects.create(company=self.company, code="CAT", name_ar="عام")
+        self.fiscal_year = FiscalYear.objects.create(
+            company=self.company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31)
+        )
+        role_accounts = (
+            (AccountRole.Role.INVENTORY, "1000", "مخزون", ChartOfAccount.Nature.ASSET),
+            (AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, "2100", "بضاعة مستلمة غير مفوترة", ChartOfAccount.Nature.LIABILITY),
+            (AccountRole.Role.COGS, "5000", "تكلفة المبيعات", ChartOfAccount.Nature.EXPENSE),
+            (AccountRole.Role.INVENTORY_ADJUSTMENT_GAIN, "4900", "أرباح تسوية مخزون", ChartOfAccount.Nature.REVENUE),
+            (AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, "5900", "خسائر تسوية مخزون", ChartOfAccount.Nature.EXPENSE),
+            (AccountRole.Role.INTER_BRANCH_CLEARING, "2300", "تسوية بين الفروع", ChartOfAccount.Nature.ASSET),
+        )
+        for role, code, name, nature in role_accounts:
+            account = ChartOfAccount.objects.create(
+                company=self.company, code=code, name_ar=name, nature=nature, allow_posting=True
+            )
+            AccountRole.objects.create(company=self.company, role=role, account=account)
 
     def test_product_create_and_company_scope(self):
         hidden_unit = UnitOfMeasure.objects.create(company=self.other_company, code="PCS", name_ar="قطعة")
