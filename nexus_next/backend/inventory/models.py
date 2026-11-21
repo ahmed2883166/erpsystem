@@ -116,6 +116,30 @@ class Warehouse(models.Model):
             raise ValidationError({"branch": "الفرع يجب أن يتبع نفس الشركة."})
 
 
+class WarehouseProductSetting(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="warehouse_settings")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="product_settings")
+    min_stock = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("warehouse__code", "product__code")
+        constraints = [
+            models.UniqueConstraint(fields=("product", "warehouse"), name="uq_wh_product_setting"),
+        ]
+        indexes = [models.Index(fields=("warehouse", "is_active"), name="inv_wh_setting_active_idx")]
+        verbose_name = "حد إعادة طلب الصنف بالمخزن"
+        verbose_name_plural = "حدود إعادة الطلب بالمخازن"
+
+    def clean(self):
+        super().clean()
+        if self.product_id and self.warehouse_id and self.product.company_id != self.warehouse.company_id:
+            raise ValidationError({"warehouse": "المخزن والصنف يجب أن يتبعا نفس الشركة."})
+        if self.product_id and self.product.product_type != Product.ProductType.GOODS:
+            raise ValidationError({"product": "حد إعادة الطلب يطبق على الأصناف المخزنية فقط."})
+
+
 class StorageLocation(models.Model):
     class LocationType(models.TextChoices):
         FLOOR = "floor", "دور"
