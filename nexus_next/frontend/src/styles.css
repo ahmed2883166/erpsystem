@@ -29,3 +29,35 @@
 .status-pill{display:inline-flex;align-items:center;border-radius:20px;padding:4px 9px;font-size:9px;font-weight:700;background:#edf1f6;color:#738196}
 .status-pill.posted{background:#e7f7ef;color:#269567}.status-pill.draft{background:#fff5df;color:#b27c24}.status-pill.reversed{background:#fff0ef;color:#c45c56}
 @media(max-width:760px){.workspace select{max-width:82px}.admin-shortcut{display:none}.table-toolbar{gap:8px}.table-toolbar input{min-width:0;width:100%}.error-banner{align-items:flex-start;flex-direction:column}.error-banner a{margin-right:0}}
+
+
+/* NEXUS interaction layer: consistent controls, keyboard focus and responsive data surfaces. */
+:root{--nx-primary:#2865c7;--nx-primary-hover:#1e55ad;--nx-border:#e5eaf1;--nx-muted:#8290a3;--nx-radius:10px;--nx-focus:0 0 0 3px #2865c72b}
+button,a,input,select,textarea{ -webkit-tap-highlight-color:transparent }
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:0;box-shadow:var(--nx-focus)}
+button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
+.primary-button,.subtle-button,.icon-button,.admin-shortcut,.nav-item,.module-card{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
+.subtle-button:hover,.icon-button:hover{border-color:#b8cbe5;background:#f7faff;color:#285da7}
+.subtle-button:active,.primary-button:active,.icon-button:active{transform:translateY(1px)}
+.data-table-wrap{scrollbar-width:thin;scrollbar-color:#c5d0df transparent}
+.data-table-wrap table{font-variant-numeric:tabular-nums}
+.data-table-wrap th{position:sticky;top:0;z-index:1}
+.data-table-wrap td:first-child,.data-table-wrap th:first-child{padding-right:17px}
+.data-table-wrap tbody tr{transition:background-color .12s ease}
+.table-toolbar{gap:12px;flex-wrap:wrap}
+.table-toolbar input::placeholder{color:#a0aaba}
+.work-panel{box-shadow:0 5px 20px #233b5a08}
+.metric-card,.module-card,.activity-panel{box-shadow:0 4px 16px #233b5a07}
+.status-pill{white-space:nowrap}
+@media(max-width:760px){
+ .work-panel{padding:14px;min-height:360px}
+ .work-panel-head{align-items:flex-start;gap:10px}
+ .work-panel-head h2{font-size:13px}
+ .data-table-wrap{border-radius:8px}
+ .data-table-wrap table{min-width:590px}
+ .table-toolbar input{font-size:12px;min-height:40px}
+ .primary-button,.subtle-button{min-height:38px}
+}
+@media(prefers-reduced-motion:reduce){
+ *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+}
