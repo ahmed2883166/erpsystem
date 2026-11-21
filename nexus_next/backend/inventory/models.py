@@ -205,7 +205,7 @@ class StockMovementLine(models.Model):
         IN = "in", "زيادة"
         OUT = "out", "عجز"
 
-    movement = models.ForeignKey(StockMovement, on_delete=models.PROTECT, related_name="lines")
+    movement = models.ForeignKey(StockMovement, on_delete=models.CASCADE, related_name="lines")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_movement_lines")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0.0001)])
     unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
