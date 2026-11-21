@@ -399,7 +399,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
 
       {selectedPayslip && selectedCycle && <section className="report-drilldown payroll-slip" style={{marginTop:20}}>
         <div className="work-panel-head"><div><h3>قسيمة مرتب: {selectedPayslip.employee_name}</h3><p>كود الموظف: {selectedPayslip.employee_code} · دورة رقم {selectedCycle} · {cycles.find(c=>c.id===selectedCycle)?.period_start||""} — {cycles.find(c=>c.id===selectedCycle)?.period_end||""}</p></div>
-          <div className="report-actions"><button type="button" className="subtle-button" onClick={()=>{const target=document.querySelector(".payroll-slip");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}>طباعة القسيمة / PDF</button><button type="button" className="subtle-button" onClick={()=>setSelectedPayslip(null)}>إغلاق</button></div>
+          <div className="report-actions"><button type="button" className="subtle-button" onClick={()=>{const target=document.querySelector(".payroll-slip");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة القسيمة / PDF</button><button type="button" className="subtle-button" onClick={()=>setSelectedPayslip(null)}>إغلاق</button></div>
         </div>
         <div className="asset-cashflow-totals"><span>الراتب الأساسي: {money(selectedPayslip.basic_salary_snapshot)}</span><span>حصة صاحب العمل: {money(selectedPayslip.employer_share_total)}</span><b>صافي المستحق: {money(selectedPayslip.net_pay)}</b></div>
         <div className="data-table-wrap"><table><thead><tr><th>البند</th><th>النوع</th><th>القيمة</th></tr></thead><tbody>
