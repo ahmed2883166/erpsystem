@@ -292,7 +292,9 @@ def post_payroll_cycle(cycle_id, actor=None):
 
     payroll_expense = get_account_for_role(cycle.company, "payroll_expense")
     payroll_payable = get_account_for_role(cycle.company, "payroll_payable")
-    branch_ids = cycle.results.values_list("employee__branch_id", flat=True).distinct()
+    branch_ids = list(cycle.results.values_list("employee__branch_id", flat=True).distinct())
+    if not branch_ids or None in branch_ids:
+        raise ValidationError("يجب إسناد كل موظفي دورة المرتبات إلى فرع قبل الترحيل.")
     posted = []
 
     def validate_account(account, nature, description):
@@ -370,6 +372,13 @@ def post_payroll_cycle(cycle_id, actor=None):
 
         if line_count < 2:
             raise ValidationError(f"لا توجد بنود محاسبية كافية لترحيل فرع {branch.name_ar}.")
+        totals = JournalLine.objects.filter(entry=entry).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        debit_total = money(totals["debit"] or Decimal("0"))
+        credit_total = money(totals["credit"] or Decimal("0"))
+        if debit_total != credit_total:
+            raise ValidationError(
+                f"قيد مرتبات فرع {branch.name_ar} غير متوازن: مدين {debit_total} ودائن {credit_total}."
+            )
         posted_entry = post_journal(entry.pk)
         PayrollPosting.objects.create(cycle=cycle, branch=branch, journal_entry=posted_entry)
         posted.append({"branch_id": branch.pk, "branch_name": branch.name_ar, "journal_entry_id": posted_entry.pk, "entry_number": posted_entry.entry_number})
