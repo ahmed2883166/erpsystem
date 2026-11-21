@@ -49,8 +49,7 @@ def post_journal(entry_id: int) -> JournalEntry:
             raise ValidationError("القيد الأصلي غير صالح للعكس.")
         if JournalEntry.objects.filter(reversal_of=original).exclude(pk=entry.pk).exists():
             raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
-        original.status = JournalEntry.Status.REVERSED
-        original.save(update_fields=["status"])
+        JournalEntry.objects.filter(pk=original.pk).update(status=JournalEntry.Status.REVERSED)
 
     entry.status = JournalEntry.Status.POSTED
     entry.posted_at = timezone.now()
