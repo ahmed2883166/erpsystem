@@ -11,6 +11,7 @@ const AuditPanel = lazy(() => import("./AuditPanel"));
 const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
+const AccountsPanel = lazy(() => import("./AccountsPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup" | "audit" | "approvals" | "access";
@@ -647,12 +648,7 @@ export default function App() {
                 : <div className="empty-state"><div className="empty-graphic">◷</div><strong>{loading ? "جارٍ تحميل القيود" : "لا توجد قيود حتى الآن"}</strong><p>ستظهر القيود هنا بمجرد تسجيلها في الشركة المختارة.</p></div>}</section>
           </>}
 
-          {active === "accounts" && <section className="work-panel"><div className="work-panel-head"><div><h2>دليل الحسابات</h2><p>شجرة الحسابات الخاصة بـ {selectedCompany?.name_ar || "الشركة"}</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
-            <div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث بكود أو اسم الحساب…" /><span className="module-count">{filteredAccounts.length} نتيجة</span></div>
-            <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>الحساب الأب</th><th>الطبيعة</th><th>نوع الحساب</th><th>الحالة</th></tr></thead>
-              <tbody>{filteredAccounts.map((account) => <tr key={account.id}><td className="code-cell">{account.code}</td><td>{account.name_ar}</td><td>{account.parent_code || "—"}</td><td>{natureNames[account.nature] || account.nature}</td>
-                <td>{account.is_group ? "تجميعي" : "تفصيلي"}</td><td><span className={`status-pill ${account.is_active ? "posted" : "reversed"}`}>{account.is_active ? "نشط" : "موقوف"}</span></td></tr>)}</tbody></table>
-              {!loading && !filteredAccounts.length && <div className="table-empty">لا توجد حسابات مطابقة للبحث.</div>}</div></section>}
+          {active === "accounts" && <Suspense fallback={panelFallback}><AccountsPanel companyId={companyId} companyName={selectedCompany?.name_ar || "الشركة"} activity={selectedCompany?.activity} accounts={accounts} onRefresh={async () => { if (!companyId) return; const rows = await api.accounts(companyId); setAccounts(rows); }} /></Suspense>}
 
           {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
             {journalError && <div className="error-banner">{journalError}</div>}<div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
