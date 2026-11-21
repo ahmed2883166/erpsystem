@@ -7,6 +7,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from audit.models import AuditEvent
 from .models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from .services import post_journal
 
@@ -38,6 +39,53 @@ class PostingEngineTests(TestCase):
         post_journal(entry.pk)
         entry.refresh_from_db()
         self.assertEqual(entry.status, JournalEntry.Status.POSTED)
+        event = AuditEvent.objects.get(
+            resource="accounting.journal_entry.posted", object_id=str(entry.pk)
+        )
+        self.assertEqual(event.company, self.company)
+        self.assertEqual(event.branch, self.branch)
+        self.assertTrue(event.succeeded)
+        self.assertEqual(event.metadata["entry_number"], entry.entry_number)
+
+    def test_posting_rolls_back_if_transactional_audit_write_fails(self):
+        from unittest.mock import patch
+
+        entry = self.make_entry()
+        with patch("accounting.services.AuditEvent.objects.create", side_effect=RuntimeError("audit unavailable")):
+            with self.assertRaises(RuntimeError):
+                post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+        self.assertFalse(AuditEvent.objects.filter(
+            resource="accounting.journal_entry.posted", object_id=str(entry.pk)
+        ).exists())
+
+    def test_reversal_audits_original_and_reversal_in_same_transaction(self):
+        original = self.make_entry()
+        post_journal(original.pk)
+        reversal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="JV-REV-002", entry_date=date(2026, 1, 3),
+            description="عكس قيد", reversal_of=original,
+        )
+        JournalLine.objects.create(entry=reversal, account=self.cash, credit=Decimal("100"))
+        JournalLine.objects.create(entry=reversal, account=self.capital, debit=Decimal("100"))
+        post_journal(reversal.pk)
+
+        original.refresh_from_db()
+        reversal.refresh_from_db()
+        self.assertEqual(original.status, JournalEntry.Status.REVERSED)
+        self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        self.assertTrue(AuditEvent.objects.filter(
+            resource="accounting.journal_entry.reversed",
+            object_id=str(original.pk),
+            metadata__reversal_entry_id=reversal.pk,
+        ).exists())
+        self.assertTrue(AuditEvent.objects.filter(
+            resource="accounting.journal_entry.posted",
+            object_id=str(reversal.pk),
+            metadata__reversal_of_id=original.pk,
+        ).exists())
 
     def test_unbalanced_entry_is_rejected(self):
         entry = self.make_entry(credit="90.00")
