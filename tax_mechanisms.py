@@ -93,3 +93,73 @@ def calculate_saudi_reverse_charge(country, taxable_base, rate,
         "non_recoverable_input_tax": non_recoverable,
         "net_vat_effect": output_tax - recoverable,
     }
+
+
+def build_saudi_reverse_charge_journal_lines(calculation, output_vat_account_id,
+                                              input_vat_account_id,
+                                              nonrecoverable_account_id):
+    """Build balanced, unposted journal lines for a Saudi RCM calculation.
+
+    Account IDs must come from configured account roles. No database writes or
+    automatic posting occur here. A zero-value leg does not require an account.
+    """
+    required = {
+        "output_vat_account_id": output_vat_account_id,
+        "input_vat_account_id": input_vat_account_id,
+        "nonrecoverable_account_id": nonrecoverable_account_id,
+    }
+    normalized = {}
+    for name, value in required.items():
+        if value in (None, ""):
+            normalized[name] = None
+            continue
+        try:
+            account_id = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("معرّف حساب الضريبة يجب أن يكون رقمًا صحيحًا.") from None
+        if account_id <= 0:
+            raise ValueError("معرّف حساب الضريبة يجب أن يكون أكبر من صفر.")
+        normalized[name] = account_id
+
+    output_tax = _money(_decimal(calculation.get("output_tax"), "ضريبة المخرجات"))
+    recoverable = _money(_decimal(calculation.get("recoverable_input_tax"), "ضريبة المدخلات القابلة للخصم"))
+    nonrecoverable = _money(_decimal(calculation.get("non_recoverable_input_tax"), "ضريبة المدخلات غير القابلة للخصم"))
+    if min(output_tax, recoverable, nonrecoverable) < 0:
+        raise ValueError("قيم قيد الاحتساب العكسي لا يمكن أن تكون سالبة.")
+    if output_tax != recoverable + nonrecoverable:
+        raise ValueError("تفصيل ضريبة الاحتساب العكسي غير متوازن؛ أعد الحساب قبل إنشاء القيد.")
+
+    lines = []
+    if recoverable:
+        if not normalized["input_vat_account_id"]:
+            raise ValueError("يجب تحديد حساب ضريبة المدخلات القابلة للخصم.")
+        lines.append({
+            "account_id": normalized["input_vat_account_id"],
+            "debit": recoverable,
+            "credit": Decimal("0.00"),
+            "tax_component": "recoverable_input_vat",
+        })
+    if nonrecoverable:
+        if not normalized["nonrecoverable_account_id"]:
+            raise ValueError("يجب تحديد حساب تكلفة/مصروف الجزء غير القابل للخصم.")
+        lines.append({
+            "account_id": normalized["nonrecoverable_account_id"],
+            "debit": nonrecoverable,
+            "credit": Decimal("0.00"),
+            "tax_component": "nonrecoverable_input_vat",
+        })
+    if output_tax:
+        if not normalized["output_vat_account_id"]:
+            raise ValueError("يجب تحديد حساب ضريبة المخرجات.")
+        lines.append({
+            "account_id": normalized["output_vat_account_id"],
+            "debit": Decimal("0.00"),
+            "credit": output_tax,
+            "tax_component": "reverse_charge_output_vat",
+        })
+
+    debits = sum((line["debit"] for line in lines), Decimal("0.00"))
+    credits = sum((line["credit"] for line in lines), Decimal("0.00"))
+    if debits != credits:
+        raise ValueError("قيد الاحتساب العكسي غير متوازن.")
+    return lines
