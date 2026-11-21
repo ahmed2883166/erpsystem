@@ -11,8 +11,8 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
         model = TreasuryAccount
         fields = ("id", "company", "branch", "branch_name", "account", "account_code", "account_name",
                   "kind", "code", "name_ar", "bank_name", "account_number", "iban", "currency_code",
-                  "opening_balance", "is_active", "created_at")
-        read_only_fields = ("created_at", "opening_balance")
+                  "opening_balance", "opening_journal_entry", "is_active", "created_at")
+        read_only_fields = ("created_at", "opening_journal_entry")
 
     def validate(self, attrs):
         company = attrs.get("company", getattr(self.instance, "company", None))
@@ -26,6 +26,11 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا."})
         if account and account.nature != account.Nature.ASSET:
             raise serializers.ValidationError({"account": "يجب أن يكون حساب الخزينة من طبيعة الأصول."})
+        opening_balance = attrs.get("opening_balance", getattr(self.instance, "opening_balance", 0))
+        if opening_balance < 0:
+            raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
+        if self.instance and "opening_balance" in attrs:
+            raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يتغير بعد إنشاء الحساب؛ صحّح الرصيد بقيد افتتاحي أو تسوية معتمدة."})
         return attrs
 
 
