@@ -2,13 +2,14 @@ from datetime import date
 from decimal import Decimal
 
 from django.test import SimpleTestCase, TestCase
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
-from hr.services import post_payroll_cycle
+from hr.services import post_payroll_cycle, complete_payroll_payment
 
 from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
 from hr.services import calculate_component, money, salary_for_date
@@ -286,3 +287,78 @@ class PayrollTaxPostingTests(TestCase):
         self.assertEqual(tax_line.credit, Decimal("100.0000"))
         self.assertEqual(tax_line.debit, Decimal("0.0000"))
 
+
+    def test_prepared_payroll_payment_cannot_be_changed_and_completion_rechecks_amount(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="HR-PAY-GUARD", name_ar="شركة حماية صرف المرتبات", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="HQ", name_ar="المركز الرئيسي", is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        actor = User.objects.create_user(username="payroll-payment-guard", password="test-password")
+        employee = Employee.objects.create(
+            company=company, code="EMP-PAY", full_name_ar="موظف صرف",
+            branch=branch, hire_date=date(2026, 1, 1), basic_salary=Decimal("1000"), currency=currency,
+        )
+        cycle = PayrollCycle.objects.create(
+            company=company, period_start=date(2026, 1, 1), period_end=date(2026, 1, 31),
+            payment_date=date(2026, 2, 1), status=PayrollCycle.Status.APPROVED,
+        )
+        role_accounts = {
+            "payroll_expense": ("6101", "مصروف المرتبات", ChartOfAccount.Nature.EXPENSE),
+            "payroll_payable": ("2201", "مرتبات مستحقة", ChartOfAccount.Nature.LIABILITY),
+        }
+        for role, (code, name, nature) in role_accounts.items():
+            account = ChartOfAccount.objects.create(company=company, code=code, name_ar=name, nature=nature)
+            AccountRole.objects.create(company=company, role=role, account=account)
+        PayrollResult.objects.create(
+            cycle=cycle, employee=employee, basic_salary_snapshot=Decimal("1000"),
+            earnings_total=Decimal("1000"), employee_deductions_total=Decimal("100"),
+            net_pay=Decimal("900"), company_cost=Decimal("1000"),
+        )
+        result = cycle.results.get()
+        PayrollResultLine.objects.create(
+            result=result, code_snapshot="BASIC", name_snapshot="الراتب الأساسي",
+            kind_snapshot="earning", amount=Decimal("1000"),
+        )
+        PayrollResultLine.objects.create(
+            result=result, code_snapshot="OTHER-DEDUCTION", name_snapshot="خصم",
+            kind_snapshot="deduction", amount=Decimal("100"),
+        )
+        post_payroll_cycle(cycle.pk, actor)
+        cycle.refresh_from_db()
+        cycle.status = PayrollCycle.Status.PAYMENT_PENDING
+        cycle.save(update_fields=("status", "updated_at"))
+        posting = cycle.postings.get()
+        bank_gl = ChartOfAccount.objects.create(
+            company=company, code="1111", name_ar="بنك المرتبات", nature=ChartOfAccount.Nature.ASSET,
+        )
+        bank = TreasuryAccount.objects.create(
+            company=company, branch=branch, account=bank_gl, kind=TreasuryAccount.Kind.BANK,
+            code="BANK-PAY-GUARD", name_ar="بنك المرتبات", currency_code="EGP",
+            opening_balance=Decimal("5000"),
+        )
+        payroll_payable = AccountRole.objects.get(company=company, role="payroll_payable").account
+        document = TreasuryTransaction.objects.create(
+            company=company, branch=branch, fiscal_year=year, source_account=bank,
+            counter_account=payroll_payable, kind=TreasuryTransaction.Kind.PAYMENT,
+            document_number="PAY-GUARD-1", transaction_date=date(2026, 2, 1),
+            amount=Decimal("900"), description="صرف مرتبات",
+        )
+        posting.payment_treasury_transaction = document
+        posting.save(update_fields=("payment_treasury_transaction",))
+
+        document.amount = Decimal("899")
+        with self.assertRaises(ValidationError):
+            document.save()
+        TreasuryTransaction.objects.filter(pk=document.pk).update(amount=Decimal("899"))
+        with self.assertRaises(ValidationError):
+            complete_payroll_payment(cycle.pk, actor)
+        cycle.refresh_from_db()
+        self.assertEqual(cycle.status, PayrollCycle.Status.PAYMENT_PENDING)
+        self.assertIsNone(posting.payment_journal_entry_id)
