@@ -204,6 +204,75 @@ class AccountingApiTests(TestCase):
         self.assertEqual(response.data["credit_total"], Decimal("125.0000"))
         self.assertEqual(response.data["difference"], Decimal("0.0000"))
 
+    def test_activity_chart_template_creates_unique_ranges_and_role_links(self):
+        company = Company.objects.create(
+            code="TPL-COM", name_ar="شركة تجارية", country="EG",
+            activity="commercial", base_currency=self.currency,
+        )
+        user = User.objects.create_user(username="chart_admin", password="test-password")
+        CompanyMembership.objects.create(user=user, company=company, role="admin", all_branches=True)
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post("/api/accounting/account-templates/", {
+            "company": company.pk,
+        }, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertGreater(len(response.data["created_accounts"]), 25)
+        self.assertEqual(ChartOfAccount.objects.filter(company=company, code="4110").get().name_ar,
+                         "إيرادات مبيعات البضائع")
+        self.assertEqual(ChartOfAccount.objects.filter(company=company, code="2160").get().nature,
+                         ChartOfAccount.Nature.LIABILITY)
+        self.assertEqual(ChartOfAccount.objects.filter(company=company, code="1150").get().nature,
+                         ChartOfAccount.Nature.ASSET)
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.SALES).account.code, "4110")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.COGS).account.code, "5110")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.VAT_INPUT).account.code, "1150")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.VAT_OUTPUT).account.code, "2120")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE).account.code, "2160")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE).account.code, "2170")
+
+    def test_activity_chart_template_is_idempotent_and_never_overwrites_existing_role(self):
+        company = Company.objects.create(
+            code="TPL-SRV", name_ar="شركة خدمات", country="EG",
+            activity="service", base_currency=self.currency,
+        )
+        custom = ChartOfAccount.objects.create(
+            company=company, code="9900", name_ar="إيرادات مخصصة", nature="revenue",
+        )
+        AccountRole.objects.create(company=company, role=AccountRole.Role.SALES, account=custom)
+        user = User.objects.create_user(username="chart_admin_2", password="test-password")
+        CompanyMembership.objects.create(user=user, company=company, role="admin", all_branches=True)
+        self.client.force_authenticate(user=user)
+
+        first = self.client.post("/api/accounting/account-templates/", {"company": company.pk}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["role_conflicts"][0]["existing_account_code"], "9900")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.SALES).account_id, custom.pk)
+        count = ChartOfAccount.objects.filter(company=company).count()
+
+        second = self.client.post("/api/accounting/account-templates/", {"company": company.pk}, format="json")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(ChartOfAccount.objects.filter(company=company).count(), count)
+        self.assertEqual(ChartOfAccount.objects.get(company=company, code="4110").name_ar, "إيرادات تقديم الخدمات")
+
+    def test_activity_chart_template_stops_on_code_collision_without_partial_creation(self):
+        company = Company.objects.create(
+            code="TPL-COLL", name_ar="شركة تعارض", country="EG",
+            activity="medical", base_currency=self.currency,
+        )
+        ChartOfAccount.objects.create(
+            company=company, code="2120", name_ar="حساب آخر", nature="asset",
+        )
+        user = User.objects.create_user(username="chart_admin_3", password="test-password")
+        CompanyMembership.objects.create(user=user, company=company, role="admin", all_branches=True)
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post("/api/accounting/account-templates/", {"company": company.pk}, format="json")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code_conflicts"][0]["code"], "2120")
+        self.assertEqual(ChartOfAccount.objects.filter(company=company).count(), 1)
+        self.assertFalse(AccountRole.objects.filter(company=company).exists())
+
     def test_authenticated_user_can_read_accounts(self):
         user = User.objects.create_user(username="reader", password="test-password")
         permission = Permission.objects.get(codename="view_chartofaccount")
