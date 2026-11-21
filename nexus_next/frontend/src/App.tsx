@@ -8,7 +8,8 @@ const SalesPanel = lazy(() => import("./SalesPanel"));
 const InventoryPanel = lazy(() => import("./InventoryPanel"));
 const TreasuryPanel = lazy(() => import("./TreasuryPanel"));
 const FixedAssetsPanel = lazy(() => import("./FixedAssetsPanel"));
-const AuditPanel = lazy(() => import("./AuditPanel"));
+const DashboardPanel = lazy(() => import("./DashboardPanel"));
+const SystemMonitorPanel = lazy(() => import("./SystemMonitorPanel"));
 const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
@@ -50,7 +51,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "tax", label: "الضرائب والإقرارات", icon: "%", group: "التقارير" },
   { id: "backup", label: "النسخ الاحتياطي", icon: "▣", group: "الإدارة" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
-  { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
+  { id: "audit", label: "مركز مراقبة النظام", icon: "⌕", group: "الإدارة" },
   { id: "approvals", label: "الموافقات وحدود الخصم", icon: "✓", group: "الإدارة" },
   { id: "access", label: "المستخدمون والصلاحيات", icon: "♙", group: "الإدارة" },
 ];
@@ -616,6 +617,7 @@ export default function App() {
             {companyId !== null && active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
+          {active === "overview" && <Suspense fallback={panelFallback}><DashboardPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} onNavigate={(section) => setActive(section)} /></Suspense>}
           {active === "overview" && <>
             <div className="section-heading"><div><h2>ملخص البيانات</h2><p>الأرقام التالية مبنية على السجلات المحملة من قاعدة البيانات</p></div><span className="module-count">{loading ? "جارٍ التحديث…" : "تحديث مباشر"}</span></div>
             <div className="metrics-grid">
@@ -683,7 +685,7 @@ export default function App() {
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
           {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
           {active === "hr" && <Suspense fallback={panelFallback}><HrPayrollPanel companyId={companyId} baseCurrencyId={selectedCompany?.base_currency} country={selectedCompany?.country} /></Suspense>}
-          {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
+          {active === "audit" && <Suspense fallback={panelFallback}><SystemMonitorPanel companyId={companyId} /></Suspense>}
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
           {active === "setup" && <Suspense fallback={panelFallback}><CompanySetupPanel companies={companies} companyId={companyId} onCompanyCreated={(company) => { setCompanies((rows) => [...rows, company]); setCompanyId(company.id); setActive("setup"); }} onStructureChanged={async () => { if (!companyId) return; try { const [branchRows, yearRows] = await Promise.all([api.branches(companyId), api.fiscalYears(companyId)]); setBranches(branchRows.filter((row) => row.company === companyId)); setFiscalYears(yearRows.filter((row) => row.company === companyId)); setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active)?.id || ""), fiscal_year: String(yearRows.find((row) => row.status === "open")?.id || "") })); } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر تحديث إعدادات الفرع والسنة المالية."); } }} /></Suspense>}
