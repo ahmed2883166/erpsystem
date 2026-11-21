@@ -85,6 +85,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
         return qs
 
+    @transaction.atomic
     def perform_create(self, serializer):
         data = serializer.validated_data
         self._scope(data["company"].pk); self._write(data["company"].pk)
@@ -96,6 +97,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
             doc, self.request.user,
         )
 
+    @transaction.atomic
     def perform_update(self, serializer):
         instance = serializer.instance
         if instance.status != TreasuryTransaction.Status.DRAFT:
