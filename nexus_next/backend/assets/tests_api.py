@@ -127,6 +127,31 @@ class FixedAssetWorkflowTests(APITestCase):
         depreciation_report = self.client.get("/api/assets/fixed-assets/depreciation-report/", {"company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-12-31"})
         self.assertEqual(depreciation_report.status_code, 200, depreciation_report.data)
         self.assertEqual(depreciation_report.data["total_depreciation"], Decimal("6000.0000"))
+        duplicate = self.client.post(f"/api/assets/fixed-assets/{asset_id}/dispose/", {
+            "disposal_date": "2026-03-10", "proceeds": "120000.0000",
+            "treasury_account": self.bank.pk, "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(JournalEntry.objects.count(), 4)
+
+    def test_zero_proceeds_disposal_posts_loss_without_fake_treasury_receipt(self):
+        payload = self._payload()
+        payload["disposal_gain_loss_account"] = self.expense_gl.pk
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        disposed = self.client.post(f"/api/assets/fixed-assets/{asset_id}/dispose/", {
+            "disposal_date": "2026-02-28", "proceeds": "0",
+            "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(disposed.status_code, 201, disposed.data)
+        self.assertEqual(disposed.data["proceeds"], Decimal("0"))
+        self.assertEqual(disposed.data["loss"], Decimal("115000.0000"))
+        self.assertIsNone(disposed.data["treasury_transaction"])
+        self.assertEqual(TreasuryTransaction.objects.count(), 1)
+        asset = __import__("assets.models", fromlist=["FixedAsset"]).FixedAsset.objects.get(pk=asset_id)
+        self.assertEqual(asset.status, asset.Status.DISPOSED)
+
 
     def test_disposal_rejects_wrong_nature_gain_loss_account_without_partial_commit(self):
         created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
