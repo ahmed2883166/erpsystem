@@ -1,8 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from rest_framework.test import APIClient
 
-from core.models import BackupConfiguration
+from core.models import BackupConfiguration, BackupRun
 
 
 class BackupConfigurationApiTests(TestCase):
@@ -82,3 +85,23 @@ class BackupConfigurationApiTests(TestCase):
         deleted = reset_operational_data()
         self.assertIn("accounting.JournalEntry", deleted)
         self.assertTrue(all(value == 0 for value in deleted.values()))
+
+    def test_reset_executes_only_after_a_real_recent_backup(self):
+        self.client.force_authenticate(self.admin)
+        with TemporaryDirectory() as folder:
+            archive = Path(folder) / "verified.dump"
+            archive.write_bytes(b"x" * 2048)
+            BackupRun.objects.create(
+                status=BackupRun.Status.SUCCESS,
+                backup_file=str(archive),
+                size_bytes=archive.stat().st_size,
+                started_by=self.admin,
+            )
+            with patch("core.backup_api.reset_operational_data", return_value={"accounting.JournalEntry": 0}) as reset:
+                response = self.client.post(
+                    "/api/backup/reset/",
+                    {"password": "safe-password-123", "confirmation": "تصفير الحركات"},
+                    format="json",
+                )
+            self.assertEqual(response.status_code, 200)
+            reset.assert_called_once()
