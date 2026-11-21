@@ -16,6 +16,19 @@ class CompanySetupApiTests(APITestCase):
             activity="commercial", base_currency=self.currency,
         )
 
+    def test_protected_company_delete_returns_clear_client_error(self):
+        branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي")
+        admin = get_user_model().objects.create_user(username="company-delete-admin", password="test-password")
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
+        response = self.client.delete(f"/api/setup/companies/{self.company.pk}/")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("بيانات مرتبطة", response.data["detail"])
+        self.assertTrue(Company.objects.filter(pk=self.company.pk).exists())
+        self.assertTrue(Branch.objects.filter(pk=branch.pk).exists())
+
     def test_setup_endpoints_require_authentication(self):
         response = self.client.get("/api/setup/currencies/")
         self.assertEqual(response.status_code, 403)
