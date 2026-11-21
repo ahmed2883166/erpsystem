@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet } from "./api";
+import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account } from "./api";
 
 const statusLabels: Record<string, string> = {
   active: "نشط", leave: "إجازة", unpaid_leave: "إجازة بدون راتب",
@@ -21,7 +21,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [leaveRequests, setLeaveRequests] = useState<HrLeaveRequest[]>([]);
   const [loans, setLoans] = useState<HrEmployeeLoan[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [currencies, setCurrencies] = useState<Currency[]>([]);\n  const [accounts, setAccounts] = useState<Account[]>([]);
   const [results, setResults] = useState<HrPayrollResult[]>([]);
   const [selectedCycle, setSelectedCycle] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -32,7 +32,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [attendanceDraft, setAttendanceDraft] = useState({employee:"",work_date:new Date().toISOString().slice(0,10),status:"present" as HrAttendance["status"],worked_hours:"8",overtime_hours:"0",friday_worked:false,late_minutes:"0"});
   const [assignmentDraft, setAssignmentDraft] = useState({employee:"",component:"",value:"",effective_from:new Date().toISOString().slice(0,10),effective_to:""});
   const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
-  const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),principal:"0",installment_count:"1",installment_amount:"0",notes:""});
+  const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),receivable_account:"",principal:"0",installment_count:"1",installment_amount:"0",notes:""});
   const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),new_salary:"0",change_type:"annual_raise",reason:""});
   const [ruleSetDraft, setRuleSetDraft] = useState({name:"",effective_from:new Date().toISOString().slice(0,10),effective_to:"",monthly_daily_divisor:"30",min_base:"",max_base:"",employee_rate:"",employer_rate:"",annual_personal_exemption:"",annual_brackets:"[]"});
   const [cycleDraft, setCycleDraft] = useState({rule_set:"",period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
@@ -41,11 +41,11 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows, assignmentRows, leaveRows, loanRows, ruleRows] = await Promise.all([
-        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId), hrApi.employeeComponents(companyId), hrApi.leaveRequests(companyId), hrApi.employeeLoans(companyId), hrApi.payrollRuleSets(companyId),
+      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows, assignmentRows, leaveRows, loanRows, ruleRows, accountRows] = await Promise.all([
+        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId), hrApi.employeeComponents(companyId), hrApi.leaveRequests(companyId), hrApi.employeeLoans(companyId), hrApi.payrollRuleSets(companyId), api.accounts(companyId),
       ]);
       setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows); setRuleSets(ruleRows);
-      setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows);
+      setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows); setAccounts(accountRows);
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
       setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(baseCurrencyId||currencyRows[0]?.id||"")}));
@@ -114,7 +114,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         const amount=i===count-1?principal-regular*(count-1):regular;
         return {due_date:due.toISOString().slice(0,10),amount:amount.toFixed(4)};
       });
-      await hrApi.createEmployeeLoanWithSchedule({...loanDraft,employee:Number(loanDraft.employee),principal:principal.toFixed(4),installment_count:count,installment_amount:regular.toFixed(4),installments});
+      await hrApi.createEmployeeLoanWithSchedule({...loanDraft,employee:Number(loanDraft.employee),receivable_account:Number(loanDraft.receivable_account),principal:principal.toFixed(4),installment_count:count,installment_amount:regular.toFixed(4),installments});
       setNotice("تم تسجيل السلفة وإنشاء جدول أقساطها دفعة واحدة.");await load();
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل السلفة أو جدول أقساطها.");}
     finally{setBusy(false);}
@@ -264,7 +264,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <label>رقم السلفة<input required value={loanDraft.reference} onChange={e=>setLoanDraft({...loanDraft,reference:e.target.value})}/></label>
         <label>تاريخ السلفة<input type="date" required value={loanDraft.issue_date} onChange={e=>setLoanDraft({...loanDraft,issue_date:e.target.value})}/></label>
         <label>أول قسط<input type="date" required value={loanDraft.first_due_date} onChange={e=>setLoanDraft({...loanDraft,first_due_date:e.target.value})}/></label>
-        <label>قيمة السلفة<input type="number" min="0.01" step="0.01" value={loanDraft.principal} onChange={e=>setLoanDraft({...loanDraft,principal:e.target.value})}/></label>
+        <label>حساب ذمم سلف الموظفين<select required value={loanDraft.receivable_account} onChange={e=>setLoanDraft({...loanDraft,receivable_account:e.target.value})}><option value="">اختر حساب أصل</option>{accounts.filter(a=>a.nature==="asset"&&a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} — {a.name_ar}</option>)}</select></label>\n        <label>قيمة السلفة<input type="number" min="0.01" step="0.01" value={loanDraft.principal} onChange={e=>setLoanDraft({...loanDraft,principal:e.target.value})}/></label>
         <label>عدد الأقساط<input type="number" min="1" step="1" value={loanDraft.installment_count} onChange={e=>setLoanDraft({...loanDraft,installment_count:e.target.value})}/></label>
         <label>قيمة القسط<input type="number" min="0.01" step="0.01" value={loanDraft.installment_amount} onChange={e=>setLoanDraft({...loanDraft,installment_amount:e.target.value})}/></label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>إنشاء السلفة وجدول الأقساط</button></div>
