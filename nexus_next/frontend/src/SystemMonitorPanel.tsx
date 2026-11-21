@@ -15,12 +15,14 @@ type Metrics = {
 };
 const number = (value?: number) => value === undefined ? "—" : Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
+// شاشة مراقبة الأداء ومؤشرات قاعدة البيانات مع تبويب سجل التدقيق.
 export default function SystemMonitorPanel({ companyId }: { companyId: number | null }) {
   const [tab, setTab] = useState<"performance" | "audit">("performance");
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const load = async () => {
+  // جلب آخر قياسات الأداء من الخادم عند فتح تبويب المراقبة.
+const load = async () => {
     setBusy(true); setError("");
     try {
       const response = await fetch("/api/system/performance/", { credentials: "same-origin", headers: { Accept: "application/json" } });
@@ -29,7 +31,8 @@ export default function SystemMonitorPanel({ companyId }: { companyId: number | 
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل مؤشرات الأداء."); }
     finally { setBusy(false); }
   };
-  useEffect(() => { if (tab === "performance") void load(); }, [tab]);
+  // تحديث مؤشرات الأداء عند الانتقال إلى تبويب المراقبة.
+useEffect(() => { if (tab === "performance") void load(); }, [tab]);
   return <section className="work-panel system-monitor">
     <div className="work-panel-head"><div><h2>مركز مراقبة النظام</h2><p>مراقبة زمن الاستجابة واستهلاك الجهاز واتصالات PostgreSQL مع سجل التدقيق المنفصل</p></div>
       {tab === "performance" && <button className="subtle-button" type="button" onClick={() => void load()} disabled={busy}>تحديث</button>}
