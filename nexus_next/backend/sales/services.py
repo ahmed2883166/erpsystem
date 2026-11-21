@@ -11,6 +11,7 @@ from accounting.services import post_journal
 from companies.models import Branch, FiscalYear
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
+from approvals.snapshots import invoice_discount_snapshot
 
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice
 
