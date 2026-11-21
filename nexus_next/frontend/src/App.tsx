@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Account, type Company, type Journal, type TrialBalance } from "./api";
+import { api, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance } from "./api";
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "setup";
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
@@ -32,6 +32,12 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [journalModal, setJournalModal] = useState(false);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [journalError, setJournalError] = useState("");
+  const [draft, setDraft] = useState({ branch: "", fiscal_year: "", entry_number: "", entry_date: new Date().toISOString().slice(0, 10), description: "", debit: "", credit: "", amount: "" });
   const current = useMemo(() => navigation.find((item) => item.id === active), [active]);
 
   useEffect(() => {
@@ -55,6 +61,26 @@ export default function App() {
     return () => { cancelled = true; };
   }, [companyId]);
 
+  useEffect(() => {
+    if (!companyId) { setBranches([]); setFiscalYears([]); return; }
+    Promise.all([api.branches(companyId), api.fiscalYears(companyId)]).then(([branchRows, yearRows]) => {
+      setBranches(branchRows.filter((row) => row.is_active)); setFiscalYears(yearRows);
+      setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active)?.id || ""), fiscal_year: String(yearRows.find((row) => row.status === "open")?.id || "") }));
+    }).catch((reason: Error) => setJournalError(reason.message));
+  }, [companyId]);
+
+  const saveDraft = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setJournalError("");
+    if (!companyId || !draft.branch || !draft.fiscal_year) { setJournalError("حدد الشركة والفرع والسنة المالية."); return; }
+    if (draft.debit === draft.credit || Number(draft.amount) <= 0) { setJournalError("اختر حسابين مختلفين وأدخل مبلغاً أكبر من صفر."); return; }
+    setSaving(true);
+    try {
+      await api.createJournal({ company: companyId, branch: Number(draft.branch), fiscal_year: Number(draft.fiscal_year), entry_number: draft.entry_number, entry_date: draft.entry_date, description: draft.description, source_type: "manual", lines: [{ account: Number(draft.debit), debit: draft.amount, credit: "0", description: draft.description }, { account: Number(draft.credit), debit: "0", credit: draft.amount, description: draft.description }] });
+      const rows = await api.journals(companyId); setJournals(rows); setJournalModal(false);
+      setDraft((old) => ({ ...old, entry_number: "", description: "", debit: "", credit: "", amount: "" }));
+    } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر حفظ القيد."); }
+    finally { setSaving(false); }
+  };
   const filteredAccounts = useMemo(() => accounts.filter((account) =>
     `${account.code} ${account.name_ar}`.toLowerCase().includes(search.toLowerCase())), [accounts, search]);
   const filteredJournals = useMemo(() => journals.filter((entry) =>
@@ -100,7 +126,7 @@ export default function App() {
         <div className="page-content">
           <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
-            <button className="primary-button" onClick={() => setActive("journals")}><span>＋</span> قيود اليومية</button></section>
+            <button className="primary-button" onClick={() => { setActive("journals"); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button></section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
           {active === "overview" && <>
@@ -129,7 +155,7 @@ export default function App() {
                 <td>{account.is_group ? "تجميعي" : "تفصيلي"}</td><td><span className={`status-pill ${account.is_active ? "posted" : "reversed"}`}>{account.is_active ? "نشط" : "موقوف"}</span></td></tr>)}</tbody></table>
               {!loading && !filteredAccounts.length && <div className="table-empty">لا توجد حسابات مطابقة للبحث.</div>}</div></section>}
 
-          {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><span className="coming-soon">{journals.length} قيد</span></div>
+          {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
             <div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th></tr></thead>
               <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td></tr>)}</tbody></table>
@@ -145,6 +171,25 @@ export default function App() {
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}</section>}
           {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
+          {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
+            <section className="journal-modal" role="dialog" aria-modal="true" aria-labelledby="journal-title">
+              <div className="modal-heading"><div><h2 id="journal-title">إنشاء قيد يومية</h2><p>أدخل بيانات القيد واحفظه كمسودة للمراجعة.</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
+              {journalError && <div className="error-banner">{journalError}</div>}
+              <form className="journal-form" onSubmit={saveDraft}>
+                <label>رقم القيد<input required value={draft.entry_number} onChange={(e) => setDraft({ ...draft, entry_number: e.target.value })} /></label>
+                <label>التاريخ<input required type="date" value={draft.entry_date} onChange={(e) => setDraft({ ...draft, entry_date: e.target.value })} /></label>
+                <label>الفرع<select required value={draft.branch} onChange={(e) => setDraft({ ...draft, branch: e.target.value })}><option value="">اختر الفرع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name_ar} ({b.code})</option>)}</select></label>
+                <label>السنة المالية<select required value={draft.fiscal_year} onChange={(e) => setDraft({ ...draft, fiscal_year: e.target.value })}><option value="">اختر السنة</option>{fiscalYears.map((y) => <option key={y.id} value={y.id}>{y.name} · {y.status === "open" ? "مفتوحة" : "مغلقة"}</option>)}</select></label>
+                <label className="form-wide">البيان<input required value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
+                <div className="journal-lines-head form-wide"><strong>أطراف القيد</strong><span>مدين ودائن متساويان</span></div>
+                <label>الحساب المدين<select required value={draft.debit} onChange={(e) => setDraft({ ...draft, debit: e.target.value })}><option value="">اختر الحساب</option>{accounts.filter((a) => a.is_active && a.allow_posting && !a.is_group).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+                <label>الحساب الدائن<select required value={draft.credit} onChange={(e) => setDraft({ ...draft, credit: e.target.value })}><option value="">اختر الحساب</option>{accounts.filter((a) => a.is_active && a.allow_posting && !a.is_group).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+                <label>المبلغ<input required type="number" min="0.0001" step="0.0001" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} /></label>
+                <div className="balance-preview"><span>إجمالي المدين = إجمالي الدائن</span><strong>{Number(draft.amount || 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} {selectedCompany?.base_currency_code || ""}</strong></div>
+                <div className="form-actions form-wide"><button type="button" className="subtle-button" onClick={() => setJournalModal(false)}>إلغاء</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "جارٍ الحفظ…" : "حفظ كمسودة"}</button></div>
+              </form>
+            </section>
+          </div>}
           <footer className="page-footer"><span>© 2026 NEXUS ERP</span><span><i /> واجهة التطوير المحلية</span><span>الإصدار التأسيسي 0.1.0</span></footer>
         </div>
       </main>
