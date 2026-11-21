@@ -512,3 +512,12 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .account-role-manager-footnote{font-size:11px;color:var(--muted,#94a6bd);line-height:1.6}
 @media(max-width:900px){.account-role-manager-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.account-role-manager{padding:13px}.account-role-manager-row{grid-template-columns:1fr;gap:8px}.account-role-manager-row button{width:100%}.account-role-manager-heading{flex-direction:column}}
+
+.hr-payroll-panel .success-banner{margin:12px 0;padding:10px 12px;border:1px solid #b8e2ca;background:#effaf3;color:#24744b;border-radius:9px;font-size:11px}
+.hr-payroll-panel .hr-tabs{border-bottom:1px solid #edf0f5;padding-bottom:12px}
+.hr-payroll-panel .section-heading{margin-bottom:12px}
+.hr-payroll-panel .journal-form{margin-top:16px}
+.hr-payroll-panel .data-table-wrap{margin-top:12px}
+.hr-payroll-panel .asset-report-note{margin-top:18px;padding:10px 12px;background:#f6f8fb;border-radius:8px;color:#7d899a;font-size:10px;line-height:1.8}
+.hr-payroll-panel .status-pill{white-space:nowrap}
+@media(max-width:760px){.hr-payroll-panel{padding:14px}.hr-payroll-panel .journal-form{grid-template-columns:1fr}.hr-payroll-panel .form-wide{grid-column:1}.hr-payroll-panel .data-table-wrap{overflow-x:auto}.hr-payroll-panel table{min-width:720px}}
