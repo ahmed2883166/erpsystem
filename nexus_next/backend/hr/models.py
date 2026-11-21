@@ -122,6 +122,9 @@ class PayrollComponent(CompanyScopedModel):
         PER_DAY = "per_day", "حسب الأيام"
         PER_HOUR = "per_hour", "حسب الساعات"
         FRIDAY_DOUBLE_DAY = "friday_double_day", "عمل الجمعة بضعف اليومية"
+        EMPLOYEE_INSURANCE = "employee_insurance", "تأمينات الموظف حسب القواعد"
+        EMPLOYER_INSURANCE = "employer_insurance", "تأمينات صاحب العمل حسب القواعد"
+        PROGRESSIVE_TAX = "progressive_tax", "ضريبة شرائح حسب القواعد"
         MANUAL = "manual", "إدخال يدوي"
 
     code = models.CharField(max_length=32)
