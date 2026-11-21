@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role
+from sales.models import SalesInvoice
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval
 from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer
 
@@ -83,8 +84,9 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def approve(self, request, pk=None):
-        approval = self.get_object()
-        approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=approval.pk)
+        candidate = self.get_object()
+        SalesInvoice.objects.select_for_update().get(pk=candidate.invoice_id)
+        approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=candidate.pk)
         self._manager(approval)
         approval.status = SalesInvoiceApproval.Status.APPROVED
         approval.decided_by = request.user
