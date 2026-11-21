@@ -288,10 +288,14 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         account = attrs.get("payment_account")
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
+            treasury_account = TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).first()
+            branch_id = invoice.receipt.warehouse.branch_id
             if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                     or not account.is_active or account.is_group or not account.allow_posting
-                    or not TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).exists()):
-                raise serializers.ValidationError({"payment_account": "اختر حساب خزينة/بنك نشطًا من حسابات الخزينة المعرفة للشركة وبنفس طريقة الصرف."})
+                    or not treasury_account
+                    or (treasury_account.branch_id and treasury_account.branch_id != branch_id)
+                    or treasury_account.currency_code != company.base_currency.code):
+                raise serializers.ValidationError({"payment_account": "اختر حساب خزينة/بنك نشطًا تابعًا لفرع الفاتورة (أو عامًا) وبعملة الشركة وبنفس طريقة الصرف."})
         return attrs
 
     @transaction.atomic
