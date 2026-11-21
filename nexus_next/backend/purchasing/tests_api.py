@@ -87,6 +87,22 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(revised_lines.data["line_items"][0]["quantity"], "7.0000")
         self.assertEqual(revised_lines.data["line_items"][0]["unit_price"], "105.0000")
 
+    def test_receipt_posting_rejects_inactive_supplier_and_preserves_stock(self):
+        created = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-INACTIVE-SUP", "receipt_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.supplier.is_active = False
+        self.supplier.save(update_fields=("is_active",))
+        rejected = self.client.post(
+            f"/api/purchasing/receipts/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
+        self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).exists())
+
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
