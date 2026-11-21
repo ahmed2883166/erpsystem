@@ -220,6 +220,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "taxable_base": str(taxable_base), "insurance_base": str(insurance_base)}))
         installments = LoanInstallment.objects.filter(
             loan__employee=employee,
+            loan__status=EmployeeLoan.Status.ACTIVE,
             due_date__range=(cycle.period_start, cycle.period_end),
             status__in=(LoanInstallment.Status.DUE, LoanInstallment.Status.PARTIAL),
         ).select_related("loan")
