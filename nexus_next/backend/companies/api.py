@@ -1,4 +1,8 @@
-from rest_framework import permissions, viewsets
+from django.contrib.auth import get_user_model
+from django.db.models import Q
+from rest_framework import permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
 from .models import Branch, CompanyMembership, Currency, FiscalYear
@@ -86,6 +90,26 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
             ).count()
             if active_admins <= 1:
                 raise ValidationError("لا يمكن تعطيل أو تخفيض صلاحية آخر مدير نشط للشركة.")
+
+    @action(detail=False, methods=("get",), url_path="users")
+    def users(self, request):
+        from rest_framework.exceptions import ValidationError
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة أولًا."})
+        self._require_admin(company_id)
+        term = request.query_params.get("search", "").strip()
+        if len(term) < 2:
+            return Response([])
+        User = get_user_model()
+        users = User.objects.filter(is_active=True).filter(
+            Q(username__icontains=term) | Q(display_name__icontains=term)
+        ).exclude(company_memberships__company_id=company_id).order_by("username")[:25]
+        return Response([
+            {"id": user.pk, "username": user.username, "display_name": user.display_name}
+            for user in users
+        ])
 
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
