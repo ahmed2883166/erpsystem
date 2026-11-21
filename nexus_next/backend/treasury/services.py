@@ -1,4 +1,4 @@
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Sum
 from decimal import Decimal
