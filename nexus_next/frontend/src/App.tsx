@@ -10,6 +10,7 @@ const FixedAssetsPanel = lazy(() => import("./FixedAssetsPanel"));
 const AuditPanel = lazy(() => import("./AuditPanel"));
 const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
+const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup" | "audit" | "approvals" | "access";
@@ -489,6 +490,7 @@ export default function App() {
     api.companies().then((items) => {
       setCompanies(items);
       if (items.length) setCompanyId(items[0].id);
+      else setActive("setup");
     }).catch((reason: Error) => setError(reason.message));
   }, []);
 
@@ -682,8 +684,7 @@ export default function App() {
           {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
-          {active === "setup" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
-            <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section></>}
+          {active === "setup" && <Suspense fallback={panelFallback}><CompanySetupPanel companies={companies} companyId={companyId} onCompanyCreated={(company) => { setCompanies((rows) => [...rows, company]); setCompanyId(company.id); setActive("setup"); }} /><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /></Suspense>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
             <section className="journal-modal" role="dialog" aria-modal="true" aria-labelledby="journal-title">
               <div className="modal-heading"><div><h2 id="journal-title">{reviewingJournal ? "مراجعة القيد قبل الحفظ" : "إنشاء قيد يومية"}</h2><p>{reviewingJournal ? "راجع بيانات القيد وإجمالياته، ثم احفظه كمسودة دون ترحيل." : "أدخل البيانات والتفاصيل ثم انتقل إلى المراجعة قبل الحفظ."}</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
