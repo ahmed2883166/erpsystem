@@ -162,6 +162,22 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         self.assertEqual(response.data["pending_movements_count"], 1)
         self.assertEqual(response.data["pending_movements"][0]["movement_number"], "DRAFT-FIFO")
 
+    def test_pending_cross_branch_movement_is_not_exposed_to_limited_branch_user(self):
+        from .models import StockMovement
+
+        StockMovement.objects.create(
+            company=self.company, movement_number="DRAFT-CROSS",
+            movement_type=StockMovement.MovementType.TRANSFER,
+            movement_date=date(2026, 3, 2),
+            source_warehouse=Warehouse.objects.get(company=self.company, code="WH-HQ"),
+            destination_warehouse=Warehouse.objects.get(company=self.company, code="WH-2"),
+            created_by=self.limited_user,
+        )
+        self.client.force_authenticate(user=self.limited_user)
+        response = self.client.get(f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["pending_movements_count"], 0)
+
     def test_limited_user_sees_only_accessible_branches_and_cannot_query_another_branch(self):
         self.client.force_authenticate(user=self.limited_user)
         scoped = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
