@@ -14,7 +14,7 @@ class PayrollCalculationTests(SimpleTestCase):
         fixed = PayrollComponent(method=PayrollComponent.Method.FIXED, default_value=Decimal("750"))
         percent = PayrollComponent(method=PayrollComponent.Method.PERCENT_BASIC, default_value=Decimal("10"))
         self.assertEqual(calculate_component(fixed, Decimal("750"), Decimal("12000"), Decimal("30"), Decimal("0"), Decimal("30"), Decimal("0")), Decimal("750.00"))
-        self.assertEqual(calculate_component(percent, Decimal("10"), Decimal("12000"), Decimal("30"), Decimal("0")), Decimal("1200.00"))
+        self.assertEqual(calculate_component(percent, Decimal("10"), Decimal("12000"), Decimal("30"), Decimal("0"), Decimal("30"), Decimal("0")), Decimal("1200.00"))
 
     def test_friday_double_day_uses_two_daily_rates(self):
         friday = PayrollComponent(method="friday_double_day", default_value=Decimal("0"))
