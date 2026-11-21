@@ -311,7 +311,7 @@ class PayrollCycle(CompanyScopedModel):
     def save(self, *args, **kwargs):
         if self.pk:
             old = type(self).objects.filter(pk=self.pk).first()
-            if old and old.status in (self.Status.POSTED, self.Status.PAID):
+            if old and old.status in (self.Status.APPROVED, self.Status.POSTED, self.Status.PAID):
                 protected = ("company_id", "period_start", "period_end", "payment_date", "rule_set_id")
                 if any(getattr(old, key) != getattr(self, key) for key in protected):
                     raise ValidationError("الدورة المرحلة أو المصروفة لا يمكن تغيير بياناتها الأساسية.")
