@@ -42,6 +42,7 @@ def initialize_tax_schema(conn):
         }
         if table == "supplier_bills":
             additions["input_vat_deductible_percent"] = "TEXT NOT NULL DEFAULT '100'"
+            additions["tax_category"] = "TEXT NOT NULL DEFAULT ''"
         for name, definition in additions.items():
             if name not in cols:
                 execute_compat(conn, 'ALTER TABLE "' + table + '" ADD COLUMN "' + name + '" ' + definition)
@@ -318,6 +319,7 @@ def build_tax_report_snapshot(conn, period_value):
                b.subtotal taxable_base, b.tax_rate tax_rate,
                b.tax_amount tax_amount, b.total_amount total_amount,
                COALESCE(b.tax_treatment,'standard') tax_treatment,
+               COALESCE(b.tax_category,'') tax_category,
                COALESCE(b.tax_reference,'') tax_reference, COALESCE(b.tax_notes,'') tax_notes,
                COALESCE(b.input_vat_deductible_percent,'100') deductible_percent
         FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
@@ -352,11 +354,13 @@ def build_tax_report_snapshot(conn, period_value):
         supplier_bill_columns = _columns(conn, "supplier_bills")
         bill_treatment = "COALESCE(b.tax_treatment,'standard')" if "tax_treatment" in supplier_bill_columns else "'standard'"
         bill_deductible = "COALESCE(b.input_vat_deductible_percent,'100')" if "input_vat_deductible_percent" in supplier_bill_columns else "'100'"
+        bill_tax_category = "COALESCE(b.tax_category,'')" if "tax_category" in supplier_bill_columns else "''"
         credit_rows = execute_compat(conn, f"""
             SELECT cn.id, cn.credit_no document_no, cn.credit_date document_date,
                    s.name party_name, {supplier_tax_number} party_tax_number,
                    {pc_base} taxable_base, {pc_rate} tax_rate, {pc_tax} tax_amount, {pc_total} total_amount,
-                   {bill_treatment} tax_treatment, {pc_reference} tax_reference, {pc_notes} tax_notes,
+                   {bill_treatment} tax_treatment, {bill_tax_category} tax_category,
+                   {pc_reference} tax_reference, {pc_notes} tax_notes,
                    {bill_deductible} deductible_percent
             FROM supplier_credit_notes cn
             JOIN supplier_bills b ON b.id=cn.bill_id
@@ -376,6 +380,26 @@ def build_tax_report_snapshot(conn, period_value):
             })
             purchase_credits.append(item)
     purchases.extend(purchase_credits)
+    # Read-only purchase category analysis. Supplier credit notes inherit
+    # the category of their source bill and are already negative in purchases.
+    purchase_category_breakdown = []
+    category_totals = {}
+    for row in purchases:
+        code = str(row.get("tax_category") or "").strip() or "legacy_unclassified"
+        item = category_totals.setdefault(code, {
+            "document_count": 0, "taxable_base": Decimal("0"), "tax_amount": Decimal("0")
+        })
+        item["document_count"] += 1
+        item["taxable_base"] += Decimal(str(row.get("taxable_base") or "0"))
+        item["tax_amount"] += Decimal(str(row.get("tax_amount") or "0"))
+    from tax_categories import tax_category_label
+    for code, amounts in sorted(category_totals.items()):
+        purchase_category_breakdown.append({
+            "tax_category": code,
+            "label": ("غير مصنف تفصيليًا – مستند سابق" if code == "legacy_unclassified"
+                      else tax_category_label(country, "purchase", code) or "تصنيف غير معروف"),
+            **amounts,
+        })
     tax_profile = {
         "country_code": country,
         "country_name": "مصر" if country == "EG" else "السعودية" if country == "SA" else "إعداد مخصص",
@@ -509,6 +533,7 @@ def build_tax_report_snapshot(conn, period_value):
         "ledger_reconciliation": ledger_reconciliation,
         "saudi_preparation": saudi_preparation,
         "sales_category_breakdown": sales_category_breakdown,
+        "purchase_category_breakdown": purchase_category_breakdown,
     }
 
 
