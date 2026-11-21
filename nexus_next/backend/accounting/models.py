@@ -62,6 +62,7 @@ class AccountRole(models.Model):
         VAT_OUTPUT = "vat_output", "ضريبة القيمة المضافة - مخرجات"
         VAT_PAYABLE = "vat_payable", "ضريبة قيمة مضافة مستحقة للسداد"
         EMPLOYEE_INSURANCE_PAYABLE = "employee_insurance_payable", "حصة الموظف من التأمينات المستحقة"
+        PAYROLL_TAX_PAYABLE = "payroll_tax_payable", "ضريبة المرتبات المستحقة"
         EMPLOYER_INSURANCE_PAYABLE = "employer_insurance_payable", "حصة الشركة من التأمينات المستحقة"
         EMPLOYER_INSURANCE_EXPENSE = "employer_insurance_expense", "مصروف حصة الشركة في التأمينات"
         RETAINED_EARNINGS = "retained_earnings", "الأرباح المحتجزة"
