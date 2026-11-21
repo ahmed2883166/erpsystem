@@ -51,6 +51,42 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         return receipt_id, receipt_line_id
 
+    def test_posted_purchase_receipt_update_is_rejected_without_partial_changes(self):
+        receipt_id, _ = self._create_and_post_receipt()
+        other_supplier = Supplier.objects.create(company=self.company, code="SUP-2", name_ar="مورد آخر")
+        response = self.client.patch(
+            f"/api/purchasing/receipts/{receipt_id}/",
+            {"supplier": other_supplier.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        saved = self.client.get(f"/api/purchasing/receipts/{receipt_id}/")
+        self.assertEqual(saved.status_code, 200, saved.data)
+        self.assertEqual(saved.data["supplier"], self.supplier.pk)
+
+    def test_draft_purchase_order_supports_safe_partial_and_line_updates(self):
+        created = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-EDIT-001", "order_date": "2026-03-10",
+            "expected_date": "2026-03-20", "notes": "أمر أولي",
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        order_id = created.data["id"]
+        updated = self.client.patch(
+            f"/api/purchasing/orders/{order_id}/", {"notes": "تم تحديث الملاحظات"}, format="json"
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["notes"], "تم تحديث الملاحظات")
+        revised_lines = self.client.patch(
+            f"/api/purchasing/orders/{order_id}/",
+            {"lines": [{"product": self.product.pk, "quantity": "7", "unit_price": "105", "tax_rate": "14"}]},
+            format="json",
+        )
+        self.assertEqual(revised_lines.status_code, 200, revised_lines.data)
+        self.assertEqual(revised_lines.data["line_items"][0]["quantity"], "7.0000")
+        self.assertEqual(revised_lines.data["line_items"][0]["unit_price"], "105.0000")
+
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
