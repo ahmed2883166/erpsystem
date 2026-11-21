@@ -87,6 +87,39 @@ class PostingEngineTests(TestCase):
             metadata__reversal_of_id=original.pk,
         ).exists())
 
+    def test_journal_reversal_api_posts_exact_mirror_and_prevents_second_reversal(self):
+        user = User.objects.create_user(username="journal-reverser", password="test-password")
+        CompanyMembership.objects.create(user=user, company=self.company, role="accountant", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user)
+        original = self.make_entry()
+        post_journal(original.pk)
+
+        response = client.post(
+            f"/api/accounting/journal-entries/{original.pk}/reverse/",
+            {"entry_date": "2026-01-03"}, format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        original.refresh_from_db()
+        reversal = JournalEntry.objects.get(pk=response.data["id"])
+        self.assertEqual(original.status, JournalEntry.Status.REVERSED)
+        self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        self.assertEqual(reversal.reversal_of_id, original.pk)
+        self.assertEqual(
+            list(reversal.lines.order_by("account_id").values_list("account_id", "debit", "credit")),
+            list(original.lines.order_by("account_id").values_list("account_id", "credit", "debit")),
+        )
+
+        second = client.post(
+            f"/api/accounting/journal-entries/{original.pk}/reverse/", {}, format="json"
+        )
+        reverse_of_reverse = client.post(
+            f"/api/accounting/journal-entries/{reversal.pk}/reverse/", {}, format="json"
+        )
+        self.assertEqual(second.status_code, 400, second.data)
+        self.assertEqual(reverse_of_reverse.status_code, 400, reverse_of_reverse.data)
+        self.assertEqual(JournalEntry.objects.filter(reversal_of=original).count(), 1)
+
     def test_unbalanced_entry_is_rejected(self):
         entry = self.make_entry(credit="90.00")
         with self.assertRaises(ValidationError):
