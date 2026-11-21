@@ -23,3 +23,7 @@ Install Docker Desktop, Python 3.12, and Node.js 22, then run this from the `nex
 If no administrator exists, the startup helper opens a separate PowerShell window to create one. The database port is bound to localhost only.
 
 See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend/README.md) for details.
+
+## Database protection
+
+See [Windows PostgreSQL backup and restore](docs/backup-and-restore.md) for daily/monthly backups and a non-destructive restore test.
