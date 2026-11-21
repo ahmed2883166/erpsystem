@@ -21,9 +21,11 @@ from approvals.services import refresh_financial_approval
 class TreasuryBaseViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
     def _write(self, company_id):
+        """التحقق من صلاحية الكتابة على حسابات وحركات الخزينة."""
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب.")
     def _scope(self, company_id):
+        """تطبيق نطاق الشركات والفروع المسموح للمستخدم بالوصول إليها."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
 
@@ -35,6 +37,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
     search_fields = ("code", "name_ar", "bank_name", "account_number")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser:
             from django.db.models import Q
@@ -43,6 +46,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         company = serializer.validated_data["company"]
         company_id = company.pk
         branch = serializer.validated_data.get("branch")
@@ -91,6 +95,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             account.save(update_fields=("opening_journal_entry",))
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         instance = serializer.instance
         company_id = serializer.validated_data.get("company", instance.company).pk
         if company_id != instance.company_id:
@@ -103,6 +108,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
         if TreasuryTransaction.objects.filter(source_account=instance).exists() or TreasuryTransaction.objects.filter(destination_account=instance).exists():
             raise ValidationError("لا يمكن حذف خزينة لها حركات؛ أوقفها بدلًا من حذفها.")
@@ -120,6 +126,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
     ordering_fields = ("transaction_date", "document_number", "amount", "created_at")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser:
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
@@ -127,6 +134,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._scope(data["company"].pk); self._write(data["company"].pk)
         if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
@@ -139,6 +147,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         instance = serializer.instance
         from hr.models import PayrollPosting
         if PayrollPosting.objects.filter(payment_treasury_transaction=instance).exists():
@@ -160,6 +169,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         )
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
         from hr.models import PayrollPosting
         if PayrollPosting.objects.filter(payment_treasury_transaction=instance).exists():
@@ -172,6 +182,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         doc = self.get_object()
         self._write(doc.company_id)
         if not can_access_branch(request.user, doc.branch_id, doc.company_id):
@@ -185,6 +196,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="cash-flow")
     def cash_flow(self, request):
+        """تجميع حركة النقدية والتدفقات المرتبطة بحسابات الخزينة."""
         company_id = request.query_params.get("company")
         if not company_id or not company_id.isdigit():
             raise ValidationError({"company": "حدد الشركة لعرض التدفقات النقدية."})
@@ -242,6 +254,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     ordering_fields = ("statement_date", "created_at", "statement_number")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser:
             from django.db.models import Q
@@ -249,6 +262,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         return qs
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         company_id = data["company"].pk
         self._scope(company_id); self._write(company_id)
@@ -260,6 +274,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         instance = serializer.instance
         if instance.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("التسوية المعتمدة غير قابلة للتعديل.")
@@ -273,6 +288,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
         if instance.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("لا يمكن حذف تسوية معتمدة.")
@@ -280,6 +296,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def import_csv(self, request, pk=None):
+        """استيراد كشف البنك والتحقق من صيغ السطور والتواريخ والمبالغ."""
         recon = self.get_object()
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
@@ -347,6 +364,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def add_line(self, request, pk=None):
+        """إضافة سطر كشف بنكي إلى جلسة التسوية الحالية."""
         recon = self.get_object()
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
@@ -361,6 +379,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
     def match(self, request, pk=None):
+        """مطابقة سطر كشف البنك مع الحركة المالية المقابلة."""
         recon = self.get_object()
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
@@ -396,6 +415,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def unmatch(self, request, pk=None):
+        """إلغاء المطابقة مع الإبقاء على بيانات سطر الكشف."""
         recon = self.get_object()
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
@@ -411,6 +431,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("get",))
     def summary(self, request, pk=None):
+        """إعداد ملخص جلسة التسوية والفروق بين الدفاتر وكشف البنك."""
         recon = self.get_object()
         lines = recon.lines.select_related("matched_transaction")
         matched_ids = list(lines.filter(matched_transaction__isnull=False).values_list("matched_transaction_id", flat=True))
@@ -448,6 +469,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def reconcile(self, request, pk=None):
+        """اعتماد نتيجة التسوية بعد التحقق من اكتمال المطابقات."""
         with transaction.atomic():
             scoped = self.get_object()
             recon = BankReconciliation.objects.select_for_update().get(pk=scoped.pk)
@@ -489,12 +511,14 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
     queryset = BankStatementLine.objects.select_related("reconciliation", "matched_transaction").all()
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(reconciliation__company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser:
             qs = qs.filter(models.Q(reconciliation__bank_account__branch__isnull=True) | models.Q(reconciliation__bank_account__branch__in=accessible_branches(self.request.user)))
         return qs
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         recon = serializer.validated_data["reconciliation"]
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
@@ -504,6 +528,7 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         recon = serializer.instance.reconciliation
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT or serializer.instance.matched_transaction_id:
@@ -513,6 +538,7 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.reconciliation.company_id)
         if instance.reconciliation.status != BankReconciliation.Status.DRAFT or instance.matched_transaction_id:
             raise ValidationError("لا يمكن حذف سطر مطابق أو ضمن تسوية معتمدة.")
