@@ -183,3 +183,13 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(str(balance.inventory_value), "20.0000")
         self.assertEqual(StockCostLayer.objects.filter(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).count(), 1)
         self.assertEqual(str(StockCostLayer.objects.get(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).unit_cost), "10.000000")
+
+
+    def test_admin_can_delete_only_a_draft_movement(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="DEL-1", name_ar="مسودة")
+        warehouse = self._warehouse("DEL-WH")
+        created = self._movement("DEL-001", "receipt", destination=warehouse)
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.delete(f"/api/inventory/movements/{created.data['id']}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(StockMovement.objects.filter(pk=created.data["id"]).exists())
