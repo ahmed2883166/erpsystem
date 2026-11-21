@@ -13,7 +13,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [years,setYears]=useState<FiscalYear[]>([]);
   const [gl,setGl]=useState<Account[]>([]);
   const [loading,setLoading]=useState(true), [busy,setBusy]=useState(false), [error,setError]=useState("");
-  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});
+  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP"});
   const [doc,setDoc]=useState({branch:"",fiscal_year:"",source_account:"",destination_account:"",counter_account:"",kind:"receipt",document_number:"",transaction_date:today(),amount:"",description:"",reference:""});
   const load=useCallback(async()=>{
     setLoading(true);setError("");
@@ -25,7 +25,7 @@ export default function TreasuryPanel({companyId}: Props) {
   },[companyId]);
   useEffect(()=>{void load();},[load]);
   const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
-    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code,opening_balance:acc.opening_balance});
+    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code});
     setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ الحساب.");}finally{setBusy(false);}};
   const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
@@ -48,7 +48,6 @@ export default function TreasuryPanel({companyId}: Props) {
         <label>الفرع<select value={acc.branch} onChange={e=>setAcc({...acc,branch:e.target.value})}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
         <label>العملة<input maxLength={3} value={acc.currency_code} onChange={e=>setAcc({...acc,currency_code:e.target.value.toUpperCase()})}/></label>
         {acc.kind==="bank"&&<><label>اسم البنك<input value={acc.bank_name} onChange={e=>setAcc({...acc,bank_name:e.target.value})}/></label><label>رقم الحساب<input value={acc.account_number} onChange={e=>setAcc({...acc,account_number:e.target.value})}/></label><label>IBAN<input value={acc.iban} onChange={e=>setAcc({...acc,iban:e.target.value})}/></label></>}
-        <label>الرصيد الافتتاحي<input type="number" min="0" step="0.0001" value={acc.opening_balance} onChange={e=>setAcc({...acc,opening_balance:e.target.value})}/></label>
         <div className="treasury-form-actions"><button className="primary-button" disabled={busy}>حفظ الحساب</button></div>
       </form>
       <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th>الحساب المحاسبي</th><th>العملة</th><th>افتتاحي</th><th>الرصيد بالحركات</th></tr></thead><tbody>{accounts.map(a=><tr key={a.id}><td>{a.code}</td><td>{a.name_ar}{a.bank_name?" · "+a.bank_name:""}</td><td>{a.kind==="cash"?"خزينة":"بنك"}</td><td>{a.account_code} · {a.account_name}</td><td>{a.currency_code}</td><td>{money(a.opening_balance)}</td><td>{money(balance(a.id))}</td></tr>)}</tbody></table>{!loading&&!accounts.length&&<div className="table-empty">لا توجد حسابات بعد.</div>}</div>
