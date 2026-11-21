@@ -197,7 +197,7 @@ class JournalEntryViewSet(AccountingViewSet):
         if branch_id:
             entries = entries.filter(branch_id=branch_id)
         period_lines = JournalLine.objects.filter(entry__in=entries)
-        profit_lines = period_lines.exclude(entry__source_type=JournalEntry.Source.CLOSING)
+        profit_lines = period_lines.exclude(entry__source_type__in=(JournalEntry.Source.CLOSING, JournalEntry.Source.OPENING))
 
         revenue_totals = profit_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
             credit=Sum("credit"), debit=Sum("debit")
@@ -224,10 +224,14 @@ class JournalEntryViewSet(AccountingViewSet):
             qs = account.journal_lines.filter(
                 entry__status=JournalEntry.Status.POSTED,
                 entry__company_id=company_id,
-                entry__entry_date__lte=cutoff if inclusive else cutoff,
             )
-            if not inclusive:
-                qs = qs.filter(entry__entry_date__lt=cutoff)
+            if inclusive:
+                qs = qs.filter(entry__entry_date__lte=cutoff)
+            else:
+                qs = qs.filter(
+                    Q(entry__entry_date__lt=cutoff)
+                    | Q(entry__entry_date=cutoff, entry__source_type=JournalEntry.Source.OPENING)
+                )
             if branch_id:
                 qs = qs.filter(entry__branch_id=branch_id)
             totals = qs.aggregate(debit=Sum("debit"), credit=Sum("credit"))
@@ -313,7 +317,7 @@ class JournalEntryViewSet(AccountingViewSet):
         cash_lines = JournalLine.objects.filter(
             account_id__in=cash_account_ids, entry__status=JournalEntry.Status.POSTED,
             entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
-        )
+        ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
         if branch_id:
             cash_lines = cash_lines.filter(entry__branch_id=branch_id)
         cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
