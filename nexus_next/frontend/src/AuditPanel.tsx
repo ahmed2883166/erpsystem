@@ -48,6 +48,15 @@ export default function AuditPanel({ companyId }: { companyId: number | null }) 
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
 
+  const resourceLabel = (resource: string) => {
+    const approval = resource.match(/^approvals\/requests\/(\d+)\/(approve|reject)$/);
+    if (approval) {
+      return `طلبات الخصم · ${approval[2] === "approve" ? "اعتماد" : "رفض"} رقم ${approval[1]}`;
+    }
+    if (resource.startsWith("approvals/discount-policies")) return "إعدادات حدود الخصم";
+    return resource;
+  };
+
   return <section className="work-panel audit-panel">
     <div className="work-panel-head">
       <div>
@@ -76,7 +85,7 @@ export default function AuditPanel({ companyId }: { companyId: number | null }) 
             {items.map(item => <tr key={item.id}>
               <td className="audit-time">{dateTime(item.created_at)}</td><td>{item.actor}</td>
               <td>{actionNames[item.action] || item.action}</td>
-              <td className="code-cell" dir="ltr">{item.resource}</td><td>{item.object_id || "—"}</td>
+              <td title={item.resource}>{resourceLabel(item.resource)}</td><td>{item.object_id || "—"}</td>
               <td>{item.branch || "كل الشركة"}</td>
               <td><span className={item.succeeded ? "status-pill posted" : "status-pill reversed"}>{item.succeeded ? "نجاح " + item.status_code : "مرفوض " + item.status_code}</span></td>
               <td className="code-cell" dir="ltr">{item.ip_address || "—"}</td>
