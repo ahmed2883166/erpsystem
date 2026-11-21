@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 type BackupConfig = {
   backup_path: string;
@@ -43,7 +43,7 @@ export default function BackupPanel() {
   };
   useEffect(() => { void load(); }, []);
 
-  const save = async (event: React.FormEvent) => {
+  const save = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
       const value = await call<BackupConfig>("PATCH", {
