@@ -134,6 +134,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
         branch = serializer.validated_data.get("branch", instance.branch)
         if company.pk != instance.company_id:
             raise ValidationError("لا يمكن نقل مخزن قائم إلى شركة أخرى.")
+        self._check_company_write(company.pk)
         if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
         if branch is None and not self.request.user.is_superuser:
