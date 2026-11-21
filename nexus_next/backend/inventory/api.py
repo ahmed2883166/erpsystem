@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 
-from .models import Product, ProductCategory, StockMovement, StorageLocation, UnitOfMeasure, Warehouse
+from .models import Product, ProductCategory, StockBalance, StockMovement, StorageLocation, UnitOfMeasure, Warehouse
 from .serializers import (
-    ProductCategorySerializer, ProductSerializer, StockMovementSerializer, StorageLocationSerializer,
+    ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseSerializer,
 )
 
@@ -240,3 +240,23 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         self._check_warehouse(movement.destination_warehouse, movement.company_id) if movement.destination_warehouse else None
         movement = post_stock_movement(movement.pk, request.user)
         return Response(self.get_serializer(movement).data, status=status.HTTP_200_OK)
+
+
+
+class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = StockBalanceSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = StockBalance.objects.select_related("product", "warehouse", "warehouse__company")
+    filterset_fields = ("warehouse", "product")
+    search_fields = ("product__code", "product__name_ar", "warehouse__name_ar")
+    ordering_fields = ("product__code", "warehouse__code", "quantity", "inventory_value")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        queryset = self.queryset.filter(warehouse__company__in=companies)
+        if self.request.user.is_superuser:
+            return queryset
+        branches = accessible_branches(self.request.user)
+        return queryset.filter(
+            Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches)
+        )
