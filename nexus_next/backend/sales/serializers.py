@@ -8,6 +8,7 @@ from accounting.models import TaxCode
 from customers.models import Customer
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation, Warehouse
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine
+from approvals.snapshots import invoice_discount_snapshot
 
 
 class DeliveryLineInputSerializer(serializers.Serializer):
@@ -151,6 +152,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         if (
             approval.requested_discount_total != obj.discount_total
             or approval.requested_max_discount_percent != max_discount
+            or approval.requested_lines_snapshot != invoice_discount_snapshot(obj)
         ):
             return "pending"
         return approval.status
@@ -228,6 +230,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                     requested_limit=invoice.discount_approval_limit,
                     requested_discount_total=invoice.discount_total,
                     requested_max_discount_percent=max_discount,
+                    requested_lines_snapshot=invoice_discount_snapshot(invoice),
                 )
 
     @transaction.atomic
