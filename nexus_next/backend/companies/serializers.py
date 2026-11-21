@@ -44,6 +44,11 @@ class CompanyMembershipSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "company_code", "user", "username", "role", "all_branches", "branches", "is_active", "created_at")
         read_only_fields = ("created_at",)
 
+    def validate_user(self, user):
+        if not user.is_active:
+            raise serializers.ValidationError("لا يمكن إضافة مستخدم غير نشط إلى الشركة.")
+        return user
+
     def validate(self, attrs):
         company = attrs.get("company", self.instance.company if self.instance else None)
         branches = attrs.get("branches")
