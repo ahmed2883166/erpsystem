@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import decorators, response, status, viewsets
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError\nfrom rest_framework.permissions import IsAuthenticated
 
 from accounting.models import JournalEntry
 from accounting.permissions import CompanyRolePermission
@@ -86,7 +86,7 @@ class PayrollComponentViewSet(HrViewSet):
     search_fields = ("code", "name_ar")
 
 
-class EmployeeComponentViewSet(viewsets.ModelViewSet):
+class EmployeeScopedViewSet(viewsets.ModelViewSet):\n    permission_classes = (IsAuthenticated,)\n\n    def get_queryset(self):\n        qs = self.queryset\n        if not self.request.user.is_superuser:\n            qs = qs.filter(employee__company__in=accessible_companies(self.request.user))\n        company_id = self.request.query_params.get("company")\n        if company_id:\n            qs = qs.filter(employee__company_id=company_id)\n        return qs\n\n    def _check_employee(self, employee):\n        if not can_access_company(self.request.user, employee.company_id):\n            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")\n        if not has_company_role(self.request.user, employee.company_id, ("admin", "accountant")):\n            raise PermissionDenied("لا تملك صلاحية تعديل سجلات الموظف.")\n\n    def perform_create(self, serializer):\n        self._check_employee(serializer.validated_data["employee"])\n        serializer.save()\n\n    def perform_update(self, serializer):\n        employee = serializer.validated_data.get("employee", serializer.instance.employee)\n        self._check_employee(employee)\n        serializer.save()\n\n    def perform_destroy(self, instance):\n        self._check_employee(instance.employee)\n        instance.delete()\n\n\nclass EmployeeComponentViewSet(EmployeeScopedViewSet):
     queryset = EmployeeComponent.objects.select_related("employee", "component", "employee__company").all()
     serializer_class = EmployeeComponentSerializer
     permission_classes = (CompanyRolePermission,)
@@ -158,7 +158,7 @@ class LeaveRequestViewSet(viewsets.ModelViewSet):
         return response.Response(self.get_serializer(leave).data)
 
 
-class EmployeeLoanViewSet(viewsets.ModelViewSet):
+class EmployeeLoanViewSet(EmployeeScopedViewSet):
     queryset = EmployeeLoan.objects.select_related("employee", "employee__company").all()
     serializer_class = EmployeeLoanSerializer
     permission_classes = (CompanyRolePermission,)
