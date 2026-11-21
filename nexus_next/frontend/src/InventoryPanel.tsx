@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type StockBalance, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
-type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "accounting";
+type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
   const [tab, setTab] = useState<Tab>("products");
   const [products, setProducts] = useState<Product[]>([]);
@@ -9,6 +9,10 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [units, setUnits] = useState<InventoryUnit[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [warehouseSettings, setWarehouseSettings] = useState<WarehouseProductSetting[]>([]);
+  const [stockCard, setStockCard] = useState<StockCard | null>(null);
+  const [stockCardError, setStockCardError] = useState("");
+  const [stockCardBusy, setStockCardBusy] = useState(false);
+  const [stockCardForm, setStockCardForm] = useState({ product: "", warehouse: "", date_from: "", date_to: "" });
   const [reorderForm, setReorderForm] = useState({ product: "", warehouse: "", min_stock: "0" });
   const [locations, setLocations] = useState<InventoryLocation[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
@@ -40,6 +44,7 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
       setRoleForm((old) => ({ ...old, account: String(ar.find((item) => item.role === old.role)?.account || "") }));
       setLocationForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || "") }));
       setReorderForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || ""), product: old.product || String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "") }));
+      setStockCardForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || ""), product: old.product || String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "") }));
       const defaultProduct = String(p.find((item) => item.product_type === "goods" && item.is_active)?.id || "");
       setStockForm((old) => ({ ...old, source_warehouse: old.source_warehouse || String(w.find((item) => item.is_active)?.id || ""), destination_warehouse: old.destination_warehouse || String(w.find((item) => item.is_active)?.id || "") }));
       setStockLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? defaultProduct : "") })));
@@ -48,6 +53,13 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     finally { setBusy(false); }
   };
   useEffect(() => { void refresh(); }, [companyId]);
+  const loadStockCard = async () => {
+    if (!stockCardForm.product || !stockCardForm.warehouse) { setStockCardError("اختر الصنف والمخزن أولاً."); return; }
+    setStockCardBusy(true); setStockCardError("");
+    try { setStockCard(await stockApi.stockCard(Number(stockCardForm.product), Number(stockCardForm.warehouse), stockCardForm.date_from, stockCardForm.date_to)); }
+    catch (reason) { setStockCard(null); setStockCardError(reason instanceof Error ? reason.message : "تعذر تحميل بطاقة الصنف."); }
+    finally { setStockCardBusy(false); }
+  };
   const loadReconciliation = async () => {
     if (!companyId) return;
     setReconciling(true); setReconciliationError("");
@@ -126,11 +138,12 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
     { id: "reports", label: "تقارير المخزون", count: warehouseValuation.length + expiryAlerts.length + reorderAlerts.length },
     { id: "reorder", label: "حدود الطلب لكل مخزن", count: warehouseSettings.filter((item) => item.is_active).length },
+    { id: "stock-card", label: "بطاقة حركة الصنف", count: stockCard?.rows.length || 0 },
     { id: "accounting", label: "ربط الحسابات", count: roleAssignments.length },
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
   return <section className="work-panel inventory-panel">
-    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات.</p></div>{tab !== "balances" && tab !== "reports" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
+    <div className="work-panel-head"><div><h2>إدارة المخزون والمستودعات</h2><p>الأصناف والمخازن وحركات الاستلام والصرف والتحويل وأرصدة المخزون وربط الحسابات.</p></div>{tab !== "balances" && tab !== "reports" && tab !== "stock-card" && <button className="primary-button" onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : "＋ إضافة جديد"}</button>}</div>
     <div className="inventory-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab(item.id); setShowForm(false); setSearch(""); }}>{item.label}<b>{item.count}</b></button>)}</div>
     {error && <div className="error-banner">{error}</div>}
     {showForm && <form className="inventory-form" onSubmit={submit}>
@@ -200,6 +213,24 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
       {tab === "movements" && <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>قيود اليومية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{m.lines.reduce((sum, line) => sum + Number(line.cost_amount || 0), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{m.journal_entries.length ? m.journal_entries.map((entry) => entry.entry_number).join("، ") : "—"}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>}
       {tab === "accounting" && <table><thead><tr><th>الدور المحاسبي</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>{[{ role: "inventory", label: "حساب المخزون" }, { role: "goods_received_not_invoiced", label: "بضاعة مستلمة غير مفوترة" }, { role: "cogs", label: "تكلفة المبيعات" }, { role: "inventory_adjustment_gain", label: "أرباح تسوية المخزون" }, { role: "inventory_adjustment_loss", label: "خسائر تسوية المخزون" }, { role: "inter_branch_clearing", label: "تسوية بين الفروع" }].map((item) => { const assigned = roleAssignments.find((x) => x.role === item.role); const account = accounts.find((x) => x.id === assigned?.account); return <tr key={item.role}><td>{item.label}</td><td>{assigned ? `${account?.code || assigned.account_code} - ${account?.name_ar || ""}` : "غير مربوط"}</td><td>{assigned ? "مربوط" : "مطلوب"}</td></tr>; })}</tbody></table>}
       {tab === "balances" && <table><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>موقع التخزين</th><th>الصلاحية</th><th>الرصيد</th><th>متوسط التكلفة</th><th>قيمة المخزون</th></tr></thead><tbody>{balances.filter((b) => `${b.product_code} ${b.product_name} ${b.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((b) => <tr key={b.id}><td className="code-cell">{b.product_code}</td><td>{b.product_name}</td><td>{b.warehouse_name}</td><td>{b.location_name || "عام"}</td><td>{b.expiry_date || "—"}</td><td>{Number(b.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.average_cost).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}</tbody></table>}
+      {tab === "stock-card" && <div className="inventory-reports">
+        <section className="activity-panel inventory-report-section">
+          <div className="activity-title"><div><h3>بطاقة حركة الصنف</h3><p>حركة الوارد والمنصرف والرصيد المتدرج حسب المخزن والفترة</p></div></div>
+          <div className="stock-card-filters">
+            <label>الصنف<select value={stockCardForm.product} onChange={(e) => setStockCardForm({ ...stockCardForm, product: e.target.value })}><option value="">اختر الصنف</option>{products.filter((item) => item.product_type === "goods" && item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
+            <label>المخزن<select value={stockCardForm.warehouse} onChange={(e) => setStockCardForm({ ...stockCardForm, warehouse: e.target.value })}><option value="">اختر المخزن</option>{warehouses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
+            <label>من تاريخ<input type="date" value={stockCardForm.date_from} onChange={(e) => setStockCardForm({ ...stockCardForm, date_from: e.target.value })} /></label>
+            <label>إلى تاريخ<input type="date" value={stockCardForm.date_to} onChange={(e) => setStockCardForm({ ...stockCardForm, date_to: e.target.value })} /></label>
+            <button type="button" className="primary-button" disabled={stockCardBusy} onClick={() => void loadStockCard()}>{stockCardBusy ? "جارٍ التحميل…" : "عرض البطاقة"}</button>
+          </div>
+          {stockCardError && <div className="error-banner">{stockCardError}</div>}
+          {stockCard && <>
+            <div className="stock-card-summary"><div><span>الصنف</span><strong>{stockCard.product_code} - {stockCard.product_name}</strong></div><div><span>المخزن</span><strong>{stockCard.warehouse_name}</strong></div><div><span>رصيد أول المدة</span><strong>{Number(stockCard.opening_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} / {Number(stockCard.opening_value).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></div><div><span>رصيد آخر المدة</span><strong>{Number(stockCard.closing_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} / {Number(stockCard.closing_value).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></div></div>
+            <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم الحركة</th><th>نوع الحركة</th><th>وارد كمية</th><th>منصرف كمية</th><th>تكلفة الوحدة</th><th>وارد قيمة</th><th>منصرف قيمة</th><th>الرصيد الكمي</th><th>قيمة الرصيد</th></tr></thead><tbody>{stockCard.rows.map((row, index) => <tr key={`${row.movement_number}-${index}`}><td>{row.date}</td><td className="code-cell">{row.movement_number}</td><td>{({ receipt: "استلام", issue: "صرف", transfer: "تحويل", adjustment: "تسوية" } as Record<string, string>)[row.movement_type] || row.movement_type}</td><td>{Number(row.quantity_in).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.quantity_out).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.unit_cost).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.value_in).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.value_out).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.balance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.balance_value).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}{!stockCard.rows.length && <tr><td colSpan={10}>لا توجد حركات مرحلة خلال الفترة المحددة.</td></tr>}</tbody></table></div>
+          </>}
+          {!stockCard && !stockCardError && <div className="table-empty">حدد الصنف والمخزن والفترة ثم اعرض بطاقة الحركة.</div>}
+        </section>
+      </div>}
       {tab === "reports" && <div className="inventory-reports">
         <div className="metrics-grid inventory-report-metrics">
           <article className="metric-card"><div className="metric-top">قيمة المخزون</div><strong className="metric-value">{totalInventoryValue.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong><small>حسب تكلفة الأرصدة الحالية</small></article>
