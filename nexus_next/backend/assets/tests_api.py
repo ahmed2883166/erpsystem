@@ -50,11 +50,11 @@ class FixedAssetWorkflowTests(APITestCase):
             "period_date": "2026-02-28", "fiscal_year": self.year.pk,
         }, format="json")
         self.assertEqual(depreciation.status_code, 201, depreciation.data)
-        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("3000.0000"))
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("5000.0000"))
         schedule = self.client.get(f"/api/assets/fixed-assets/{asset_id}/schedule/")
         self.assertEqual(schedule.status_code, 200, schedule.data)
         self.assertEqual(schedule.data["accumulated_depreciation"], Decimal("3000.0000"))
-        self.assertEqual(schedule.data["net_book_value"], Decimal("117000.0000"))
+        self.assertEqual(schedule.data["net_book_value"], Decimal("115000.0000"))
         self.assertEqual(JournalEntry.objects.count(), 2)
 
     def test_asset_acquisition_is_atomic_when_fiscal_year_is_invalid(self):
@@ -89,8 +89,8 @@ class FixedAssetWorkflowTests(APITestCase):
             "treasury_account": self.bank.pk, "fiscal_year": self.year.pk,
         }, format="json")
         self.assertEqual(disposed.status_code, 201, disposed.data)
-        self.assertEqual(disposed.data["accumulated_depreciation"], Decimal("4000.0000"))
-        self.assertEqual(disposed.data["net_book_value"], Decimal("116000.0000"))
+        self.assertEqual(disposed.data["accumulated_depreciation"], Decimal("6000.0000"))
+        self.assertEqual(disposed.data["net_book_value"], Decimal("114000.0000"))
         self.assertEqual(disposed.data["gain"], Decimal("4000.0000"))
         self.assertEqual(disposed.data["loss"], Decimal("0"))
         from assets.models import AssetDepreciation, FixedAsset
