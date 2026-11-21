@@ -208,6 +208,23 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(invoice.data["invoice_lines"][0]["tax_code"], code.pk)
         self.assertEqual(invoice.data["tax_total"], "28.0000")
 
+    def test_used_tax_code_rate_is_immutable_but_can_be_deactivated(self):
+        delivery_id, line_id = self._create_delivery("DEL-TAX-LOCK")
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-LOCK", name_ar="ضريبة ثابتة",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1),
+        )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-TAX-LOCK", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        changed = self.client.patch(f"/api/accounting/tax-codes/{code.pk}/", {"rate": "15"}, format="json")
+        self.assertEqual(changed.status_code, 400)
+        disabled = self.client.patch(f"/api/accounting/tax-codes/{code.pk}/", {"is_active": False}, format="json")
+        self.assertEqual(disabled.status_code, 200, disabled.data)
     def test_sales_invoice_rejects_tax_code_outside_effective_period(self):
         delivery_id, line_id = self._create_delivery("DEL-TAX-2")
         code = TaxCode.objects.create(
