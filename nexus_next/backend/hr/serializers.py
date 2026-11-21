@@ -16,6 +16,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if branch and company and branch.company_id != company.pk:
@@ -29,6 +30,7 @@ class JobPositionSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         department = attrs.get("department", getattr(self.instance, "department", None))
         if department and company and department.company_id != company.pk:
@@ -55,6 +57,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if branch and company and branch.company_id != company.pk:
@@ -72,6 +75,7 @@ class PayrollComponentSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         for field in ("expense_account", "payable_account"):
             account = attrs.get(field, getattr(self.instance, field, None))
@@ -106,6 +110,7 @@ class EmployeeComponentSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
         component = attrs.get("component", getattr(self.instance, "component", None))
         start = attrs.get("effective_from", getattr(self.instance, "effective_from", None))
@@ -165,6 +170,7 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "outstanding_balance")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         principal = attrs.get("principal", getattr(self.instance, "principal", 0))
         balance = attrs.get("outstanding_balance", getattr(self.instance, "outstanding_balance", principal))
         installments = attrs.get("installment_count", getattr(self.instance, "installment_count", 0))
@@ -188,6 +194,7 @@ class PayrollRuleSetSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         country = attrs.get("country", getattr(self.instance, "country", None))
         if company and country and company.country != country:
@@ -198,6 +205,7 @@ class PayrollRuleSetSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"configuration": "إعدادات المرتبات يجب أن تكون كائن إعدادات صحيحًا."})
 
         def numeric(value, field, *, minimum=None, maximum=None):
+            """تنفيذ وظيفة numeric ضمن بيانات الوحدة مع تطبيق قواعد التحقق الخاصة بها."""
             try:
                 number = Decimal(str(value))
             except (InvalidOperation, TypeError, ValueError):
@@ -262,6 +270,7 @@ class PayrollCycleSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "created_by", "approved_by", "approved_at", "journal_entry")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         start = attrs.get("period_start", getattr(self.instance, "period_start", None))
         end = attrs.get("period_end", getattr(self.instance, "period_end", None))
         payment = attrs.get("payment_date", getattr(self.instance, "payment_date", None))
@@ -302,6 +311,7 @@ class PayrollResultSerializer(serializers.ModelSerializer):
         )
 
     def get_lines(self, obj):
+        """تجهيز قيمة محسوبة أو بيانات مرتبطة لعرضها بأمان في الواجهة."""
         return [{
             "code": line.code_snapshot, "name": line.name_snapshot,
             "kind": line.kind_snapshot, "amount": str(line.amount),
@@ -317,6 +327,7 @@ class EmployeeSalaryHistorySerializer(serializers.ModelSerializer):
         read_only_fields = ("previous_salary", "changed_by", "created_at")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         employee = attrs.get("employee", getattr(self.instance, "employee", None))
         effective_date = attrs.get("effective_date", getattr(self.instance, "effective_date", None))
         new_salary = attrs.get("new_salary", getattr(self.instance, "new_salary", None))
@@ -342,6 +353,7 @@ class LoanInstallmentSerializer(serializers.ModelSerializer):
         read_only_fields = ("paid_amount", "paid_date", "status", "payroll_cycle")
 
     def validate(self, attrs):
+        """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         loan = attrs.get("loan", getattr(self.instance, "loan", None))
         amount = attrs.get("amount", getattr(self.instance, "amount", 0))
         due_date = attrs.get("due_date", getattr(self.instance, "due_date", None))
