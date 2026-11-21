@@ -14,7 +14,7 @@ from db_sql import execute_compat
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
-from tax_categories import validate_tax_category, tax_category_options
+from tax_categories import validate_tax_category, validate_tax_document_reference, tax_category_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 
@@ -2259,9 +2259,7 @@ def new_bill():
             if tax_treatment != "standard" and rate != 0:
                 raise ValueError("المشتريات الصفرية أو المعفاة أو خارج النطاق يجب أن تكون نسبة ضريبتها صفرًا.")
             tax_category = validate_tax_category(tax_country, "purchase", request.form.get("tax_category", ""), tax_treatment)
-            tax_reference = str(request.form.get("tax_reference", "")).strip()[:200]
-            if tax_category.endswith("_customs_vat") and not tax_reference:
-                raise ValueError("رقم البيان الجمركي أو مرجع مستند سداد ضريبة الاستيراد مطلوب لهذا التصنيف.")
+            tax_reference = validate_tax_document_reference(tax_category, request.form.get("tax_reference", ""))
             deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
             if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
@@ -2420,9 +2418,7 @@ def edit_bill(bill_id):
             if tax_treatment != "standard" and rate != 0:
                 raise ValueError("المشتريات الصفرية أو المعفاة أو خارج النطاق يجب أن تكون نسبة ضريبتها صفرًا.")
             tax_category = validate_tax_category(tax_country, "purchase", request.form.get("tax_category", ""), tax_treatment)
-            tax_reference = str(request.form.get("tax_reference", "")).strip()[:200]
-            if tax_category.endswith("_customs_vat") and not tax_reference:
-                raise ValueError("رقم البيان الجمركي أو مرجع مستند سداد ضريبة الاستيراد مطلوب لهذا التصنيف.")
+            tax_reference = validate_tax_document_reference(tax_category, request.form.get("tax_reference", ""))
             deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
             if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
