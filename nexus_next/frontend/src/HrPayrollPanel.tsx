@@ -13,7 +13,8 @@ const cycleLabels: Record<string, string> = {
 export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: { companyId: number | null; baseCurrencyId?: number; country?: "EG" | "SA" }) {
   const [tab, setTab] = useState<"employees" | "components" | "attendance" | "assignments" | "leaveLoans" | "rules" | "payroll">("employees");
   const [employees, setEmployees] = useState<HrEmployee[]>([]);
-  const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);\n  const [ruleSets, setRuleSets] = useState<HrPayrollRuleSet[]>([]);
+  const [cycles, setCycles] = useState<HrPayrollCycle[]>([]);
+  const [ruleSets, setRuleSets] = useState<HrPayrollRuleSet[]>([]);
   const [components, setComponents] = useState<HrPayrollComponent[]>([]);
   const [attendance, setAttendance] = useState<HrAttendance[]>([]);
   const [employeeComponents, setEmployeeComponents] = useState<HrEmployeeComponent[]>([]);
@@ -33,7 +34,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
   const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),principal:"0",installment_count:"1",installment_amount:"0",notes:""});
   const [salaryDraft, setSalaryDraft] = useState({employee:"",effective_date:new Date().toISOString().slice(0,10),new_salary:"0",change_type:"annual_raise",reason:""});
-  const [ruleSetDraft, setRuleSetDraft] = useState({name:"",effective_from:new Date().toISOString().slice(0,10),effective_to:"",monthly_daily_divisor:"30",min_base:"",max_base:"",employee_rate:"",employer_rate:"",annual_personal_exemption:"",annual_brackets:"[]"});\n  const [cycleDraft, setCycleDraft] = useState({rule_set:"",period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
+  const [ruleSetDraft, setRuleSetDraft] = useState({name:"",effective_from:new Date().toISOString().slice(0,10),effective_to:"",monthly_daily_divisor:"30",min_base:"",max_base:"",employee_rate:"",employer_rate:"",annual_personal_exemption:"",annual_brackets:"[]"});
+  const [cycleDraft, setCycleDraft] = useState({rule_set:"",period_start:new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10),period_end:new Date().toISOString().slice(0,10),payment_date:new Date().toISOString().slice(0,10)});
 
   const load = async () => {
     if (!companyId) return;
@@ -178,7 +180,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
       <button type="button" className={tab==="attendance"?"primary-button":"subtle-button"} onClick={()=>setTab("attendance")}>الحضور</button>
       <button type="button" className={tab==="assignments"?"primary-button":"subtle-button"} onClick={()=>setTab("assignments")}>عناصر الموظفين</button>
       <button type="button" className={tab==="leaveLoans"?"primary-button":"subtle-button"} onClick={()=>setTab("leaveLoans")}>الإجازات والسلف</button>
-      <button type="button" className={tab==="rules"?"primary-button":"subtle-button"} onClick={()=>setTab("rules")}>القواعد القانونية</button>\n      <button type="button" className={tab==="payroll"?"primary-button":"subtle-button"} onClick={()=>setTab("payroll")}>دورات المرتبات</button>
+      <button type="button" className={tab==="rules"?"primary-button":"subtle-button"} onClick={()=>setTab("rules")}>القواعد القانونية</button>
+      <button type="button" className={tab==="payroll"?"primary-button":"subtle-button"} onClick={()=>setTab("payroll")}>دورات المرتبات</button>
       <button type="button" className="subtle-button" onClick={()=>void load()} disabled={busy}>تحديث البيانات</button>
     </div>
     {error&&<div className="error-banner">{error}</div>}{notice&&<div className="success-banner">{notice}</div>}
@@ -290,7 +293,8 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
       <form className="journal-form" onSubmit={submitCycle}>
         <label>بداية الفترة<input required type="date" value={cycleDraft.period_start} onChange={e=>setCycleDraft({...cycleDraft,period_start:e.target.value})}/></label>
         <label>نهاية الفترة<input required type="date" value={cycleDraft.period_end} onChange={e=>setCycleDraft({...cycleDraft,period_end:e.target.value})}/></label>
-        <label>تاريخ الصرف<input required type="date" value={cycleDraft.payment_date} onChange={e=>setCycleDraft({...cycleDraft,payment_date:e.target.value})}/></label>\n        <label>مجموعة القواعد القانونية<select value={cycleDraft.rule_set} onChange={e=>setCycleDraft({...cycleDraft,rule_set:e.target.value})}><option value="">بدون مجموعة (للعناصر غير القانونية فقط)</option>{ruleSets.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.name} · {x.effective_from}</option>)}</select></label>
+        <label>تاريخ الصرف<input required type="date" value={cycleDraft.payment_date} onChange={e=>setCycleDraft({...cycleDraft,payment_date:e.target.value})}/></label>
+        <label>مجموعة القواعد القانونية<select value={cycleDraft.rule_set} onChange={e=>setCycleDraft({...cycleDraft,rule_set:e.target.value})}><option value="">بدون مجموعة (للعناصر غير القانونية فقط)</option>{ruleSets.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.name} · {x.effective_from}</option>)}</select></label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy}>إنشاء دورة جديدة</button></div>
       </form>
       <div className="section-heading" style={{marginTop:24}}><div><h2>دورات المرتبات</h2><p>لا يتم إنشاء قيود أو صرف أموال في هذه المرحلة قبل استكمال المراجعة المحاسبية</p></div><span className="module-count">{cycles.length} دورة</span></div>
