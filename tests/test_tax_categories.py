@@ -31,6 +31,18 @@ class TaxCategoryTests(unittest.TestCase):
         self.assertNotIn("eg_purchase_reverse_charge", egypt)
         self.assertNotIn("eg_purchase_table_tax", egypt)
 
+    def test_zero_and_exempt_purchase_categories_match_their_tax_treatment(self):
+        self.assertEqual(
+            validate_tax_category("EG", "purchase", "eg_purchase_zero", "zero_rated"),
+            "eg_purchase_zero",
+        )
+        self.assertEqual(
+            validate_tax_category("SA", "purchase", "sa_purchase_exempt", "exempt"),
+            "sa_purchase_exempt",
+        )
+        with self.assertRaises(ValueError):
+            validate_tax_category("EG", "purchase", "eg_purchase_exempt", "standard")
+
     def test_category_must_match_existing_generic_tax_treatment(self):
         with self.assertRaises(ValueError):
             validate_tax_category("SA", "sale", "sa_sales_zero_export", "standard")
