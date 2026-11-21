@@ -5,6 +5,7 @@ from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.services import get_account_for_role
 from accounting.services import post_journal
 from companies.models import Branch, FiscalYear
 
@@ -12,14 +13,7 @@ from .models import StockMovement, StockMovementJournalLink
 
 
 def _role_account(company, role):
-    assignment = AccountRole.objects.select_related("account").filter(company=company, role=role).first()
-    if not assignment:
-        raise ValidationError(f"اربط دور الحساب ({role}) في إعدادات الشركة قبل ترحيل حركة المخزون.")
-    account = assignment.account
-    if account.company_id != company.pk or not account.is_active or account.is_group or not account.allow_posting:
-        raise ValidationError(f"الحساب المرتبط بالدور ({role}) غير صالح للترحيل.")
-    return account
-
+    return get_account_for_role(company, role)
 
 def _branch_for(warehouse, company):
     if warehouse.branch_id:
