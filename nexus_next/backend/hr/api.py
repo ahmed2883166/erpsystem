@@ -6,14 +6,14 @@ from rest_framework.permissions import IsAuthenticated
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_companies, can_access_company, has_company_role
 from .models import (
-    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan,
+    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
     PayrollRuleSet,
 )
 from .serializers import (
     AttendanceRecordSerializer, DepartmentSerializer, EmployeeComponentSerializer,
     EmployeeLoanSerializer, EmployeeSerializer, JobPositionSerializer,
-    LeaveRequestSerializer, PayrollComponentSerializer, PayrollCycleSerializer,
+    LeaveRequestSerializer, EmployeeSalaryHistorySerializer, PayrollComponentSerializer, PayrollCycleSerializer,
     PayrollResultSerializer, PayrollRuleSetSerializer,
 )
 from .services import calculate_payroll_cycle
@@ -153,6 +153,28 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
     queryset = EmployeeLoan.objects.select_related("employee", "employee__company").all()
     serializer_class = EmployeeLoanSerializer
     filterset_fields = ("employee", "employee__company", "status")
+
+
+class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
+    queryset = EmployeeSalaryHistory.objects.select_related("employee", "employee__company", "changed_by").all()
+    serializer_class = EmployeeSalaryHistorySerializer
+    filterset_fields = ("employee", "employee__company", "change_type", "effective_date")
+    http_method_names = ("get", "post", "head", "options")
+
+    def perform_create(self, serializer):
+        from datetime import timedelta
+        from django.db import transaction
+        from .services import salary_for_date
+        employee = serializer.validated_data["employee"]
+        self.check_employee_write(employee)
+        effective_date = serializer.validated_data["effective_date"]
+        with transaction.atomic():
+            locked = Employee.objects.select_for_update().get(pk=employee.pk)
+            previous = salary_for_date(locked, effective_date - timedelta(days=1))
+            history = serializer.save(previous_salary=previous, changed_by=self.request.user)
+            if effective_date <= timezone.localdate():
+                locked.basic_salary = history.new_salary
+                locked.save(update_fields=("basic_salary", "updated_at"))
 
 
 class PayrollRuleSetViewSet(CompanyScopedViewSet):
