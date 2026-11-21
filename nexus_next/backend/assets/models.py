@@ -30,6 +30,7 @@ class FixedAsset(models.Model):
     depreciation_expense_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_expenses")
     acquisition_counter_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_acquisitions")
     disposal_gain_loss_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_disposals")
+    disposal_loss_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_disposal_losses")
     acquisition_journal = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="acquired_fixed_asset")
     acquisition_treasury_transaction = models.OneToOneField("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_acquisition")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
@@ -54,7 +55,7 @@ class FixedAsset(models.Model):
             raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية لا يمكن أن تتجاوز التكلفة."})
-        for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account"):
+        for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account"):
             account = getattr(self, field, None)
             if account and account.company_id != self.company_id:
                 raise ValidationError({field: "الحساب يجب أن يتبع نفس الشركة."})
