@@ -182,7 +182,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
         <label>تاريخ النهاية<input required type="date" min={yearStart} value={yearEnd} onChange={e => setYearEnd(e.target.value)} /></label>
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || yearStart > yearEnd}>{busy ? "جارٍ الحفظ…" : "إنشاء السنة المالية"}</button></div>
       </form>
-      {branches.length > 0 && years.some(item => item.status === "open") && <div className="success-banner setup-complete">اكتمل الحد الأدنى من إعداد الشركة. يمكنك الآن الانتقال إلى دليل الحسابات وباقي الوحدات.</div>}
+      {branches.length > 0 && years.some(item => item.status === "open") && <div className="success-banner setup-complete">تم حفظ بيانات الشركة والفرع والسنة المالية. قبل بدء القيود، يلزم إعداد دليل الحسابات المناسب للنشاط وربط أدوار الحسابات.</div>}
     </>}
   </section>;
 }
