@@ -170,7 +170,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
     queryset = StockMovement.objects.select_related(
         "company", "source_warehouse", "destination_warehouse", "created_by", "posted_by"
-    ).prefetch_related("lines__product")
+    ).prefetch_related("lines__product", "journal_links__journal_entry__branch")
     filterset_fields = ("company", "movement_type", "status", "movement_date")
     search_fields = ("movement_number", "notes", "lines__product__code", "lines__product__name_ar")
     ordering_fields = ("movement_date", "movement_number", "created_at")
