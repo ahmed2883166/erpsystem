@@ -372,7 +372,10 @@ def save_pending_special_tax_mechanism(conn, document_kind, document_id, mechani
         (document_id,)).fetchone()
     if not document or str(document["status"] or "").lower() not in {"draft", "posted"}:
         raise ValueError("الفاتورة غير موجودة أو حالتها لا تسمح بتسجيل ورقة ضريبية.")
-    period, _, _ = _period(document["document_date"], country=country)
+    document_date = str(document["document_date"] or "").strip()
+    if len(document_date) < 7:
+        raise ValueError("تاريخ الفاتورة غير صالح لتحديد الفترة الضريبية.")
+    period, _, _ = _period(document_date[:7], country=country)
 
     result = None
     tax_rate_value = quantity_value = unit_value = deduction_value = None
