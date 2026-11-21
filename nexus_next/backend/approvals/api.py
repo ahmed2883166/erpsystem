@@ -10,6 +10,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from sales.models import SalesInvoice
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval
 from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer
+from .snapshots import invoice_discount_snapshot
 
 
 class DiscountApprovalPolicyViewSet(viewsets.ModelViewSet):
@@ -78,6 +79,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         if (
             approval.requested_discount_total != approval.invoice.discount_total
             or approval.requested_max_discount_percent != current_max
+            or approval.requested_lines_snapshot != invoice_discount_snapshot(approval.invoice)
         ):
             raise ValidationError("تغيرت تفاصيل الخصم بعد إنشاء الطلب؛ يجب مراجعة الطلب الأحدث.")
 
