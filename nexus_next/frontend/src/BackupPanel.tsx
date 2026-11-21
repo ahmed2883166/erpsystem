@@ -154,7 +154,7 @@ export default function BackupPanel() {
       </tbody></table></div>
       <p className="asset-report-note">لا نعرض نسبة تقدم وهمية؛ أثناء التنفيذ تظهر حالة التشغيل، ولا تُسجل النسخة ناجحة إلا بعد التحقق من الأرشيف ووجود الملف بالحجم المتوقع. بعد تغيير الجدولة، أعد تشغيل scripts/install-backup-task.ps1 لتحديث مهمة Windows.</p>
       {config.can_manage && <section className="work-panel reset-panel">
-        <div className="work-panel-head"><div><h3>تصفير الحركات التشغيلية</h3><p>إجراء نهائي لجميع الشركات؛ يحتفظ بالبيانات الأساسية وإعدادات النظام وسجل التدقيق.</p></div><span className="coming-soon">{resetPreview?.backup_ready ? "النسخة الاحتياطية جاهزة" : "يلزم نسخ احتياطي حديث"}</span></div>
+        <div className="work-panel-head"><div><h3>تصفير الحركات التشغيلية</h3><p>إجراء نهائي لجميع الشركات؛ يحتفظ بالبيانات الأساسية وإعدادات النظام وسجل التدقيق.</p></div><span className="coming-soon">{resetPreview?.backup_ready ? "آخر نسخة ناجحة حديثة" : "سينشئ نسخة قبل التصفير"}</span></div>
         {resetPreview && <>
           <div className="review-meta"><div><span>السجلات المحددة للتصفير</span><strong>{resetPreview.total_records.toLocaleString("ar-EG")}</strong></div><div><span>آخر نسخة ناجحة</span><strong>{resetPreview.last_backup_at ? new Date(resetPreview.last_backup_at).toLocaleString("ar-EG") : "لا توجد"}</strong></div></div>
           <h4>ما سيتم الاحتفاظ به</h4><ul>{resetPreview.preserved.map(x=><li key={x}>{x}</li>)}</ul>
