@@ -1,5 +1,7 @@
 export type Company = { id: number; code: string; name_ar: string; country: "EG" | "SA"; base_currency_code: string };
 export type Branch = { id: number; company: number; code: string; name_ar: string; is_active: boolean };
+export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
+export type CompanyUserLookup = { id: number; username: string; display_name: string };
 export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
 export type Account = {
   id: number; company: number; code: string; name_ar: string; parent: number | null;
@@ -200,6 +202,10 @@ export const api = {
   deactivateTaxCode: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>(`/api/accounting/tax-codes/${id}/`, { method: "PATCH", body: JSON.stringify({ is_active: false }) }); },
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
+  memberships: (companyId: number) => request<CompanyMembership[]>(`/api/setup/memberships/?company=${companyId}`),
+  searchCompanyUsers: (companyId: number, search: string) => request<CompanyUserLookup[]>(`/api/setup/memberships/users/?company=${companyId}&search=${encodeURIComponent(search)}`),
+  createMembership: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>("/api/setup/memberships/", {method:"POST",body:JSON.stringify(payload)}); },
+  updateMembership: async (id: number, payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>(`/api/setup/memberships/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
   fiscalYears: (id: number) => request<FiscalYear[]>("/api/setup/fiscal-years/?company=" + id),
   createJournal: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/", { method: "POST", body: JSON.stringify(payload) }); },
   postJournal: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/" + id + "/post/", { method: "POST" }); },
