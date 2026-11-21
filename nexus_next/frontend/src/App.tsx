@@ -137,6 +137,8 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [balance, setBalance] = useState<BalanceSheetReport|null>(null);
   const [income, setIncome] = useState<IncomeStatementReport|null>(null);
   const [selectedLedger, setSelectedLedger] = useState<GeneralLedgerReport|null>(null);
@@ -152,20 +154,26 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
     setBusy(true); setError("");
     try {
       const [balanceData, incomeData] = await Promise.all([
-        api.balanceSheet(companyId, to), api.incomeStatement(companyId, from, to),
+        api.balanceSheet(companyId, to, branchId ? Number(branchId) : undefined),
+        api.incomeStatement(companyId, from, to, branchId ? Number(branchId) : undefined),
       ]);
       setBalance(balanceData); setIncome(incomeData);
       setSelectedLedger(null); setSelectedJournal(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل القوائم المالية."); }
     finally { setBusy(false); }
   };
-  useEffect(() => { void load(); }, [companyId]);
+  useEffect(() => {
+    if (!companyId) { setBranches([]); setBranchId(""); return; }
+    api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
+      .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
+  }, [companyId]);
+  useEffect(() => { void load(); }, [companyId, branchId]);
   const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
   const openLedger = async (accountId: number | null) => {
     if (!companyId || accountId === null || !balance) return;
     setLedgerBusy(true); setLedgerError(""); setSelectedJournal(null);
     try {
-      setSelectedLedger(await api.generalLedger(companyId, accountId, from, balance.as_of));
+      setSelectedLedger(await api.generalLedger(companyId, accountId, from, balance.as_of, branchId ? Number(branchId) : undefined));
     } catch (reason) { setLedgerError(reason instanceof Error ? reason.message : "تعذر فتح دفتر الأستاذ."); }
     finally { setLedgerBusy(false); }
   };
@@ -182,6 +190,7 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
     <div className="asset-report-filters">
       <label>من تاريخ قائمة الدخل<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
       <label>إلى تاريخ / تاريخ الميزانية<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+      <label>الفرع<select value={branchId} onChange={e=>setBranchId(e.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map(item=><option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label>
     </div>
     {error && <div className="error-banner">{error}</div>}
     {balance && income && <>
