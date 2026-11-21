@@ -113,6 +113,32 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
             response.data["scope_branch_ids"], [self.head_office.pk, self.second_branch.pk, self.archived_branch.pk],
         )
 
+    def test_currency_rounding_difference_within_half_minor_unit_is_tolerated(self):
+        self._post_inventory_balance(
+            "RECON-ROUND-IN", self.head_office,
+            ChartOfAccount.objects.get(company=self.company, code="3000"), Decimal("0.0049"),
+        )
+        self.client.force_authenticate(user=self.full_user)
+        response = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["currency"], "EGP")
+        self.assertEqual(response.data["rounding_tolerance"], "0.005")
+        self.assertEqual(Decimal(response.data["difference"]), Decimal("0.0049"))
+        self.assertTrue(response.data["is_reconciled"])
+        self.assertEqual(response.data["reconciliation_status"], "matched")
+
+    def test_currency_rounding_difference_above_half_minor_unit_is_flagged(self):
+        self._post_inventory_balance(
+            "RECON-ROUND-OUT", self.head_office,
+            ChartOfAccount.objects.get(company=self.company, code="3000"), Decimal("0.0051"),
+        )
+        self.client.force_authenticate(user=self.full_user)
+        response = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Decimal(response.data["difference"]), Decimal("0.0051"))
+        self.assertFalse(response.data["is_reconciled"])
+        self.assertEqual(response.data["reconciliation_status"], "difference")
+
     def test_branch_filter_reconciles_only_the_selected_branch(self):
         self.client.force_authenticate(user=self.full_user)
         head = self.client.get(
