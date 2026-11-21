@@ -5,7 +5,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
     dependencies = [
         ("assets", "0002_partial_depreciation"),
-        ("treasury", "0002_bankreconciliation"),
+        ("treasury", "0002_bankreconciliation_bankstatementline"),
     ]
     operations = [
         migrations.AddField(
