@@ -94,7 +94,7 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
       <label>أقصى خصم دون موافقة (%)<input type="number" min="0" max="100" step="0.0001" value={limit} onChange={e => setLimit(e.target.value)} placeholder="اتركه فارغًا لتعطيل الحد" /></label>
       <label>أقصى إجمالي فاتورة دون موافقة (عملة الشركة الأساسية)<input type="number" min="0" step="0.0001" value={invoiceAmountLimit} onChange={e => setInvoiceAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : policy ? "تحديث سياسة الموافقات" : "تفعيل سياسة الموافقات"}</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button></div>
-      <p className="inventory-report-note inventory-wide">{policy ? "الحدود الحالية محفوظة للشركة. تغييرها لا يغيّر الحدود المسجلة على الفواتير السابقة." : "لم يتم إعداد سياسة موافقات لهذه الشركة بعد."} يمكن ضبط حد واحد أو الحدين معًا، ولا يمكن تركهما فارغين معًا. إعداد السياسة وتعديلها متاحان لمدير الشركة فقط.</p>
+      <p className="inventory-report-note inventory-wide">{policy ? "الحدود الحالية محفوظة للشركة. تغييرها لا يغيّر الحدود المسجلة على الفواتير السابقة." : "لم يتم إعداد سياسة موافقات لهذه الشركة بعد."} يمكن ضبط حد واحد أو الحدين معًا، ولا يمكن تركهما فارغين معًا. يجب تحديد حد واحد على الأقل. إعداد السياسة وتعديلها متاحان لمدير الشركة فقط.</p>
     </form>}
     {!canManage && <p className="inventory-report-note">عرض طلبات الموافقة متاح حسب صلاحيات الشركة؛ تعديل السياسة واعتماد الطلبات متاحان لمدير الشركة فقط.</p>}
     <div className="data-table-wrap">
