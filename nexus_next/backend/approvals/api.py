@@ -97,8 +97,9 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def reject(self, request, pk=None):
-        approval = self.get_object()
-        approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=approval.pk)
+        candidate = self.get_object()
+        SalesInvoice.objects.select_for_update().get(pk=candidate.invoice_id)
+        approval = SalesInvoiceApproval.objects.select_for_update().select_related("invoice").get(pk=candidate.pk)
         self._manager(approval)
         note = str(request.data.get("note", "")).strip()
         if not note:
