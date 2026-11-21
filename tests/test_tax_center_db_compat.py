@@ -121,6 +121,95 @@ class SpecialTaxQualityCheckTests(unittest.TestCase):
         self.assertEqual(issues[0]["severity"], "error")
 
 
+class PendingSpecialTaxPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("""CREATE TABLE company_settings(
+            setting_key TEXT PRIMARY KEY, setting_value TEXT
+        )""")
+        self.conn.execute("INSERT INTO company_settings VALUES('tax_country','EG')")
+        self.conn.execute("""CREATE TABLE sales_invoices(
+            id INTEGER PRIMARY KEY, status TEXT, invoice_date TEXT,
+            total_amount TEXT, tax_amount TEXT
+        )""")
+        self.conn.execute("""INSERT INTO sales_invoices VALUES(
+            4,'posted','2026-11-12','1140.00','140.00'
+        )""")
+        self.conn.execute("""CREATE TABLE supplier_bills(
+            id INTEGER PRIMARY KEY, status TEXT, bill_date TEXT,
+            total_amount TEXT, tax_amount TEXT
+        )""")
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_saves_egypt_table_tax_as_pending_without_changing_invoice(self):
+        from tax_center import save_pending_special_tax_mechanism
+
+        result = save_pending_special_tax_mechanism(
+            self.conn, "sale", 4, "eg_table_tax_t2",
+            taxable_base="1000", tax_reference="ETA-REF-4",
+            tax_type="T2", tax_rate="5", created_by=8,
+        )
+        row = self.conn.execute(
+            "SELECT status,tax_period,tax_amount,journal_entry_id,tax_reference "
+            "FROM tax_document_mechanisms"
+        ).fetchone()
+        invoice = self.conn.execute(
+            "SELECT total_amount,tax_amount FROM sales_invoices WHERE id=4"
+        ).fetchone()
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(tuple(row), ("pending","2026-11","50.00",None,"ETA-REF-4"))
+        self.assertEqual(tuple(invoice), ("1140.00","140.00"))
+
+    def test_pending_record_can_be_retried_but_posted_record_is_immutable(self):
+        from tax_center import save_pending_special_tax_mechanism
+
+        args = dict(taxable_base="1000", tax_reference="ETA-REF-4",
+                    tax_type="T2", tax_rate="5")
+        save_pending_special_tax_mechanism(
+            self.conn, "sale", 4, "eg_table_tax_t2", **args
+        )
+        save_pending_special_tax_mechanism(
+            self.conn, "sale", 4, "eg_table_tax_t2",
+            **{**args, "tax_rate": "6"}
+        )
+        self.conn.execute(
+            "UPDATE tax_document_mechanisms SET status='posted',journal_entry_id=91"
+        )
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "قيد مرحّل"):
+            save_pending_special_tax_mechanism(
+                self.conn, "sale", 4, "eg_table_tax_t2", **args
+            )
+        row = self.conn.execute(
+            "SELECT tax_amount,journal_entry_id,status FROM tax_document_mechanisms"
+        ).fetchone()
+        self.assertEqual(tuple(row), ("60.00",91,"posted"))
+
+    def test_rejects_wrong_country_and_reverse_charge_on_sales(self):
+        from tax_center import save_pending_special_tax_mechanism
+
+        with self.assertRaisesRegex(ValueError, "المصري"):
+            save_pending_special_tax_mechanism(
+                self.conn, "sale", 4, "sa_reverse_charge",
+                taxable_base="1000", tax_reference="REF",
+                tax_rate="15", deductible_percent="100",
+            )
+        self.conn.execute(
+            "UPDATE company_settings SET setting_value='SA' WHERE setting_key='tax_country'"
+        )
+        self.conn.commit()
+        with self.assertRaisesRegex(ValueError, "المشتريات"):
+            save_pending_special_tax_mechanism(
+                self.conn, "sale", 4, "sa_reverse_charge",
+                taxable_base="1000", tax_reference="REF",
+                tax_rate="15", deductible_percent="100",
+            )
+
+
 class TaxMetadataSQLiteTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
