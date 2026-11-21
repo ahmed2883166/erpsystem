@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse } from "./api";
+import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -9,6 +9,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
@@ -28,19 +29,19 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [receiptLines, setReceiptLines] = useState<ReceiptDraftLine[]>([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
   const [orderForm, setOrderForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10), expected_date: "", notes: "" });
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
-  const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", notes: "" });
+  const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", notes: "" });
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", amount: "", reference: "" });
 
   const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay] = await Promise.all([
+      const [s, p, w, o, r, i, pay, t] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay);
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== 'reverse_charge'));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -123,7 +124,7 @@ export default function PurchasingPanel({ companyId }: Props) {
       await purchasingApi.createInvoice({
         company: companyId, supplier: receipt.supplier, receipt: receipt.id,
         invoice_number: invoiceForm.invoice_number, invoice_date: invoiceForm.invoice_date, notes: invoiceForm.notes,
-        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, unit_price: line.unit_cost, tax_rate: invoiceForm.tax_rate })),
+        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, unit_price: line.unit_cost, tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null })),
       });
       setShowForm(false); setInvoiceForm((old) => ({ ...old, receipt: "", invoice_number: "", notes: "" }));
       await refresh();
@@ -208,7 +209,8 @@ export default function PurchasingPanel({ companyId }: Props) {
       <label className="inventory-wide">إذن الاستلام المرحّل<select required value={invoiceForm.receipt} onChange={(e) => setInvoiceForm({ ...invoiceForm, receipt: e.target.value })}><option value="">اختر إذن الاستلام</option>{invoiceableReceipts.map((x) => <option key={x.id} value={x.id}>{x.receipt_number} - {x.supplier_name} - {x.receipt_date}</option>)}</select></label>
       <label>رقم فاتورة المورد<input required value={invoiceForm.invoice_number} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></label>
       <label>تاريخ الفاتورة<input required type="date" value={invoiceForm.invoice_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })} /></label>
-      <label>نسبة الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={invoiceForm.tax_rate} onChange={(e) => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })} /><small>أدخل النسبة المعتمدة للمعاملة؛ تُحسب الضريبة على قيمة الأصناف غير شاملة الضريبة.</small></label>
+      <label>كود ضريبة المدخلات<select value={invoiceForm.tax_code} onChange={(e) => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceForm({ ...invoiceForm, tax_code:e.target.value, tax_rate:selected?.rate || "0" }); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}%</option>)}</select><small>تظهر هنا الأكواد القابلة للخصم فقط. الضريبة غير القابلة للخصم تحتاج معالجة مستقلة لتكلفة المخزون قبل تفعيلها.</small></label>
+      {!invoiceForm.tax_code && <label>نسبة الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={invoiceForm.tax_rate} onChange={(e) => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })} /><small>أدخل النسبة المعتمدة للمعاملة؛ تُحسب الضريبة على قيمة الأصناف غير شاملة الضريبة.</small></label>}
       {invoiceForm.receipt && <div className="inventory-wide data-table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>صافي القيمة</th></tr></thead><tbody>{receipts.find((x) => x.id === Number(invoiceForm.receipt))?.line_items.map((line) => <tr key={line.id}><td>{line.product_code} - {line.product_name}</td><td>{line.quantity}</td><td>{money(line.unit_cost)}</td><td>{money(String(Number(line.quantity) * Number(line.unit_cost)))}</td></tr>)}</tbody></table><p>سيتم احتساب الضريبة على قيمة الأصناف، ويجب أن يطابق صافي الفاتورة قيمة الاستلام حتى لا تتغير قيمة المخزون.</p></div>}
       <label className="inventory-wide">ملاحظات<textarea value={invoiceForm.notes} onChange={(e) => setInvoiceForm({ ...invoiceForm, notes: e.target.value })} /></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ فاتورة المورد كمسودة"}</button></div>
