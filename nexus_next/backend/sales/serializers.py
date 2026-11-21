@@ -96,6 +96,7 @@ class SalesInvoiceLineInputSerializer(serializers.Serializer):
     tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"),
                                         max_value=Decimal("100"), required=False, default=Decimal("0"))
     tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
+    discount_percent = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False, default=Decimal("0"))
 
 
 class SalesInvoiceLineSerializer(serializers.ModelSerializer):
@@ -106,7 +107,7 @@ class SalesInvoiceLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesInvoiceLine
         fields = ("id", "delivery_line", "product_code", "product_name", "quantity",
-                  "unit_price", "tax_rate", "tax_code", "net_amount", "tax_amount", "total_amount")
+                  "unit_price", "tax_rate", "tax_code", "discount_percent", "discount_amount", "net_amount", "tax_amount", "total_amount")
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
@@ -121,10 +122,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesInvoice
         fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number",
-                  "invoice_number", "invoice_date", "status", "net_total", "tax_total", "grand_total",
+                  "invoice_number", "invoice_date", "status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "created_at", "posted_at")
-        read_only_fields = ("status", "net_total", "tax_total", "grand_total", "paid_total",
+        read_only_fields = ("status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
                             "created_at", "posted_at")
 
@@ -164,9 +165,21 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         for line in lines:
             SalesInvoiceLine.objects.create(invoice=invoice, **line)
         invoice.net_total = sum((x.net_amount for x in invoice.lines.all()), Decimal("0"))
+        invoice.discount_total = sum((x.discount_amount for x in invoice.lines.all()), Decimal("0"))
         invoice.tax_total = sum((x.tax_amount for x in invoice.lines.all()), Decimal("0"))
         invoice.grand_total = invoice.net_total + invoice.tax_total
-        invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
+        from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
+        policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
+        if policy:
+            invoice.discount_approval_limit = policy.max_discount_percent
+            invoice.save(update_fields=("net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total"))
+            if any(line.discount_percent > policy.max_discount_percent for line in invoice.lines.all()):
+                SalesInvoiceApproval.objects.create(
+                    company=invoice.company, invoice=invoice, requested_by=self.context["request"].user,
+                    requested_limit=policy.max_discount_percent,
+                )
+        else:
+            invoice.save(update_fields=("net_total", "discount_total", "tax_total", "grand_total"))
         return invoice
 
 
