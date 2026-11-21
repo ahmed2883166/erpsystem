@@ -58,7 +58,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات الموارد البشرية."); }
     finally { setBusy(false); }
   };
-  useEffect(()=>{ setEmployees([]);setCycles([]);setResults([]);setError("");setNotice(""); if(companyId) void load(); },[companyId]);
+  useEffect(()=>{ setEmployees([]);setCycles([]);setResults([]);setPayReport(null);setError("");setNotice(""); if(companyId) void load(); },[companyId]);
 
   const submitEmployee = async (event:FormEvent) => {
     event.preventDefault(); if(!companyId) return;
