@@ -11,7 +11,8 @@ const AuditPanel = lazy(() => import("./AuditPanel"));
 const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
-const AccountsPanel = lazy(() => import("./AccountsPanel"));\nconst HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
+const AccountsPanel = lazy(() => import("./AccountsPanel"));
+const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
@@ -23,7 +24,8 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
     const protectedText = /^[=+@-]/.test(text) || text.startsWith("\t") || text.startsWith("\r") ? "'" + text : text;
     return '"' + protectedText.replace(/"/g, '""') + '"';
   };
-  const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\r\n");
+  const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\r
+");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -42,7 +44,8 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "purchasing", label: "دورة المشتريات", icon: "↙", group: "المشتريات" },
   { id: "inventory", label: "المخزون والمستودعات", icon: "▦", group: "المخزون" },
   { id: "treasury", label: "الخزينة والبنوك", icon: "¤", group: "المالية" },
-  { id: "fixed-assets", label: "الأصول الثابتة", icon: "▣", group: "المالية" },\n  { id: "hr", label: "الموارد البشرية والمرتبات", icon: "♙", group: "الموارد البشرية" },
+  { id: "fixed-assets", label: "الأصول الثابتة", icon: "▣", group: "المالية" },
+  { id: "hr", label: "الموارد البشرية والمرتبات", icon: "♙", group: "الموارد البشرية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
   { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
@@ -673,7 +676,8 @@ export default function App() {
           {active === "purchasing" && <Suspense fallback={panelFallback}><PurchasingPanel companyId={companyId} /></Suspense>}
           {active === "inventory" && <Suspense fallback={panelFallback}><InventoryPanel companyId={companyId} /></Suspense>}
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
-          {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}\n          {active === "hr" && <Suspense fallback={panelFallback}><HrPayrollPanel companyId={companyId} baseCurrencyId={selectedCompany?.base_currency} /></Suspense>}
+          {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
+          {active === "hr" && <Suspense fallback={panelFallback}><HrPayrollPanel companyId={companyId} baseCurrencyId={selectedCompany?.base_currency} /></Suspense>}
           {active === "audit" && <Suspense fallback={panelFallback}><AuditPanel companyId={companyId} /></Suspense>}
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
