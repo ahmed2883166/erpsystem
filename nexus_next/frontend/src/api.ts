@@ -487,6 +487,16 @@ export type HrPayrollResult = {
   displayed_earnings_total:string; displayed_deductions_total:string; net_pay:string; company_cost:string;
   lines:{code:string;name:string;kind:string;amount:string;display_only:boolean;calculation:Record<string,unknown>}[];
 };
+export type HrEmployeePayReport = {
+  company:number; date_from:string; date_to:string; branch:number|null; currency_note:string; employee_count:number;
+  totals:{earnings:string;employee_deductions:string;employer_share:string;net_pay:string;company_cost:string}|null;
+  employees:{
+    employee_id:number;employee_code:string;employee_name:string;branch:string;department:string;currency:string;cycle_count:number;
+    earnings:string;employee_deductions:string;employer_share:string;net_pay:string;company_cost:string;
+    components:{code:string;name:string;kind:string;amount:string}[];
+    periods:{cycle_id:number;period_start:string;period_end:string;status:string;net_pay:string}[];
+  }[];
+};
 export const hrApi = {
 
   payrollComponents: (companyId:number) => request<HrPayrollComponent[]>(`/api/hr/payroll-components/?company=${companyId}&ordering=kind,code`),
@@ -516,6 +526,11 @@ export const hrApi = {
   postPayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/post/`, {method:"POST"}); },
   preparePayrollPayment: async (id:number, treasuryAccountId:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/prepare_payment/`, {method:"POST",body:JSON.stringify({treasury_account_id:treasuryAccountId})}); },
   completePayrollPayment: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/complete_payment/`, {method:"POST"}); },
+  employeePayReport: (companyId:number, dateFrom:string, dateTo:string, branchId?:number) => {
+    const q = new URLSearchParams({company:String(companyId),date_from:dateFrom,date_to:dateTo});
+    if(branchId) q.set("branch",String(branchId));
+    return request<HrEmployeePayReport>(`/api/hr/payroll-cycles/employee-pay-report/?${q.toString()}`);
+  },
   payrollResults: (id:number) => request<HrPayrollResult[]>(`/api/hr/payroll-cycles/${id}/results/`),
 };
 
