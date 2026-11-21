@@ -1,4 +1,4 @@
-from django.db.models import Q
+from django.db.models import F, Q
 
 from .models import Branch, Company, CompanyMembership
 
@@ -24,7 +24,7 @@ def accessible_branches(user, company_id=None):
     if company_id:
         memberships = memberships.filter(company_id=company_id)
     all_company_ids = memberships.filter(all_branches=True).values("company_id")
-    explicit_branch_ids = memberships.filter(all_branches=False).values("branches__id")
+    explicit_branch_ids = memberships.filter(\n        all_branches=False, branches__company_id=F("company_id")\n    ).values("branches__id")
     return Branch.objects.filter(
         Q(company_id__in=all_company_ids) | Q(id__in=explicit_branch_ids),
         is_active=True,
