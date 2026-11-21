@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
                 "verbose_name": "عضوية شركة",
                 "verbose_name_plural": "عضويات الشركات",
                 "ordering": ("company__code", "user__username"),
-                "indexes": [models.Index(fields=["user", "is_active", "company"], name="companies_c_user_id_9e4d8f_idx")],
+                "indexes": [models.Index(fields=["user", "is_active", "company"], name="companies_c_user_id_1b1dae_idx")],
                 "constraints": [models.UniqueConstraint(fields=("user", "company"), name="uq_company_membership_user_company")],
             },
         ),
