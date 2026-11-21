@@ -34,6 +34,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [journalModal, setJournalModal] = useState(false);
+  const [reviewingJournal, setReviewingJournal] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [fiscalYears, setFiscalYears] = useState<FiscalYear[]>([]);
   const [saving, setSaving] = useState(false);
@@ -75,18 +76,22 @@ export default function App() {
   const debitTotal = journalLines.reduce((sum, line) => sum + (Number(line.debit) || 0), 0);
   const creditTotal = journalLines.reduce((sum, line) => sum + (Number(line.credit) || 0), 0);
   const journalDifference = debitTotal - creditTotal;
-  const saveDraft = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setJournalError("");
+  const validateDraft = () => {
+    setJournalError("");
     if (!companyId || !draft.branch || !draft.fiscal_year) { setJournalError("حدد الشركة والفرع والسنة المالية."); return; }
     const selectedYear = fiscalYears.find((year) => year.id === Number(draft.fiscal_year));
     if (!selectedYear || selectedYear.status !== "open") { setJournalError("لا يمكن تسجيل القيد إلا في سنة مالية مفتوحة."); return; }
     if (draft.entry_date < selectedYear.start_date || draft.entry_date > selectedYear.end_date) { setJournalError("تاريخ القيد خارج حدود السنة المالية المحددة."); return; }
     if (journalLines.length < 2 || journalLines.some((line) => !line.account || (Number(line.debit) > 0) === (Number(line.credit) > 0) || Number(line.debit) < 0 || Number(line.credit) < 0)) { setJournalError("راجع كل سطر: اختر الحساب وأدخل قيمة في خانة مدين أو دائن فقط."); return; }
     if (Math.abs(journalDifference) > 0.00005) { setJournalError("القيد غير متوازن. يجب أن يتساوى إجمالي المدين والدائن."); return; }
+    return true;
+  };
+  const saveDraft = async () => {
+    if (!validateDraft()) return;
     setSaving(true);
     try {
       await api.createJournal({ company: companyId, branch: Number(draft.branch), fiscal_year: Number(draft.fiscal_year), entry_number: draft.entry_number, entry_date: draft.entry_date, description: draft.description, source_type: "manual", lines: journalLines.map((line) => ({ account: Number(line.account), debit: line.debit || "0", credit: line.credit || "0", description: line.description || draft.description })) });
-      const rows = await api.journals(companyId); setJournals(rows); setJournalModal(false);
+      const rows = await api.journals(companyId); setJournals(rows); setJournalModal(false); setReviewingJournal(false);
       setDraft((old) => ({ ...old, entry_number: "", description: "" }));
       setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]);
     } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر حفظ القيد."); }
@@ -144,7 +149,7 @@ export default function App() {
         <div className="page-content">
           <section className="welcome-row"><div><p className="eyebrow">{today} · NEXUS ERP</p><h1>{active === "overview" ? "أهلاً بك في NEXUS" : current?.label}</h1>
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
-            <button className="primary-button" onClick={() => { setActive("journals"); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button></section>
+            <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button></section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
           {active === "overview" && <>
@@ -173,7 +178,7 @@ export default function App() {
                 <td>{account.is_group ? "تجميعي" : "تفصيلي"}</td><td><span className={`status-pill ${account.is_active ? "posted" : "reversed"}`}>{account.is_active ? "نشط" : "موقوف"}</span></td></tr>)}</tbody></table>
               {!loading && !filteredAccounts.length && <div className="table-empty">لا توجد حسابات مطابقة للبحث.</div>}</div></section>}
 
-          {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
+          {active === "journals" && <section className="work-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
             {journalError && <div className="error-banner">{journalError}</div>}<div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead>
               <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td><td>{entry.status === "draft" ? <button className="subtle-button" disabled={postingId === entry.id} onClick={() => postDraft(entry)}>{postingId === entry.id ? "جارٍ الترحيل…" : "ترحيل"}</button> : "—"}</td></tr>)}</tbody></table>
@@ -191,9 +196,9 @@ export default function App() {
             <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
             <section className="journal-modal" role="dialog" aria-modal="true" aria-labelledby="journal-title">
-              <div className="modal-heading"><div><h2 id="journal-title">إنشاء قيد يومية</h2><p>أدخل بيانات القيد واحفظه كمسودة للمراجعة.</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
+              <div className="modal-heading"><div><h2 id="journal-title">{reviewingJournal ? "مراجعة القيد قبل الحفظ" : "إنشاء قيد يومية"}</h2><p>{reviewingJournal ? "راجع بيانات القيد وإجمالياته، ثم احفظه كمسودة دون ترحيل." : "أدخل البيانات والتفاصيل ثم انتقل إلى المراجعة قبل الحفظ."}</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
               {journalError && <div className="error-banner">{journalError}</div>}
-              <form className="journal-form" onSubmit={saveDraft}>
+              {!reviewingJournal ? <form className="journal-form" onSubmit={(event) => { event.preventDefault(); if (validateDraft()) setReviewingJournal(true); }}>
                 <label>رقم القيد<input required value={draft.entry_number} onChange={(e) => setDraft({ ...draft, entry_number: e.target.value })} /></label>
                 <label>التاريخ<input required type="date" value={draft.entry_date} onChange={(e) => setDraft({ ...draft, entry_date: e.target.value })} /></label>
                 <label>الفرع<select required value={draft.branch} onChange={(e) => setDraft({ ...draft, branch: e.target.value })}><option value="">اختر الفرع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name_ar} ({b.code})</option>)}</select></label>
@@ -209,8 +214,8 @@ export default function App() {
                     <td><button type="button" className="remove-line-button" aria-label="حذف السطر" disabled={journalLines.length <= 2} onClick={() => setJournalLines((rows) => rows.filter((_, i) => i !== index))}>×</button></td></tr>)}
                 </tbody></table></div>
                 <div className="balance-preview form-wide"><div><span>إجمالي المدين</span><strong>{debitTotal.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>إجمالي الدائن</span><strong>{creditTotal.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div className={Math.abs(journalDifference) <= 0.00005 ? "balance-ok" : "balance-warn"}><span>الفرق</span><strong>{journalDifference.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong><small>{Math.abs(journalDifference) <= 0.00005 ? "القيد متوازن" : "القيد غير متوازن"}</small></div><small>{selectedCompany?.base_currency_code || ""}</small></div>
-                <div className="form-actions form-wide"><button type="button" className="subtle-button" onClick={() => setJournalModal(false)}>إلغاء</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "جارٍ الحفظ…" : "حفظ كمسودة"}</button></div>
-              </form>
+                <div className="form-actions form-wide"><button type="button" className="subtle-button" onClick={() => setJournalModal(false)}>إلغاء</button><button type="submit" className="primary-button">مراجعة القيد ←</button></div>
+              </form> : <div className="journal-review"><div className="review-meta"><div><span>الشركة</span><strong>{selectedCompany?.name_ar || "—"}</strong></div><div><span>الفرع</span><strong>{branches.find((item) => item.id === Number(draft.branch))?.name_ar || "—"}</strong></div><div><span>السنة المالية</span><strong>{fiscalYears.find((item) => item.id === Number(draft.fiscal_year))?.name || "—"}</strong></div><div><span>رقم القيد</span><strong>{draft.entry_number || "—"}</strong></div><div><span>التاريخ</span><strong>{draft.entry_date}</strong></div><div className="review-description"><span>البيان</span><strong>{draft.description || "—"}</strong></div></div><div className="journal-lines-wrap"><table className="journal-lines-table"><thead><tr><th>#</th><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>{journalLines.map((line, index) => { const account = accounts.find((item) => item.id === Number(line.account)); return <tr key={index}><td>{index + 1}</td><td>{account ? `${account.code} · ${account.name_ar}` : "—"}</td><td>{line.description || draft.description || "—"}</td><td>{(Number(line.debit) || 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{(Number(line.credit) || 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>; })}</tbody></table></div><div className="review-totals"><div><span>إجمالي المدين</span><strong>{debitTotal.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>إجمالي الدائن</span><strong>{creditTotal.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>الفرق</span><strong>{journalDifference.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong><small> {selectedCompany?.base_currency_code || ""} · متوازن</small></div></div><div className="form-actions"><button type="button" className="subtle-button" disabled={saving} onClick={() => setReviewingJournal(false)}>← تعديل البيانات</button><button type="button" className="primary-button" disabled={saving} onClick={() => void saveDraft()}>{saving ? "جارٍ الحفظ…" : "تأكيد وحفظ كمسودة"}</button></div></div>}
             </section>
           </div>}
           <footer className="page-footer"><span>© 2026 NEXUS ERP</span><span><i /> واجهة التطوير المحلية</span><span>الإصدار التأسيسي 0.1.0</span></footer>
