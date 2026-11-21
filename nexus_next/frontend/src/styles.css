@@ -16,6 +16,7 @@
 .work-panel{background:white;border:1px solid #e9edf3;border-radius:12px;padding:20px;min-height:450px}.work-panel-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:18px;border-bottom:1px solid #edf0f5}.work-panel-head p{font-size:10px;color:#8a96a7}.coming-soon{font-size:9px;color:#b17a2e;background:#fff6e6;border-radius:7px;padding:6px 9px}.table-placeholder{margin-top:22px;border:1px solid #edf0f4;border-radius:9px;overflow:hidden}.table-toolbar{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;font-size:11px;font-weight:700}.small{padding:7px 10px;font-size:9px}.table-head{display:grid;grid-template-columns:1fr 1fr 2fr 1fr 1fr;background:#f7f9fc;padding:11px 14px;color:#7d899a;font-size:9px}.table-empty{text-align:center;padding:65px 15px;color:#9aa6b5;font-size:10px}.page-footer{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #e8edf3;margin-top:27px;padding-top:14px;color:#9aa5b4;font-size:9px}.page-footer span:nth-child(2){display:flex;align-items:center;gap:6px}.page-footer i{width:6px;height:6px;border-radius:50%;background:#42b987}.mobile-scrim{display:none}
 /* استجابة الهيكل العام والقائمة الجانبية والتنقل على الهاتف. */
 @media(max-width:1100px){.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.modules-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة الهيكل العام والقائمة الجانبية والتنقل على الهاتف. */
 @media(max-width:760px){.sidebar{position:fixed;right:0;top:0;z-index:20;transform:translateX(105%);transition:transform .22s ease;width:275px}.sidebar-open{transform:translateX(0)}.sidebar-close{display:block}.mobile-scrim{display:block;position:fixed;inset:0;background:#0d1729a8;border:0;z-index:15}.menu-toggle{display:block}.topbar{height:62px;padding:0 15px}.topbar-actions{gap:7px}.period-select{font-size:0;padding:8px}.period-select span{font-size:10px}.top-user>span,.top-user>b{display:none}.top-user{padding-right:7px}.page-content{padding-top:24px}.welcome-row{align-items:flex-start;flex-direction:column}.welcome-row h1{font-size:22px}.primary-button{padding:9px 12px}.modules-grid{grid-template-columns:1fr}.page-footer{flex-wrap:wrap}.table-head{grid-template-columns:1fr 1fr 1.5fr}.table-head span:nth-child(4),.table-head span:nth-child(5){display:none}}
 /* استجابة الهيكل العام والقائمة الجانبية والتنقل على الهاتف. */
 @media(max-width:430px){.metrics-grid{grid-template-columns:1fr 1fr;gap:8px}.metric-card{padding:12px;min-height:120px}.metric-top{font-size:9px}.metric-value{font-size:20px}.section-heading h2{font-size:13px}.breadcrumb{font-size:10px}.topbar-start{gap:9px}}
@@ -96,6 +97,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .form-actions.form-wide{grid-column:1/-1}
 /* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
 @media(max-width:800px){.journal-form{grid-template-columns:repeat(2,minmax(0,1fr))}.balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
 @media(max-width:560px){.modal-backdrop{padding:7px;align-items:end}.journal-modal{max-height:96vh;padding:15px;border-radius:17px 17px 9px 9px}.journal-form{grid-template-columns:1fr;gap:12px}.journal-form label:nth-child(5),.journal-lines-head,.journal-lines-wrap,.balance-preview.form-wide,.form-actions.form-wide{grid-column:1}.journal-lines-head{align-items:flex-start}.journal-lines-head>div{display:block}.balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr))}.form-actions.form-wide{justify-content:stretch}.form-actions.form-wide button{flex:1}}
 /* مراجعة القيد قبل الحفظ: بيانات القيد، الإجماليات والتحقق من التوازن. */
 .journal-review{display:flex;flex-direction:column;gap:17px}.review-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.review-meta>div,.review-totals>div{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--nx-border,#e3e9f1);border-radius:10px;background:var(--surface-soft,#f8fafc);min-width:0}.review-meta span,.review-totals span{font-size:11px;color:var(--muted,#7b8798)}.review-meta strong{font-size:13px;overflow-wrap:anywhere}.review-description{grid-column:1/-1}.review-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.review-totals strong{font-size:17px;font-variant-numeric:tabular-nums}.review-totals small{font-size:11px;color:#16845c}.journal-review .form-actions{justify-content:space-between}.journal-review .form-actions button{min-height:42px}
@@ -119,6 +121,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .customer-status-active{background:#e8f7ef;color:#26865d}.customer-status-inactive{background:#f1f3f6;color:#7b8796}
 /* استجابة شاشة العملاء ونموذج بيانات العميل للشاشات الصغيرة. */
 @media(max-width:760px){.customer-form{grid-template-columns:repeat(2,minmax(0,1fr))}.customer-toolbar{flex-wrap:wrap}.customer-toolbar input{order:3;flex-basis:100%}}
+/* استجابة شاشة العملاء ونموذج بيانات العميل للشاشات الصغيرة. */
 @media(max-width:460px){.customer-form{grid-template-columns:1fr}.customer-form-wide{grid-column:auto}.customer-form-actions{grid-column:1/-1}}
 
 
@@ -139,6 +142,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .inventory-form textarea{resize:vertical;min-height:70px}
 /* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:760px){.inventory-form{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-wide,.inventory-actions{grid-column:1/-1}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:460px){.inventory-form{grid-template-columns:1fr}.inventory-wide,.inventory-actions{grid-column:auto}.inventory-actions{flex-direction:column}.inventory-actions button{width:100%}}
 
 
@@ -150,6 +154,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .inventory-reports{display:grid;gap:16px;padding-top:14px}.inventory-report-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.inventory-report-section{margin:0;min-width:0}.inventory-report-section .activity-title{padding:14px 16px}.inventory-report-section .activity-title h3{margin:0;font-size:13px;color:#304159}.inventory-report-section .activity-title p{margin:4px 0 0;font-size:10px;color:#8794a7}.inventory-report-note{margin:0;padding:11px 13px;border:1px solid #e6ebf2;border-radius:9px;color:#738197;background:#f8fafd;font-size:10px;line-height:1.8}
 /* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:900px){.inventory-report-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:460px){.inventory-report-metrics{grid-template-columns:1fr}}
 
 
@@ -157,6 +162,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .reconciliation-result{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:14px}.reconciliation-result>div:not(.reconciliation-status){display:flex;flex-direction:column;gap:6px;padding:11px;border:1px solid #e7edf4;border-radius:8px;background:#fafbfd;min-width:0}.reconciliation-result span{font-size:10px;color:#7a8799}.reconciliation-result strong{font-size:13px;color:#34465e;overflow-wrap:anywhere}.reconciliation-status{grid-column:1/-1;padding:11px 13px;border-radius:8px;font-size:11px;font-weight:750}.reconciliation-status.matched{background:#eaf7ef;color:#237747}.reconciliation-status.mismatch{background:#fff0ef;color:#b44949}
 /* استجابة نتائج المطابقة وعرض الفروق على الشاشات الصغيرة. */
 @media(max-width:760px){.reconciliation-result{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة نتائج المطابقة وعرض الفروق على الشاشات الصغيرة. */
 @media(max-width:460px){.reconciliation-result{grid-template-columns:1fr}}
 
 
@@ -164,6 +170,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .stock-card-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:10px;padding:14px;align-items:end}.stock-card-filters label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#64748b}.stock-card-filters input,.stock-card-filters select{min-width:0;min-height:37px;padding:7px 9px;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#34465e}.stock-card-filters .primary-button{white-space:nowrap;min-height:37px}.stock-card-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:12px 14px}.stock-card-summary>div{display:flex;flex-direction:column;gap:5px;min-width:0;padding:10px;border:1px solid #e7edf4;border-radius:8px;background:#fafbfd}.stock-card-summary span{font-size:10px;color:#7a8799}.stock-card-summary strong{font-size:12px;color:#34465e;overflow-wrap:anywhere}
 /* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:1000px){.stock-card-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.stock-card-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:460px){.stock-card-filters,.stock-card-summary{grid-template-columns:1fr}}
 
 
@@ -174,6 +181,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .inventory-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px}
 /* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:760px){.inventory-form-row{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-form-row label:first-child{grid-column:1/-1}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
 @media(max-width:460px){.inventory-form-row{grid-template-columns:1fr}.inventory-form-row label:first-child{grid-column:auto}.inventory-form-actions{flex-direction:column}.inventory-form-actions button{width:100%}}
 
 /* العملاء والموردون: ملخص المديونيات وتقسيم أعمار الديون. */
@@ -196,6 +204,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .treasury-form-actions{display:flex;align-items:end;justify-content:flex-start}
 /* استجابة شاشات الخزينة والبنوك والتسوية واستيراد كشف البنك. */
 @media(max-width:760px){.treasury-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشات الخزينة والبنوك والتسوية واستيراد كشف البنك. */
 @media(max-width:480px){.treasury-form{grid-template-columns:1fr}.treasury-form .form-wide{grid-column:auto}}
 
 .treasury-recon-select{max-width:520px;margin:12px 0 18px}
@@ -233,6 +242,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .asset-depreciation-action{display:flex;align-items:end;gap:12px;margin:12px 0 16px}.asset-depreciation-action label{width:220px}
 /* استجابة شاشة الأصول الثابتة ونماذج الإهلاك والاستبعاد. */
 @media(max-width:900px){.assets-panel .asset-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشة الأصول الثابتة ونماذج الإهلاك والاستبعاد. */
 @media(max-width:560px){.assets-panel .asset-form{grid-template-columns:1fr}.asset-form-heading{display:block}.asset-form-heading small{display:block;margin-top:5px}.asset-description{grid-column:auto}.asset-depreciation-action{align-items:stretch;flex-direction:column}.asset-depreciation-action label{width:100%}}
 
 /* استبعاد وبيع الأصل: نموذج بيانات الاستبعاد وتقارير الأصول. */
@@ -498,6 +508,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .account-role-item strong{font-size:9px;color:#3b6592;background:#f0f5fb;padding:4px 6px;border-radius:5px}
 /* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
 @media(max-width:1000px){.account-role-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.account-tree-row{grid-template-columns:22px 22px 75px minmax(120px,1.5fr) auto 68px 52px}.account-tree-columns{grid-template-columns:95px minmax(150px,2fr) 80px 55px}}
+/* توضيح قواعد التجاوب لهذا الجزء حسب عرض الشاشة. */
 @media(max-width:700px){
  .accounts-hero{padding:23px 19px}.accounts-hero h2{font-size:21px!important}.accounts-hero-mark{width:65px;height:65px;flex-basis:65px;border-radius:20px}.accounts-hero-mark span{font-size:38px}
  .accounts-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:13px 13px 3px;gap:8px}.accounts-stat-grid article{padding:11px}.accounts-stat-grid article strong{font-size:19px}
@@ -557,6 +568,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .account-role-manager-footnote{font-size:11px;color:var(--muted,#94a6bd);line-height:1.6}
 /* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
 @media(max-width:900px){.account-role-manager-grid{grid-template-columns:1fr}}
+/* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
 @media(max-width:560px){.account-role-manager{padding:13px}.account-role-manager-row{grid-template-columns:1fr;gap:8px}.account-role-manager-row button{width:100%}.account-role-manager-heading{flex-direction:column}}
 
 /* الموارد البشرية والمرتبات: رسائل النجاح والتبويبات والنماذج والجداول. */
@@ -595,4 +607,5 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .system-monitor table{min-width:760px}
 /* استجابة لوحة المؤشرات ومراقبة النظام للشاشات الأصغر. */
 @media(max-width:900px){.finance-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.monitor-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة لوحة المؤشرات ومراقبة النظام للشاشات الأصغر. */
 @media(max-width:640px){.finance-kpi-grid,.monitor-kpis{grid-template-columns:1fr 1fr}.finance-balance-strip,.finance-aging-grid{grid-template-columns:1fr}.dashboard-filters{display:grid;grid-template-columns:1fr 1fr}.dashboard-filters .primary-button{grid-column:1/-1}.system-monitor .monitor-tabs{overflow:auto}.system-monitor .monitor-tabs button{white-space:nowrap}}
