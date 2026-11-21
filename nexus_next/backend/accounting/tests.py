@@ -773,3 +773,42 @@ class AccountExcelImportTests(TestCase):
         self.assertEqual(root.name_ar, "الأصول")
         self.assertFalse(root.allow_posting)
         self.assertEqual(ChartOfAccount.objects.filter(company=self.company, code="1000").count(), 1)
+
+    def test_account_role_can_be_remapped_without_changing_role_identity(self):
+        old = ChartOfAccount.objects.create(company=self.company, code="1110", name_ar="الصندوق القديم", nature="asset")
+        new = ChartOfAccount.objects.create(company=self.company, code="1120", name_ar="الصندوق الرئيسي", nature="asset")
+        role = AccountRole.objects.create(company=self.company, role="cash", account=old)
+        response = self.client.patch(
+            f"/api/accounting/account-roles/{role.pk}/", {"account": new.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        role.refresh_from_db()
+        self.assertEqual(role.role, "cash")
+        self.assertEqual(role.company_id, self.company.pk)
+        self.assertEqual(role.account_id, new.pk)
+
+    def test_account_role_identity_and_company_cannot_be_changed(self):
+        account = ChartOfAccount.objects.create(company=self.company, code="1110", name_ar="الصندوق", nature="asset")
+        role = AccountRole.objects.create(company=self.company, role="cash", account=account)
+        response = self.client.patch(
+            f"/api/accounting/account-roles/{role.pk}/", {"role": "bank"}, format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        role.refresh_from_db()
+        self.assertEqual(role.role, "cash")
+
+    def test_account_role_rejects_group_inactive_or_cross_company_accounts(self):
+        role_account = ChartOfAccount.objects.create(company=self.company, code="1110", name_ar="الصندوق", nature="asset")
+        role = AccountRole.objects.create(company=self.company, role="cash", account=role_account)
+        group = ChartOfAccount.objects.create(company=self.company, code="1000", name_ar="الأصول", nature="asset",
+                                              is_group=True, allow_posting=False)
+        response = self.client.patch(
+            f"/api/accounting/account-roles/{role.pk}/", {"account": group.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        role_account.is_active = False
+        role_account.save()
+        response = self.client.patch(
+            f"/api/accounting/account-roles/{role.pk}/", {"account": role_account.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 400)
