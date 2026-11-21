@@ -5,6 +5,44 @@ import unittest
 
 from tax_center import _columns, _table_exists
 
+class TaxMechanismSchemaSQLiteTests(unittest.TestCase):
+    def test_special_tax_storage_migration_is_additive_and_idempotent(self):
+        from tax_center import initialize_tax_schema
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("""CREATE TABLE sales_invoices(
+                id INTEGER PRIMARY KEY, invoice_no TEXT NOT NULL,
+                status TEXT NOT NULL, tax_amount TEXT NOT NULL DEFAULT '0'
+            )""")
+            conn.execute("""INSERT INTO sales_invoices(id,invoice_no,status,tax_amount)
+                VALUES(7,'OLD-007','posted','14.00')""")
+            conn.commit()
+
+            initialize_tax_schema(conn)
+            initialize_tax_schema(conn)
+
+            columns = _columns(conn, "tax_document_mechanisms")
+            self.assertTrue({
+                "country_code", "document_kind", "document_id", "mechanism_code",
+                "tax_type", "taxable_base", "tax_rate", "quantity",
+                "amount_per_unit", "deductible_percent", "output_tax",
+                "recoverable_input_tax", "nonrecoverable_input_tax",
+                "tax_amount", "journal_entry_id", "status",
+            }.issubset(columns))
+            legacy = conn.execute(
+                "SELECT invoice_no,status,tax_amount FROM sales_invoices WHERE id=7"
+            ).fetchone()
+            self.assertEqual(tuple(legacy), ("OLD-007", "posted", "14.00"))
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM tax_document_mechanisms").fetchone()[0],
+                0,
+            )
+        finally:
+            conn.close()
+
+
 class TaxMetadataSQLiteTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
