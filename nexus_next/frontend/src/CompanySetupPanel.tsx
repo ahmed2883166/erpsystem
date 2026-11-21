@@ -5,6 +5,7 @@ type Props = {
   companies: Company[];
   companyId: number | null;
   onCompanyCreated: (company: Company) => void;
+  onStructureChanged: () => Promise<void>;
 };
 
 const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
@@ -15,7 +16,7 @@ const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
   industrial: "صناعي",
 };
 
-export default function CompanySetupPanel({ companies, companyId, onCompanyCreated }: Props) {
+export default function CompanySetupPanel({ companies, companyId, onCompanyCreated, onStructureChanged }: Props) {
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [years, setYears] = useState<FiscalYear[]>([]);
@@ -103,6 +104,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
         is_head_office: branches.length === 0, is_active: true,
       });
       await refreshStructure(companyId);
+      await onStructureChanged();
       setNotice("تم إنشاء الفرع وحفظه.");
       setBranchCode(""); setBranchName(""); setBranchAddress("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء الفرع."); }
@@ -119,6 +121,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
         start_date: yearStart, end_date: yearEnd, status: "open",
       });
       await refreshStructure(companyId);
+      await onStructureChanged();
       setNotice("تم إنشاء السنة المالية المفتوحة.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء السنة المالية."); }
     finally { setBusy(false); }
