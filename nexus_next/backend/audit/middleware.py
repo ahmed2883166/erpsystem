@@ -3,6 +3,8 @@ import json
 import logging
 import uuid
 
+from django.urls import Resolver404, resolve
+
 from companies.models import Branch, Company
 from .models import AuditEvent
 
@@ -36,6 +38,34 @@ def _json_object(raw):
         return {}
 
 
+def _target_before_request(request):
+    """Capture ownership before a DELETE removes the target row."""
+    try:
+        match = resolve(request.path_info)
+    except Resolver404:
+        return None, None, None
+    view_class = getattr(match.func, "cls", None)
+    queryset = getattr(view_class, "queryset", None)
+    serializer_class = getattr(view_class, "serializer_class", None)
+    model = getattr(queryset, "model", None) or getattr(
+        getattr(serializer_class, "Meta", None), "model", None
+    )
+    object_id = _numeric_id(match.kwargs.get("pk") or match.kwargs.get("id"))
+    if model is None or object_id is None:
+        return object_id, None, None
+    instance = model._default_manager.filter(pk=object_id).first()
+    if instance is None:
+        return object_id, None, None
+    if isinstance(instance, Company):
+        return object_id, instance.pk, None
+    company_id = getattr(instance, "company_id", None)
+    branch_id = getattr(instance, "branch_id", None)
+    if company_id is None and branch_id:
+        branch = Branch.objects.filter(pk=branch_id).only("company_id").first()
+        company_id = branch.company_id if branch else None
+    return object_id, company_id, branch_id
+
+
 class AuditTrailMiddleware:
     """Record API write attempts without persisting request/response payloads."""
 
@@ -43,9 +73,13 @@ class AuditTrailMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        response = self.get_response(request)
         method = request.method.upper()
-        if not request.path.startswith("/api/") or method not in _ACTIONS:
+        should_audit = request.path.startswith("/api/") and method in _ACTIONS
+        prior_object_id, prior_company_id, prior_branch_id = (
+            _target_before_request(request) if should_audit else (None, None, None)
+        )
+        response = self.get_response(request)
+        if not should_audit:
             return response
 
         try:
@@ -55,11 +89,11 @@ class AuditTrailMiddleware:
 
             company_id = _numeric_id(
                 request.GET.get("company") or payload.get("company") or payload.get("company_id")
-            )
+            ) or prior_company_id
             branch_id = _numeric_id(
                 request.GET.get("branch") or payload.get("branch") or payload.get("branch_id")
-            )
-            company = Company.objects.filter(pk=company_id).only("id").first() if company_id else None
+            ) or prior_branch_id
+            company = Company.objects.filter(pk=company_id).first() if company_id else None
             branch = Branch.objects.select_related("company").filter(pk=branch_id).first() if branch_id else None
             if branch and company and branch.company_id != company.pk:
                 branch = None
@@ -70,36 +104,10 @@ class AuditTrailMiddleware:
             content_type = response.get("Content-Type", "")
             if "json" in content_type.lower() and not getattr(response, "streaming", False):
                 response_data = _json_object(response.content)
-            object_id = _numeric_id(response_data.get("id"))
+            object_id = _numeric_id(response_data.get("id")) or prior_object_id
             path_parts = [part for part in request.path.rstrip("/").split("/") if part]
             if object_id is None and path_parts:
                 object_id = _numeric_id(path_parts[-1])
-
-            # Resolve ownership for update/delete requests with no company in the payload.
-            if object_id and (company is None or branch is None):
-                match = getattr(request, "resolver_match", None)
-                view_class = getattr(getattr(match, "func", None), "cls", None)
-                queryset = getattr(view_class, "queryset", None)
-                serializer_class = getattr(view_class, "serializer_class", None)
-                model = getattr(queryset, "model", None) or getattr(
-                    getattr(serializer_class, "Meta", None), "model", None
-                )
-                if model is not None:
-                    instance = model._default_manager.filter(pk=object_id).first()
-                    if instance is not None:
-                        if isinstance(instance, Company):
-                            company = company or instance
-                        else:
-                            inferred_company_id = getattr(instance, "company_id", None)
-                            inferred_branch_id = getattr(instance, "branch_id", None)
-                            if company is None and inferred_company_id:
-                                company = Company.objects.filter(pk=inferred_company_id).first()
-                            if branch is None and inferred_branch_id:
-                                branch = Branch.objects.select_related("company").filter(
-                                    pk=inferred_branch_id
-                                ).first()
-                            if company is None and branch is not None:
-                                company = branch.company
 
             action = _ACTIONS[method]
             if method == "POST" and path_parts and path_parts[-1].lower() in _ACTION_ENDPOINTS:
