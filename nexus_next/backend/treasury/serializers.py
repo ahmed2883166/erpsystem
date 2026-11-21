@@ -77,6 +77,16 @@ class BankStatementLineSerializer(serializers.ModelSerializer):
                   "amount", "matched_transaction", "matched_document", "matched_amount", "matched_at")
         read_only_fields = ("matched_transaction", "matched_at")
 
+    def validate(self, attrs):
+        recon = attrs.get("reconciliation", getattr(self.instance, "reconciliation", None))
+        line_date = attrs.get("transaction_date", getattr(self.instance, "transaction_date", None))
+        amount = attrs.get("amount", getattr(self.instance, "amount", None))
+        if amount == 0:
+            raise serializers.ValidationError({"amount": "قيمة حركة كشف البنك لا يمكن أن تكون صفرًا."})
+        if recon and line_date and line_date > recon.statement_date:
+            raise serializers.ValidationError({"transaction_date": "تاريخ الحركة بعد تاريخ كشف البنك."})
+        return attrs
+
 
 class BankReconciliationSerializer(serializers.ModelSerializer):
     bank_name = serializers.CharField(source="bank_account.name_ar", read_only=True)
@@ -89,3 +99,12 @@ class BankReconciliationSerializer(serializers.ModelSerializer):
                   "statement_date", "opening_balance", "closing_balance", "status", "line_count",
                   "created_at", "reconciled_at")
         read_only_fields = ("status", "created_at", "reconciled_at", "line_count")
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        bank = attrs.get("bank_account", getattr(self.instance, "bank_account", None))
+        if bank and company and bank.company_id != company.id:
+            raise serializers.ValidationError({"bank_account": "الحساب البنكي لا يتبع الشركة."})
+        if bank and (bank.kind != TreasuryAccount.Kind.BANK or not bank.is_active):
+            raise serializers.ValidationError({"bank_account": "اختر حسابًا بنكيًا نشطًا."})
+        return attrs
