@@ -45,6 +45,10 @@ def calculate_payroll_cycle(cycle_id, actor=None):
     cycle = PayrollCycle.objects.select_for_update().select_related("company", "rule_set").get(pk=cycle_id)
     if cycle.status not in (PayrollCycle.Status.DRAFT, PayrollCycle.Status.CALCULATED, PayrollCycle.Status.REVIEW):
         raise ValidationError("لا يمكن إعادة احتساب دورة معتمدة أو مرحلة أو مصروفة.")
+    if PayrollCycle.objects.filter(
+        company=cycle.company, period_start__lte=cycle.period_end, period_end__gte=cycle.period_start
+    ).exclude(pk=cycle.pk).exists():
+        raise ValidationError("توجد دورة مرتبات أخرى تتداخل مع هذه الفترة؛ راجع الدورات قبل الاحتساب.")
     employees = Employee.objects.filter(
         company=cycle.company,
         hire_date__lte=cycle.period_end,
