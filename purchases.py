@@ -2332,7 +2332,7 @@ def new_bill():
                 status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
                 asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
                 asset_account_id,asset_accum_account_id,asset_expense_account_id,activity_code)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (no,supplier,request.form["bill_date"],due_date,supplier_invoice_no,str(subtotal),str(rate),
                  str(tax),str(total),str(deductible_percent),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
                  dimensions["project_id"],tax_category,tax_treatment,bill_kind,expense_account_id,
