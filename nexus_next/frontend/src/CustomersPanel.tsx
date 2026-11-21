@@ -1,3 +1,7 @@
+/*
+ * إدارة العملاء: البحث وعرض بيانات العملاء وإنشاءها وتعديلها.
+ * تشمل بيانات التعريف والاتصال والحد الائتماني وشروط السداد.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { api, type Customer } from "./api";
 
