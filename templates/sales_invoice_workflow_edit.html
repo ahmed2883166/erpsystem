@@ -60,7 +60,7 @@ document.querySelectorAll('tbody tr').forEach(function(row){
   </div>
   <h3>بنود الفاتورة</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>الصنف</th><th>الوصف</th><th>الكمية</th><th>وحدة البيع</th><th>سعر الوحدة</th><th>المعاملة الضريبية</th><th>النسبة %</th></tr></thead>
+    <thead><tr><th>الصنف</th><th>الوصف</th><th>الكمية</th><th>وحدة البيع</th><th>سعر الوحدة</th><th>المعاملة الضريبية</th><th>التصنيف التفصيلي</th><th>النسبة %</th></tr></thead>
     <tbody>
     {% for n in range([payload['items']|length,8]|max) %}
       {% set line = payload['items'][n] if n < payload['items']|length else {} %}
@@ -79,6 +79,9 @@ document.querySelectorAll('tbody tr').forEach(function(row){
         <td><select name="line_tax_treatment">
           {% for key,label in [('standard','خاضع للضريبة'),('zero_rated','صفرية'),('exempt','معفاة'),('out_of_scope','خارج النطاق')] %}
           <option value="{{ key }}" {% if line.get('tax_treatment','standard') == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select></td>
+        <td><select name="line_tax_category"><option value="">بدون تصنيف تفصيلي</option>
+          {% for category in sales_tax_categories %}<option value="{{ category.code }}" data-treatment="{{ category.treatment }}" {% if line.get('tax_category','') == category.code %}selected{% endif %}>{{ category.label_ar }}</option>{% endfor %}
         </select></td>
         <td><input name="line_tax_rate" type="number" min="0" max="100" step="0.01" value="{{ line.get('tax_rate',settings.get('default_vat_rate','0')) }}" required></td>
       </tr>
