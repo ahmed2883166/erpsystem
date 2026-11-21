@@ -3,6 +3,9 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework import serializers
 
+from approvals.models import FinancialApprovalRequest
+from approvals.services import refresh_financial_approval
+
 from accounting.models import TaxCode
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
@@ -246,6 +249,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
         invoice.grand_total = invoice.net_total + invoice.tax_total
         invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
+            invoice, self.context["request"].user,
+        )
         return invoice
 
 
@@ -277,10 +284,16 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد الفاتورة."})
         return attrs
 
+    @transaction.atomic
     def create(self, validated_data):
-        return SupplierPayment.objects.create(
+        payment = SupplierPayment.objects.create(
             **validated_data, created_by=self.context["request"].user
         )
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
+            payment, self.context["request"].user,
+        )
+        return payment
 
 
 class PurchaseOrderLineInputSerializer(serializers.Serializer):
