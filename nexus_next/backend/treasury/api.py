@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.db.models import Sum
-from django.utils import timezone
+from django.utils import timezone, dateparse
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import decorators, permissions, response, status, viewsets
 from django.db import models
@@ -98,6 +98,58 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         except DjangoValidationError as exc:
             raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
         return response.Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
+
+
+    @decorators.action(detail=False, methods=("get",), url_path="cash-flow")
+    def cash_flow(self, request):
+        company_id = request.query_params.get("company")
+        if not company_id or not company_id.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض التدفقات النقدية."})
+        company_id = int(company_id)
+        self._scope(company_id)
+        rows = self.get_queryset().filter(
+            company_id=company_id, status=TreasuryTransaction.Status.POSTED
+        ).exclude(kind=TreasuryTransaction.Kind.TRANSFER).select_related(
+            "source_account", "journal_entry", "branch"
+        )
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            if not branch_id.isdigit() or not can_access_branch(request.user, int(branch_id), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            rows = rows.filter(branch_id=int(branch_id))
+        date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
+        date_from = dateparse.parse_date(date_from_raw) if date_from_raw else None
+        date_to = dateparse.parse_date(date_to_raw) if date_to_raw else None
+        if date_from_raw and not date_from:
+            raise ValidationError({"date_from": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if date_to_raw and not date_to:
+            raise ValidationError({"date_to": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
+        if date_from:
+            rows = rows.filter(transaction_date__gte=date_from)
+        if date_to:
+            rows = rows.filter(transaction_date__lte=date_to)
+        categories = []
+        for code, label in TreasuryTransaction.CashFlowCategory.choices:
+            selected = list(rows.filter(cash_flow_category=code))
+            inflows = sum((row.amount for row in selected if row.kind == TreasuryTransaction.Kind.RECEIPT), start=0)
+            outflows = sum((row.amount for row in selected if row.kind == TreasuryTransaction.Kind.PAYMENT), start=0)
+            categories.append({"category": code, "label": label, "inflows": inflows,
+                               "outflows": outflows, "net": inflows - outflows})
+        details = [{
+            "id": row.pk, "date": row.transaction_date, "document_number": row.document_number,
+            "description": row.description, "branch": row.branch.name_ar,
+            "category": row.cash_flow_category, "kind": row.kind, "amount": row.amount,
+            "signed_amount": row.amount if row.kind == TreasuryTransaction.Kind.RECEIPT else -row.amount,
+            "treasury_account": row.source_account.name_ar, "journal_entry": row.journal_entry_id,
+        } for row in rows.order_by("transaction_date", "id")]
+        return response.Response({
+            "company": company_id, "date_from": date_from, "date_to": date_to,
+            "categories": categories, "rows": details,
+            "net_cash_flow": sum((item["net"] for item in categories), start=0),
+            "note": "يعرض الحركات النقدية المرحلة من الخزائن والبنوك فقط؛ التحويلات الداخلية مستبعدة.",
+        })
 
 
 class BankReconciliationViewSet(TreasuryBaseViewSet):
