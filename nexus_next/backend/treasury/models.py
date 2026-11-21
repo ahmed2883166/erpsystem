@@ -118,3 +118,55 @@ class TreasuryTransaction(models.Model):
         if self.status != self.Status.DRAFT:
             raise ValidationError("لا يمكن حذف مستند خزينة مرحّل.")
         return super().delete(*args, **kwargs)
+
+
+class BankReconciliation(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        RECONCILED = "reconciled", "تمت التسوية"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="bank_reconciliations")
+    bank_account = models.ForeignKey(TreasuryAccount, on_delete=models.PROTECT, related_name="reconciliations")
+    statement_number = models.CharField(max_length=60)
+    statement_date = models.DateField()
+    opening_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    closing_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_bank_reconciliations")
+    created_at = models.DateTimeField(auto_now_add=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-statement_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "bank_account", "statement_number"), name="uq_bank_recon_statement_no")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.bank_account_id and self.bank_account.company_id != self.company_id:
+            raise ValidationError({"bank_account": "الحساب البنكي لا يتبع الشركة."})
+        if self.bank_account_id and self.bank_account.kind != TreasuryAccount.Kind.BANK:
+            raise ValidationError({"bank_account": "التسوية متاحة للحسابات البنكية فقط."})
+        if self.closing_balance < 0:
+            raise ValidationError({"closing_balance": "رصيد كشف البنك لا يمكن أن يكون سالبًا."})
+
+
+class BankStatementLine(models.Model):
+    reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name="lines")
+    line_number = models.PositiveIntegerField()
+    transaction_date = models.DateField()
+    description = models.CharField(max_length=500, blank=True)
+    reference = models.CharField(max_length=120, blank=True)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    matched_transaction = models.ForeignKey(TreasuryTransaction, null=True, blank=True, on_delete=models.PROTECT, related_name="bank_statement_matches")
+    matched_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("line_number", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("reconciliation", "line_number"), name="uq_bank_recon_line_no"),
+            models.UniqueConstraint(fields=("reconciliation", "matched_transaction"), condition=models.Q(matched_transaction__isnull=False), name="uq_bank_recon_matched_tx"),
+        ]
