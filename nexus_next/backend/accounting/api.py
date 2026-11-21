@@ -9,7 +9,7 @@ from .services import post_journal
 
 
 class AccountingViewSet(viewsets.ModelViewSet):
-    permission_classes = (permissions.IsAuthenticated,)
+    permission_classes = (permissions.DjangoModelPermissions,)
 
 
 class ChartOfAccountViewSet(AccountingViewSet):
@@ -45,6 +45,7 @@ class JournalEntryViewSet(AccountingViewSet):
     def perform_update(self, serializer):
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
+        serializer.save()
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
