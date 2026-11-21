@@ -158,6 +158,8 @@ class StockMovementSerializer(serializers.ModelSerializer):
         for warehouse in (source, destination):
             if warehouse and company and warehouse.company_id != company.pk:
                 raise serializers.ValidationError("المخزن لا يتبع الشركة المحددة.")
+            if warehouse and not warehouse.is_active:
+                raise serializers.ValidationError("لا يمكن تسجيل حركة على مخزن موقوف.")
         if movement_type == StockMovement.MovementType.RECEIPT and not destination:
             raise serializers.ValidationError({"destination_warehouse": "حدد مخزن الاستلام."})
         if movement_type == StockMovement.MovementType.ISSUE and not source:
@@ -175,10 +177,12 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "الخدمات لا تقبل حركات مخزنية."})
             source_location = line.get("source_location")
             destination_location = line.get("destination_location")
-            if source_location and (not source or source_location.warehouse_id != source.pk):
-                raise serializers.ValidationError({"lines": "موقع المصدر لا يتبع مخزن المصدر المحدد."})
-            if destination_location and (not destination or destination_location.warehouse_id != destination.pk):
-                raise serializers.ValidationError({"lines": "موقع الوجهة لا يتبع مخزن الوجهة المحدد."})
+            if not product.is_active:
+                raise serializers.ValidationError({"lines": "لا يمكن تسجيل حركة على صنف موقوف."})
+            if source_location and (not source or source_location.warehouse_id != source.pk or not source_location.is_active):
+                raise serializers.ValidationError({"lines": "موقع المصدر غير نشط أو لا يتبع مخزن المصدر المحدد."})
+            if destination_location and (not destination or destination_location.warehouse_id != destination.pk or not destination_location.is_active):
+                raise serializers.ValidationError({"lines": "موقع الوجهة غير نشط أو لا يتبع مخزن الوجهة المحدد."})
             expiry_date = line.get("expiry_date")
             if product.track_expiry and not expiry_date:
                 raise serializers.ValidationError({"lines": "تاريخ الصلاحية مطلوب للصنف المتتبع."})
