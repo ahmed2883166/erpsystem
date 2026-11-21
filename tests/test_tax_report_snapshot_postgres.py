@@ -118,6 +118,15 @@ class TaxReportSnapshotPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(snapshot["summary"]["input_vat"], Decimal("56.00"))
                     self.assertEqual(snapshot["sales"][0]["document_no"], "SI-PG-1")
                     self.assertEqual(snapshot["purchases"][0]["document_no"], "PB-PG-1")
+                    self.assertEqual(len(snapshot["purchase_category_breakdown"]), 1)
+                    self.assertEqual(
+                        snapshot["purchase_category_breakdown"][0]["tax_category"],
+                        "legacy_unclassified",
+                    )
+                    self.assertEqual(
+                        snapshot["purchase_category_breakdown"][0]["taxable_base"],
+                        Decimal("400"),
+                    )
                     self.assertTrue(snapshot["ledger_reconciliation"]["available"])
                     self.assertEqual(
                         snapshot["ledger_reconciliation"]["output_difference"],
@@ -171,7 +180,7 @@ class TaxReportSnapshotPostgreSQLTests(unittest.TestCase):
                         }
                         with patch("activity_profiles.active_tax_roles", return_value=roles):
                             sqlite_snapshot = build_tax_report_snapshot(sqlite_conn, "2026-11")
-                        for key in ("tax_profile", "summary", "sales", "purchases", "ledger_reconciliation"):
+                        for key in ("tax_profile", "summary", "sales", "purchases", "purchase_category_breakdown", "ledger_reconciliation"):
                             self.assertEqual(snapshot[key], sqlite_snapshot[key], key)
 
                         conn.execute(
@@ -186,7 +195,7 @@ class TaxReportSnapshotPostgreSQLTests(unittest.TestCase):
                             pg_sa_snapshot = build_tax_report_snapshot(conn, "2026-11")
                             sqlite_sa_snapshot = build_tax_report_snapshot(sqlite_conn, "2026-11")
                         self.assertEqual(pg_sa_snapshot["tax_profile"]["standard_rate"], Decimal("15"))
-                        for key in ("tax_profile", "summary", "sales", "purchases", "ledger_reconciliation"):
+                        for key in ("tax_profile", "summary", "sales", "purchases", "purchase_category_breakdown", "ledger_reconciliation"):
                             self.assertEqual(pg_sa_snapshot[key], sqlite_sa_snapshot[key], "Saudi " + key)
                     finally:
                         sqlite_conn.close()
