@@ -66,7 +66,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.data["grand_total"], "228.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(), 1)
-        self.assertEqual(JournalLine.objects.filter(entry__source_type=JournalEntry.Source.PURCHASES, debit__gt=0).aggregate_total if False else 2, 2)
+        purchase_lines = list(JournalLine.objects.filter(entry__source_type=JournalEntry.Source.PURCHASES))\n        self.assertEqual(sum((line.debit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))\n        self.assertEqual(sum((line.credit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
 
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id = self._create_and_post_receipt()
