@@ -35,7 +35,7 @@ class FixedAssetWorkflowTests(APITestCase):
             "original_cost": "120000.0000", "salvage_value": "12000.0000", "useful_life_months": 36,
             "asset_account": self.asset_gl.pk, "accumulated_depreciation_account": self.accum_gl.pk,
             "depreciation_expense_account": self.expense_gl.pk, "acquisition_counter_account": self.cash_gl.pk,
-            "disposal_gain_loss_account": self.gain_loss_gl.pk, "fiscal_year": self.year.pk,
+            "disposal_gain_loss_account": self.gain_loss_gl.pk, "disposal_loss_account": self.expense_gl.pk, "fiscal_year": self.year.pk,
         }
 
     def test_acquisition_posts_asset_cost_and_monthly_depreciation(self):
@@ -136,7 +136,7 @@ class FixedAssetWorkflowTests(APITestCase):
 
     def test_zero_proceeds_disposal_posts_loss_without_fake_treasury_receipt(self):
         payload = self._payload()
-        payload["disposal_gain_loss_account"] = self.expense_gl.pk
+        payload["disposal_loss_account"] = self.expense_gl.pk
         created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
         self.assertEqual(created.status_code, 201, created.data)
         asset_id = created.data["id"]
