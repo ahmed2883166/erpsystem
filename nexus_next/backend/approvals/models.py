@@ -13,6 +13,11 @@ class DiscountApprovalPolicy(models.Model):
         validators=[MinValueValidator(0), MaxValueValidator(100)],
         help_text="الحد الأقصى للخصم المسموح دون موافقة مدير الشركة.",
     )
+    max_sales_invoice_amount = models.DecimalField(
+        max_digits=20, decimal_places=4, null=True, blank=True,
+        validators=[MinValueValidator(0)],
+        help_text="أقصى إجمالي فاتورة مبيعات دون موافقة مدير الشركة، بعملة الشركة الأساسية.",
+    )
     created_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="created_discount_policies")
     updated_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="updated_discount_policies")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -39,6 +44,7 @@ class SalesInvoiceApproval(models.Model):
     invoice = models.ForeignKey("sales.SalesInvoice", on_delete=models.PROTECT, related_name="approval_requests")
     requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="sales_discount_requests")
     requested_limit = models.DecimalField(max_digits=7, decimal_places=4)
+    requested_invoice_limit = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     requested_discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     requested_max_discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0)
     requested_lines_snapshot = models.JSONField(default=list, editable=False)
@@ -71,7 +77,7 @@ class SalesInvoiceApproval(models.Model):
                 raise ValidationError("قرار الموافقة نهائي ولا يمكن تغييره.")
             immutable_fields = (
                 "company_id", "invoice_id", "requested_by_id", "requested_limit",
-                "requested_discount_total", "requested_max_discount_percent",
+                "requested_invoice_limit", "requested_discount_total", "requested_max_discount_percent",
                 "requested_lines_snapshot", "requested_at",
             )
             if any(getattr(old, field) != getattr(self, field) for field in immutable_fields):
