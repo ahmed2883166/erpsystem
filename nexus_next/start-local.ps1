@@ -6,7 +6,19 @@ Push-Location $Root
 try {
   docker compose -f compose.yaml up -d db
   if ($LASTEXITCODE -ne 0) { throw "تعذر تشغيل PostgreSQL. تأكد أن Docker Desktop يعمل." }
-  if (-not (Test-Path (Join-Path $Backend ".env"))) { Copy-Item (Join-Path $Backend ".env.example") (Join-Path $Backend ".env") }
+  $EnvFile = Join-Path $Backend ".env"
+  if (-not (Test-Path $EnvFile)) {
+    Copy-Item (Join-Path $Backend ".env.example") $EnvFile
+    $LocalSecret = "nexus-local-" + [guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")
+    (Get-Content $EnvFile -Raw).Replace("replace-this-for-local-development", $LocalSecret) | Set-Content $EnvFile -NoNewline
+  }
+  $DatabaseReady = $false
+  for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
+    docker compose -f compose.yaml exec -T db pg_isready *> $null
+    if ($LASTEXITCODE -eq 0) { $DatabaseReady = $true; break }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $DatabaseReady) { throw "PostgreSQL لم يصبح جاهزًا. راجع Docker Desktop." }
   $Python = Join-Path $Backend ".venv\Scripts\python.exe"
   if (-not (Test-Path $Python)) { py -3.12 -m venv (Join-Path $Backend ".venv") }
   if ($LASTEXITCODE -ne 0) { throw "تعذر إنشاء بيئة Python 3.12." }
