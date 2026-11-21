@@ -1,3 +1,5 @@
+import decimal
+import django.core.validators
 from django.db import migrations, models
 
 
@@ -10,7 +12,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="salesinvoice",
             name="discount_total",
-            field=models.DecimalField(decimal_places=4, default=0, max_digits=20),
+            field=models.DecimalField(decimal_places=4, default=decimal.Decimal("0"), max_digits=20),
         ),
         migrations.AddField(
             model_name="salesinvoice",
@@ -20,11 +22,14 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="salesinvoiceline",
             name="discount_percent",
-            field=models.DecimalField(decimal_places=4, default=0, max_digits=7),
+            field=models.DecimalField(
+                decimal_places=4, default=decimal.Decimal("0"), max_digits=7,
+                validators=[django.core.validators.MinValueValidator(0), django.core.validators.MaxValueValidator(100)],
+            ),
         ),
         migrations.AddField(
             model_name="salesinvoiceline",
             name="discount_amount",
-            field=models.DecimalField(decimal_places=4, default=0, max_digits=20),
+            field=models.DecimalField(decimal_places=4, default=decimal.Decimal("0"), max_digits=20),
         ),
     ]
