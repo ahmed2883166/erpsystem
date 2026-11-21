@@ -221,3 +221,19 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual(response.data["id"], membership.pk)
         self.assertEqual(response.data["role"], "accountant")
 
+
+    def test_company_admin_cannot_reassign_existing_membership_to_another_user(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        original = get_user_model().objects.create_user(username="membership-original", password="test-password")
+        replacement = get_user_model().objects.create_user(username="membership-replacement", password="test-password")
+        membership = CompanyMembership.objects.create(user=original, company=self.company, role="viewer")
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/memberships/{membership.pk}/", {"user": replacement.pk}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        membership.refresh_from_db()
+        self.assertEqual(membership.user_id, original.pk)
+
