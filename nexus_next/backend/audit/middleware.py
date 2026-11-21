@@ -75,6 +75,32 @@ class AuditTrailMiddleware:
             if object_id is None and path_parts:
                 object_id = _numeric_id(path_parts[-1])
 
+            # Resolve ownership for update/delete requests with no company in the payload.
+            if object_id and (company is None or branch is None):
+                match = getattr(request, "resolver_match", None)
+                view_class = getattr(getattr(match, "func", None), "cls", None)
+                queryset = getattr(view_class, "queryset", None)
+                serializer_class = getattr(view_class, "serializer_class", None)
+                model = getattr(queryset, "model", None) or getattr(
+                    getattr(serializer_class, "Meta", None), "model", None
+                )
+                if model is not None:
+                    instance = model._default_manager.filter(pk=object_id).first()
+                    if instance is not None:
+                        if isinstance(instance, Company):
+                            company = company or instance
+                        else:
+                            inferred_company_id = getattr(instance, "company_id", None)
+                            inferred_branch_id = getattr(instance, "branch_id", None)
+                            if company is None and inferred_company_id:
+                                company = Company.objects.filter(pk=inferred_company_id).first()
+                            if branch is None and inferred_branch_id:
+                                branch = Branch.objects.select_related("company").filter(
+                                    pk=inferred_branch_id
+                                ).first()
+                            if company is None and branch is not None:
+                                company = branch.company
+
             action = _ACTIONS[method]
             if method == "POST" and path_parts and path_parts[-1].lower() in _ACTION_ENDPOINTS:
                 action = AuditEvent.Action.ACTION
