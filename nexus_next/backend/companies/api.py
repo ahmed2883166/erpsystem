@@ -1,6 +1,6 @@
 from rest_framework import permissions, viewsets
 
-from .access import accessible_branches, accessible_companies, can_access_company
+from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
 from .models import Branch, CompanyMembership, Currency, FiscalYear
 from .serializers import BranchSerializer, CompanySerializer, CurrencySerializer, FiscalYearSerializer
 
@@ -33,10 +33,16 @@ class CompanyViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        if not can_access_company(self.request.user, self.get_object().pk):
+        if not has_company_role(self.request.user, self.get_object().pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى هذه الشركة.")
+            raise PermissionDenied("إدارة بيانات الشركة متاحة لمدير الشركة فقط.")
         serializer.save()
+
+    def perform_destroy(self, instance):
+        if not has_company_role(self.request.user, instance.pk, ("admin",)):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("حذف الشركة متاح لمدير الشركة فقط.")
+        instance.delete()
 
 
 class BranchViewSet(viewsets.ModelViewSet):
@@ -48,17 +54,26 @@ class BranchViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
-        if not can_access_company(self.request.user, company.pk):
+        if not has_company_role(self.request.user, company.pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية إنشاء فرع في هذه الشركة.")
+            raise PermissionDenied("إنشاء الفروع متاح لمدير الشركة فقط.")
         serializer.save()
 
     def perform_update(self, serializer):
-        company = serializer.validated_data.get("company", serializer.instance.company)
-        if not can_access_company(self.request.user, company.pk):
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية نقل الفرع إلى هذه الشركة.")
+        from rest_framework.exceptions import PermissionDenied
+        current_company_id = serializer.instance.company_id
+        target_company = serializer.validated_data.get("company", serializer.instance.company)
+        if not has_company_role(self.request.user, current_company_id, ("admin",)):
+            raise PermissionDenied("تعديل الفروع متاح لمدير الشركة فقط.")
+        if not has_company_role(self.request.user, target_company.pk, ("admin",)):
+            raise PermissionDenied("لا تملك صلاحية نقل الفرع إلى الشركة المحددة.")
         serializer.save()
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import PermissionDenied
+        if not has_company_role(self.request.user, instance.company_id, ("admin",)):
+            raise PermissionDenied("حذف الفروع متاح لمدير الشركة فقط.")
+        instance.delete()
 
 
 class FiscalYearViewSet(viewsets.ModelViewSet):
@@ -72,14 +87,23 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
-        if not can_access_company(self.request.user, company.pk):
+        if not has_company_role(self.request.user, company.pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية إنشاء سنة مالية لهذه الشركة.")
+            raise PermissionDenied("إنشاء السنوات المالية متاح لمدير الشركة فقط.")
         serializer.save()
 
     def perform_update(self, serializer):
-        company = serializer.validated_data.get("company", serializer.instance.company)
-        if not can_access_company(self.request.user, company.pk):
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية نقل السنة المالية إلى هذه الشركة.")
+        from rest_framework.exceptions import PermissionDenied
+        current_company_id = serializer.instance.company_id
+        target_company = serializer.validated_data.get("company", serializer.instance.company)
+        if not has_company_role(self.request.user, current_company_id, ("admin",)):
+            raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
+        if not has_company_role(self.request.user, target_company.pk, ("admin",)):
+            raise PermissionDenied("لا تملك صلاحية نقل السنة المالية إلى الشركة المحددة.")
         serializer.save()
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import PermissionDenied
+        if not has_company_role(self.request.user, instance.company_id, ("admin",)):
+            raise PermissionDenied("حذف السنوات المالية متاح لمدير الشركة فقط.")
+        instance.delete()
