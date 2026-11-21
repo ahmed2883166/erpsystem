@@ -396,17 +396,39 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         } for line in obj.lines.select_related("product").all()]
 
     def validate(self, attrs):
-        company, supplier, warehouse = attrs.get("company"), attrs.get("supplier"), attrs.get("warehouse")
-        if supplier and (supplier.company_id != company.pk or not supplier.is_active):
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        supplier = attrs.get("supplier", instance.supplier if instance else None)
+        warehouse = attrs.get("warehouse", instance.warehouse if instance else None)
+
+        if instance:
+            if instance.status != PurchaseOrder.Status.DRAFT:
+                raise serializers.ValidationError("لا يمكن تعديل أمر شراء معتمد أو مرتبط باستلام.")
+            immutable = {
+                "company": instance.company_id, "supplier": instance.supplier_id,
+                "warehouse": instance.warehouse_id, "order_number": instance.order_number,
+                "order_date": instance.order_date,
+            }
+            for field, current in immutable.items():
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "بيانات أمر الشراء الأساسية لا تتغير بعد إنشائه."})
+        if supplier and (not company or supplier.company_id != company.pk or not supplier.is_active):
             raise serializers.ValidationError({"supplier": "اختر موردًا نشطًا تابعًا للشركة."})
-        if warehouse and (warehouse.company_id != company.pk or not warehouse.is_active):
+        if warehouse and (not company or warehouse.company_id != company.pk or not warehouse.is_active):
             raise serializers.ValidationError({"warehouse": "اختر مخزنًا نشطًا تابعًا للشركة."})
-        lines = attrs.get("lines", [])
+        lines = attrs.get("lines")
+        if lines is None:
+            if instance:
+                return attrs
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         if not lines:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         for line in lines:
             product = line["product"]
-            if product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
+            if not company or product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
                 raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
         return attrs
 
@@ -415,4 +437,19 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         lines = validated_data.pop("lines")
         order = PurchaseOrder.objects.create(**validated_data, created_by=self.context["request"].user)
         PurchaseOrderLine.objects.bulk_create([PurchaseOrderLine(order=order, **line) for line in lines])
+        return order
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        order = PurchaseOrder.objects.select_for_update().get(pk=instance.pk)
+        if order.status != PurchaseOrder.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل أمر شراء معتمد أو مرتبط باستلام.")
+        lines = validated_data.pop("lines", None)
+        if lines is not None:
+            if PurchaseOrderReceiptLine.objects.filter(order_line__order=order).exists() or order.lines.filter(received_quantity__gt=0).exists():
+                raise serializers.ValidationError({"lines": "لا يمكن تغيير بنود أمر شراء بدأ استلامه."})
+        order = super().update(order, validated_data)
+        if lines is not None:
+            order.lines.all().delete()
+            PurchaseOrderLine.objects.bulk_create([PurchaseOrderLine(order=order, **line) for line in lines])
         return order
