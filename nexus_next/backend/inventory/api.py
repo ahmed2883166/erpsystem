@@ -630,7 +630,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         currency = Company.objects.select_related("base_currency").get(pk=company_id).base_currency
         # Reconciliation tolerates at most half of the smallest currency unit.
         # The raw difference is still returned so reviewers can inspect rounding.
-        rounding_tolerance = Decimal("1").scaleb(-(currency.decimal_places + 1))
+        rounding_tolerance = Decimal("5").scaleb(-(currency.decimal_places + 1))
         is_reconciled = abs(difference) <= rounding_tolerance
         return Response({
             "company": company_id,
