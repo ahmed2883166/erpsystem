@@ -42,6 +42,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 asset = serializer.save()
                 acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
+                serializer.instance.refresh_from_db()
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
             raise ValidationError(detail) from exc
