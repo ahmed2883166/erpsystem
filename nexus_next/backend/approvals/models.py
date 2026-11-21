@@ -41,6 +41,7 @@ class SalesInvoiceApproval(models.Model):
     requested_limit = models.DecimalField(max_digits=7, decimal_places=4)
     requested_discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     requested_max_discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0)
+    requested_lines_snapshot = models.JSONField(default=list, editable=False)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     decided_by = models.ForeignKey(
         "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
