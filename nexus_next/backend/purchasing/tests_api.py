@@ -72,7 +72,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(sum((line.credit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
 
     def test_invoice_rejects_price_mismatch_against_grni(self):
-        receipt_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
         response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-S-002", "invoice_date": "2026-03-10",
