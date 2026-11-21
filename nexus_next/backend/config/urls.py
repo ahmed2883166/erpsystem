@@ -2,6 +2,11 @@ from django.contrib import admin
 from django.urls import include, path
 from core.frontend import frontend_index
 
+# هوية لوحة إدارة Django الخاصة بتطبيق Admrail ERP v2.
+admin.site.site_header = "Admrail ERP v2"
+admin.site.site_title = "Admrail ERP v2"
+admin.site.index_title = "إدارة النظام"
+
 urlpatterns = [
     path("", frontend_index, name="frontend-index"),
     path("admin/", admin.site.urls),
