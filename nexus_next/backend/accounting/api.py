@@ -301,7 +301,12 @@ class JournalEntryViewSet(AccountingViewSet):
         exclude_closing = request.query_params.get("exclude_closing", "").lower() in ("1", "true", "yes")
         if exclude_closing:
             date_filter &= ~Q(journal_lines__entry__source_type=JournalEntry.Source.CLOSING)
-        if not request.user.is_superuser:
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), int(company_id)):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            date_filter &= Q(journal_lines__entry__branch_id=int(branch_raw))
+        elif not request.user.is_superuser:
             date_filter &= Q(
                 journal_lines__entry__branch__in=accessible_branches(request.user, int(company_id))
             )
