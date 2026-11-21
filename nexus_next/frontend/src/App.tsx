@@ -191,7 +191,8 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
     if (!companyId) { setAccounts([]); setAccountId(""); return; }
     api.accounts(companyId).then(items => {
       setAccounts(items);
-      setAccountId(current => current || String(items.find(item=>!item.is_group)?.id || ""));
+      setAccountId(String(items.find(item=>!item.is_group)?.id || ""));
+      setLedger(null); setEquity(null);
     }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الحسابات."));
   }, [companyId]);
   const load = async () => {
