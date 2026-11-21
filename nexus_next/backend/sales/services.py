@@ -80,6 +80,7 @@ def post_sales_invoice(invoice_id, user):
                 or approval.status != SalesInvoiceApproval.Status.APPROVED
                 or approval.requested_discount_total != invoice.discount_total
                 or approval.requested_max_discount_percent != current_max_discount
+                or approval.requested_lines_snapshot != invoice_discount_snapshot(invoice)
             ):
                 raise ValidationError("تجاوز الخصم الحد المسموح؛ يجب اعتماد مدير الشركة لآخر نسخة من الفاتورة قبل الترحيل.")
     delivery = invoice.delivery
