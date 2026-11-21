@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from accounting.models import JournalEntry, JournalLine
 from companies.models import FiscalYear
-from .models import TreasuryTransaction
+from .models import TreasuryAccount, TreasuryTransaction
 
 
 @transaction.atomic
@@ -27,7 +27,19 @@ def post_treasury_transaction(transaction_id, user=None):
         raise ValidationError("السنة المالية مغلقة.")
     if not (doc.fiscal_year.start_date <= doc.transaction_date <= doc.fiscal_year.end_date):
         raise ValidationError("تاريخ المستند خارج السنة المالية.")
-    source = doc.source_account
+    # Serialize balance checks per treasury account so concurrent payments cannot both spend the same balance.
+    account_ids = {doc.source_account_id}
+    if doc.destination_account_id:
+        account_ids.add(doc.destination_account_id)
+    locked_accounts = {
+        account.pk: account
+        for account in TreasuryAccount.objects.select_for_update(of=("self",))
+        .filter(pk__in=sorted(account_ids)).order_by("pk")
+    }
+    source = locked_accounts[doc.source_account_id]
+    if doc.destination_account_id:
+        doc.destination_account = locked_accounts[doc.destination_account_id]
+    doc.source_account = source
     if not source.is_active:
         raise ValidationError("حساب الخزينة المصدر موقوف.")
     if source.account.nature != source.account.Nature.ASSET:
