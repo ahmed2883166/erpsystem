@@ -40,8 +40,26 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
             {"account": asset.asset_account, "debit": asset.original_cost, "credit": 0, "description": asset.name_ar},
             {"account": asset.acquisition_counter_account, "debit": 0, "credit": asset.original_cost, "description": asset.name_ar},
         ], user)
+    from treasury.models import TreasuryAccount, TreasuryTransaction
+    treasury_account = TreasuryAccount.objects.filter(
+        company=asset.company, account=asset.acquisition_counter_account, is_active=True
+    ).first()
+    treasury_doc = None
+    if treasury_account:
+        if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
+            raise ValidationError("حساب الخزينة المرتبط بمقابل الاقتناء لا يتبع فرع الأصل.")
+        treasury_doc = TreasuryTransaction.objects.create(
+            company=asset.company, branch=asset.branch, fiscal_year=year,
+            source_account=treasury_account, counter_account=asset.asset_account,
+            kind=TreasuryTransaction.Kind.PAYMENT, status=TreasuryTransaction.Status.POSTED,
+            document_number=f"FA-ACQ-{asset.pk}", transaction_date=asset.acquisition_date,
+            amount=asset.original_cost, description=f"سداد تكلفة اقتناء الأصل: {asset.name_ar}",
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
+            journal_entry=entry, created_by=user, posted_at=timezone.now(),
+        )
     asset.acquisition_journal = entry
-    asset.save(update_fields=("acquisition_journal",))
+    asset.acquisition_treasury_transaction = treasury_doc
+    asset.save(update_fields=("acquisition_journal", "acquisition_treasury_transaction"))
     return asset
 
 
@@ -185,6 +203,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
             status=TreasuryTransaction.Status.POSTED, document_number=f"FA-DISP-{asset.pk}",
             transaction_date=disposal_date, amount=proceeds,
             description=f"متحصلات بيع / استبعاد الأصل: {asset.name_ar}",
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
             journal_entry=entry, created_by=user, posted_at=timezone.now(),
         )
     asset.status = FixedAsset.Status.DISPOSED
