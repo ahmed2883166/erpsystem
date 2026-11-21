@@ -152,6 +152,18 @@ class JournalEntry(models.Model):
             if old in (self.Status.POSTED, self.Status.REVERSED):
                 raise ValidationError("القيد المرحّل غير قابل للتعديل.")
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if previous in (self.Status.POSTED, self.Status.REVERSED):
+                raise ValidationError("القيد المرحّل أو المعكوس غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف قيد مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
+
     def __str__(self):
         return f"{self.entry_number} - {self.entry_date}"
 
@@ -170,6 +182,16 @@ class JournalLine(models.Model):
             models.CheckConstraint(condition=Q(debit__gte=0) & Q(credit__gte=0), name="ck_journal_line_nonnegative"),
             models.CheckConstraint(condition=(Q(debit__gt=0, credit=0) | Q(credit__gt=0, debit=0)), name="ck_journal_line_one_side"),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.entry_id and self.entry.status != JournalEntry.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل سطور قيد مرحّل أو معكوس.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.entry.status != JournalEntry.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف سطور قيد مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
 
     def clean(self):
         super().clean()
