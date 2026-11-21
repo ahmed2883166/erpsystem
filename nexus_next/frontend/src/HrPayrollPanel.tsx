@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount } from "./api";
+import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount, type HrEmployeePayReport } from "./api";
 
 const statusLabels: Record<string, string> = {
   active: "نشط", leave: "إجازة", unpaid_leave: "إجازة بدون راتب",
@@ -26,6 +26,9 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [paymentAccountId, setPaymentAccountId] = useState("");
   const [results, setResults] = useState<HrPayrollResult[]>([]);
+  const [payReport, setPayReport] = useState<HrEmployeePayReport | null>(null);
+  const [payReportFrom, setPayReportFrom] = useState(new Date(new Date().getFullYear(),0,1).toISOString().slice(0,10));
+  const [payReportTo, setPayReportTo] = useState(new Date().toISOString().slice(0,10));
   const [selectedCycle, setSelectedCycle] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -168,6 +171,45 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     catch(reason){setError(reason instanceof Error?reason.message:"تعذر تحميل نتائج المرتبات.");}
     finally{setBusy(false);}
   };
+
+  const loadEmployeePayReport = async () => {
+    if (!companyId) return;
+    setBusy(true); setError(""); setPayReport(null);
+    try {
+      setPayReport(await hrApi.employeePayReport(companyId, payReportFrom, payReportTo));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحميل تقرير إجمالي مرتبات الموظفين.");
+    } finally { setBusy(false); }
+  };
+  const reportColumns = useMemo(() => {
+    const columns = new Map<string,{code:string;name:string;kind:string}>();
+    for (const employee of payReport?.employees ?? []) {
+      for (const component of employee.components) {
+        const key = `${component.code}|${component.kind}`;
+        if (!columns.has(key)) columns.set(key,{code:component.code,name:component.name,kind:component.kind});
+      }
+    }
+    return [...columns.values()];
+  },[payReport]);
+  const exportEmployeePayReport = () => {
+    if (!payReport) return;
+    const rows = [
+      ["كود الموظف","الموظف","الفرع","القسم","العملة","عدد الدورات","الاستحقاقات","استقطاعات الموظف","حصة صاحب العمل","صافي المرتب","تكلفة الشركة"],
+      ...payReport.employees.map(employee=>[
+        employee.employee_code,employee.employee_name,employee.branch,employee.department,employee.currency,
+        employee.cycle_count,employee.earnings,employee.employee_deductions,employee.employer_share,employee.net_pay,employee.company_cost
+      ])
+    ];
+    const csv = rows.map(row=>row.map(value=>`"${String(value??"").replace(/"/g,'""')}"`).join(",")).join("\\r\\n");
+    const blob = new Blob(["\\uFEFF",csv],{type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `employee-payroll-${payReport.date_from}-${payReport.date_to}.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const totals = useMemo(()=>results.reduce((a,r)=>({
     net:a.net+Number(r.net_pay), cost:a.cost+Number(r.company_cost),
     employer:a.employer+Number(r.employer_share_total),
@@ -320,6 +362,34 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
           <button type="button" className="subtle-button" disabled={busy} onClick={()=>void showResults(c.id)}>النتائج</button>
         </td></tr>)}
       </tbody></table>{!cycles.length&&<div className="table-empty">لا توجد دورات مرتبات بعد.</div>}</div>
+
+      <section className="report-drilldown" style={{marginTop:24}}>
+        <div className="section-heading"><div><h2>إجمالي مرتبات الموظفين خلال فترة</h2><p>يعرض الدورات المرحلة أو التي تم إعداد صرفها أو صرفها فعليًا، مع الاحتفاظ بتفاصيل كل عنصر كما كان وقت الاحتساب</p></div>
+          <button type="button" className="subtle-button" disabled={!payReport} onClick={exportEmployeePayReport}>تصدير CSV (Excel)</button>
+        </div>
+        <div className="asset-report-filters">
+          <label>من تاريخ<input type="date" value={payReportFrom} onChange={e=>setPayReportFrom(e.target.value)}/></label>
+          <label>إلى تاريخ<input type="date" value={payReportTo} onChange={e=>setPayReportTo(e.target.value)}/></label>
+          <button type="button" className="primary-button" disabled={busy||!companyId||payReportFrom>payReportTo} onClick={()=>void loadEmployeePayReport()}>{busy?"جارٍ التحميل…":"عرض إجمالي المرتبات"}</button>
+        </div>
+        {payReport && <>
+          <p className="asset-report-note">{payReport.currency_note}</p>
+          {payReport.totals && <div className="metrics-grid report-metrics">
+            <article className="metric-card"><div className="metric-top">الاستحقاقات</div><strong className="metric-value">{money(payReport.totals.earnings)}</strong></article>
+            <article className="metric-card"><div className="metric-top">الاستقطاعات</div><strong className="metric-value">{money(payReport.totals.employee_deductions)}</strong></article>
+            <article className="metric-card"><div className="metric-top">صافي المرتبات</div><strong className="metric-value">{money(payReport.totals.net_pay)}</strong></article>
+            <article className="metric-card"><div className="metric-top">تكلفة الشركة</div><strong className="metric-value">{money(payReport.totals.company_cost)}</strong></article>
+          </div>}
+          <div className="data-table-wrap"><table><thead><tr><th>الموظف</th><th>الفرع</th><th>القسم</th><th>العملة</th><th>الدورات</th>{reportColumns.map(col=><th key={col.code+col.kind}>{col.name}</th>)}<th>الاستحقاقات</th><th>الاستقطاعات</th><th>حصة الشركة</th><th>الصافي</th><th>تكلفة الشركة</th><th>الفترات</th></tr></thead><tbody>
+            {payReport.employees.map(employee=><tr key={employee.employee_id}><td>{employee.employee_code} — {employee.employee_name}</td><td>{employee.branch}</td><td>{employee.department||"—"}</td><td>{employee.currency}</td><td>{employee.cycle_count}</td>
+              {reportColumns.map(col=><td key={col.code+col.kind}>{money(employee.components.filter(item=>item.code===col.code&&item.kind===col.kind).reduce((sum,item)=>sum+Number(item.amount),0))}</td>)}
+              <td>{money(employee.earnings)}</td><td>{money(employee.employee_deductions)}</td><td>{money(employee.employer_share)}</td><td><strong>{money(employee.net_pay)}</strong></td><td>{money(employee.company_cost)}</td>
+              <td><details><summary>عرض الفترات</summary><ul>{employee.periods.map(period=><li key={period.cycle_id}>{period.period_start} — {period.period_end}: {money(period.net_pay)} ({cycleLabels[period.status]||period.status})</li>)}</ul></details></td>
+            </tr>)}
+          </tbody></table>{!payReport.employees.length&&<div className="table-empty">لا توجد مرتبات مرحلة خلال الفترة المحددة.</div>}</div>
+        </>}
+      </section>
+
       {selectedCycle&&<><div className="section-heading" style={{marginTop:24}}><div><h2>نتائج الدورة رقم {selectedCycle}</h2><p>حصة صاحب العمل ظاهرة في جانبي الكشف كتسوية عرضية لا تؤثر على صافي الموظف</p></div></div>
         <div className="metrics-grid report-metrics"><article className="metric-card"><div className="metric-top">صافي المستحقات</div><strong className="metric-value">{money(totals.net)}</strong></article><article className="metric-card"><div className="metric-top">حصة صاحب العمل</div><strong className="metric-value">{money(totals.employer)}</strong></article><article className="metric-card"><div className="metric-top">تكلفة الشركة</div><strong className="metric-value">{money(totals.cost)}</strong></article></div>
         <div className="data-table-wrap"><table><thead><tr><th>الموظف</th>{dynamicPayrollColumns.map(column=><th key={column.code}>{column.name}</th>)}<th>الاستحقاقات الظاهرة</th><th>الاستقطاعات الظاهرة</th><th>صافي الموظف</th><th>تكلفة الشركة</th><th>تفاصيل</th></tr></thead><tbody>{results.map(r=><tr key={r.id}><td>{r.employee_code} — {r.employee_name}</td>{dynamicPayrollColumns.map(column=><td key={column.code}>{money(r.lines.filter(line=>line.code===column.code).reduce((sum,line)=>sum+Number(line.amount),0))}</td>)}<td>{money(r.displayed_earnings_total)}</td><td>{money(r.displayed_deductions_total)}</td><td><strong>{money(r.net_pay)}</strong></td><td>{money(r.company_cost)}</td><td><details><summary>عرض البنود</summary><ul>{r.lines.filter(line=>line.kind!=="employer_share").map((line,i)=><li key={i}>{line.name}: {money(line.amount)} {line.display_only?"(للعرض فقط)":""}</li>)}</ul></details></td></tr>)}</tbody></table>{!results.length&&<div className="table-empty">لا توجد نتائج لهذه الدورة.</div>}</div>
