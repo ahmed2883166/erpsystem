@@ -27,11 +27,13 @@ class AccountingViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         if self.request.user.is_superuser:
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
     def _validate_scope(self, data):
+        """التحقق من ارتباط البيانات المرجعية بالشركة والفرع المسموحين."""
         company = data.get("company")
         if company and not can_access_company(self.request.user, company.pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
@@ -42,16 +44,19 @@ class AccountingViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
 
     def _require_write_role(self, company_id, *, delete=False):
+        """التحقق من امتلاك المستخدم دورًا يسمح بتعديل البيانات المالية."""
         roles = ("admin",) if delete else ("admin", "accountant")
         if not has_company_role(self.request.user, company_id, roles):
             raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب لتنفيذ هذا الإجراء.")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         self._validate_scope(serializer.validated_data)
         self._require_write_role(serializer.validated_data["company"].pk)
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         self._validate_scope(serializer.validated_data)
         company = serializer.validated_data.get("company", serializer.instance.company)
         if company.pk != serializer.instance.company_id:
@@ -60,6 +65,7 @@ class AccountingViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         self._require_write_role(instance.company_id, delete=True)
         instance.delete()
 
@@ -68,6 +74,7 @@ class AccountTemplateView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def _company(self, company_id):
+        """تنفيذ وظيفة _company ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         company = Company.objects.filter(pk=company_id).first()
         if not company:
             raise ValidationError({"company": "الشركة المحددة غير موجودة."})
@@ -76,6 +83,7 @@ class AccountTemplateView(APIView):
         return company
 
     def get(self, request):
+        """إرجاع البيانات المطلوبة للعرض مع احترام صلاحيات الوصول."""
         company_id = request.query_params.get("company")
         if not company_id or not company_id.isdigit():
             raise ValidationError({"company": "حدد الشركة المطلوبة."})
@@ -91,6 +99,7 @@ class AccountTemplateView(APIView):
         })
 
     def post(self, request):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         company_id = request.data.get("company")
         if not str(company_id or "").isdigit():
             raise ValidationError({"company": "حدد الشركة المطلوبة."})
@@ -119,6 +128,7 @@ class AccountImportView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
 
     def get(self, request):
+        """إرجاع البيانات المطلوبة للعرض مع احترام صلاحيات الوصول."""
         if not request.user.is_authenticated:
             raise PermissionDenied("سجل الدخول أولًا لتحميل النموذج.")
         workbook = Workbook()
@@ -152,6 +162,7 @@ class AccountImportView(APIView):
         return response_file
 
     def post(self, request):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         company_id = request.data.get("company")
         if not str(company_id or "").isdigit():
             raise ValidationError({"company": "حدد الشركة المطلوبة."})
@@ -217,6 +228,7 @@ class TaxCodeViewSet(AccountingViewSet):
     ordering_fields = ("code", "rate", "effective_from")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = super().get_queryset()
         as_of = self.request.query_params.get("as_of")
         if as_of:
@@ -229,12 +241,14 @@ class TaxCodeViewSet(AccountingViewSet):
         return qs.filter(is_active=True) if self.request.query_params.get("active_only") == "true" else qs
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         self._validate_scope(serializer.validated_data)
         company = serializer.validated_data["company"]
         self._require_write_role(company.pk)
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         company = serializer.validated_data.get("company", serializer.instance.company)
         self._validate_scope(serializer.validated_data)
         self._require_write_role(company.pk)
@@ -245,6 +259,7 @@ class TaxCodeViewSet(AccountingViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         self._require_write_role(instance.company_id, delete=True)
         if instance.is_active:
             raise ValidationError("عطّل كود الضريبة بدل حذفه للحفاظ على أثر الفواتير.")
@@ -263,12 +278,14 @@ class JournalEntryViewSet(AccountingViewSet):
     ordering_fields = ("entry_date", "entry_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = super().get_queryset()
         if self.request.user.is_superuser:
             return qs
         return qs.filter(branch__in=accessible_branches(self.request.user))
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
         self._validate_scope(serializer.validated_data)
@@ -276,6 +293,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         entry = self.get_object()
         self._require_write_role(entry.company_id)
         try:
@@ -288,6 +306,7 @@ class JournalEntryViewSet(AccountingViewSet):
     @decorators.action(detail=True, methods=("post",))
     @transaction.atomic
     def reverse(self, request, pk=None):
+        """إنشاء قيد عكسي مرتبط بالقيد الأصلي مع منع العكس غير المسموح."""
         original = self.get_object()
         self._require_write_role(original.company_id)
         if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
@@ -329,6 +348,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="trial-balance")
     def trial_balance(self, request):
+        """إعداد ميزان المراجعة للفترة والفروع المحددة وفق حالة القيود."""
         company_id = request.query_params.get("company")
         if not company_id or not company_id.isdigit():
             raise ValidationError({"company": "حدد الشركة لعرض ميزان المراجعة."})
@@ -395,6 +415,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="balance-sheet")
     def balance_sheet(self, request):
+        """إعداد قائمة المركز المالي حتى التاريخ المحدد."""
         from decimal import Decimal
         company_raw = request.query_params.get("company")
         as_of = parse_date(request.query_params.get("as_of") or "")
@@ -483,6 +504,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="income-statement")
     def income_statement(self, request):
+        """إعداد قائمة الدخل للفترة المحددة مع فصل تكلفة المبيعات عن المصروفات."""
         from decimal import Decimal
         company_raw = request.query_params.get("company")
         date_from = parse_date(request.query_params.get("date_from") or "")
@@ -548,6 +570,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="general-ledger")
     def general_ledger(self, request):
+        """استخراج حركة الأستاذ العام مع أرصدة أول وآخر الفترة."""
         from decimal import Decimal
         company_raw = request.query_params.get("company")
         account_raw = request.query_params.get("account")
@@ -616,6 +639,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="changes-in-equity")
     def changes_in_equity(self, request):
+        """إعداد حركة حقوق الملكية وربطها بالأرصدة والنتيجة المالية."""
         from decimal import Decimal
         company_raw = request.query_params.get("company")
         date_from = parse_date(request.query_params.get("date_from") or "")
@@ -702,6 +726,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="indirect-cash-flow")
     def indirect_cash_flow(self, request):
+        """إعداد التدفقات النقدية بالطريقة غير المباشرة مع إظهار فروق المطابقة."""
         from decimal import Decimal
         from django.db.models import Sum
         from assets.models import AssetDepreciation, FixedAsset
@@ -870,6 +895,7 @@ class JournalEntryViewSet(AccountingViewSet):
         financing_rows = treasury_rows.filter(cash_flow_category=TreasuryTransaction.CashFlowCategory.FINANCING)
 
         def cash_category_total(queryset):
+            """تنفيذ وظيفة cash_category_total ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
             receipts = queryset.filter(kind=TreasuryTransaction.Kind.RECEIPT).aggregate(v=Sum("amount"))["v"] or Decimal("0")
             payments = queryset.filter(kind=TreasuryTransaction.Kind.PAYMENT).aggregate(v=Sum("amount"))["v"] or Decimal("0")
             return receipts - payments
@@ -916,6 +942,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="vat-return")
     def vat_return(self, request):
+        """تجميع بيانات الإقرار الضريبي حسب الأكواد والفترات الضريبية."""
         from decimal import Decimal
 
         company_id = request.query_params.get("company")
@@ -972,6 +999,7 @@ class JournalEntryViewSet(AccountingViewSet):
         ).order_by("tax_code__code", "tax_rate"))
 
         def summarize(rows, purchases=False):
+            """تنفيذ وظيفة summarize ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
             normalized = []
             by_category = {}
             by_rate = {}
@@ -1022,6 +1050,7 @@ class JournalEntryViewSet(AccountingViewSet):
                 rate_row["gross_amount"] += gross
 
             def strings(values):
+                """تنفيذ وظيفة strings ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
                 return {key: str(value) for key, value in values.items()}
 
             return {
@@ -1058,6 +1087,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     @decorators.action(detail=True, methods=("get",))
     def totals(self, request, pk=None):
+        """إرجاع إجماليات السجل وتفاصيله المالية المرتبطة."""
         entry = self.get_object()
         lines = list(entry.lines.all())
         debit = sum((line.debit for line in lines), start=0)
