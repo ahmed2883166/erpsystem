@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { accountRoleApi, api, type Account, type AccountRole, type AccountTemplateInfo } from "./api";
 
 type Props = {
@@ -151,7 +151,7 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     } finally { setBusy(false); }
   };
 
-  const renderNode = (item: Account, depth = 0): JSX.Element | null => {
+  const renderNode = (item: Account, depth = 0): ReactNode => {
     if (!visibleIds.has(item.id)) return null;
     const children = (childrenByParent.get(item.id) || []).filter(child => visibleIds.has(child.id));
     const hasChildren = children.length > 0;
