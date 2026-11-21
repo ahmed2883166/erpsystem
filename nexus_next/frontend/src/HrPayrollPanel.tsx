@@ -37,6 +37,19 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [employeeDraft, setEmployeeDraft] = useState({code:"",full_name_ar:"",branch:"",currency:"",hire_date:new Date().toISOString().slice(0,10),basic_salary:"0"});
   const [componentDraft, setComponentDraft] = useState({code:"",name_ar:"",kind:"earning" as HrPayrollComponent["kind"],method:"fixed" as HrPayrollComponent["method"],default_value:"0",expense_account:"",payable_account:"",affects_taxable_base:false,affects_insurance_base:false,requires_approval:false});
   const [attendanceDraft, setAttendanceDraft] = useState({employee:"",work_date:new Date().toISOString().slice(0,10),status:"present" as HrAttendance["status"],worked_hours:"8",overtime_hours:"0",friday_worked:false,late_minutes:"0"});
+  const [attendanceMonth, setAttendanceMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+  });
+  const attendanceDays = useMemo(() => {
+    const [year, month] = attendanceMonth.split("-").map(Number);
+    if (!year || !month) return [];
+    const count = new Date(year, month, 0).getDate();
+    return Array.from({length: count}, (_, index) => {
+      const day = index + 1;
+      return `${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    });
+  }, [attendanceMonth]);
   const [assignmentDraft, setAssignmentDraft] = useState({employee:"",component:"",value:"",effective_from:new Date().toISOString().slice(0,10),effective_to:""});
   const [leaveDraft, setLeaveDraft] = useState({employee:"",kind:"annual" as HrLeaveRequest["kind"],start_date:new Date().toISOString().slice(0,10),end_date:new Date().toISOString().slice(0,10),days:"1",reason:""});
   const [loanDraft, setLoanDraft] = useState({employee:"",reference:"",issue_date:new Date().toISOString().slice(0,10),first_due_date:new Date().toISOString().slice(0,10),receivable_account:"",principal:"0",installment_count:"1",installment_amount:"0",notes:""});
@@ -81,6 +94,26 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر حفظ عنصر المرتب.");}
     finally{setBusy(false);}
   };
+  const updateAttendanceCell = async (employeeId:number, workDate:string, nextStatus:HrAttendance["status"]) => {
+    const existing = attendance.find(item => item.employee === employeeId && item.work_date === workDate);
+    setBusy(true); setError(""); setNotice("");
+    try {
+      if (existing) {
+        await hrApi.updateAttendance(existing.id, {status: nextStatus});
+      } else {
+        await hrApi.createAttendance({
+          employee: employeeId, work_date: workDate, status: nextStatus,
+          worked_hours: nextStatus === "present" ? "8" : "0",
+          overtime_hours: "0", friday_worked: false, late_minutes: 0,
+        });
+      }
+      setNotice("تم تحديث سجل الحضور.");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحديث سجل الحضور.");
+    } finally { setBusy(false); }
+  };
+
   const submitAttendance = async (event:FormEvent) => {
     event.preventDefault();if(!attendanceDraft.employee)return;
     setBusy(true);setError("");setNotice("");
@@ -267,7 +300,34 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
       <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم العنصر</th><th>النوع</th><th>طريقة الحساب</th><th>القيمة الافتراضية</th></tr></thead><tbody>{components.map(x=><tr key={x.id}><td>{x.code}</td><td>{x.name_ar}</td><td>{x.kind==="earning"?"استحقاق":x.kind==="deduction"?"استقطاع موظف":"حصة صاحب العمل"}</td><td>{x.method}</td><td>{money(x.default_value)}</td></tr>)}</tbody></table>{!components.length&&<div className="table-empty">لا توجد عناصر مرتبات معرفة.</div>}</div>
     </>}
     {tab==="attendance"&&<>
-      <form className="journal-form" onSubmit={submitAttendance}>
+      <div className="asset-report-filters">
+        <label>الشهر والسنة<input type="month" value={attendanceMonth} onChange={e=>setAttendanceMonth(e.target.value)}/></label>
+        <span className="module-count">{attendance.filter(x=>x.work_date.startsWith(attendanceMonth)).length} سجل في الشهر</span>
+      </div>
+      <div className="asset-report-note">جدول الحضور الشهري: الموظفون في الصفوف والأيام في الأعمدة. تغيير الحالة يحفظها مباشرة؛ الأيام الفارغة لا تُسجل تلقائيًا.</div>
+      <div className="data-table-wrap" style={{overflowX:"auto"}}>
+        <table style={{minWidth:`${attendanceDays.length*86+220}px`}}>
+          <thead><tr><th style={{position:"sticky",right:0,background:"var(--panel, #fff)",zIndex:2,minWidth:190}}>الموظف</th>{attendanceDays.map(day=><th key={day} style={{minWidth:82,textAlign:"center"}}>{Number(day.slice(-2))}</th>)}</tr></thead>
+          <tbody>{employees.map(employee=><tr key={employee.id}>
+            <th style={{position:"sticky",right:0,background:"var(--panel, #fff)",zIndex:1,textAlign:"right"}}>{employee.code} — {employee.full_name_ar}</th>
+            {attendanceDays.map(day=>{
+              const record=attendance.find(item=>item.employee===employee.id&&item.work_date===day);
+              return <td key={day} style={{padding:"4px"}}>
+                <select aria-label={`حالة ${employee.full_name_ar} بتاريخ ${day}`} value={record?.status||""}
+                  disabled={busy} onChange={e=>{const value=e.target.value as HrAttendance["status"];if(value)void updateAttendanceCell(employee.id,day,value);}}
+                  style={{width:"100%",minWidth:76,fontSize:12,padding:"5px 2px"}}>
+                  <option value="">—</option><option value="present">حضور</option><option value="absent">غياب</option>
+                  <option value="leave">إجازة</option><option value="unpaid_leave">بدون راتب</option><option value="holiday">عطلة</option>
+                </select>
+              </td>;
+            })}
+          </tr>)}
+          {!employees.length&&<tr><td colSpan={attendanceDays.length+1}>لا يوجد موظفون لعرضهم.</td></tr>}
+        </tbody>
+        </table>
+      </div>
+      <form className="journal-form" onSubmit={submitAttendance} style={{marginTop:20}}>
+        <div className="section-heading form-wide"><div><h3>تفاصيل يوم عمل</h3><p>لإضافة ساعات العمل والإضافي والتأخير وعمل الجمعة</p></div></div>
         <label>الموظف<select required value={attendanceDraft.employee} onChange={e=>setAttendanceDraft({...attendanceDraft,employee:e.target.value})}><option value="">اختر الموظف</option>{employees.map(e=><option key={e.id} value={e.id}>{e.code} — {e.full_name_ar}</option>)}</select></label>
         <label>التاريخ<input required type="date" value={attendanceDraft.work_date} onChange={e=>setAttendanceDraft({...attendanceDraft,work_date:e.target.value})}/></label>
         <label>الحالة<select value={attendanceDraft.status} onChange={e=>setAttendanceDraft({...attendanceDraft,status:e.target.value as HrAttendance["status"]})}><option value="present">حضور</option><option value="absent">غياب</option><option value="leave">إجازة</option><option value="unpaid_leave">إجازة بدون راتب</option><option value="holiday">عطلة</option></select></label>
@@ -275,10 +335,10 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <label>ساعات إضافية<input type="number" min="0" step="0.25" value={attendanceDraft.overtime_hours} onChange={e=>setAttendanceDraft({...attendanceDraft,overtime_hours:e.target.value})}/></label>
         <label>دقائق التأخير<input type="number" min="0" step="1" value={attendanceDraft.late_minutes} onChange={e=>setAttendanceDraft({...attendanceDraft,late_minutes:e.target.value})}/></label>
         <label className="checkbox-filter"><input type="checkbox" checked={attendanceDraft.friday_worked} onChange={e=>setAttendanceDraft({...attendanceDraft,friday_worked:e.target.checked})}/> عمل يوم الجمعة</label>
-        <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>تسجيل الحضور</button></div>
+        <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>تسجيل / تحديث تفاصيل اليوم</button></div>
       </form>
-      <div className="section-heading" style={{marginTop:24}}><div><h2>سجل الحضور</h2><p>ساعات العمل والإضافي والتأخير</p></div><span className="module-count">{attendance.length} سجل</span></div>
-      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>الكود</th><th>الموظف</th><th>الحالة</th><th>ساعات العمل</th><th>إضافي</th><th>تأخير</th></tr></thead><tbody>{attendance.map(x=><tr key={x.id}><td>{x.work_date}</td><td>{x.employee_code}</td><td>{x.employee_name}</td><td>{x.status}</td><td>{money(x.worked_hours)}</td><td>{money(x.overtime_hours)}</td><td>{x.late_minutes}</td></tr>)}</tbody></table>{!attendance.length&&<div className="table-empty">لا توجد سجلات حضور.</div>}</div>
+      <div className="section-heading" style={{marginTop:24}}><div><h2>سجل الحضور التفصيلي</h2><p>ساعات العمل والإضافي والتأخير</p></div><span className="module-count">{attendance.length} سجل</span></div>
+      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>الكود</th><th>الموظف</th><th>الحالة</th><th>ساعات العمل</th><th>إضافي</th><th>تأخير</th></tr></thead><tbody>{attendance.filter(x=>x.work_date.startsWith(attendanceMonth)).map(x=><tr key={x.id}><td>{x.work_date}</td><td>{x.employee_code}</td><td>{x.employee_name}</td><td>{x.status}</td><td>{money(x.worked_hours)}</td><td>{money(x.overtime_hours)}</td><td>{x.late_minutes}</td></tr>)}</tbody></table>{!attendance.some(x=>x.work_date.startsWith(attendanceMonth))&&<div className="table-empty">لا توجد سجلات حضور في الشهر المحدد.</div>}</div>
     </>}
     {tab==="assignments"&&<>
       <form className="journal-form" onSubmit={submitAssignment}>
