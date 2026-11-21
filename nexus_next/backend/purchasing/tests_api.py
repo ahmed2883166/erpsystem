@@ -28,6 +28,7 @@ class PurchasingWorkflowTests(APITestCase):
             AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED: ("2100", "بضاعة مستلمة غير مفوترة", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.ACCOUNTS_PAYABLE: ("2200", "الموردون", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.VAT_INPUT: ("1300", "ضريبة مدخلات", ChartOfAccount.Nature.ASSET),
+            AccountRole.Role.BANK: ("1100", "البنك", ChartOfAccount.Nature.ASSET),
         }
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
@@ -101,6 +102,50 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).count(), 1)
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 1)
+
+    def test_supplier_payment_reduces_invoice_balance_and_blocks_overpayment(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PAY-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        invoice_id = invoice_response.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        payment_response = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-001", "payment_date": "2026-03-15",
+            "method": "bank", "amount": "100.0000", "reference": "BANK-REF-1",
+        }, format="json")
+        self.assertEqual(payment_response.status_code, 201, payment_response.data)
+        payment_id = payment_response.data["id"]
+        posted_payment = self.client.post(
+            f"/api/purchasing/payments/{payment_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+        invoice_data = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
+        self.assertEqual(invoice_data["paid_total"], "100.0000")
+        self.assertEqual(invoice_data["balance_due"], "128.0000")
+
+        overpayment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-002", "payment_date": "2026-03-16",
+            "method": "bank", "amount": "129.0000",
+        }, format="json")
+        self.assertEqual(overpayment.status_code, 201, overpayment.data)
+        rejected = self.client.post(
+            f"/api/purchasing/payments/{overpayment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(
+            JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
+            2,
+        )
 
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
