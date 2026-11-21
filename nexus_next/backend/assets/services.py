@@ -112,7 +112,10 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     if not (year.start_date <= disposal_date <= year.end_date):
         raise ValidationError("تاريخ الاستبعاد خارج السنة المالية المفتوحة.")
 
-    cash_account = ChartOfAccount.objects.get(pk=cash_account_id, company=asset.company)
+    try:
+        cash_account = ChartOfAccount.objects.get(pk=cash_account_id, company=asset.company)
+    except (ChartOfAccount.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حساب البنك أو الخزينة غير موجود في الشركة.")
     if not cash_account.is_active or cash_account.is_group or not cash_account.allow_posting or cash_account.nature != "asset":
         raise ValidationError("اختر حساب بنك أو خزينة نشطًا وتفصيليًا من طبيعة الأصول.")
 
