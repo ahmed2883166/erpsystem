@@ -78,7 +78,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         friday_days = Decimal(attendance.filter(friday_worked=True).count())
         deductions = Decimal("0")
         employer_share = Decimal("0")
-        lines = [("BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
+        lines = [(None, "BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
         for assignment in assignments:
             component = assignment.component
             amount = calculate_component(component, assignment.value, effective_basic_salary, payable_days, overtime_hours, daily_divisor, friday_days)
@@ -88,7 +88,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
                 deductions += amount
             else:
                 employer_share += amount
-            lines.append((component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
+            lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
         installments = LoanInstallment.objects.filter(
             loan__employee=employee,
             due_date__range=(cycle.period_start, cycle.period_end),
