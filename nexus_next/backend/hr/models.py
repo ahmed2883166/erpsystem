@@ -245,6 +245,7 @@ class EmployeeLoan(models.Model):
     principal = models.DecimalField(max_digits=18, decimal_places=4)
     installment_count = models.PositiveSmallIntegerField()
     installment_amount = models.DecimalField(max_digits=18, decimal_places=4)
+    receivable_account = models.ForeignKey("accounting.ChartOfAccount", null=True, blank=True, on_delete=models.PROTECT)
     outstanding_balance = models.DecimalField(max_digits=18, decimal_places=4)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
     notes = models.TextField(blank=True)
@@ -361,6 +362,18 @@ class PayrollCycle(CompanyScopedModel):
                 if any(getattr(old, key) != getattr(self, key) for key in protected):
                     raise ValidationError("الدورة المرحلة أو المصروفة لا يمكن تغيير بياناتها الأساسية.")
         return super().save(*args, **kwargs)
+
+
+class PayrollPosting(models.Model):
+    cycle = models.ForeignKey(PayrollCycle, on_delete=models.PROTECT, related_name="postings")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="payroll_postings")
+    journal_entry = models.OneToOneField("accounting.JournalEntry", on_delete=models.PROTECT, related_name="payroll_posting")
+    payment_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="payroll_payment_posting")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("branch__code",)
+        constraints = [models.UniqueConstraint(fields=("cycle", "branch"), name="uq_hr_payroll_posting_branch")]
 
 
 class PayrollResult(models.Model):
