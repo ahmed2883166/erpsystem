@@ -17,7 +17,9 @@ class DiscountApprovalPolicyViewSet(viewsets.ModelViewSet):
     http_method_names = ("get", "post", "patch", "head", "options")
 
     def get_queryset(self):
-        return DiscountApprovalPolicy.objects.filter(company__in=accessible_companies(self.request.user)).select_related("company")
+        qs = DiscountApprovalPolicy.objects.filter(company__in=accessible_companies(self.request.user)).select_related("company")
+        company_id = self.request.query_params.get("company")
+        return qs.filter(company_id=company_id) if company_id else qs
 
     def _admin(self, company_id):
         if not can_access_company(self.request.user, company_id):
@@ -47,11 +49,14 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
             company__in=accessible_companies(self.request.user)
         ).select_related("company", "invoice", "invoice__customer", "requested_by", "decided_by", "invoice__delivery__warehouse")
         if self.request.user.is_superuser:
-            return qs
-        return qs.filter(
-            Q(invoice__delivery__warehouse__branch__isnull=True)
-            | Q(invoice__delivery__warehouse__branch__in=accessible_branches(self.request.user))
-        )
+            scoped = qs
+        else:
+            scoped = qs.filter(
+                Q(invoice__delivery__warehouse__branch__isnull=True)
+                | Q(invoice__delivery__warehouse__branch__in=accessible_branches(self.request.user))
+            )
+        company_id = self.request.query_params.get("company")
+        return scoped.filter(company_id=company_id) if company_id else scoped
 
     def _manager(self, approval):
         if not has_company_role(self.request.user, approval.company_id, ("admin",)):
