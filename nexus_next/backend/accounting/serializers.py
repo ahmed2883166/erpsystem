@@ -14,6 +14,7 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at",)
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and company and parent.company_id != company.id:
@@ -48,6 +49,7 @@ class AccountRoleSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "role", "account", "account_code")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         account = attrs.get("account", getattr(self.instance, "account", None))
         if self.instance and "company" in attrs and company.pk != self.instance.company_id:
@@ -71,6 +73,7 @@ class CostCenterSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "code", "name_ar", "parent", "is_active")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and company and parent.company_id != company.id:
@@ -89,6 +92,7 @@ class JournalLineSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "account_code", "account_name")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         debit = attrs.get("debit", getattr(self.instance, "debit", 0))
         credit = attrs.get("credit", getattr(self.instance, "credit", 0))
         if debit < 0 or credit < 0 or ((debit > 0) == (credit > 0)):
@@ -110,6 +114,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "created_by", "created_at", "posted_at")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         year = attrs.get("fiscal_year", getattr(self.instance, "fiscal_year", None))
@@ -136,6 +141,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         request = self.context.get("request")
         if request and request.user.is_authenticated:
@@ -146,6 +152,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         lines = validated_data.pop("lines", None)
         for key, value in validated_data.items():
             setattr(instance, key, value)
@@ -168,6 +175,7 @@ class TaxCodeSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at",)
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         country = attrs.get("country", getattr(self.instance, "country", None))
         category = attrs.get("category", getattr(self.instance, "category", TaxCode.Category.STANDARD))
