@@ -208,3 +208,17 @@ export const bankReconciliationApi = {
   unmatch: async (id: number, lineId: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/unmatch/`, { method: "POST", body: JSON.stringify({line_id:lineId}) }); },
   reconcile: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>(`/api/treasury/reconciliations/${id}/reconcile/`, { method: "POST" }); },
 };
+
+export const importBankStatementCsv = async (id: number, file: File): Promise<{imported:number;message:string}> => {
+  await request<{detail:string}>("/api/csrf/");
+  const form = new FormData(); form.append("file", file);
+  const response = await fetch(`/api/treasury/reconciliations/${id}/import_csv/`, {
+    method:"POST", credentials:"same-origin", headers:{Accept:"application/json","X-CSRFToken":csrfToken()}, body:form
+  });
+  if (!response.ok) {
+    let message = `تعذر استيراد الملف (HTTP ${response.status}).`;
+    try { const body=await response.json() as Record<string,unknown>; message=Object.entries(body).map(([k,v])=>`${k}: ${Array.isArray(v)?v.join("، "):typeof v==="string"?v:JSON.stringify(v)}`).join(" | ")||message; } catch {}
+    throw new Error(message);
+  }
+  return response.json() as Promise<{imported:number;message:string}>;
+};
