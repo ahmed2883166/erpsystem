@@ -670,6 +670,8 @@ class JournalEntryViewSet(AccountingViewSet):
             AccountRole.Role.ACCOUNTS_RECEIVABLE, AccountRole.Role.INVENTORY,
             AccountRole.Role.VAT_INPUT, AccountRole.Role.ACCOUNTS_PAYABLE,
             AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, AccountRole.Role.VAT_OUTPUT,
+            AccountRole.Role.PAYROLL_PAYABLE, AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE,
+            AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE,
         )
         role_accounts = {
             item.role: item.account
@@ -794,7 +796,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "financing_transactions": list(financing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
-            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة وضريبة المخرجات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
+            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة والمرتبات المستحقة وحصتي التأمينات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
         })
 
     @decorators.action(detail=False, methods=("get",), url_path="vat-return")
