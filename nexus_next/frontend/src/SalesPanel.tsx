@@ -10,6 +10,7 @@ type DeliveryDraftLine = { product: string; quantity: string; expiry_date: strin
 type InvoiceDraftLine = { delivery_line: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string; discount_percent: string };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
+// شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
   const [tab, setTab] = useState<"deliveries" | "invoices" | "receipts" | "aging">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -33,7 +34,8 @@ export default function SalesPanel({ companyId }: Props) {
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
   const [receiptForm, setReceiptForm] = useState({ invoice: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "" });
 
-  const refresh = async () => {
+  // تحديث قوائم العملاء والأصناف والمخازن ومستندات البيع للشركة الحالية.
+const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -54,7 +56,8 @@ export default function SalesPanel({ companyId }: Props) {
   const filteredInvoices = invoices.filter(x => [x.invoice_number, x.customer_name, x.delivery_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredReceipts = receipts.filter(x => [x.receipt_number, x.customer_name, x.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
 
-  const createDelivery = async (event: FormEvent) => {
+  // إنشاء مستند تسليم بالأصناف والكميات والمخزن وتفاصيل الصلاحية.
+const createDelivery = async (event: FormEvent) => {
     event.preventDefault();
     if (!companyId) return;
     setBusy(true); setError("");
@@ -71,7 +74,8 @@ export default function SalesPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء إذن التسليم."); }
     finally { setBusy(false); }
   };
-  const createInvoice = async (event: React.FormEvent) => {
+  // إنشاء فاتورة البيع وربطها ببنود التسليم والأسعار والخصومات والضرائب.
+const createInvoice = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!companyId) return;
     const delivery = deliveries.find(d => d.id === Number(invoiceForm.delivery));
@@ -92,7 +96,8 @@ export default function SalesPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء فاتورة المبيعات."); }
     finally { setBusy(false); }
   };
-  const beginEditInvoice = (invoice: SalesInvoice) => {
+  // تحميل بيانات الفاتورة المختارة داخل نموذج التعديل دون إرسال تغييرات للخادم.
+const beginEditInvoice = (invoice: SalesInvoice) => {
     setTab("invoices"); setShowForm(true); setError(""); setEditingInvoiceId(invoice.id);
     setInvoiceForm({ delivery: String(invoice.delivery), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date });
     setInvoiceLines(invoice.invoice_lines.map(line => ({
@@ -117,7 +122,8 @@ export default function SalesPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند القبض."); }
     finally { setBusy(false); }
   };
-  const loadAging = async () => {
+  // تحميل تقرير أعمار مديونيات العملاء للشركة.
+const loadAging = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try { setAging(await salesApi.customerAging(companyId, agingAsOf)); }
@@ -125,7 +131,8 @@ export default function SalesPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const post = async (action: () => Promise<unknown>) => {
+  // تنفيذ إجراء ترحيل مستند بيع مع معالجة حالة الانتظار والأخطاء وتحديث القوائم.
+const post = async (action: () => Promise<unknown>) => {
     setBusy(true); setError("");
     try { await action(); await refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل المستند."); }
