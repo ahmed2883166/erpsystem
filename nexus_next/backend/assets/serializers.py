@@ -28,6 +28,10 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({key: "الحساب لا يتبع الشركة."})
             if account and (not account.is_active or account.is_group or not account.allow_posting):
                 raise serializers.ValidationError({key: "اختر حسابًا تفصيليًا نشطًا قابلًا للترحيل."})
+            if account and key in ("asset_account", "accumulated_depreciation_account") and account.nature != "asset":
+                raise serializers.ValidationError({key: "هذا الربط يتطلب حسابًا من طبيعة الأصول."})
+            if account and key == "depreciation_expense_account" and account.nature != "expense":
+                raise serializers.ValidationError({key: "مصروف الإهلاك يجب أن يرتبط بحساب مصروفات."})
         cost = attrs.get("original_cost", getattr(self.instance, "original_cost", 0))
         salvage = attrs.get("salvage_value", getattr(self.instance, "salvage_value", 0))
         life = attrs.get("useful_life_months", getattr(self.instance, "useful_life_months", 0))
