@@ -12,11 +12,25 @@ class DepartmentSerializer(serializers.ModelSerializer):
         model = Department
         fields = "__all__"
 
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if branch and company and branch.company_id != company.pk:
+            raise serializers.ValidationError({"branch": "الفرع يجب أن يتبع نفس الشركة."})
+        return attrs
+
 
 class JobPositionSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobPosition
         fields = "__all__"
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        department = attrs.get("department", getattr(self.instance, "department", None))
+        if department and company and department.company_id != company.pk:
+            raise serializers.ValidationError({"department": "الإدارة يجب أن تتبع نفس الشركة."})
+        return attrs
 
 
 class EmployeeSerializer(serializers.ModelSerializer):
@@ -108,6 +122,7 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeLoan
         fields = "__all__"
+        read_only_fields = ("status", "outstanding_balance")
 
     def validate(self, attrs):
         principal = attrs.get("principal", getattr(self.instance, "principal", 0))
@@ -152,6 +167,10 @@ class PayrollCycleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"period_end": "نهاية الفترة تسبق بدايتها."})
         if start and payment and payment < start:
             raise serializers.ValidationError({"payment_date": "تاريخ الصرف لا يمكن أن يسبق بداية الفترة."})
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        rule_set = attrs.get("rule_set", getattr(self.instance, "rule_set", None))
+        if company and rule_set and rule_set.company_id != company.pk:
+            raise serializers.ValidationError({"rule_set": "مجموعة القواعد يجب أن تتبع نفس الشركة."})
         if self.instance and self.instance.status in ("approved", "posted", "paid"):
             raise serializers.ValidationError("الدورة المعتمدة أو المرحلة أو المصروفة غير قابلة للتعديل.")
         return attrs
