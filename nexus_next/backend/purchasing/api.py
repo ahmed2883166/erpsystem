@@ -11,8 +11,8 @@ from rest_framework.response import Response
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from inventory.models import Warehouse
-from .models import PurchaseInvoice, PurchaseReceipt, SupplierPayment
-from .serializers import PurchaseInvoiceSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment
 
 
@@ -27,6 +27,50 @@ class PurchaseBaseViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         raise PermissionDenied("لا يمكن حذف مستندات المشتريات؛ استخدم الإلغاء المعتمد بعد إضافته.")
+
+
+class PurchaseOrderViewSet(PurchaseBaseViewSet):
+    serializer_class = PurchaseOrderSerializer
+    queryset = PurchaseOrder.objects.select_related("company", "supplier", "warehouse", "warehouse__branch").prefetch_related("lines__product")
+    filterset_fields = ("company", "supplier", "warehouse", "status", "order_date")
+    search_fields = ("order_number", "supplier__name_ar")
+    ordering_fields = ("order_date", "order_number", "created_at")
+
+    def get_queryset(self):
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if self.request.user.is_superuser:
+            return qs
+        return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=accessible_branches(self.request.user)))
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."})
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_write(data["company"].pk)
+        if data["warehouse"].branch_id and not can_access_branch(self.request.user, data["warehouse"].branch_id, data["company"].pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        serializer.save()
+
+    @action(detail=True, methods=("post",))
+    def confirm(self, request, pk=None):
+        order = self.get_object()
+        self._check_write(order.company_id)
+        if order.status != PurchaseOrder.Status.DRAFT:
+            raise ValidationError("أمر الشراء ليس مسودة.")
+        if not order.lines.exists():
+            raise ValidationError("أمر الشراء لا يحتوي على أصناف.")
+        from django.utils import timezone
+        PurchaseOrder.objects.filter(pk=order.pk, status=PurchaseOrder.Status.DRAFT).update(
+            status=PurchaseOrder.Status.CONFIRMED, confirmed_at=timezone.now()
+        )
+        order.refresh_from_db()
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
 
 class PurchaseReceiptViewSet(PurchaseBaseViewSet):
