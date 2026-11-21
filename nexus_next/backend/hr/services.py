@@ -103,6 +103,13 @@ def calculate_payroll_cycle(cycle_id, actor=None):
     cycle = PayrollCycle.objects.select_for_update().select_related("company", "rule_set").get(pk=cycle_id)
     if cycle.status not in (PayrollCycle.Status.DRAFT, PayrollCycle.Status.CALCULATED, PayrollCycle.Status.REVIEW):
         raise ValidationError("لا يمكن إعادة احتساب دورة معتمدة أو مرحلة أو مصروفة.")
+    if cycle.rule_set_id:
+        if not cycle.rule_set.is_active or cycle.rule_set.country != cycle.company.country:
+            raise ValidationError("مجموعة القواعد غير نشطة أو لا تطابق بلد الشركة.")
+        if cycle.rule_set.effective_from > cycle.period_start or (
+            cycle.rule_set.effective_to and cycle.rule_set.effective_to < cycle.period_end
+        ):
+            raise ValidationError("مجموعة القواعد لا تغطي كامل فترة المرتبات.")
     if PayrollCycle.objects.filter(
         company=cycle.company, period_start__lte=cycle.period_end, period_end__gte=cycle.period_start
     ).exclude(pk=cycle.pk).exists():
