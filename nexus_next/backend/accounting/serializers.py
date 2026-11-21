@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import serializers
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 
@@ -161,4 +162,18 @@ class TaxCodeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"rate": "هذه الفئة يجب أن تكون بنسبة صفر."})
         if category == TaxCode.Category.STANDARD and rate <= 0:
             raise serializers.ValidationError({"rate": "أدخل نسبة موجبة للفئة القياسية."})
+        code = attrs.get("code", getattr(self.instance, "code", None))
+        if company and code and effective_from:
+            overlapping = TaxCode.objects.filter(company=company, code=code)
+            if self.instance:
+                overlapping = overlapping.exclude(pk=self.instance.pk)
+            overlapping = overlapping.filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=effective_from)
+            )
+            if effective_to:
+                overlapping = overlapping.filter(effective_from__lte=effective_to)
+            if overlapping.exists():
+                raise serializers.ValidationError({
+                    "effective_from": "فترة السريان تتداخل مع إصدار آخر لنفس كود الضريبة؛ أغلق الفترة السابقة أو اختر فترة غير متداخلة."
+                })
         return attrs
