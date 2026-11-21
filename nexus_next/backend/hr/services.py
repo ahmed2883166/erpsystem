@@ -59,15 +59,22 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         employment_start = max(cycle.period_start, employee.hire_date)
         employment_end = min(cycle.period_end, employee.termination_date or cycle.period_end)
         calendar_days = Decimal(max(0, (employment_end - employment_start).days + 1))
+        full_calendar_month = (
+            cycle.period_start.day == 1
+            and cycle.period_end.month == cycle.period_start.month
+            and cycle.period_end.year == cycle.period_start.year
+            and cycle.period_end.day == (cycle.period_end.replace(day=28) + __import__("datetime").timedelta(days=4)).replace(day=1).day - 1
+        )
         attendance = AttendanceRecord.objects.filter(employee=employee, work_date__range=(employment_start, employment_end))
         attendance_count = attendance.count()
+        base_payable_days = Decimal("30") if full_calendar_month and employment_start == cycle.period_start and employment_end == cycle.period_end else min(calendar_days, Decimal("30"))
         if attendance_count:
-            payable_days = calendar_days - attendance.filter(status__in=(AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.UNPAID_LEAVE)).count()
+            absent_days = attendance.filter(status__in=(AttendanceRecord.Status.ABSENT, AttendanceRecord.Status.UNPAID_LEAVE)).count()
+            payable_days = max(Decimal("0"), base_payable_days - Decimal(absent_days))
         elif employee.status == Employee.Status.UNPAID_LEAVE:
             payable_days = Decimal("0")
         else:
-            payable_days = calendar_days
-        payable_days = min(payable_days, Decimal("30"))
+            payable_days = base_payable_days
         daily_divisor = Decimal(str((cycle.rule_set.configuration if cycle.rule_set_id else {}).get("monthly_daily_divisor", 30)))
         if daily_divisor <= 0:
             raise ValidationError("مقسم الراتب اليومي يجب أن يكون أكبر من صفر.")
