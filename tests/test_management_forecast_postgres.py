@@ -1,5 +1,6 @@
 """PostgreSQL coverage for payroll and employee-grant cash forecasts."""
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
@@ -84,6 +85,29 @@ class ManagementForecastPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(len(grants), 1)
                     self.assertEqual(grants[0]["balance"], Decimal("300"))
                     self.assertEqual(grants[0]["due_date"], "2026-11-25")
+                    sqlite_conn = sqlite3.connect(":memory:")
+                    sqlite_conn.row_factory = sqlite3.Row
+                    try:
+                        sqlite_conn.executescript("""
+                            CREATE TABLE payroll_runs(id INTEGER PRIMARY KEY,period TEXT,status TEXT,journal_entry_id INTEGER);
+                            CREATE TABLE payroll_lines(id INTEGER PRIMARY KEY,run_id INTEGER,net_pay TEXT);
+                            CREATE TABLE payroll_payments(id INTEGER PRIMARY KEY,run_id INTEGER,payment_date TEXT,amount TEXT);
+                            CREATE TABLE employee_grants(id INTEGER PRIMARY KEY,grant_name_snapshot TEXT,grant_date TEXT,status TEXT);
+                            CREATE TABLE employee_grant_lines(id INTEGER PRIMARY KEY,grant_id INTEGER,amount TEXT);
+                            CREATE TABLE employee_grant_payments(id INTEGER PRIMARY KEY,grant_id INTEGER,payment_date TEXT,amount TEXT);
+                            INSERT INTO payroll_runs VALUES(1,'2026-11','posted',10);
+                            INSERT INTO payroll_lines VALUES(1,1,'1000');
+                            INSERT INTO payroll_payments VALUES(1,1,'2026-11-10','250'),(2,1,'2026-11-20','100');
+                            INSERT INTO employee_grants VALUES
+                                (1,'Ramadan grant','2026-11-25','approved'),
+                                (2,'Draft grant','2026-11-26','draft');
+                            INSERT INTO employee_grant_lines VALUES(1,1,'400'),(2,2,'900');
+                            INSERT INTO employee_grant_payments VALUES(1,1,'2026-11-12','100');
+                        """)
+                        self.assertEqual(payroll, _cash_forecast_payroll(sqlite_conn, "2026-11-15"))
+                        self.assertEqual(grants, _cash_forecast_grants(sqlite_conn, "2026-11-15"))
+                    finally:
+                        sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")

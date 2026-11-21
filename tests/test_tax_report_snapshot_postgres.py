@@ -3,9 +3,13 @@
 All objects are created in a disposable schema and rolled back.
 """
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
+from unittest.mock import patch
+
+from accounting_core import register_decimal_aggregates
 
 
 @unittest.skipUnless(
@@ -123,6 +127,54 @@ class TaxReportSnapshotPostgreSQLTests(unittest.TestCase):
                         snapshot["ledger_reconciliation"]["input_difference"],
                         Decimal("0"),
                     )
+                    sqlite_conn = sqlite3.connect(":memory:")
+                    sqlite_conn.row_factory = sqlite3.Row
+                    register_decimal_aggregates(sqlite_conn)
+                    try:
+                        sqlite_conn.executescript("""
+                            CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL);
+                            INSERT INTO company_settings VALUES
+                                ('company_name','NEXUS Test'),('tax_country','EG'),
+                                ('tax_number','123456789'),('activity','commercial');
+                            CREATE TABLE customers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,tax_number TEXT);
+                            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,name TEXT NOT NULL,tax_number TEXT);
+                            CREATE TABLE sales_invoices(
+                                id INTEGER PRIMARY KEY,invoice_no TEXT,customer_id INTEGER,invoice_date TEXT,
+                                subtotal TEXT,tax_rate TEXT,tax_amount TEXT,total_amount TEXT,status TEXT,
+                                tax_treatment TEXT,tax_reference TEXT,tax_notes TEXT
+                            );
+                            CREATE TABLE supplier_bills(
+                                id INTEGER PRIMARY KEY,bill_no TEXT,supplier_id INTEGER,bill_date TEXT,
+                                subtotal TEXT,tax_rate TEXT,tax_amount TEXT,total_amount TEXT,status TEXT,
+                                tax_treatment TEXT,tax_reference TEXT,tax_notes TEXT,
+                                input_vat_deductible_percent TEXT
+                            );
+                            CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT);
+                            CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
+                            CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+                            INSERT INTO customers VALUES(1,'Customer A','123456789');
+                            INSERT INTO suppliers VALUES(1,'Supplier A','987654321');
+                            INSERT INTO sales_invoices VALUES
+                                (1,'SI-PG-1',1,'2026-11-05','1000','14','140','1140','posted','standard','EG-INV-1','');
+                            INSERT INTO supplier_bills VALUES
+                                (1,'PB-PG-1',1,'2026-11-07','400','14','56','456','posted','standard','EG-BILL-1','','100');
+                            INSERT INTO accounts VALUES
+                                (1,'2130','Output VAT','liability'),(2,'1165','Input VAT','asset');
+                            INSERT INTO journal_entries VALUES
+                                (1,'2026-11-05','posted'),(2,'2026-11-07','posted');
+                            INSERT INTO journal_lines VALUES
+                                (1,1,1,'0','140'),(2,2,2,'56','0');
+                        """)
+                        roles = {
+                            "output_vat": [snapshot["ledger_reconciliation"]["output_account"]],
+                            "input_vat": [snapshot["ledger_reconciliation"]["input_account"]],
+                        }
+                        with patch("activity_profiles.active_tax_roles", return_value=roles):
+                            sqlite_snapshot = build_tax_report_snapshot(sqlite_conn, "2026-11")
+                        for key in ("tax_profile", "summary", "sales", "purchases", "ledger_reconciliation"):
+                            self.assertEqual(snapshot[key], sqlite_snapshot[key], key)
+                    finally:
+                        sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")

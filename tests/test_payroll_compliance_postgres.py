@@ -1,5 +1,6 @@
 """PostgreSQL integration coverage for effective-dated payroll compliance rules."""
 import os
+import sqlite3
 import unittest
 import uuid
 import threading
@@ -88,6 +89,37 @@ class PostgreSQLPayrollComplianceTests(unittest.TestCase):
         self.assertEqual(result["employee_insurance"], Decimal("1650.00"))
         self.assertEqual(result["employer_insurance"], Decimal("2812.50"))
         self.assertEqual(result["tax"], Decimal("1482.50"))
+        sqlite_conn = sqlite3.connect(":memory:")
+        sqlite_conn.row_factory = sqlite3.Row
+        try:
+            sqlite_conn.executescript("""
+                CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY,setting_value TEXT NOT NULL);
+                INSERT INTO company_settings VALUES('tax_country','EG');
+                CREATE TABLE payroll_rule_sets(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,country_code TEXT NOT NULL,
+                    category_code TEXT NOT NULL,effective_from TEXT NOT NULL,effective_to TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',personal_exemption_annual TEXT NOT NULL,
+                    taxable_rounding_unit TEXT NOT NULL DEFAULT '1',insurance_floor TEXT NOT NULL,
+                    insurance_ceiling TEXT NOT NULL,employee_insurance_rate TEXT NOT NULL,
+                    employer_insurance_rate TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1,
+                    notes TEXT NOT NULL DEFAULT '',UNIQUE(country_code,category_code,effective_from)
+                );
+                CREATE TABLE payroll_tax_brackets(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,rule_set_id INTEGER NOT NULL,
+                    lower_bound TEXT NOT NULL,upper_bound TEXT,rate TEXT NOT NULL
+                );
+                CREATE TABLE payroll_tax_tier_brackets(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,rule_set_id INTEGER NOT NULL,
+                    income_max TEXT,lower_bound TEXT NOT NULL,upper_bound TEXT,rate TEXT NOT NULL
+                );
+            """)
+            ensure_default_payroll_rules(sqlite_conn)
+            sqlite_result = calculate_payroll_deductions(
+                sqlite_conn, employee, Decimal("15000.00"), "2026-11"
+            )
+            self.assertEqual(sqlite_result, result)
+        finally:
+            sqlite_conn.close()
 
     def test_concurrent_activation_serializes_overlapping_country_category_rules(self):
         rule_ids = []

@@ -1,8 +1,12 @@
 """PostgreSQL coverage for VAT ledger reconciliation and activity-profile lookup."""
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
+from unittest.mock import patch
+
+from accounting_core import register_decimal_aggregates
 
 
 @unittest.skipUnless(
@@ -73,6 +77,29 @@ class VatLedgerPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(result["output_difference"], Decimal("0.00"))
                     self.assertEqual(result["input_difference"], Decimal("0.00"))
                     self.assertEqual(result["issues"], [])
+                    sqlite_conn = sqlite3.connect(":memory:")
+                    sqlite_conn.row_factory = sqlite3.Row
+                    register_decimal_aggregates(sqlite_conn)
+                    sqlite_conn.executescript("""
+                        CREATE TABLE company_settings(setting_key TEXT,setting_value TEXT);
+                        INSERT INTO company_settings VALUES('activity','commercial');
+                        CREATE TABLE accounts(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,account_type TEXT);
+                        CREATE TABLE journal_entries(id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT);
+                        CREATE TABLE journal_lines(id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,debit TEXT,credit TEXT);
+                        INSERT INTO accounts VALUES(1,'2130','Output VAT','liability'),(2,'1165','Input VAT','asset');
+                        INSERT INTO journal_entries VALUES(1,'2026-11-05','posted'),(2,'2026-11-07','posted');
+                        INSERT INTO journal_lines VALUES(1,1,1,'0','137.20'),(2,2,2,'56.00','0');
+                    """)
+                    roles = {
+                        "output_vat": [x.strip() for x in result["output_account"].split(",") if x.strip()],
+                        "input_vat": [x.strip() for x in result["input_account"].split(",") if x.strip()],
+                    }
+                    try:
+                        with patch("activity_profiles.active_tax_roles", return_value=roles):
+                            sqlite_result = _tax_ledger_reconciliation(sqlite_conn, summary)
+                        self.assertEqual(sqlite_result, result)
+                    finally:
+                        sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")

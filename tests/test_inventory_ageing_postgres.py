@@ -1,5 +1,6 @@
 """PostgreSQL coverage for inventory ageing, isolated in a rollback-only schema."""
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
@@ -81,6 +82,36 @@ class InventoryAgeingPostgreSQLTests(unittest.TestCase):
                         row["last_movement_date"] == "2026-11-10"
                         for row in report["rows"]
                     ))
+                    sqlite_conn = sqlite3.connect(":memory:")
+                    sqlite_conn.row_factory = sqlite3.Row
+                    try:
+                        sqlite_conn.executescript("""
+                            CREATE TABLE stock_products(id INTEGER PRIMARY KEY,sku TEXT,name_ar TEXT);
+                            CREATE TABLE stock_warehouses(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                            CREATE TABLE stock_lots(id INTEGER PRIMARY KEY,expiry_date TEXT);
+                            CREATE TABLE stock_movements(
+                                id INTEGER PRIMARY KEY,product_id INTEGER,source_warehouse_id INTEGER,
+                                target_warehouse_id INTEGER,movement_date TEXT
+                            );
+                            CREATE TABLE stock_valuation_layers(
+                                id INTEGER PRIMARY KEY,product_id INTEGER,warehouse_id INTEGER,
+                                source_movement_id INTEGER,lot_id INTEGER,qty_remaining TEXT,
+                                unit_cost TEXT,created_at TEXT
+                            );
+                            INSERT INTO stock_products VALUES(1,'P-1','Test product');
+                            INSERT INTO stock_warehouses VALUES(1,'W-1','Main');
+                            INSERT INTO stock_lots VALUES(1,'2026-11-01'),(2,'2026-12-01');
+                            INSERT INTO stock_valuation_layers VALUES
+                                (10,1,1,NULL,1,'3','10','2026-07-01 08:00:00'),
+                                (11,1,1,NULL,2,'2','20','2026-11-01 08:00:00'),
+                                (12,1,1,NULL,NULL,'9','99','2026-11-20 08:00:00');
+                            INSERT INTO stock_movements VALUES
+                                (10,1,1,NULL,'2026-11-10'),(11,1,1,NULL,'2026-12-10');
+                        """)
+                        sqlite_report = build_inventory_ageing(sqlite_conn, "2026-11-15")
+                        self.assertEqual(report, sqlite_report)
+                    finally:
+                        sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")

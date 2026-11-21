@@ -1,5 +1,6 @@
 """PostgreSQL coverage for receivables/payables aging queries in an isolated schema."""
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
@@ -89,6 +90,55 @@ class ReceivablesAgingPostgreSQLTests(unittest.TestCase):
                     self.assertEqual(customer_moves[5][1], Decimal("2"))
                     self.assertEqual(supplier_moves[1][1], Decimal("40"))
                     self.assertEqual(supplier_moves[3][1], Decimal("15"))
+                    sqlite_conn = sqlite3.connect(":memory:")
+                    sqlite_conn.row_factory = sqlite3.Row
+                    try:
+                        sqlite_conn.executescript("""
+                            CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                            CREATE TABLE suppliers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                            CREATE TABLE sales_invoices(
+                                id INTEGER PRIMARY KEY,customer_id INTEGER,invoice_no TEXT,
+                                invoice_date TEXT,due_date TEXT,total_amount TEXT,
+                                paid_amount TEXT,credited_amount TEXT,status TEXT
+                            );
+                            CREATE TABLE supplier_bills(
+                                id INTEGER PRIMARY KEY,supplier_id INTEGER,bill_no TEXT,
+                                bill_date TEXT,due_date TEXT,total_amount TEXT,
+                                paid_amount TEXT,credited_amount TEXT,status TEXT
+                            );
+                            CREATE TABLE customer_receipts(id INTEGER PRIMARY KEY,invoice_id INTEGER,receipt_date TEXT,amount TEXT);
+                            CREATE TABLE customer_receipt_batches(id INTEGER PRIMARY KEY,receipt_date TEXT);
+                            CREATE TABLE customer_receipt_allocations(batch_id INTEGER,invoice_id INTEGER,amount TEXT);
+                            CREATE TABLE customer_advance_allocations(id INTEGER PRIMARY KEY,invoice_id INTEGER,allocation_date TEXT,amount TEXT);
+                            CREATE TABLE sales_credit_notes(id INTEGER PRIMARY KEY,invoice_id INTEGER,total_amount TEXT,credit_date TEXT,status TEXT);
+                            CREATE TABLE customer_refunds(id INTEGER PRIMARY KEY,credit_note_id INTEGER,amount TEXT,refund_date TEXT);
+                            CREATE TABLE supplier_payments(id INTEGER PRIMARY KEY,payment_date TEXT);
+                            CREATE TABLE supplier_payment_allocations(payment_id INTEGER,bill_id INTEGER,amount TEXT);
+                            CREATE TABLE supplier_credit_notes(id INTEGER PRIMARY KEY,bill_id INTEGER,total_amount TEXT,status TEXT,credit_date TEXT);
+                            INSERT INTO customers VALUES(1,'C1','Customer');
+                            INSERT INTO suppliers VALUES(1,'S1','Supplier');
+                            INSERT INTO sales_invoices VALUES(1,1,'SI-1','2026-11-01','2026-11-10','100','50','10','posted');
+                            INSERT INTO supplier_bills VALUES(1,1,'PB-1','2026-11-01','2026-11-10','200','40','15','posted');
+                            INSERT INTO customer_receipts VALUES(1,1,'2026-11-10','50');
+                            INSERT INTO customer_receipt_batches VALUES(1,'2026-11-12');
+                            INSERT INTO customer_receipt_allocations VALUES(1,1,'5');
+                            INSERT INTO customer_advance_allocations VALUES(1,1,'2026-11-15','3');
+                            INSERT INTO sales_credit_notes VALUES(1,1,'10','2026-11-18','posted');
+                            INSERT INTO customer_refunds VALUES(1,1,'2','2026-11-20');
+                            INSERT INTO supplier_payments VALUES(1,'2026-11-12');
+                            INSERT INTO supplier_payment_allocations VALUES(1,1,'40');
+                            INSERT INTO supplier_credit_notes VALUES(1,1,'15','posted','2026-11-18');
+                        """)
+                        sqlite_customer_docs = _customer_aging_documents(sqlite_conn, "2026-11-30")
+                        sqlite_customer_moves = _customer_aging_movements(sqlite_conn, "2026-11-30")
+                        sqlite_supplier_docs = _supplier_aging_documents(sqlite_conn, "2026-11-30")
+                        sqlite_supplier_moves = _supplier_aging_movements(sqlite_conn, "2026-11-30")
+                        self.assertEqual([dict(x) for x in customer_docs], [dict(x) for x in sqlite_customer_docs])
+                        self.assertEqual([dict(x) for x in supplier_docs], [dict(x) for x in sqlite_supplier_docs])
+                        self.assertEqual(customer_moves, sqlite_customer_moves)
+                        self.assertEqual(supplier_moves, sqlite_supplier_moves)
+                    finally:
+                        sqlite_conn.close()
                     raise RuntimeError("rollback disposable schema")
             except RuntimeError as exc:
                 self.assertEqual(str(exc), "rollback disposable schema")

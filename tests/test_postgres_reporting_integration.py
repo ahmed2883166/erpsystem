@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import unittest
 import uuid
 from decimal import Decimal
@@ -8,6 +9,7 @@ try:
 except ImportError:
     psycopg = None
 
+from accounting_core import register_decimal_aggregates
 from management_reports import build_inventory_ageing
 
 
@@ -16,6 +18,64 @@ from management_reports import build_inventory_ageing
     "PostgreSQL integration DSN/driver is not configured",
 )
 class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
+    def test_bank_opening_balance_and_statement_match_are_sqlite_postgresql_equivalent(self):
+        from banking import bank_opening_ledger_balance, save_statement_line_match
+        from unittest.mock import patch
+
+        schema = "nexus_bank_parity_" + uuid.uuid4().hex[:12]
+        pg = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=psycopg.rows.dict_row
+        )
+        sqlite_conn = sqlite3.connect(":memory:")
+        sqlite_conn.row_factory = sqlite3.Row
+
+        def seed(connection):
+            connection.execute("""
+                CREATE TABLE journal_entries(id BIGINT PRIMARY KEY,entry_date TEXT,status TEXT)
+            """)
+            connection.execute("""
+                CREATE TABLE journal_lines(
+                    id BIGINT PRIMARY KEY,entry_id BIGINT,account_id BIGINT,
+                    debit NUMERIC(20,2),credit NUMERIC(20,2)
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE bank_statement_lines(
+                    id BIGINT PRIMARY KEY,matched_transaction_id BIGINT,
+                    matched_journal_line_id BIGINT,matched_at TEXT,matched_by BIGINT
+                )
+            """)
+            connection.execute("INSERT INTO journal_entries VALUES(1,'2026-12-20','posted'),(2,'2026-12-29','posted'),(3,'2027-01-02','posted')")
+            connection.execute("INSERT INTO journal_lines VALUES(1,1,11,100.10,0),(2,2,11,0,20.05),(3,3,11,500,0)")
+            connection.execute("INSERT INTO bank_statement_lines VALUES(1,NULL,NULL,NULL,NULL)")
+
+        try:
+            seed(sqlite_conn)
+            with pg.transaction():
+                pg.execute(f'CREATE SCHEMA "{schema}"')
+                pg.execute(f'SET LOCAL search_path TO "{schema}"')
+                seed(pg)
+                with patch("management_dashboard._copied_opening_entry_ids", return_value=set()):
+                    sqlite_opening = bank_opening_ledger_balance(sqlite_conn, 11, "2027-01-01")
+                    pg_opening = bank_opening_ledger_balance(pg, 11, "2027-01-01")
+                self.assertEqual(pg_opening, sqlite_opening)
+                self.assertEqual(pg_opening, Decimal("80.05"))
+                save_statement_line_match(sqlite_conn, 1, 2, "2026-11-21T09:00:00", 7)
+                save_statement_line_match(pg, 1, 2, "2026-11-21T09:00:00", 7)
+                sqlite_match = tuple(sqlite_conn.execute(
+                    "SELECT matched_journal_line_id,matched_at,matched_by FROM bank_statement_lines WHERE id=1"
+                ).fetchone())
+                pg_match = tuple(pg.execute(
+                    "SELECT matched_journal_line_id,matched_at,matched_by FROM bank_statement_lines WHERE id=1"
+                ).fetchone().values())
+                self.assertEqual(pg_match, sqlite_match)
+                raise RuntimeError("rollback disposable schema")
+        except RuntimeError as exc:
+            self.assertEqual(str(exc), "rollback disposable schema")
+        finally:
+            sqlite_conn.close()
+            pg.close()
+
     def test_inventory_ageing_uses_postgresql_date_expressions(self):
         schema = "nexus_report_" + uuid.uuid4().hex[:12]
         connection = psycopg.connect(
@@ -113,6 +173,46 @@ class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
             self.assertEqual(previous[1]["debit"], Decimal("100.10"))
             self.assertEqual(opening[1]["debit"], Decimal("100.10"))
             self.assertEqual(as_of[1]["debit"], Decimal("175.35"))
+
+            sqlite_conn = sqlite3.connect(":memory:")
+            sqlite_conn.row_factory = sqlite3.Row
+            register_decimal_aggregates(sqlite_conn)
+            try:
+                sqlite_conn.executescript("""
+                    CREATE TABLE accounts(
+                        id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,
+                        account_type TEXT,is_group INTEGER DEFAULT 0
+                    );
+                    CREATE TABLE journal_entries(
+                        id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,
+                        entry_type TEXT DEFAULT 'general'
+                    );
+                    CREATE TABLE journal_lines(
+                        id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
+                        debit TEXT,credit TEXT
+                    );
+                    INSERT INTO accounts VALUES(1,'1110','Cash','asset',0);
+                    INSERT INTO journal_entries VALUES
+                        (1,'2026-01-05','posted','general'),
+                        (2,'2026-02-05','posted','general'),
+                        (3,'2026-02-06','posted','year_end_closing');
+                    INSERT INTO journal_lines VALUES
+                        (1,1,1,'100.10','0'),(2,2,1,'25.25','0'),(3,3,1,'50.00','0');
+                """)
+                sqlite_balances = account_balances(
+                    sqlite_conn,"2026-02-01","2026-02-28",exclude_closing_entries=True
+                )
+                self.assertEqual(sqlite_balances[1]["debit"], balances[1]["debit"])
+                sqlite_current,sqlite_previous,sqlite_as_of,sqlite_opening = dashboard_period_balances(
+                    sqlite_conn,"2026-02-01","2026-02-28","2026-01-01","2026-01-31",
+                    exclude_closing_entries=True,
+                )
+                self.assertEqual(sqlite_current,current)
+                self.assertEqual(sqlite_previous,previous)
+                self.assertEqual(sqlite_as_of,as_of)
+                self.assertEqual(sqlite_opening,opening)
+            finally:
+                sqlite_conn.close()
         finally:
             connection.rollback()
             connection.execute("SET search_path TO public")
