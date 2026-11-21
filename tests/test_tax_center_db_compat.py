@@ -2,6 +2,7 @@
 import os
 import sqlite3
 import unittest
+from decimal import Decimal
 
 from tax_center import _columns, _table_exists
 
