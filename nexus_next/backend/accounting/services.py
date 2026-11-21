@@ -8,6 +8,35 @@ from companies.models import FiscalYear
 from audit.models import AuditEvent
 from .models import JournalEntry, JournalLine
 
+ACCOUNT_ROLE_NATURES = {
+    "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
+    "inventory": {"asset"}, "vat_input": {"asset"},
+    "accounts_payable": {"liability"}, "vat_output": {"liability"}, "vat_payable": {"liability"},
+    "employee_insurance_payable": {"liability"}, "employer_insurance_payable": {"liability"},
+    "payroll_payable": {"liability"}, "goods_received_not_invoiced": {"liability"},
+    "inter_branch_clearing": {"liability"},
+    "sales": {"revenue"}, "sales_returns": {"revenue"}, "inventory_adjustment_gain": {"revenue"},
+    "cogs": {"expense"}, "operating_expense": {"expense"}, "payroll_expense": {"expense"},
+    "employer_insurance_expense": {"expense"}, "inventory_adjustment_loss": {"expense"},
+    "retained_earnings": {"equity"},
+}
+
+
+def get_account_for_role(company, role):
+    from .models import AccountRole
+
+    assignment = AccountRole.objects.select_related("account").filter(company=company, role=role).first()
+    if not assignment:
+        raise ValidationError(f"يجب ربط دور الحساب ({role}) في إعدادات الشركة.")
+    account = assignment.account
+    if account.company_id != company.pk or not account.is_active or account.is_group or not account.allow_posting:
+        raise ValidationError(f"الحساب المرتبط بالدور ({role}) غير صالح للترحيل.")
+    expected = ACCOUNT_ROLE_NATURES.get(role)
+    if expected and account.nature not in expected:
+        raise ValidationError(f"طبيعة الحساب المرتبط بالدور ({role}) غير متوافقة؛ راجع ربط الأدوار المحاسبية.")
+    return account
+
+
 
 @transaction.atomic
 def post_journal(entry_id: int) -> JournalEntry:
