@@ -117,8 +117,8 @@ class StockMovementLineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StockMovementLine
-        fields = ("id", "product", "product_code", "product_name", "source_location", "source_location_name", "destination_location", "destination_location_name", "expiry_date", "quantity", "unit_cost", "adjustment_direction")
-        read_only_fields = ("id",)
+        fields = ("id", "product", "product_code", "product_name", "source_location", "source_location_name", "destination_location", "destination_location_name", "expiry_date", "quantity", "unit_cost", "cost_amount", "adjustment_direction")
+        read_only_fields = ("id", "cost_amount")
 
     def validate(self, attrs):
         product = attrs.get("product")
@@ -190,6 +190,10 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "الصنف لا يتطلب تتبع الصلاحية."})
             if movement_type == StockMovement.MovementType.ADJUSTMENT and not line.get("adjustment_direction"):
                 raise serializers.ValidationError({"lines": "حدد الزيادة أو العجز لكل صنف في التسوية."})
+            if movement_type == StockMovement.MovementType.ADJUSTMENT:
+                directions = {item.get("adjustment_direction") for item in lines}
+                if len(directions) > 1:
+                    raise serializers.ValidationError({"lines": "افصل زيادات الجرد عن العجز في حركتين مستقلتين."})
         return attrs
 
     @transaction.atomic
