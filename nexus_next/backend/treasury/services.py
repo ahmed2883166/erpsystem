@@ -1,5 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Sum
+from decimal import Decimal
 from django.utils import timezone
 
 from accounting.models import JournalEntry, JournalLine
@@ -22,8 +24,14 @@ def post_treasury_transaction(transaction_id, user=None):
     source = doc.source_account
     if not source.is_active:
         raise ValidationError("حساب الخزينة المصدر موقوف.")
+    if source.account.nature != source.account.Nature.ASSET:
+        raise ValidationError("يجب ربط الخزينة بحساب من طبيعة الأصول.")
     if source.branch_id and source.branch_id != doc.branch_id:
         raise ValidationError("فرع المستند لا يطابق فرع الخزينة.")
+    totals = source.account.journal_lines.filter(entry__status=JournalEntry.Status.POSTED).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+    available = source.opening_balance + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+    if doc.kind in (TreasuryTransaction.Kind.PAYMENT, TreasuryTransaction.Kind.TRANSFER) and available < doc.amount:
+        raise ValidationError("الرصيد المتاح غير كافٍ لتنفيذ الحركة؛ تم إيقاف الترحيل لمنع الرصيد السالب.")
     debit_account = credit_account = None
     if doc.kind == TreasuryTransaction.Kind.RECEIPT:
         if not doc.counter_account.is_active or doc.counter_account.is_group or not doc.counter_account.allow_posting:
@@ -37,6 +45,8 @@ def post_treasury_transaction(transaction_id, user=None):
         destination = doc.destination_account
         if not destination.is_active:
             raise ValidationError("حساب الخزينة المستقبلة موقوف.")
+        if destination.account.nature != destination.account.Nature.ASSET:
+            raise ValidationError("يجب ربط الخزينة المستقبلة بحساب من طبيعة الأصول.")
         if destination.branch_id and destination.branch_id != doc.branch_id:
             raise ValidationError("التحويل بين الفروع يحتاج معالجة تسوية بين الفروع؛ لا يمكن ترحيله كتحويل داخلي.")
         if destination.currency_code != source.currency_code:
