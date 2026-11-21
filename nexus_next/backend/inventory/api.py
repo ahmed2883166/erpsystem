@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.models import Branch
 
 from .models import Product, ProductCategory, StockBalance, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
@@ -424,22 +425,72 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).first()
         if role is None:
             return Response({"detail": "لم يتم ربط دور حساب المخزون بدليل الحسابات."}, status=status.HTTP_400_BAD_REQUEST)
+        inventory_account = role.account
+        if (
+            not inventory_account.is_active or inventory_account.is_group
+            or not inventory_account.allow_posting
+            or inventory_account.nature != inventory_account.Nature.ASSET
+        ):
+            return Response({"detail": "حساب المخزون المرتبط يجب أن يكون حساب أصول تفصيليًا ونشطًا وقابلًا للترحيل."}, status=status.HTTP_400_BAD_REQUEST)
 
-        stock_value = StockBalance.objects.filter(
+        # Never expose company-wide totals to a user who can access only selected branches.
+        accessible_ids = list(
+            accessible_branches(request.user, company_id).values_list("id", flat=True)
+        )
+        requested_branch = request.query_params.get("branch")
+        if requested_branch:
+            try:
+                requested_branch_id = int(requested_branch)
+            except (TypeError, ValueError):
+                return Response({"detail": "معرّف الفرع غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+            selected_branch = Branch.objects.filter(
+                pk=requested_branch_id, company_id=company_id, is_active=True
+            ).first()
+            if selected_branch is None:
+                return Response({"detail": "الفرع المحدد غير موجود أو موقوف."}, status=status.HTTP_400_BAD_REQUEST)
+            if selected_branch.pk not in accessible_ids:
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            branch_ids = [selected_branch.pk]
+        else:
+            selected_branch = None
+            branch_ids = accessible_ids
+
+        default_branch = Branch.objects.filter(
+            company_id=company_id, is_active=True, is_head_office=True
+        ).first()
+        if default_branch is None:
+            default_branch = Branch.objects.filter(
+                company_id=company_id, is_active=True
+            ).order_by("code").first()
+
+        stock_scope = Q(warehouse__branch_id__in=branch_ids)
+        # Warehouses without an explicit branch post their inventory journals to
+        # the same default branch selected by inventory.posting._branch_for().
+        if default_branch and default_branch.pk in branch_ids:
+            stock_scope |= Q(warehouse__branch__isnull=True)
+        stock_totals = StockBalance.objects.filter(
             warehouse__company_id=company_id
-        ).aggregate(total=Sum("inventory_value"))["total"] or Decimal("0")
+        ).filter(stock_scope).aggregate(total=Sum("inventory_value"))
+        stock_value = stock_totals["total"] or Decimal("0")
+
         gl_totals = JournalLine.objects.filter(
-            account_id=role.account_id,
+            account_id=inventory_account.pk,
             entry__company_id=company_id,
+            entry__branch_id__in=branch_ids,
             entry__status=JournalEntry.Status.POSTED,
         ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
         gl_balance = (gl_totals["debit"] or Decimal("0")) - (gl_totals["credit"] or Decimal("0"))
         difference = gl_balance - stock_value
         return Response({
             "company": company_id,
-            "account_id": role.account_id,
-            "account_code": role.account.code,
-            "account_name": role.account.name_ar,
+            "branch": selected_branch.pk if selected_branch else None,
+            "branch_code": selected_branch.code if selected_branch else "",
+            "branch_name": selected_branch.name_ar if selected_branch else "",
+            "scope_branch_ids": branch_ids,
+            "scope_note": "عند اختيار كل الفروع، تُحسب الفروع المسموح للمستخدم بالوصول إليها فقط. المخازن غير المرتبطة بفرع تُنسب للمركز الرئيسي، مثل قيود ترحيل المخزون.",
+            "account_id": inventory_account.pk,
+            "account_code": inventory_account.code,
+            "account_name": inventory_account.name_ar,
             "stock_value": str(stock_value),
             "gl_balance": str(gl_balance),
             "difference": str(difference),
