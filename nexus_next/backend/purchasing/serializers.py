@@ -4,7 +4,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseReceipt
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseReceipt, SupplierPayment
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -50,6 +50,13 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             "unit_cost": str(line.unit_cost), "cost_amount": str(line.cost_amount),
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
         } for line in obj.stock_movement.lines.select_related("product").all()]
+
+    def get_paid_total(self, obj):
+        from django.db.models import Sum
+        return str(obj.payments.filter(status=SupplierPayment.Status.POSTED).aggregate(total=Sum("amount"))["total"] or Decimal("0"))
+
+    def get_balance_due(self, obj):
+        return str(max(Decimal("0"), obj.grand_total - Decimal(self.get_paid_total(obj))))
 
     def validate(self, attrs):
         company = attrs.get("company")
@@ -144,18 +151,20 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    paid_total = serializers.SerializerMethodField()
+    balance_due = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseInvoice
         fields = (
             "id", "company", "supplier", "supplier_name", "receipt", "receipt_number",
             "invoice_number", "invoice_date", "status", "net_total", "tax_total",
-            "grand_total", "notes", "journal_entry", "journal_number", "invoice_lines",
+            "grand_total", "paid_total", "balance_due", "notes", "journal_entry", "journal_number", "invoice_lines",
             "lines", "created_at", "posted_at",
         )
         read_only_fields = (
             "status", "net_total", "tax_total", "grand_total", "journal_entry",
-            "journal_number", "created_at", "posted_at", "invoice_lines",
+            "journal_number", "paid_total", "balance_due", "created_at", "posted_at", "invoice_lines",
         )
 
     def validate(self, attrs):
@@ -197,3 +206,37 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         invoice.grand_total = invoice.net_total + invoice.tax_total
         invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
         return invoice
+
+
+class SupplierPaymentSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SupplierPayment
+        fields = (
+            "id", "company", "supplier", "supplier_name", "invoice", "invoice_number",
+            "payment_number", "payment_date", "method", "amount", "reference",
+            "status", "journal_entry", "journal_number", "created_at", "posted_at",
+        )
+        read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
+
+    def validate(self, attrs):
+        company = attrs.get("company")
+        supplier = attrs.get("supplier")
+        invoice = attrs.get("invoice")
+        if supplier and not supplier.is_active:
+            raise serializers.ValidationError({"supplier": "المورد موقوف."})
+        if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
+            raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
+        if company and invoice.company_id != company.pk:
+            raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
+        if supplier and invoice.supplier_id != supplier.pk:
+            raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد الفاتورة."})
+        return attrs
+
+    def create(self, validated_data):
+        return SupplierPayment.objects.create(
+            **validated_data, created_by=self.context["request"].user
+        )
