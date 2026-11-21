@@ -104,6 +104,9 @@ export default function BackupPanel() {
     if (!window.confirm("تحذير نهائي: سيتم حذف كل الحركات التشغيلية من جميع الشركات. هل أنشأت وراجعت النسخة الاحتياطية؟")) return;
     setResetBusy(true); setError(""); setNotice("");
     try {
+      setNotice("جارٍ إنشاء نسخة حماية جديدة والتحقق منها قبل التصفير…");
+      await call<{detail:string}>("POST");
+      setNotice("تم إنشاء نسخة الحماية والتحقق منها. جارٍ تصفير الحركات…");
       const result = await call<{detail:string}>("POST", {password:resetPassword, confirmation:resetPhrase}, "/api/backup/reset/");
       setNotice(result.detail); setResetPassword(""); setResetPhrase(""); await load();
     } catch (e) { setError(e instanceof Error ? e.message : "تعذر تصفير الحركات."); }
@@ -159,9 +162,9 @@ export default function BackupPanel() {
           <form className="journal-form" onSubmit={executeReset}>
             <label>كلمة مرور مدير النظام<input type="password" autoComplete="current-password" required value={resetPassword} onChange={e=>setResetPassword(e.target.value)}/></label>
             <label>اكتب عبارة التأكيد حرفيًا<input required value={resetPhrase} onChange={e=>setResetPhrase(e.target.value)} placeholder="تصفير الحركات"/></label>
-            <div className="form-actions form-wide"><button className="danger-button" type="submit" disabled={resetBusy || !resetPreview.backup_ready || resetPhrase !== "تصفير الحركات"}>{resetBusy ? "جارٍ التصفير…" : "تصفير الحركات التشغيلية"}</button></div>
+            <div className="form-actions form-wide"><button className="danger-button" type="submit" disabled={resetBusy || !config.enabled || !config.path_configured || resetPhrase !== "تصفير الحركات"}>{resetBusy ? "جارٍ التصفير…" : "تصفير الحركات التشغيلية"}</button></div>
           </form>
-          {!resetPreview.backup_ready && <p className="asset-report-note">زر التصفير سيظل معطلًا حتى إنشاء نسخة ناجحة والتحقق من وجود ملفها خلال آخر 24 ساعة.</p>}
+          {!resetPreview.backup_ready && <p className="asset-report-note">سيُنشئ النظام نسخة حماية جديدة ويتحقق منها تلقائيًا عند طلب التصفير؛ إذا فشل النسخ فلن يبدأ الحذف.</p>}
         </>}
       </section>}
     </>}
