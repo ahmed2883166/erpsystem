@@ -9,6 +9,7 @@ type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
+// شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
   const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -37,7 +38,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", notes: "" });
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "" });
 
-  const refresh = async () => {
+  // تحميل بيانات الموردين والأصناف والمخازن ومستندات الشراء للشركة.
+const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -65,7 +67,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
 
-  const loadStatement = async () => {
+  // تحميل كشف حساب المورد للفترة والمورد المختارين.
+const loadStatement = async () => {
     if (!companyId || !statementSupplier) { setError("اختر المورد لعرض كشف حسابه."); return; }
     if (statementFrom && statementTo && statementFrom > statementTo) { setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."); return; }
     setBusy(true); setError("");
@@ -76,7 +79,8 @@ export default function PurchasingPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const loadAging = async () => {
+  // تحميل تقرير أعمار أرصدة الموردين.
+const loadAging = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try { setAging(await purchasingApi.supplierAging(companyId, agingAsOf)); }
@@ -84,7 +88,8 @@ export default function PurchasingPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const saveOrder = async (event: React.FormEvent) => {
+  // إنشاء أو حفظ أمر الشراء وبنوده.
+const saveOrder = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -95,14 +100,16 @@ export default function PurchasingPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء أمر الشراء."); }
     finally { setBusy(false); }
   };
-  const confirmOrder = async (id: number) => {
+  // تأكيد أمر الشراء المحدد قبل الانتقال إلى خطوات الاستلام.
+const confirmOrder = async (id: number) => {
     setBusy(true); setError("");
     try { await purchasingApi.confirmOrder(id); await refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر اعتماد أمر الشراء."); }
     finally { setBusy(false); }
   };
 
-  const saveReceipt = async (event: React.FormEvent) => {
+  // حفظ مستند استلام الأصناف والكميات وتفاصيل التكلفة والصلاحية.
+const saveReceipt = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     setBusy(true); setError("");
     try {
@@ -121,7 +128,8 @@ export default function PurchasingPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const saveInvoice = async (event: React.FormEvent) => {
+  // حفظ فاتورة المورد وربطها بالاستلام والضرائب والمبالغ المستحقة.
+const saveInvoice = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     const receipt = receipts.find((row) => row.id === Number(invoiceForm.receipt));
     if (!receipt) { setError("اختر إذن استلام مرحّلًا."); return; }
@@ -138,7 +146,8 @@ export default function PurchasingPanel({ companyId }: Props) {
     finally { setBusy(false); }
   };
 
-  const savePayment = async (event: React.FormEvent) => {
+  // تسجيل دفعة المورد وربطها بحساب الخزينة أو البنك.
+const savePayment = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     const invoice = invoices.find((row) => row.id === Number(paymentForm.invoice));
     if (!invoice) { setError("اختر فاتورة مورد لها رصيد مستحق."); return; }
@@ -149,20 +158,23 @@ export default function PurchasingPanel({ companyId }: Props) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند الصرف."); }
     finally { setBusy(false); }
   };
-  const postPayment = async (id: number) => {
+  // ترحيل دفعة المورد بعد التحقق من بياناتها على الخادم.
+const postPayment = async (id: number) => {
     setBusy(true); setError("");
     try { await purchasingApi.postPayment(id); await refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل سند الصرف."); }
     finally { setBusy(false); }
   };
 
-  const postReceipt = async (id: number) => {
+  // ترحيل استلام المخزون وتحديث الكميات والحسابات المرتبطة.
+const postReceipt = async (id: number) => {
     setBusy(true); setError("");
     try { await purchasingApi.postReceipt(id); await refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل إذن الاستلام."); }
     finally { setBusy(false); }
   };
-  const postInvoice = async (id: number) => {
+  // ترحيل فاتورة المورد وتثبيت الذمم والضريبة والتسوية المحاسبية.
+const postInvoice = async (id: number) => {
     setBusy(true); setError("");
     try { await purchasingApi.postInvoice(id); await refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل فاتورة المورد."); }
