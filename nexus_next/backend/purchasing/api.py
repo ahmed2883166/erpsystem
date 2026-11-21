@@ -249,7 +249,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         for invoice in invoices:
             paid = sum(
                 (payment.amount for payment in invoice.payments.all()
-                 if payment.status == SupplierPayment.Status.POSTED),
+                 if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= as_of),
                 Decimal("0"),
             )
             balance_due = invoice.grand_total - paid
