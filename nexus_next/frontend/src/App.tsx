@@ -65,7 +65,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState<TaxCode["category"]>("standard");
-  const [rate, setRate] = useState("14");
+  const [rate, setRate] = useState("");
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
   const [effectiveTo, setEffectiveTo] = useState("");
   const [recoverable, setRecoverable] = useState(true);
@@ -89,7 +89,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
         effective_from: effectiveFrom, effective_to: effectiveTo || null,
         input_tax_recoverable: recoverable, is_active: true,
       });
-      setCode(""); setName(""); setRate("14"); setEffectiveTo("");
+      setCode(""); setName(""); setRate(""); setEffectiveTo("");
       setNotice("تم حفظ كود الضريبة وفترة سريانه.");
       await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ كود الضريبة."); }
