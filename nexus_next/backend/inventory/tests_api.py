@@ -57,6 +57,29 @@ class InventoryApiTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 400)
 
+    def test_storage_location_create_and_soft_delete(self):
+        warehouse = Warehouse.objects.create(company=self.company, branch=self.branch, code="WH-01", name_ar="المخزن")
+        created = self.client.post("/api/inventory/locations/", {
+            "warehouse": warehouse.pk, "code": "F1", "name_ar": "الدور الأول",
+            "location_type": "floor",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        deleted = self.client.delete(f"/api/inventory/locations/{created.data['id']}/")
+        self.assertEqual(deleted.status_code, 204)
+        from .models import StorageLocation
+        location = StorageLocation.objects.get(pk=created.data["id"])
+        self.assertFalse(location.is_active)
+
+    def test_viewer_cannot_create_storage_location(self):
+        warehouse = Warehouse.objects.create(company=self.company, branch=self.branch, code="WH-02", name_ar="مخزن")
+        viewer = get_user_model().objects.create_user(username="location_viewer", password="test-password")
+        CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(viewer)
+        response = self.client.post("/api/inventory/locations/", {
+            "warehouse": warehouse.pk, "code": "A1", "name_ar": "منطقة",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+
     def test_viewer_cannot_create_inventory_product(self):
         viewer = get_user_model().objects.create_user(username="inventory_viewer", password="test-password")
         CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
