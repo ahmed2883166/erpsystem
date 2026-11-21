@@ -118,12 +118,13 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
+    approval_status = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesInvoice
         fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number",
                   "invoice_number", "invoice_date", "status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
-                  "paid_total", "balance_due", "notes", "journal_entry", "journal_number",
+                  "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "created_at", "posted_at")
         read_only_fields = ("status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
@@ -136,6 +137,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     def get_balance_due(self, obj):
         paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
         return str(max(obj.grand_total - paid, Decimal("0")))
+
+    def get_approval_status(self, obj):
+        approval = getattr(obj, "approval_request", None)
+        return approval.status if approval else "not_required"
 
     def validate(self, attrs):
         company, customer, delivery = attrs.get("company"), attrs.get("customer"), attrs.get("delivery")
