@@ -72,9 +72,16 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.data["grand_total"], "228.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(), 1)
-        purchase_lines = list(JournalLine.objects.filter(entry__source_type=JournalEntry.Source.PURCHASES))
+        invoice_entry_id = response.data["journal_entry"]
+        purchase_lines = list(JournalLine.objects.filter(entry_id=invoice_entry_id).select_related("account"))
         self.assertEqual(sum((line.debit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
         self.assertEqual(sum((line.credit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
+        by_code = {line.account.code: line for line in purchase_lines}
+        self.assertEqual(by_code["2100"].debit, Decimal("200.0000"))
+        self.assertEqual(by_code["2100"].credit, Decimal("0"))
+        self.assertEqual(by_code["1300"].debit, Decimal("28.0000"))
+        self.assertEqual(by_code["2200"].credit, Decimal("228.0000"))
+        self.assertEqual(by_code["2100"].debit-by_code["2100"].credit, Decimal("200.0000"))
 
     def test_reposting_receipt_or_invoice_does_not_duplicate_stock_or_journals(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
@@ -144,6 +151,14 @@ class PurchasingWorkflowTests(APITestCase):
             entry_id=posted_payment.data["journal_entry"], account=alternate_bank,
             credit=Decimal("100.0000"),
         ).exists())
+        retry_payment = self.client.post(
+            f"/api/purchasing/payments/{payment_id}/post/", {}, format="json"
+        )
+        self.assertEqual(retry_payment.status_code, 400)
+        self.assertEqual(
+            JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
+            2,
+        )
         invoice_data = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
         self.assertEqual(invoice_data["paid_total"], "100.0000")
         self.assertEqual(invoice_data["balance_due"], "128.0000")
