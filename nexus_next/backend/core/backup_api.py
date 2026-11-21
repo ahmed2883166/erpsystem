@@ -6,6 +6,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db import transaction
+from audit.models import AuditEvent
 
 from .models import BackupConfiguration
 
@@ -34,6 +36,7 @@ class BackupConfigurationView(APIView):
         config = _config()
         return Response(_serialize(config, request.user.is_superuser))
 
+    @transaction.atomic
     def patch(self, request):
         if not request.user.is_superuser:
             raise PermissionDenied("تغيير إعدادات النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
@@ -78,4 +81,19 @@ class BackupConfigurationView(APIView):
                 setattr(config, field, value)
         config.updated_by = request.user
         config.save()
+        AuditEvent.objects.create(
+            actor=request.user,
+            action=AuditEvent.Action.UPDATE,
+            resource="core.BackupConfiguration",
+            object_id=str(config.pk),
+            http_method="PATCH",
+            status_code=200,
+            succeeded=True,
+            metadata={
+                "changed_fields": sorted(request.data.keys()),
+                "backup_path": config.backup_path,
+                "schedule": config.schedule,
+                "enabled": config.enabled,
+            },
+        )
         return Response(_serialize(config, True))
