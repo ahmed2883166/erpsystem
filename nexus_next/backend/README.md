@@ -3,18 +3,30 @@
 Python 3.12+ and Django 5.2 LTS. PostgreSQL is the only supported application database.
 
 ## Local setup (PowerShell)
+From the `nexus_next` directory, run:
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-# Create the PostgreSQL database and user separately.
-python manage.py check
-python manage.py makemigrations accounts companies accounting
-python manage.py migrate
-python manage.py seed_reference_data
+.\start-local.ps1
+```
+The helper starts the PostgreSQL 16 container bound to `127.0.0.1`, installs backend/frontend dependencies, applies the committed migrations, seeds reference currencies, and starts both development servers. It never connects to the legacy SQLite database.
+
+On first use, create the administrator in the Backend PowerShell window:
+```powershell
 python manage.py createsuperuser
-python manage.py runserver 127.0.0.1:8000
+```
+
+To stop the database container:
+```powershell
+docker compose -f compose.yaml down
+```
+To keep local database contents, do not pass `-v`. The named volume is dedicated to NEXUS Next.
+
+Run backend checks from this directory:
+```powershell
+.\.venv\Scripts\Activate.ps1
+python manage.py check
+python manage.py makemigrations --check --dry-run accounts companies accounting
+python manage.py migrate
+python manage.py test
 ```
 
 The accounting API is under `/api/accounting/`:
