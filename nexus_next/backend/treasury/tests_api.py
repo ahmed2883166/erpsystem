@@ -136,6 +136,37 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(finalize.status_code, 400)
 
 
+    def test_bank_match_rejects_transaction_from_unassigned_branch(self):
+        shared_bank_gl = ChartOfAccount.objects.create(company=self.company, code="1120", name_ar="بنك مشترك", nature=ChartOfAccount.Nature.ASSET)
+        shared_bank = TreasuryAccount.objects.create(company=self.company, branch=None, account=shared_bank_gl, kind="bank", code="BANK-SHARED", name_ar="بنك مشترك")
+        payload = {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": shared_bank.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": "BANK-BRANCH-001", "transaction_date": "2026-03-10",
+            "amount": "50.0000", "description": "حركة فرع غير مصرح به",
+        }
+        created = self.client.post("/api/treasury/transactions/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": shared_bank.pk, "statement_number": "BRANCH-ST-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "50.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        line = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/add_line/", {
+            "line_number": 1, "transaction_date": "2026-03-10", "amount": "50.0000",
+        }, format="json")
+        self.assertEqual(line.status_code, 201, line.data)
+        other_branch = Branch.objects.create(company=self.company, code="OTHER", name_ar="فرع آخر")
+        limited = get_user_model().objects.create_user(username="treasury-limited", password="test-password")
+        membership = CompanyMembership.objects.create(user=limited, company=self.company, role="accountant", all_branches=False)
+        membership.branches.add(other_branch)
+        self.client.force_authenticate(limited)
+        matched = self.client.post(f"/api/treasury/reconciliations/{recon.data['id']}/match/", {
+            "line_id": line.data["id"], "transaction_id": created.data["id"],
+        }, format="json")
+        self.assertEqual(matched.status_code, 403, matched.data)
     def test_bank_statement_csv_import_creates_lines_without_overwriting(self):
         recon = self.client.post("/api/treasury/reconciliations/", {
             "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "CSV-001",
