@@ -73,3 +73,48 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(first.status_code, 201, first.data)
         self.assertEqual(second.status_code, 400)
         self.assertEqual(JournalEntry.objects.count(), 2)
+
+    def test_sale_posts_partial_daily_depreciation_and_gain(self):
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        monthly = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(monthly.status_code, 201, monthly.data)
+        disposed = self.client.post(f"/api/assets/fixed-assets/{asset_id}/dispose/", {
+            "disposal_date": "2026-03-10", "proceeds": "120000.0000",
+            "cash_account": self.cash_gl.pk, "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(disposed.status_code, 201, disposed.data)
+        self.assertEqual(disposed.data["accumulated_depreciation"], "4000.0000")
+        self.assertEqual(disposed.data["net_book_value"], "116000.0000")
+        self.assertEqual(disposed.data["gain"], "4000.0000")
+        self.assertEqual(disposed.data["loss"], "0")
+        from assets.models import AssetDepreciation, FixedAsset
+        asset = FixedAsset.objects.get(pk=asset_id)
+        self.assertEqual(asset.status, FixedAsset.Status.DISPOSED)
+        partial = AssetDepreciation.objects.get(asset=asset, is_partial_period=True)
+        self.assertEqual(partial.amount, Decimal("1000.0000"))
+        self.assertEqual(JournalEntry.objects.count(), 4)
+        disposal_entry = JournalEntry.objects.get(pk=disposed.data["disposal_journal"])
+        self.assertEqual(disposal_entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(disposal_entry.lines.get(account=self.asset_gl).credit, Decimal("120000.0000"))
+
+    def test_disposal_rejects_wrong_nature_gain_loss_account_without_partial_commit(self):
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        from assets.models import FixedAsset
+        asset = FixedAsset.objects.get(pk=created.data["id"])
+        asset.disposal_gain_loss_account = self.expense_gl
+        asset.save(update_fields=("disposal_gain_loss_account",))
+        before = JournalEntry.objects.count()
+        failed = self.client.post(f"/api/assets/fixed-assets/{asset.pk}/dispose/", {
+            "disposal_date": "2026-02-28", "proceeds": "120000.0000",
+            "cash_account": self.cash_gl.pk, "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(failed.status_code, 400, failed.data)
+        asset.refresh_from_db()
+        self.assertEqual(asset.status, FixedAsset.Status.ACTIVE)
+        self.assertEqual(JournalEntry.objects.count(), before)
+        self.assertFalse(asset.depreciations.exists())
