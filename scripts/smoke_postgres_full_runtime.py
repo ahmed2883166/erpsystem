@@ -965,9 +965,12 @@ def main() -> int:
 
                     def pg_writer(writer_number):
                         with nexus_app.app.app_context():
+                            # Synchronize logical clients before borrowing from the
+                            # bounded pool. Waiting at the barrier while holding a
+                            # lease can deadlock whenever workers exceed pool max_size.
+                            start_barrier.wait(timeout=30)
                             worker_connection = nexus_app.db()
                             try:
-                                start_barrier.wait(timeout=30)
                                 durations = []
                                 for sequence in range(10):
                                     started = time.perf_counter()
@@ -996,9 +999,9 @@ def main() -> int:
 
                     def pg_reader(reader_number):
                         with nexus_app.app.app_context():
+                            start_barrier.wait(timeout=30)
                             worker_connection = nexus_app.db()
                             try:
-                                start_barrier.wait(timeout=30)
                                 durations = []
                                 for _ in range(30):
                                     started = time.perf_counter()
