@@ -127,7 +127,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                   "invoice_number", "invoice_date", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "created_at", "posted_at")
-        read_only_fields = ("status", "net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total",
+        read_only_fields = ("status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
                             "created_at", "posted_at")
 
