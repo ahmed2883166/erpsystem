@@ -329,7 +329,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             branch_ids = [recon.bank_account.branch_id]
         book_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
         totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        book_balance = (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+        book_balance = recon.bank_account.opening_balance + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
         statement_balance = recon.opening_balance + sum((line.amount for line in lines), Decimal("0"))
         outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
             models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
@@ -376,7 +376,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
                 branch_ids = [recon.bank_account.branch_id]
             bank_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
             totals = bank_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-            book_balance = (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+            book_balance = recon.bank_account.opening_balance + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
             outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
                 models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
             )
