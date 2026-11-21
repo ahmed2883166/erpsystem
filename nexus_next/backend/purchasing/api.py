@@ -20,12 +20,14 @@ class PurchaseBaseViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
     def _check_write(self, company_id):
+        """التحقق من صلاحية المستخدم لتعديل بيانات الوحدة داخل الشركة."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("إجراءات المشتريات متاحة لمدير الشركة والمحاسب فقط.")
 
     def perform_destroy(self, instance):
+        """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         raise PermissionDenied("لا يمكن حذف مستندات المشتريات؛ استخدم الإلغاء المعتمد بعد إضافته.")
 
 
@@ -37,12 +39,14 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
     ordering_fields = ("order_date", "order_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
         return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=accessible_branches(self.request.user)))
 
     def create(self, request, *args, **kwargs):
+        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
@@ -51,6 +55,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         if data["warehouse"].branch_id and not can_access_branch(self.request.user, data["warehouse"].branch_id, data["company"].pk):
@@ -58,6 +63,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         order = serializer.instance
         self._check_write(order.company_id)
         warehouse = serializer.validated_data.get("warehouse", order.warehouse)
@@ -69,6 +75,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
 
     @action(detail=True, methods=("post",))
     def confirm(self, request, pk=None):
+        """اعتماد المستند ونقله إلى الحالة التالية وفق دورة العمل."""
         order = self.get_object()
         self._check_write(order.company_id)
         if order.status != PurchaseOrder.Status.DRAFT:
@@ -91,6 +98,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
     ordering_fields = ("receipt_date", "receipt_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
@@ -98,6 +106,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches))
 
     def create(self, request, *args, **kwargs):
+        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
@@ -106,6 +115,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         warehouse = data["warehouse"]
@@ -114,6 +124,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         receipt = serializer.instance
         self._check_write(receipt.company_id)
         if receipt.stock_movement.status != StockMovement.Status.DRAFT:
@@ -122,6 +133,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
         if receipt.warehouse.branch_id and not can_access_branch(request.user, receipt.warehouse.branch_id, receipt.company_id):
@@ -138,6 +150,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
@@ -145,6 +158,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         return qs.filter(Q(receipt__warehouse__branch__isnull=True) | Q(receipt__warehouse__branch__in=branches))
 
     def create(self, request, *args, **kwargs):
+        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
@@ -153,6 +167,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         receipt = data["receipt"]
@@ -161,6 +176,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         invoice = serializer.instance
         self._check_write(invoice.company_id)
         if invoice.status != PurchaseInvoice.Status.DRAFT:
@@ -174,6 +190,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
     @action(detail=False, methods=("get",), url_path="supplier-statement")
     def supplier_statement(self, request):
+        """إعداد كشف حركة المورد ورصيده للفترة المحددة."""
         try:
             company_id = int(request.query_params.get("company", ""))
             supplier_id = int(request.query_params.get("supplier", ""))
@@ -252,6 +269,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
     @action(detail=False, methods=("get",), url_path="supplier-aging")
     def supplier_aging(self, request):
+        """تصنيف مديونيات الموردين حسب تاريخ الاستحقاق."""
         try:
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
@@ -314,6 +332,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
         if invoice.receipt.warehouse.branch_id and not can_access_branch(request.user, invoice.receipt.warehouse.branch_id, invoice.company_id):
@@ -333,6 +352,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
     ordering_fields = ("payment_date", "payment_number", "amount", "created_at")
 
     def get_queryset(self):
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
@@ -343,6 +363,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         )
 
     def create(self, request, *args, **kwargs):
+        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
@@ -351,6 +372,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         invoice = data["invoice"]
@@ -361,11 +383,13 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند الصرف غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         payment = self.get_object()
         self._check_write(payment.company_id)
         if payment.invoice.receipt.warehouse.branch_id and not can_access_branch(
