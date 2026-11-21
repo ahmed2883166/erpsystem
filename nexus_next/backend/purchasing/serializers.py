@@ -55,6 +55,8 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         company = attrs.get("company")
         supplier = attrs.get("supplier")
         warehouse = attrs.get("warehouse")
+        if supplier and not supplier.is_active:
+            raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن استخدامه في مستند جديد."})
         if supplier and company and supplier.company_id != company.pk:
             raise serializers.ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
         if warehouse and company and warehouse.company_id != company.pk:
@@ -164,6 +166,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"receipt": "يجب ترحيل إذن استلام البضاعة أولاً."})
         if company and receipt.company_id != company.pk:
             raise serializers.ValidationError({"receipt": "إذن الاستلام لا يتبع الشركة المحددة."})
+        if supplier and not supplier.is_active:
+            raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن استخدامه في مستند جديد."})
         if supplier and receipt.supplier_id != supplier.pk:
             raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد إذن الاستلام."})
         if receipt.stock_movement.movement_type != StockMovement.MovementType.RECEIPT:
