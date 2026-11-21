@@ -175,6 +175,11 @@ def post_supplier_payment(payment_id, user):
     payment_account = payment.payment_account or _account(payment.company, cash_role)
     if payment_account.company_id != payment.company_id or payment_account.nature != "asset" or not payment_account.is_active or payment_account.is_group or not payment_account.allow_posting:
         raise ValidationError("حساب الصرف يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
+    if payment.payment_account_id:
+        from treasury.models import TreasuryAccount
+        expected_kind = TreasuryAccount.Kind.CASH if payment.method == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
+        if not TreasuryAccount.objects.filter(company=payment.company, account=payment_account, kind=expected_kind, is_active=True).exists():
+            raise ValidationError("حساب الخزينة المختار غير نشط أو لا يطابق طريقة الصرف.")
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
