@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment
 
-from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet
+from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet, EmployeeComponent
 from hr.services import calculate_component, money, salary_for_date
 
 
@@ -150,6 +150,23 @@ class EmployeePayrollReportApiTests(TestCase):
             {"BASIC", "BONUS", "ER-SHARE"},
         )
         self.assertEqual(len(employee["periods"]), 1)
+
+    def test_employee_component_assignment_rejects_overlapping_effective_dates(self):
+        component = PayrollComponent.objects.create(
+            company=self.company, code="BONUS-OVERLAP", name_ar="بدل ثابت",
+            kind=PayrollComponent.Kind.EARNING, method=PayrollComponent.Method.FIXED,
+        )
+        first = self.client.post("/api/hr/employee-components/", {
+            "employee": self.employee.pk, "component": component.pk, "value": "500",
+            "effective_from": "2026-01-01", "effective_to": "2026-12-31", "is_active": True,
+        }, format="json")
+        second = self.client.post("/api/hr/employee-components/", {
+            "employee": self.employee.pk, "component": component.pk, "value": "700",
+            "effective_from": "2026-06-01", "effective_to": "2027-01-31", "is_active": True,
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(second.status_code, 400, second.data)
+        self.assertEqual(EmployeeComponent.objects.filter(employee=self.employee, component=component).count(), 1)
 
     def test_manual_loan_installments_cannot_exceed_loan_principal(self):
         loan = EmployeeLoan.objects.create(
