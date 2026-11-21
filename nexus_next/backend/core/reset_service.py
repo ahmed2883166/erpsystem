@@ -44,6 +44,7 @@ RESET_MODELS = (
 
 
 def reset_preview():
+    """تجهيز معاينة البيانات التشغيلية التي ستتأثر بإعادة الضبط دون تعديلها."""
     return {
         f"{app}.{model}": apps.get_model(app, model).objects.count()
         for app, model in RESET_MODELS
@@ -52,6 +53,7 @@ def reset_preview():
 
 @transaction.atomic
 def reset_operational_data():
+    """تنفيذ إعادة ضبط البيانات التشغيلية ضمن معاملة وقواعد الحماية المعتمدة."""
     # Journal reversals are self-protected; clear links before removing all entries.
     JournalEntry = apps.get_model("accounting", "JournalEntry")
     JournalEntry.objects.exclude(reversal_of=None).update(reversal_of=None)
