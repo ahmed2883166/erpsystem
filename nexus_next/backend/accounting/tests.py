@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from .models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from .services import post_journal
 
 
@@ -446,3 +446,59 @@ class TrialBalanceClosingFilterTests(TestCase):
         self.assertEqual(excluded.status_code, 200)
         self.assertEqual(included.data["debit_total"], Decimal("100.0000"))
         self.assertEqual(excluded.data["debit_total"], Decimal("0.0000"))
+
+
+
+class TaxCodeConfigurationApiTests(TestCase):
+    def setUp(self):
+        self.egp = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.sar = Currency.objects.create(code="SAR", name_ar="ريال سعودي")
+        self.company = Company.objects.create(code="TAX-EG", name_ar="شركة مصرية", country="EG",
+            activity="commercial", base_currency=self.egp)
+        self.branch = Branch.objects.create(company=self.company, code="HQ", name_ar="الرئيسي")
+        self.admin = User.objects.create_user(username="tax_admin", password="test-password")
+        CompanyMembership.objects.create(user=self.admin, company=self.company, role="admin", all_branches=True)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+
+    def test_company_tax_code_is_created_and_filtered_by_effective_date(self):
+        payload = {
+            "company": self.company.pk, "country": "EG", "code": "VAT-STD",
+            "name_ar": "ضريبة قياسية", "category": "standard", "rate": "14.0000",
+            "effective_from": "2026-01-01", "input_tax_recoverable": True, "is_active": True,
+        }
+        created = self.client.post("/api/accounting/tax-codes/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        active = self.client.get(f"/api/accounting/tax-codes/?company={self.company.pk}&as_of=2026-06-01")
+        before = self.client.get(f"/api/accounting/tax-codes/?company={self.company.pk}&as_of=2025-12-31")
+        self.assertEqual(active.status_code, 200)
+        self.assertEqual(len(active.data), 1)
+        self.assertEqual(active.data[0]["rate"], "14.0000")
+        self.assertEqual(before.status_code, 200)
+        self.assertEqual(len(before.data), 0)
+
+    def test_tax_code_rejects_country_mismatch_and_nonzero_exempt_rate(self):
+        wrong_country = self.client.post("/api/accounting/tax-codes/", {
+            "company": self.company.pk, "country": "SA", "code": "SA-STD",
+            "name_ar": "ضريبة سعودية", "category": "standard", "rate": "15",
+            "effective_from": "2026-01-01",
+        }, format="json")
+        invalid_exempt = self.client.post("/api/accounting/tax-codes/", {
+            "company": self.company.pk, "country": "EG", "code": "EXEMPT",
+            "name_ar": "معفى", "category": "exempt", "rate": "14",
+            "effective_from": "2026-01-01",
+        }, format="json")
+        self.assertEqual(wrong_country.status_code, 400)
+        self.assertEqual(invalid_exempt.status_code, 400)
+
+    def test_viewer_cannot_create_tax_codes(self):
+        viewer = User.objects.create_user(username="tax_viewer", password="test-password")
+        CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=viewer)
+        response = self.client.post("/api/accounting/tax-codes/", {
+            "company": self.company.pk, "country": "EG", "code": "VAT-TEST",
+            "name_ar": "اختبار", "category": "standard", "rate": "14",
+            "effective_from": "2026-01-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(TaxCode.objects.count(), 0)
