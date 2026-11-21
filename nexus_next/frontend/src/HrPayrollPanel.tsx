@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, hrApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account } from "./api";
+import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount } from "./api";
 
 const statusLabels: Record<string, string> = {
   active: "نشط", leave: "إجازة", unpaid_leave: "إجازة بدون راتب",
@@ -7,7 +7,7 @@ const statusLabels: Record<string, string> = {
 };
 const cycleLabels: Record<string, string> = {
   draft: "مسودة", calculated: "تم الاحتساب", review: "تحت المراجعة",
-  approved: "معتمدة", posted: "مرحّلة", paid: "تم الصرف",
+  approved: "معتمدة", posted: "مرحّلة", payment_pending: "بانتظار اعتماد الصرف", paid: "تم الصرف",
 };
 
 export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: { companyId: number | null; baseCurrencyId?: number; country?: "EG" | "SA" }) {
@@ -22,7 +22,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [loans, setLoans] = useState<HrEmployeeLoan[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [currencies, setCurrencies] = useState<Currency[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);\n  const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);\n  const [paymentAccountId, setPaymentAccountId] = useState("");
   const [results, setResults] = useState<HrPayrollResult[]>([]);
   const [selectedCycle, setSelectedCycle] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -42,11 +42,11 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows, assignmentRows, leaveRows, loanRows, ruleRows, accountRows] = await Promise.all([
-        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId), hrApi.employeeComponents(companyId), hrApi.leaveRequests(companyId), hrApi.employeeLoans(companyId), hrApi.payrollRuleSets(companyId), api.accounts(companyId),
+      const [employeeRows, cycleRows, branchRows, currencyRows, componentRows, attendanceRows, assignmentRows, leaveRows, loanRows, ruleRows, accountRows, treasuryRows] = await Promise.all([
+        hrApi.employees(companyId), hrApi.payrollCycles(companyId), api.branches(companyId), api.currencies(), hrApi.payrollComponents(companyId), hrApi.attendance(companyId), hrApi.employeeComponents(companyId), hrApi.leaveRequests(companyId), hrApi.employeeLoans(companyId), hrApi.payrollRuleSets(companyId), api.accounts(companyId), treasuryApi.accounts(companyId),
       ]);
       setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows); setRuleSets(ruleRows);
-      setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows); setAccounts(accountRows);
+      setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows); setAccounts(accountRows); setTreasuryAccounts(treasuryRows.filter(x=>x.is_active));
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
       setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(baseCurrencyId||currencyRows[0]?.id||"")}));
@@ -297,7 +297,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         <label>نهاية الفترة<input required type="date" value={cycleDraft.period_end} onChange={e=>setCycleDraft({...cycleDraft,period_end:e.target.value})}/></label>
         <label>تاريخ الصرف<input required type="date" value={cycleDraft.payment_date} onChange={e=>setCycleDraft({...cycleDraft,payment_date:e.target.value})}/></label>
         <label>مجموعة القواعد القانونية<select value={cycleDraft.rule_set} onChange={e=>setCycleDraft({...cycleDraft,rule_set:e.target.value})}><option value="">بدون مجموعة (للعناصر غير القانونية فقط)</option>{ruleSets.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.name} · {x.effective_from}</option>)}</select></label>
-        <div className="form-actions form-wide"><button className="primary-button" disabled={busy}>إنشاء دورة جديدة</button></div>
+        <label>حساب الصرف (للاستخدام بعد الترحيل)<select value={paymentAccountId} onChange={e=>setPaymentAccountId(e.target.value)}><option value="">اختر البنك أو الخزينة</option>{treasuryAccounts.map(x=><option key={x.id} value={x.id}>{x.code} — {x.name_ar} ({x.currency_code})</option>)}</select></label>\n        <div className="form-actions form-wide"><button className="primary-button" disabled={busy}>إنشاء دورة جديدة</button></div>
       </form>
       <div className="section-heading" style={{marginTop:24}}><div><h2>دورات المرتبات</h2><p>لا يتم إنشاء قيود أو صرف أموال في هذه المرحلة قبل استكمال المراجعة المحاسبية</p></div><span className="module-count">{cycles.length} دورة</span></div>
       <div className="data-table-wrap"><table><thead><tr><th>الفترة</th><th>تاريخ الصرف</th><th>عدد الموظفين</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>
@@ -305,7 +305,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
           {["draft","calculated","review"].includes(c.status)&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.calculatePayroll(c.id),"تم احتساب الدورة. راجع النتائج قبل إرسالها للاعتماد.")}>احتساب</button>}
           {c.status==="calculated"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.sendPayrollToReview(c.id),"تم إرسال الدورة للمراجعة.")}>إرسال للمراجعة</button>}
           {c.status==="review"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.approvePayroll(c.id),"تم اعتماد الدورة.")}>اعتماد</button>}
-          {c.status==="approved"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void action(()=>hrApi.postPayroll(c.id),"تم ترحيل استحقاق المرتبات محاسبيًا لكل فرع.")}>ترحيل محاسبي</button>}
+          {c.status==="approved"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void action(()=>hrApi.postPayroll(c.id),"تم ترحيل استحقاق المرتبات محاسبيًا لكل فرع.")}>ترحيل محاسبي</button>}\n          {c.status==="posted"&&<button type="button" className="primary-button" disabled={busy||!paymentAccountId} onClick={()=>void action(()=>hrApi.preparePayrollPayment(c.id,Number(paymentAccountId)),"تم إعداد مستندات الصرف؛ راجع طلبات الموافقة المالية قبل تأكيد الصرف.")}>إعداد الصرف</button>}\n          {c.status==="payment_pending"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void action(()=>hrApi.completePayrollPayment(c.id),"تم صرف المرتبات وتحديث أقساط السلف.")}>تأكيد الصرف</button>}
           <button type="button" className="subtle-button" disabled={busy} onClick={()=>void showResults(c.id)}>النتائج</button>
         </td></tr>)}
       </tbody></table>{!cycles.length&&<div className="table-empty">لا توجد دورات مرتبات بعد.</div>}</div>
