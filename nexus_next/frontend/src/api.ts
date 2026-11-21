@@ -203,6 +203,7 @@ export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
   memberships: (companyId: number) => request<CompanyMembership[]>(`/api/setup/memberships/?company=${companyId}`),
+  currentMembership: (companyId: number) => request<CompanyMembership>(`/api/setup/memberships/current/?company=${companyId}`),
   searchCompanyUsers: (companyId: number, search: string) => request<CompanyUserLookup[]>(`/api/setup/memberships/users/?company=${companyId}&search=${encodeURIComponent(search)}`),
   createMembership: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>("/api/setup/memberships/", {method:"POST",body:JSON.stringify(payload)}); },
   updateMembership: async (id: number, payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>(`/api/setup/memberships/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
