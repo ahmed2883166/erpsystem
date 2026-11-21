@@ -55,6 +55,14 @@ class ProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"unit": "وحدة القياس لا تتبع الشركة المحددة."})
         if product_type == Product.ProductType.SERVICE and track_expiry:
             raise serializers.ValidationError({"track_expiry": "الخدمة لا يمكن تتبع صلاحيتها."})
+        if self.instance:
+            costing_method = attrs.get("costing_method", self.instance.costing_method)
+            next_type = attrs.get("product_type", self.instance.product_type)
+            if (costing_method != self.instance.costing_method or next_type != self.instance.product_type):
+                if self.instance.stock_balances.filter(quantity__gt=0).exists():
+                    raise serializers.ValidationError(
+                        "لا يمكن تغيير طريقة التقييم أو تحويل الصنف إلى خدمة مع وجود رصيد مخزني."
+                    )
         return attrs
 
     def validate_code(self, value):
