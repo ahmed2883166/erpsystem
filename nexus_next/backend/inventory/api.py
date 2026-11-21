@@ -1,9 +1,12 @@
-from django.db.models import Q
+from decimal import Decimal
+
+from django.db.models import Q, Sum
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
+from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 
@@ -262,3 +265,43 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         return queryset.filter(
             Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches)
         )
+
+    @action(detail=False, methods=("get",), url_path="reconciliation")
+    def reconciliation(self, request):
+        company_id = request.query_params.get("company")
+        if not company_id:
+            return Response({"detail": "حدد الشركة لإجراء مطابقة المخزون."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company_id = int(company_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "معرّف الشركة غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        role = AccountRole.objects.select_related("account").filter(
+            company_id=company_id, role=AccountRole.Role.INVENTORY
+        ).first()
+        if role is None:
+            return Response({"detail": "لم يتم ربط دور حساب المخزون بدليل الحسابات."}, status=status.HTTP_400_BAD_REQUEST)
+
+        stock_value = StockBalance.objects.filter(
+            warehouse__company_id=company_id
+        ).aggregate(total=Sum("inventory_value"))["total"] or Decimal("0")
+        gl_totals = JournalLine.objects.filter(
+            account_id=role.account_id,
+            entry__company_id=company_id,
+            entry__status=JournalEntry.Status.POSTED,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        gl_balance = (gl_totals["debit"] or Decimal("0")) - (gl_totals["credit"] or Decimal("0"))
+        difference = gl_balance - stock_value
+        return Response({
+            "company": company_id,
+            "account_id": role.account_id,
+            "account_code": role.account.code,
+            "account_name": role.account.name_ar,
+            "stock_value": str(stock_value),
+            "gl_balance": str(gl_balance),
+            "difference": str(difference),
+            "is_reconciled": difference == 0,
+            "basis": "current_stock_snapshot_vs_posted_inventory_account_balance",
+        })
