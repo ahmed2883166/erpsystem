@@ -420,6 +420,33 @@ def build_tax_report_snapshot(conn, period_value):
         _build_saudi_tax_preparation(conn, period, summary)
         if settings.get("tax_country") == "SA" else None
     )
+    # Read-only per-line category analysis. Empty categories remain visibly
+    # unclassified; old invoice lines are never silently re-labelled.
+    sales_category_breakdown = []
+    sales_line_columns = _columns(conn, "sales_invoice_lines")
+    if {"invoice_id", "line_total", "tax_amount", "tax_category"}.issubset(sales_line_columns):
+        category_rows = execute_compat(conn, """
+            SELECT COALESCE(NULLIF(l.tax_category,''),'legacy_unclassified') tax_category,
+                   COUNT(*) line_count,
+                   SUM(CAST(l.line_total AS NUMERIC)) taxable_base,
+                   SUM(CAST(l.tax_amount AS NUMERIC)) tax_amount
+            FROM sales_invoice_lines l
+            JOIN sales_invoices i ON i.id=l.invoice_id
+            WHERE i.status='posted' AND i.invoice_date>=? AND i.invoice_date<?
+            GROUP BY COALESCE(NULLIF(l.tax_category,''),'legacy_unclassified')
+            ORDER BY tax_category
+        """, (start.isoformat(), end.isoformat())).fetchall()
+        from tax_categories import tax_category_label
+        for row in category_rows:
+            code = row["tax_category"]
+            sales_category_breakdown.append({
+                "tax_category": code,
+                "label": ("غير مصنف تفصيليًا – مستند سابق" if code == "legacy_unclassified"
+                          else tax_category_label(country, "sale", code) or "تصنيف غير معروف"),
+                "line_count": int(row["line_count"] or 0),
+                "taxable_base": Decimal(str(row["taxable_base"] or "0")),
+                "tax_amount": Decimal(str(row["tax_amount"] or "0")),
+            })
     # Advisory data-quality checks. These never modify posted documents or journals.
     quality_issues = []
     company_tax_number = (settings.get("tax_number") or "").strip()
@@ -481,6 +508,7 @@ def build_tax_report_snapshot(conn, period_value):
         "quality_issues": quality_issues,
         "ledger_reconciliation": ledger_reconciliation,
         "saudi_preparation": saudi_preparation,
+        "sales_category_breakdown": sales_category_breakdown,
     }
 
 
