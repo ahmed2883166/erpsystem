@@ -76,3 +76,15 @@ class CompanySetupApiTests(APITestCase):
         response = self.client.get("/api/setup/branches/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["id"] for row in response.data], [first.pk])
+
+
+    def test_foreign_company_branch_cannot_be_granted_through_membership(self):
+        own = CompanyMembership.objects.create(user=self.user, company=self.company)
+        foreign_branch = Branch.objects.create(
+            company=self.other_company, code="FOREIGN", name_ar="فرع شركة أخرى"
+        )
+        own.branches.add(foreign_branch)
+        self.client.force_authenticate(self.user)
+        response = self.client.get("/api/setup/branches/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(foreign_branch.pk, [row["id"] for row in response.data])
