@@ -18,9 +18,12 @@ This directory contains the new, independent NEXUS ERP implementation.
 ## Start locally on Windows
 Install Docker Desktop, Python 3.12, and Node.js 22, then run this from the `nexus_next` directory:
 ```powershell
+Set-ExecutionPolicy -Scope Process Bypass
 .\start-local.ps1
 ```
-If no administrator exists, the startup helper opens a separate PowerShell window to create one. The database port is bound to localhost only.
+If no administrator exists, the startup helper opens a separate PowerShell window to create one. The database port and both application servers are bound to localhost only.
+
+For the Windows trial ZIP, prerequisites, first company setup, and data-safety instructions, see [TRIAL-QUICKSTART.md](TRIAL-QUICKSTART.md). To build a clean ZIP locally, run `.scripts\package-trial.ps1`.
 
 See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend/README.md) for details.
 
