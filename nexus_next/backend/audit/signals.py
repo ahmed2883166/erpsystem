@@ -83,16 +83,21 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
     if model is not None and instance.action_flag != LogEntry.DELETION:
         obj = model._default_manager.filter(pk=instance.object_id).first()
         if obj is not None:
-            company_id = getattr(obj, "company_id", None)
-            branch_id = getattr(obj, "branch_id", None)
-            if branch_id:
-                from companies.models import Branch
-                branch = Branch.objects.filter(pk=branch_id).first()
-            if company_id is None and branch is not None:
-                company_id = branch.company_id
-            if company_id:
-                from companies.models import Company
-                company = Company.objects.filter(pk=company_id).first()
+            from companies.models import Branch, Company
+            if isinstance(obj, Company):
+                company = obj
+            elif isinstance(obj, Branch):
+                branch = obj
+                company = obj.company
+            else:
+                company_id = getattr(obj, "company_id", None)
+                branch_id = getattr(obj, "branch_id", None)
+                if branch_id:
+                    branch = Branch.objects.filter(pk=branch_id).first()
+                if company_id is None and branch is not None:
+                    company_id = branch.company_id
+                if company_id:
+                    company = Company.objects.filter(pk=company_id).first()
     model_name = instance.content_type.model
     app_label = instance.content_type.app_label
     _safe_create_audit_event(
