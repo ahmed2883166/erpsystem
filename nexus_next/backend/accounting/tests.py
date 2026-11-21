@@ -823,3 +823,32 @@ class AccountExcelImportTests(TestCase):
         self.assertEqual(response.status_code, 400)
         role.refresh_from_db()
         self.assertEqual(role.account_id, cash.pk)
+
+
+class AccountRoleRuntimeValidationTests(TestCase):
+    def setUp(self):
+        from accounting.services import get_account_for_role
+        self.get_account_for_role = get_account_for_role
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="ROLE", name_ar="شركة اختبار الأدوار", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        self.cash = ChartOfAccount.objects.create(
+            company=self.company, code="1110", name_ar="الصندوق", nature="asset",
+        )
+        self.revenue = ChartOfAccount.objects.create(
+            company=self.company, code="4110", name_ar="المبيعات", nature="revenue",
+        )
+
+    def test_runtime_role_lookup_rejects_wrong_account_nature(self):
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.CASH, account=self.revenue)
+        with self.assertRaises(ValidationError):
+            self.get_account_for_role(self.company, AccountRole.Role.CASH)
+
+    def test_runtime_role_lookup_returns_correct_nature_account(self):
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.CASH, account=self.cash)
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH).pk,
+            self.cash.pk,
+        )
