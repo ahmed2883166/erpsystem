@@ -45,7 +45,7 @@ class SalesInvoiceApproval(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_invoice_approvals")
     invoice = models.ForeignKey("sales.SalesInvoice", on_delete=models.PROTECT, related_name="approval_requests")
     requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="sales_discount_requests")
-    requested_limit = models.DecimalField(max_digits=7, decimal_places=4)
+    requested_limit = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
     requested_invoice_limit = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     requested_discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     requested_max_discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0)
