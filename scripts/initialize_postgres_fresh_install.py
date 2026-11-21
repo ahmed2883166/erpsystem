@@ -1,9 +1,9 @@
 """Safely bootstrap a brand-new NEXUS PostgreSQL company database.
 
 This command installs the reviewed schema baseline and runs the application's
-idempotent schema/data bootstrap. It does not enable PostgreSQL runtime mode:
-the separate runtime compatibility gate remains authoritative until all
-operational modules have passed end-to-end verification.
+idempotent schema/data bootstrap through the normal PostgreSQL connection
+factory. It enables PostgreSQL only inside this short-lived bootstrap process;
+a normal application launch still requires its explicit runtime configuration.
 """
 from __future__ import annotations
 
@@ -142,8 +142,6 @@ def main(argv=None) -> int:
     os.environ.setdefault("NEXUS_DEMO_MODE", "0")
 
     import app as nexus_app
-    import database as database_module
-
     # Bootstrap through the same explicit runtime gate used by a normal
     # PostgreSQL validation launch; do not monkeypatch either module's gate.
     nexus_app.initialize_database()
@@ -161,10 +159,11 @@ def main(argv=None) -> int:
         "schema": args.schema,
         "baseline_sha256": baseline_sha256,
         "verification": verification,
-        "runtime_enabled": False,
+        "runtime_enabled_during_bootstrap": True,
         "runtime_note": (
-            "PostgreSQL runtime remains fail-closed until all ERP workflows "
-            "pass the separate compatibility gate."
+            "The explicit PostgreSQL gate was enabled only in this bootstrap "
+            "process. A normal launch must set NEXUS_POSTGRES_RUNTIME_ENABLE=1; "
+            "this result does not certify every ERP workflow."
         ),
         "admin_credential_file": str(data_dir / ".nexus_initial_admin_password"),
         "backup_directory": str(backup_dir),
