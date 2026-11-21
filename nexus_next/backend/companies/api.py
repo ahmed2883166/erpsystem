@@ -1,11 +1,12 @@
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.db.models import Q
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
-from .models import Branch, CompanyMembership, Currency, FiscalYear
+from .models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, FiscalYearSerializer
 
 
@@ -155,12 +156,16 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         self._require_admin(company.pk)
         serializer.save()
 
+    @transaction.atomic
     def perform_update(self, serializer):
         instance = serializer.instance
-        self._require_admin(instance.company_id)
-        new_role = serializer.validated_data.get("role", instance.role)
-        new_active = serializer.validated_data.get("is_active", instance.is_active)
-        self._protect_last_admin(instance, new_role, new_active)
+        Company.objects.select_for_update().get(pk=instance.company_id)
+        locked = CompanyMembership.objects.select_for_update().get(pk=instance.pk)
+        self._require_admin(locked.company_id)
+        new_role = serializer.validated_data.get("role", locked.role)
+        new_active = serializer.validated_data.get("is_active", locked.is_active)
+        self._protect_last_admin(locked, new_role, new_active)
+        serializer.instance = locked
         serializer.save()
 
     def perform_destroy(self, instance):
