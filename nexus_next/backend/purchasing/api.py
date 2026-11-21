@@ -1,4 +1,7 @@
+from decimal import Decimal
+
 from django.db.models import Q
+from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
@@ -101,6 +104,84 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if invoice.status != PurchaseInvoice.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل فاتورة مورد مرحلة.")
         raise ValidationError("تعديل الفاتورة غير متاح حاليًا؛ أنشئ فاتورة مسودة جديدة.")
+
+    @action(detail=False, methods=("get",), url_path="supplier-statement")
+    def supplier_statement(self, request):
+        try:
+            company_id = int(request.query_params.get("company", ""))
+            supplier_id = int(request.query_params.get("supplier", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"detail": "حدد الشركة والمورد لعرض كشف الحساب."})
+
+        date_from_raw = request.query_params.get("date_from")
+        date_to_raw = request.query_params.get("date_to")
+        date_from = parse_date(date_from_raw) if date_from_raw else None
+        date_to = parse_date(date_to_raw) if date_to_raw else None
+        if date_from_raw and not date_from:
+            raise ValidationError({"date_from": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if date_to_raw and not date_to:
+            raise ValidationError({"date_to": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية يجب ألا يسبق تاريخ البداية."})
+
+        invoices = self.get_queryset().filter(
+            company_id=company_id, supplier_id=supplier_id,
+            status=PurchaseInvoice.Status.POSTED,
+        ).select_related("supplier")
+        supplier = invoices.first()
+        if supplier is None:
+            # Distinguish an accessible supplier with no posted invoices from an inaccessible one.
+            from suppliers.models import Supplier
+            supplier_obj = Supplier.objects.filter(pk=supplier_id, company_id=company_id).first()
+            if not supplier_obj or company_id not in accessible_companies(request.user).values_list("id", flat=True):
+                raise NotFound("المورد غير موجود أو لا تملك صلاحية الوصول إليه.")
+            supplier_name = supplier_obj.name_ar
+        else:
+            supplier_name = supplier.supplier.name_ar
+
+        events = []
+        for invoice in invoices:
+            events.append({
+                "date": invoice.invoice_date, "kind": "invoice",
+                "number": invoice.invoice_number, "description": f"فاتورة مورد {invoice.invoice_number}",
+                "debit": Decimal("0"), "credit": invoice.grand_total,
+                "sort": 1,
+            })
+        payments = SupplierPayment.objects.filter(
+            invoice__in=invoices, status=SupplierPayment.Status.POSTED
+        ).select_related("invoice")
+        for payment in payments:
+            events.append({
+                "date": payment.payment_date, "kind": "payment",
+                "number": payment.payment_number, "description": f"سداد فاتورة {payment.invoice.invoice_number}",
+                "debit": payment.amount, "credit": Decimal("0"), "sort": 0,
+            })
+        events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
+
+        opening = sum(
+            (row["credit"] - row["debit"] for row in events if date_from and row["date"] < date_from),
+            Decimal("0"),
+        )
+        balance = opening
+        rows = []
+        for row in events:
+            if date_from and row["date"] < date_from:
+                continue
+            if date_to and row["date"] > date_to:
+                continue
+            balance += row["credit"] - row["debit"]
+            rows.append({
+                "date": row["date"].isoformat(), "document_type": row["kind"],
+                "document_number": row["number"], "description": row["description"],
+                "debit": str(row["debit"]), "credit": str(row["credit"]),
+                "balance": str(balance),
+            })
+        return Response({
+            "company": company_id, "supplier": supplier_id, "supplier_name": supplier_name,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "opening_balance": str(opening), "closing_balance": str(balance), "rows": rows,
+        })
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
