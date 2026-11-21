@@ -158,6 +158,12 @@ def post_supplier_payment(payment_id, user):
     payment = SupplierPayment.objects.select_for_update().get(pk=payment_id)
     if payment.status != SupplierPayment.Status.DRAFT:
         raise ValidationError("سند صرف المورد مرحّل بالفعل.")
+    from approvals.models import FinancialApprovalRequest
+    from approvals.services import require_financial_approval
+    try:
+        require_financial_approval(FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT, payment)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
     invoice = PurchaseInvoice.objects.select_for_update().get(pk=payment.invoice_id)
     if invoice.status != PurchaseInvoice.Status.POSTED:
         raise ValidationError("لا يمكن صرف قيمة فاتورة غير مرحلة.")
