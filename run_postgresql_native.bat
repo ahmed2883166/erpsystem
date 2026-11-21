@@ -11,7 +11,7 @@ if not defined NEXUS_POSTGRES_DSN (
 set "NEXUS_DEPLOYMENT_PROFILE=postgresql_native"
 set "NEXUS_DB_BACKEND=postgresql"
 set "NEXUS_POSTGRES_RUNTIME_ENABLE=1"
-set "NEXUS_POSTGRES_SCHEMA=nexus"
+if not defined NEXUS_POSTGRES_SCHEMA set "NEXUS_POSTGRES_SCHEMA=nexus"
 set "HOST=127.0.0.1"
 set "PORT=5056"
 
