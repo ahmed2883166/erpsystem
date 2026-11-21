@@ -2,14 +2,12 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q, Sum
 from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from companies.access import accessible_branches, accessible_companies, can_access_company, can_access_branch
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
 from .services import post_journal
-from companies.access import scope_company_queryset, user_can_access_company
-from rest_framework.exceptions import PermissionDenied
 
 
 class AccountingViewSet(viewsets.ModelViewSet):
@@ -20,40 +18,22 @@ class AccountingViewSet(viewsets.ModelViewSet):
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
-    def _check_company_access(self, data):
+    def _validate_scope(self, data):
         company = data.get("company")
         if company and not can_access_company(self.request.user, company.pk):
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        branch = data.get("branch")
+        if branch and not can_access_branch(
+            self.request.user, branch.pk, company.pk if company else None
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
 
     def perform_create(self, serializer):
-        data = serializer.validated_data
-        self._check_company_access(data)
-        branch = data.get("branch")
-        company = data.get("company")
-        if branch and not can_access_branch(self.request.user, branch.pk, company.pk if company else None):
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        self._validate_scope(serializer.validated_data)
         serializer.save()
 
     def perform_update(self, serializer):
-        data = serializer.validated_data
-        self._check_company_access(data)
-        branch = data.get("branch")
-        company = data.get("company")
-        if branch and not can_access_branch(self.request.user, branch.pk, company.pk if company else None):
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
-        serializer.save()
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        return scope_company_queryset(queryset, self.request.user)
-
-    def perform_create(self, serializer):
-        company = serializer.validated_data.get("company")
-        if company and not user_can_access_company(self.request.user, company.pk):
-            raise PermissionDenied("ليس لديك صلاحية الوصول إلى الشركة المحددة.")
+        self._validate_scope(serializer.validated_data)
         serializer.save()
 
 
@@ -96,13 +76,14 @@ class JournalEntryViewSet(AccountingViewSet):
     def perform_update(self, serializer):
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
+        self._validate_scope(serializer.validated_data)
         serializer.save()
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
-        self.get_object()  # Enforce the same company scope before invoking the posting service.
+        entry = self.get_object()
         try:
-            entry = post_journal(int(pk))
+            entry = post_journal(entry.pk)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
@@ -113,10 +94,7 @@ class JournalEntryViewSet(AccountingViewSet):
         company_id = request.query_params.get("company")
         if not company_id or not company_id.isdigit():
             raise ValidationError({"company": "حدد الشركة لعرض ميزان المراجعة."})
-        if not user_can_access_company(request.user, int(company_id)):
-            raise PermissionDenied("ليس لديك صلاحية الوصول إلى الشركة المحددة.")
         if not can_access_company(request.user, int(company_id)):
-            from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         date_from = request.query_params.get("date_from")
         date_to = request.query_params.get("date_to")
