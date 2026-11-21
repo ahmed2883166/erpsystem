@@ -371,7 +371,7 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(ledger_response.status_code, 200)
         self.assertEqual(journal_detail_response.status_code, 200)
         self.assertEqual(journal_detail_response.data["entry_number"], "OPS-FS")
-        self.assertEqual(len(journal_detail_response.data["lines"]), 2)
+        self.assertEqual(len(journal_detail_response.data["lines"]), 4)
         self.assertEqual(equity_response.status_code, 200)
         self.assertEqual(branch_income_response.status_code, 200)
         self.assertEqual(branch_ledger_response.status_code, 200)
