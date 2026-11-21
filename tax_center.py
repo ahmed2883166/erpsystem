@@ -322,6 +322,42 @@ def _special_tax_mechanisms_for_period(conn, country, period):
     return rows, totals
 
 
+def _special_tax_quality_issues(rows, country):
+    """Validate special-tax report rows without changing accounting data."""
+    issues = []
+    for row in rows:
+        kind = str(row.get("document_kind") or "")
+        document_id = row.get("document_id")
+        code = str(row.get("mechanism_code") or "")
+        label = f"{kind} #{document_id} – {code}"
+        if not row.get("journal_entry_id"):
+            issues.append({"severity": "error", "document": label,
+                           "issue": "الآلية الضريبية مرحلة دون ربطها بقيد يومية؛ يلزم فحص الربط قبل اعتماد التقرير"})
+        if not str(row.get("tax_reference") or "").strip():
+            issues.append({"severity": "warning", "document": label,
+                           "issue": "مرجع المستند/المعاملة الضريبية غير مسجل"})
+        if country == "EG" and code == "sa_reverse_charge":
+            issues.append({"severity": "error", "document": label,
+                           "issue": "الاحتساب العكسي السعودي مسجل على ملف ضريبي مصري"})
+        elif country == "SA" and code in {"eg_table_tax_t2", "eg_table_tax_t3"}:
+            issues.append({"severity": "error", "document": label,
+                           "issue": "ضريبة الجدول المصرية مسجلة على ملف ضريبي سعودي"})
+        if code == "sa_reverse_charge":
+            output_tax = Decimal(str(row.get("output_tax") or "0"))
+            recoverable = Decimal(str(row.get("recoverable_input_tax") or "0"))
+            nonrecoverable = Decimal(str(row.get("nonrecoverable_input_tax") or "0"))
+            if min(output_tax, recoverable, nonrecoverable) < 0 or output_tax != recoverable + nonrecoverable:
+                issues.append({"severity": "error", "document": label,
+                               "issue": "مكونات الاحتساب العكسي غير متوازنة حسابيًا"})
+        if code == "eg_table_tax_t2" and str(row.get("tax_type") or "").upper() != "T2":
+            issues.append({"severity": "error", "document": label,
+                           "issue": "نوع آلية ضريبة الجدول لا يطابق T2"})
+        if code == "eg_table_tax_t3" and str(row.get("tax_type") or "").upper() != "T3":
+            issues.append({"severity": "error", "document": label,
+                           "issue": "نوع آلية ضريبة الجدول لا يطابق T3"})
+    return issues
+
+
 def build_tax_report_snapshot(conn, period_value):
     settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(conn,
         "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
@@ -551,6 +587,7 @@ def build_tax_report_snapshot(conn, period_value):
             })
     # Advisory data-quality checks. These never modify posted documents or journals.
     quality_issues = []
+    quality_issues.extend(_special_tax_quality_issues(special_tax_rows, country))
     company_tax_number = (settings.get("tax_number") or "").strip()
     country = settings.get("tax_country", "EG")
     if not company_tax_number:
