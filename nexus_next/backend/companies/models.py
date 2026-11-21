@@ -111,31 +111,6 @@ class FiscalYear(models.Model):
 
 
 class CompanyMembership(models.Model):
-    class Role(models.TextChoices):
-        ADMIN = "admin", "مدير شركة"
-        ACCOUNTANT = "accountant", "محاسب"
-        VIEWER = "viewer", "مشاهد"
-
-    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE, related_name="company_memberships")
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="memberships")
-    role = models.CharField(max_length=16, choices=Role.choices, default=Role.VIEWER)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ("company__code", "user__username")
-        constraints = [
-            models.UniqueConstraint(fields=("user", "company"), name="uq_company_membership_user_company"),
-        ]
-        indexes = [models.Index(fields=("user", "is_active", "company"), name="companies_c_user_id_1b1dae_idx")]
-        verbose_name = "عضوية شركة"
-        verbose_name_plural = "عضويات الشركات"
-
-    def __str__(self):
-        return f"{self.user} - {self.company} ({self.get_role_display()})"
-
-
-class CompanyMembership(models.Model):
     """Explicit company and branch access for a user."""
     class Role(models.TextChoices):
         ADMIN = "admin", "مدير شركة"
