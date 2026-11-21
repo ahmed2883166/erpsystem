@@ -150,7 +150,7 @@ class PayrollComponent(CompanyScopedModel):
 class EmployeeComponent(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="compensation_items")
     component = models.ForeignKey(PayrollComponent, on_delete=models.PROTECT, related_name="employee_assignments")
-    value = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+    value = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
     effective_from = models.DateField()
     effective_to = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
@@ -164,7 +164,7 @@ class EmployeeComponent(models.Model):
         super().clean()
         if self.employee_id and self.component_id and self.employee.company_id != self.component.company_id:
             raise ValidationError("عنصر المرتب والموظف يجب أن يتبعا نفس الشركة.")
-        if self.value < 0:
+        if self.value is not None and self.value < 0:
             raise ValidationError({"value": "قيمة العنصر لا يمكن أن تكون سالبة."})
 
 
