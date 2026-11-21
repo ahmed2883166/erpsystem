@@ -487,6 +487,18 @@ export type HrPayrollResult = {
   lines:{code:string;name:string;kind:string;amount:string;display_only:boolean;calculation:Record<string,unknown>}[];
 };
 export const hrApi = {
+
+  payrollComponents: (companyId:number) => request<HrPayrollComponent[]>(`/api/hr/payroll-components/?company=${companyId}&ordering=kind,code`),
+  createPayrollComponent: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollComponent>("/api/hr/payroll-components/", {method:"POST",body:JSON.stringify(payload)}); },
+  attendance: (companyId:number) => request<HrAttendance[]>(`/api/hr/attendance/?company=${companyId}&ordering=-work_date`),
+  createAttendance: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrAttendance>("/api/hr/attendance/", {method:"POST",body:JSON.stringify(payload)}); },
+  leaveRequests: (companyId:number) => request<HrLeaveRequest[]>(`/api/hr/leave-requests/?company=${companyId}&ordering=-start_date`),
+  createLeaveRequest: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrLeaveRequest>("/api/hr/leave-requests/", {method:"POST",body:JSON.stringify(payload)}); },
+  employeeLoans: (companyId:number) => request<HrEmployeeLoan[]>(`/api/hr/employee-loans/?company=${companyId}`),
+  createEmployeeLoan: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeLoan>("/api/hr/employee-loans/", {method:"POST",body:JSON.stringify(payload)}); },
+  createLoanInstallment: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>("/api/hr/loan-installments/", {method:"POST",body:JSON.stringify(payload)}); },
+  salaryHistory: (employeeId:number) => request<Record<string,unknown>[]>(`/api/hr/salary-history/?employee=${employeeId}`),
+  createSalaryChange: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>("/api/hr/salary-history/", {method:"POST",body:JSON.stringify(payload)}); },
   employees: (companyId:number) => request<HrEmployee[]>(`/api/hr/employees/?company=${companyId}&ordering=code`),
   createEmployee: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployee>("/api/hr/employees/", {method:"POST",body:JSON.stringify(payload)}); },
   payrollCycles: (companyId:number) => request<HrPayrollCycle[]>(`/api/hr/payroll-cycles/?company=${companyId}&ordering=-period_start`),
@@ -496,3 +508,8 @@ export const hrApi = {
   approvePayroll: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrPayrollCycle>(`/api/hr/payroll-cycles/${id}/approve/`, {method:"POST"}); },
   payrollResults: (id:number) => request<HrPayrollResult[]>(`/api/hr/payroll-cycles/${id}/results/`),
 };
+
+export type HrPayrollComponent = {id:number;company:number;code:string;name_ar:string;kind:"earning"|"deduction"|"employer_share";method:"fixed"|"percent_basic"|"per_day"|"per_hour"|"manual";default_value:string;affects_taxable_base:boolean;affects_insurance_base:boolean;requires_approval:boolean;is_active:boolean;expense_account:number|null;payable_account:number|null};
+export type HrAttendance = {id:number;employee:number;employee_code:string;employee_name:string;work_date:string;status:"present"|"absent"|"leave"|"unpaid_leave"|"holiday";worked_hours:string;overtime_hours:string;late_minutes:number;notes:string};
+export type HrLeaveRequest = {id:number;employee:number;employee_name:string;kind:"annual"|"sick"|"emergency"|"unpaid";start_date:string;end_date:string;days:string;reason:string;status:"pending"|"approved"|"rejected"};
+export type HrEmployeeLoan = {id:number;employee:number;employee_name:string;reference:string;issue_date:string;principal:string;installment_count:number;installment_amount:string;outstanding_balance:string;status:"active"|"settled"|"suspended";notes:string};
