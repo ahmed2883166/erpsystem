@@ -128,6 +128,20 @@ class WarehouseViewSet(CompanyScopedViewSet):
             if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
                 raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
 
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        company = serializer.validated_data.get("company", instance.company)
+        branch = serializer.validated_data.get("branch", instance.branch)
+        if company.pk != instance.company_id:
+            raise ValidationError("لا يمكن نقل مخزن قائم إلى شركة أخرى.")
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        if branch is None and not self.request.user.is_superuser:
+            default_branch = _default_branch(company.pk)
+            if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
+                raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
+        serializer.save()
+
 
 class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
     serializer_class = WarehouseProductSettingSerializer
@@ -158,11 +172,15 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         warehouse = serializer.validated_data["warehouse"]
         self._check_write(warehouse.company_id)
+        if not _can_access_warehouse(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
     def perform_update(self, serializer):
         warehouse = serializer.validated_data.get("warehouse", serializer.instance.warehouse)
         self._check_write(warehouse.company_id)
+        if not _can_access_warehouse(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
     def perform_destroy(self, instance):
