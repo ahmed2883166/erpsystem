@@ -5,6 +5,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.models import FiscalYear
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
 from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
@@ -201,11 +202,40 @@ class JournalEntryViewSet(AccountingViewSet):
                 "debit_total": debit, "credit_total": credit, "balance": balance,
             })
             totals[account.nature] += balance
+        current_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=as_of, end_date__gte=as_of
+        ).order_by("-start_date").first()
+        current_profit = Decimal("0")
+        if current_year and current_year.status == FiscalYear.Status.OPEN:
+            current_year_entries = JournalEntry.objects.filter(
+                company_id=company_id, status=JournalEntry.Status.POSTED,
+                entry_date__gte=current_year.start_date, entry_date__lte=as_of,
+                branch__in=visible_branches,
+            ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
+            current_year_lines = JournalLine.objects.filter(entry__in=current_year_entries)
+            rev = current_year_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
+                credit=Sum("credit"), debit=Sum("debit")
+            )
+            exp = current_year_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
+                debit=Sum("debit"), credit=Sum("credit")
+            )
+            current_profit = (
+                (rev["credit"] or Decimal("0")) - (rev["debit"] or Decimal("0"))
+                - (exp["debit"] or Decimal("0")) + (exp["credit"] or Decimal("0"))
+            )
+            if current_profit:
+                sections["equity"].append({
+                    "account_id": None, "code": "CURRENT-PROFIT",
+                    "name_ar": "صافي ربح السنة حتى تاريخ الميزانية",
+                    "debit_total": Decimal("0"), "credit_total": Decimal("0"),
+                    "balance": current_profit,
+                })
+                totals["equity"] += current_profit
         return response.Response({
             "company": company_id, "as_of": as_of,
             "assets": sections["asset"], "liabilities": sections["liability"], "equity": sections["equity"],
             "total_assets": totals["asset"], "total_liabilities": totals["liability"],
-            "total_equity": totals["equity"],
+            "total_equity": totals["equity"], "current_year_profit": current_profit,
             "liabilities_and_equity": totals["liability"] + totals["equity"],
             "difference": totals["asset"] - totals["liability"] - totals["equity"],
         })
