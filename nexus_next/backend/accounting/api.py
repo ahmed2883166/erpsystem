@@ -1,5 +1,5 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
+from django.db.models import Q, Sum
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import ValidationError
 
@@ -55,6 +55,50 @@ class JournalEntryViewSet(AccountingViewSet):
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
         return response.Response(self.get_serializer(entry).data, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=False, methods=("get",), url_path="trial-balance")
+    def trial_balance(self, request):
+        company_id = request.query_params.get("company")
+        if not company_id or not company_id.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض ميزان المراجعة."})
+        date_from = request.query_params.get("date_from")
+        date_to = request.query_params.get("date_to")
+        date_filter = Q(journal_lines__entry__status=JournalEntry.Status.POSTED)
+        if date_from:
+            date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
+        if date_to:
+            date_filter &= Q(journal_lines__entry__entry_date__lte=date_to)
+        accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
+            debit_total=Sum("journal_lines__debit", filter=date_filter),
+            credit_total=Sum("journal_lines__credit", filter=date_filter),
+        ).order_by("code")
+        rows = []
+        debit_sum = 0
+        credit_sum = 0
+        for account in accounts:
+            debit = account.debit_total or 0
+            credit = account.credit_total or 0
+            debit_sum += debit
+            credit_sum += credit
+            rows.append({
+                "account_id": account.pk,
+                "code": account.code,
+                "name_ar": account.name_ar,
+                "nature": account.nature,
+                "is_group": account.is_group,
+                "debit_total": debit,
+                "credit_total": credit,
+                "net_balance": debit - credit,
+            })
+        return response.Response({
+            "company_id": int(company_id),
+            "date_from": date_from,
+            "date_to": date_to,
+            "accounts": rows,
+            "debit_total": debit_sum,
+            "credit_total": credit_sum,
+            "difference": debit_sum - credit_sum,
+        })
 
     @decorators.action(detail=True, methods=("get",))
     def totals(self, request, pk=None):
