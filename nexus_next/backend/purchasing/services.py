@@ -47,6 +47,10 @@ def post_purchase_receipt(receipt_id, user):
         raise ValidationError("إذن الاستلام مرحّل بالفعل.")
     if receipt.supplier.company_id != receipt.company_id or receipt.warehouse.company_id != receipt.company_id:
         raise ValidationError("بيانات المورد أو المخزن لا تتبع الشركة.")
+    if not receipt.supplier.is_active:
+        raise ValidationError("المورد موقوف؛ لا يمكن ترحيل إذن استلام جديد.")
+    if not receipt.warehouse.is_active:
+        raise ValidationError("المخزن موقوف؛ لا يمكن ترحيل إذن استلام جديد.")
     post_stock_movement(receipt.stock_movement_id, user)
     if receipt.purchase_order_id:
         order = PurchaseOrder.objects.select_for_update().get(pk=receipt.purchase_order_id)
