@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse, type TaxCode } from "./api";
+import { api, inventoryApi, purchasingApi, type Account, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -10,6 +10,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
@@ -30,21 +31,22 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [orderForm, setOrderForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10), expected_date: "", notes: "" });
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", notes: "" });
-  const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", amount: "", reference: "" });
+  const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "" });
 
   const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, t] = await Promise.all([
+      const [s, p, w, o, r, i, pay, t, a] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId), api.accounts(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== 'reverse_charge'));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setAccounts(a.filter(x => x.is_active && x.allow_posting && !x.is_group && x.nature === "asset"));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
+      setPaymentForm((old) => ({ ...old, payment_account: old.payment_account || String(a.find(x => x.is_active && x.allow_posting && !x.is_group && x.nature === "asset")?.id || "") }));
       setReceiptLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المشتريات."); }
     finally { setBusy(false); }
@@ -138,7 +140,7 @@ export default function PurchasingPanel({ companyId }: Props) {
     if (!invoice) { setError("اختر فاتورة مورد لها رصيد مستحق."); return; }
     setBusy(true); setError("");
     try {
-      await purchasingApi.createPayment({ company: companyId, supplier: invoice.supplier, invoice: invoice.id, payment_number: paymentForm.payment_number, payment_date: paymentForm.payment_date, method: paymentForm.method, amount: paymentForm.amount, reference: paymentForm.reference });
+      await purchasingApi.createPayment({ company: companyId, supplier: invoice.supplier, invoice: invoice.id, payment_number: paymentForm.payment_number, payment_date: paymentForm.payment_date, method: paymentForm.method, payment_account: Number(paymentForm.payment_account), amount: paymentForm.amount, reference: paymentForm.reference });
       setShowForm(false); setPaymentForm((old) => ({ ...old, invoice: "", payment_number: "", amount: "", reference: "" })); await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند الصرف."); }
     finally { setBusy(false); }
@@ -220,6 +222,7 @@ export default function PurchasingPanel({ companyId }: Props) {
       <label>رقم سند الصرف<input required value={paymentForm.payment_number} onChange={(e) => setPaymentForm({ ...paymentForm, payment_number: e.target.value })} /></label>
       <label>تاريخ الصرف<input required type="date" value={paymentForm.payment_date} onChange={(e) => setPaymentForm({ ...paymentForm, payment_date: e.target.value })} /></label>
       <label>طريقة الصرف<select value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value as "cash" | "bank" })}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
+      <label className="inventory-wide">حساب الخزينة / البنك<select required value={paymentForm.payment_account} onChange={(e) => setPaymentForm({ ...paymentForm, payment_account: e.target.value })}><option value="">اختر الحساب</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name_ar}</option>)}</select></label>
       <label>المبلغ<input required type="number" min="0.0001" step="0.0001" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} /></label>
       <label>مرجع التحويل/الإيصال<input value={paymentForm.reference} onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ سند الصرف كمسودة"}</button></div>
