@@ -361,11 +361,24 @@ class JournalEntryViewSet(AccountingViewSet):
             if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             visible_branches = visible_branches.filter(pk=int(branch_raw))
+        current_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=as_of, end_date__gte=as_of
+        ).order_by("-start_date").first()
+        has_current_year_opening = bool(current_year and JournalEntry.objects.filter(
+            company_id=company_id, fiscal_year=current_year,
+            status=JournalEntry.Status.POSTED,
+            source_type=JournalEntry.Source.OPENING,
+            entry_date__lte=as_of, branch__in=visible_branches,
+        ).exists())
         posted_filter = Q(
             journal_lines__entry__status=JournalEntry.Status.POSTED,
             journal_lines__entry__entry_date__lte=as_of,
             journal_lines__entry__branch__in=visible_branches,
         )
+        # When a fiscal year has a posted opening journal, it is the brought-forward
+        # balance. Do not add the prior year's closing ledger movements a second time.
+        if has_current_year_opening:
+            posted_filter &= Q(journal_lines__entry__entry_date__gte=current_year.start_date)
         accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
             debit_total=Sum("journal_lines__debit", filter=posted_filter),
             credit_total=Sum("journal_lines__credit", filter=posted_filter),
@@ -383,9 +396,6 @@ class JournalEntryViewSet(AccountingViewSet):
                 "debit_total": debit, "credit_total": credit, "balance": balance,
             })
             totals[account.nature] += balance
-        current_year = FiscalYear.objects.filter(
-            company_id=company_id, start_date__lte=as_of, end_date__gte=as_of
-        ).order_by("-start_date").first()
         current_profit = Decimal("0")
         if current_year and current_year.status == FiscalYear.Status.OPEN:
             current_year_entries = JournalEntry.objects.filter(
@@ -514,8 +524,23 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__company_id=company_id,
             entry__branch__in=visible_branches,
         )
+        fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
+        ).order_by("-start_date").first()
+        has_fiscal_year_opening = bool(fiscal_year and JournalEntry.objects.filter(
+            company_id=company_id, fiscal_year=fiscal_year,
+            status=JournalEntry.Status.POSTED,
+            source_type=JournalEntry.Source.OPENING,
+            entry_date__lte=date_from, branch__in=visible_branches,
+        ).exists())
+        opening_scope = Q(entry__entry_date__lt=date_from)
+        if has_fiscal_year_opening:
+            # The posted opening journal replaces the prior-year carry-forward
+            # for this fiscal year; include it once and only include this year's
+            # movements in the brought-forward balance.
+            opening_scope &= Q(entry__entry_date__gte=fiscal_year.start_date)
         opening_lines = base.filter(
-            Q(entry__entry_date__lt=date_from)
+            opening_scope
             | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
         )
         opening_totals = opening_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
