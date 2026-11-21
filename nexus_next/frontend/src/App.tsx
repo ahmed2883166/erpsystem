@@ -11,6 +11,22 @@ const panelFallback = <section className="work-panel"><div className="table-empt
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "setup";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
+
+function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
+  const safe = (value: string | number) => {
+    const text = String(value ?? "");
+    const protectedText = /^[=+@\\-\\t\\r]/.test(text) ? "'" + text : text;
+    return '"' + protectedText.replace(/"/g, '""') + '"';
+  };
+  const csv = "\\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\\r\\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url; link.download = filename; link.style.display = "none";
+  document.body.appendChild(link); link.click(); link.remove();
+  URL.revokeObjectURL(url);
+}
+
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
   { id: "overview", label: "نظرة عامة", icon: "◫", group: "الرئيسية" },
   { id: "journals", label: "قيود اليومية", icon: "⇄", group: "المحاسبة" },
@@ -162,7 +178,7 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
   const rows = (items: {account_id:number|null;code:string;name_ar:string;balance:string}[]) => items.map(item=><tr key={item.account_id ?? item.code}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.balance)}</td><td><button type="button" className="text-action-button" disabled={item.account_id===null || ledgerBusy} onClick={()=>void openLedger(item.account_id)}>عرض الحركة ←</button></td></tr>);
   const incomeRows = (items: {account_id:number;code:string;name_ar:string;amount:string}[]) => items.map(item=><tr key={item.account_id}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.amount)}</td></tr>);
   return <div className="asset-reports">
-    <div className="work-panel-head"><div><h2>القوائم المالية</h2><p>الميزانية العمومية وقائمة الدخل من القيود المرحلة فقط</p></div><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القوائم"}</button></div>
+    <div className="work-panel-head"><div><h2>القوائم المالية</h2><p>الميزانية العمومية وقائمة الدخل من القيود المرحلة فقط</p></div><div className="report-actions"><button type="button" className="subtle-button" disabled={!balance} onClick={()=>balance&&downloadCsv(`balance-sheet-${balance.as_of}.csv`,["القسم","كود الحساب","الحساب","الرصيد"],[...balance.assets.map(x=>["الأصول",x.code,x.name_ar,x.balance]),...balance.liabilities.map(x=>["الالتزامات",x.code,x.name_ar,x.balance]),...balance.equity.map(x=>["حقوق الملكية",x.code,x.name_ar,x.balance])])}>تصدير الميزانية Excel</button><button type="button" className="subtle-button" disabled={!income} onClick={()=>income&&downloadCsv(`income-statement-${income.date_from}-${income.date_to}.csv`,["القسم","كود الحساب","الحساب","القيمة"],[...income.revenues.map(x=>["الإيرادات",x.code,x.name_ar,x.amount]),...income.cost_of_sales.map(x=>["تكلفة المبيعات",x.code,x.name_ar,x.amount]),...income.operating_and_other_expenses.map(x=>["المصروفات",x.code,x.name_ar,x.amount])])}>تصدير قائمة الدخل Excel</button><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القوائم"}</button></div></div>
     <div className="asset-report-filters">
       <label>من تاريخ قائمة الدخل<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
       <label>إلى تاريخ / تاريخ الميزانية<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
