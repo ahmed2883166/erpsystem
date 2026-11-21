@@ -14,6 +14,7 @@ from db_sql import execute_compat
 from stock import consume_layers, q4, make_lot, product_uom_factor, product_uom_options, product_uom_storage, lock_stock_warehouses
 from analytic_dimensions import initialize_analytic_dimensions_schema, validate_journal_dimensions, active_dimension_options
 from code_sequences import next_code
+from tax_categories import validate_tax_category, tax_category_options
 
 purchase_bp = Blueprint("purchase", __name__, url_prefix="/purchases")
 
@@ -302,6 +303,7 @@ def init_purchase_schema(c):
         ("rejected_by", "INTEGER"), ("rejected_at", "TEXT"),
         ("rejection_reason", "TEXT"), ("approval_reason", "TEXT"),
         ("activity_code", "TEXT"),
+        ("tax_category", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in bill_columns:
             execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN " + name + " " + declaration)
@@ -2247,6 +2249,9 @@ def new_bill():
         try:
             supplier=int(request.form["supplier_id"]); subtotal=money(request.form["subtotal"]); rate=Decimal(request.form.get("tax_rate","0"))
             if subtotal<=0 or rate<0 or rate>100: raise ValueError("قيمة الفاتورة أو الضريبة غير صحيحة.")
+            tax_country_row = execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'").fetchone()
+            tax_country = str(tax_country_row["setting_value"] if tax_country_row else "EG").strip().upper()
+            tax_category = validate_tax_category(tax_country, "purchase", request.form.get("tax_category", ""), "standard")
             deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
             if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
@@ -2317,14 +2322,14 @@ def new_bill():
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
             bid=insert_and_get_id(c,"""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
-                subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,
+                subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,tax_category,
                 status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
                 asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
                 asset_account_id,asset_accum_account_id,asset_expense_account_id,activity_code)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (no,supplier,request.form["bill_date"],due_date,supplier_invoice_no,str(subtotal),str(rate),
                  str(tax),str(total),str(deductible_percent),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
-                 dimensions["project_id"],bill_kind,expense_account_id,
+                 dimensions["project_id"],tax_category,bill_kind,expense_account_id,
                  asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
@@ -2364,10 +2369,13 @@ def new_bill():
     receipt_lines = _supplier_receipt_line_rows(c, [row["id"] for row in receipts])
     dimension_options=active_dimension_options(c)
     activity_options, selected_activity = _company_activity_form_options(c)
+    tax_settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(c,
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='tax_country'").fetchall()}
+    purchase_tax_categories = tax_category_options(tax_settings.get("tax_country", "EG"), "purchase")
     c.close(); return render_template("purchase_bill_new.html",suppliers=su,receipts=receipts,
         receipt_lines=receipt_lines, expense_accounts=expense_accounts,asset_accounts=asset_accounts,
         dimension_options=dimension_options,activity_options=activity_options,selected_activity=selected_activity,
-        today=date.today().isoformat())
+        purchase_tax_categories=purchase_tax_categories, today=date.today().isoformat())
 
 
 @purchase_bp.route("/bills/<int:bill_id>/edit", methods=["GET", "POST"])
@@ -2394,6 +2402,9 @@ def edit_bill(bill_id):
             supplier_invoice_no = request.form["supplier_invoice_no"].strip()
             if subtotal <= 0 or rate < 0 or rate > 100:
                 raise ValueError("قيمة الفاتورة أو الضريبة غير صحيحة.")
+            tax_country_row = execute_compat(c, "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'").fetchone()
+            tax_country = str(tax_country_row["setting_value"] if tax_country_row else "EG").strip().upper()
+            tax_category = validate_tax_category(tax_country, "purchase", request.form.get("tax_category", ""), "standard")
             deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
             if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
@@ -2458,7 +2469,7 @@ def edit_bill(bill_id):
 
             updated = execute_compat(c, """UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
                 supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,input_vat_deductible_percent=?,
-                branch_id=?,cost_center_id=?,project_id=?,bill_kind=?,expense_account_id=?,
+                branch_id=?,cost_center_id=?,project_id=?,tax_category=?,bill_kind=?,expense_account_id=?,
                 asset_code=?,asset_name=?,asset_category=?,asset_ready_date=?,asset_residual_value=?,
                 asset_useful_life_months=?,asset_depreciation_method=?,asset_annual_rate=?,
                 asset_account_id=?,asset_accum_account_id=?,asset_expense_account_id=?,
@@ -2467,7 +2478,7 @@ def edit_bill(bill_id):
                 WHERE id=? AND status IN ('draft','rejected') AND journal_entry_id IS NULL""",
                 (supplier, bill_date, due_date, supplier_invoice_no, str(subtotal), str(rate),
                  str(tax), str(total), str(deductible_percent), dimensions["branch_id"], dimensions["cost_center_id"],
-                 dimensions["project_id"], bill_kind, expense_account_id,
+                 dimensions["project_id"], tax_category, bill_kind, expense_account_id,
                  asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
@@ -2525,12 +2536,15 @@ def edit_bill(bill_id):
     dimension_options = active_dimension_options(c)
     activity_options, selected_activity = _company_activity_form_options(c)
     selected_activity = bill["activity_code"] or selected_activity
+    tax_settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(c,
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='tax_country'").fetchall()}
+    purchase_tax_categories = tax_category_options(tax_settings.get("tax_country", "EG"), "purchase")
     c.close()
     return render_template("purchase_bill_new.html", suppliers=suppliers, receipts=receipts,
         receipt_lines=receipt_lines, existing_invoice_lines=existing_invoice_lines,
         expense_accounts=expense_accounts, asset_accounts=asset_accounts,
         dimension_options=dimension_options, activity_options=activity_options, selected_activity=selected_activity,
-        today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
+        purchase_tax_categories=purchase_tax_categories, today=date.today().isoformat(), bill=bill, selected_receipt_ids=selected_receipt_ids,
         receipt_allocations=existing_allocations, existing_asset_lines=existing_asset_lines, edit_mode=True)
 
 
