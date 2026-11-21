@@ -69,8 +69,8 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_unassigned_warehouse_is_scoped_to_the_company_default_branch(self):
-        Branch.objects.create(
-            company=self.company, code="HQ", name_ar="المركز الرئيسي", is_head_office=True,
+        restricted_branch = Branch.objects.create(
+            company=self.company, code="B2", name_ar="فرع محدود",
         )
         shared = Warehouse.objects.create(
             company=self.company, branch=None, code="WH-SHARED", name_ar="مخزن عام",
@@ -82,7 +82,7 @@ class InventoryApiTests(APITestCase):
         membership = CompanyMembership.objects.create(
             user=limited, company=self.company, role="accountant", all_branches=False,
         )
-        membership.branches.add(self.branch)
+        membership.branches.add(restricted_branch)
         self.client.force_authenticate(limited)
 
         listed = self.client.get("/api/inventory/warehouses/")
