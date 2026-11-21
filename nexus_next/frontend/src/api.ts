@@ -144,6 +144,17 @@ export type IncomeStatementReport = {
   operating_and_other_expenses: {account_id:number;code:string;name_ar:string;amount:string}[];
   revenue_total: string; cost_of_sales_total: string; gross_profit: string; expenses_total: string; net_profit: string; note: string;
 };
+export type GeneralLedgerReport = {
+  company:number; account:number; account_code:string; account_name:string; date_from:string; date_to:string;
+  opening_balance:string; closing_balance:string;
+  rows:{line_id:number;date:string;entry_id:number;entry_number:string;description:string;source_type:string;branch:string;debit:string;credit:string;running_balance:string}[];
+};
+export type EquityChangesReport = {
+  company:number; date_from:string; date_to:string; opening_equity:string; equity_movements:string;
+  period_net_profit:string; closing_equity:string;
+  accounts:{account_id:number;code:string;name_ar:string;opening_balance:string;period_movement:string;closing_balance_before_profit:string}[];
+  note:string;
+};
 export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
@@ -155,6 +166,8 @@ export const api = {
   trialBalance: (companyId: number) => request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?company=${companyId}`),
   balanceSheet: (companyId: number, asOf: string) => request<BalanceSheetReport>(`/api/accounting/journal-entries/balance-sheet/?company=${companyId}&as_of=${asOf}`),
   incomeStatement: (companyId: number, dateFrom: string, dateTo: string) => request<IncomeStatementReport>(`/api/accounting/journal-entries/income-statement/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}`),
+  generalLedger: (companyId: number, accountId: number, dateFrom: string, dateTo: string) => request<GeneralLedgerReport>(`/api/accounting/journal-entries/general-ledger/?company=${companyId}&account=${accountId}&date_from=${dateFrom}&date_to=${dateTo}`),
+  changesInEquity: (companyId: number, dateFrom: string, dateTo: string) => request<EquityChangesReport>(`/api/accounting/journal-entries/changes-in-equity/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}`),
   customers: (companyId: number) => request<Customer[]>(`/api/sales/customers/?company=${companyId}&ordering=name_ar`),
   suppliers: (companyId: number) => request<Supplier[]>(`/api/purchases/suppliers/?company=${companyId}&ordering=name_ar`),
   createSupplier: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Supplier>("/api/purchases/suppliers/", { method: "POST", body: JSON.stringify(payload) }); },
