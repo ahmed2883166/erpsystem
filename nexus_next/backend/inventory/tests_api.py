@@ -418,6 +418,40 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(destination_balance.quantity, 1)
         self.assertEqual(destination_balance.inventory_value, 9)
 
+    def test_weighted_average_receipts_and_cross_warehouse_transfer_keep_value(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="WAVG-TRANSFER", name_ar="متوسط مرجح تحويل"
+        )
+        source = self._warehouse("WAVG-SRC")
+        destination = self._warehouse("WAVG-DST")
+
+        for number, cost in (("WAVG-R1", "5"), ("WAVG-R2", "9")):
+            receipt = self._movement(number, "receipt", destination=source, quantity="2", cost=cost)
+            self.assertEqual(receipt.status_code, 201, receipt.data)
+            posted = self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json")
+            self.assertEqual(posted.status_code, 200, posted.data)
+
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=source)
+        self.assertEqual(source_balance.quantity, 4)
+        self.assertEqual(source_balance.inventory_value, 28)
+        self.assertEqual(source_balance.average_cost, 7)
+
+        transfer = self._movement("WAVG-T1", "transfer", destination=destination, source=source, quantity="2")
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        posted_transfer = self.client.post(f"/api/inventory/movements/{transfer.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_transfer.status_code, 200, posted_transfer.data)
+        transfer_line = StockMovement.objects.get(pk=transfer.data["id"]).lines.get()
+        self.assertEqual(transfer_line.cost_amount, 14)
+
+        source_balance.refresh_from_db()
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination)
+        self.assertEqual(source_balance.quantity, 2)
+        self.assertEqual(source_balance.inventory_value, 14)
+        self.assertEqual(source_balance.average_cost, 7)
+        self.assertEqual(destination_balance.quantity, 2)
+        self.assertEqual(destination_balance.inventory_value, 14)
+        self.assertEqual(destination_balance.average_cost, 7)
+
     def test_receipt_posts_balanced_inventory_journal(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-R1", name_ar="استلام محاسبي")
         warehouse = self._warehouse("GL-WH1")
