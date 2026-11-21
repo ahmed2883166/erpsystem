@@ -43,6 +43,9 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(created.status_code, 201, created.data)
         asset_id = created.data["id"]
         self.assertEqual(JournalEntry.objects.count(), 1)
+        acquisition_cash = TreasuryTransaction.objects.get(pk=created.data["acquisition_treasury_transaction"])
+        self.assertEqual(acquisition_cash.kind, TreasuryTransaction.Kind.PAYMENT)
+        self.assertEqual(acquisition_cash.cash_flow_category, TreasuryTransaction.CashFlowCategory.INVESTING)
         acquisition = JournalEntry.objects.get(source_type=JournalEntry.Source.ASSETS)
         self.assertEqual(acquisition.status, JournalEntry.Status.POSTED)
         self.assertEqual(acquisition.lines.get(account=self.asset_gl).debit, Decimal("120000.0000"))
@@ -106,6 +109,24 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(treasury_doc.status, TreasuryTransaction.Status.POSTED)
         self.assertEqual(treasury_doc.journal_entry_id, disposal_entry.pk)
         self.assertEqual(treasury_doc.source_account_id, self.bank.pk)
+        self.assertEqual(treasury_doc.cash_flow_category, TreasuryTransaction.CashFlowCategory.INVESTING)
+        cash_flow = self.client.get("/api/treasury/transactions/cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-12-31",
+        })
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        investing = next(row for row in cash_flow.data["categories"] if row["category"] == "investing")
+        self.assertEqual(investing["inflows"], Decimal("120000.0000"))
+        self.assertEqual(investing["outflows"], Decimal("120000.0000"))
+        self.assertEqual(investing["net"], Decimal("0.0000"))
+        register = self.client.get("/api/assets/fixed-assets/register/", {"company": self.company.pk, "as_of": "2026-03-10"})
+        self.assertEqual(register.status_code, 200, register.data)
+        self.assertEqual(register.data["rows"][0]["status"], "disposed")
+        movements = self.client.get("/api/assets/fixed-assets/movement-report/", {"company": self.company.pk})
+        self.assertEqual(movements.status_code, 200, movements.data)
+        self.assertEqual(len(movements.data["rows"]), 4)
+        depreciation_report = self.client.get("/api/assets/fixed-assets/depreciation-report/", {"company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-12-31"})
+        self.assertEqual(depreciation_report.status_code, 200, depreciation_report.data)
+        self.assertEqual(depreciation_report.data["total_depreciation"], Decimal("6000.0000"))
 
     def test_disposal_rejects_wrong_nature_gain_loss_account_without_partial_commit(self):
         created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
