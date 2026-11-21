@@ -11,7 +11,7 @@ class DiscountApprovalPolicySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DiscountApprovalPolicy
-        fields = ("id", "company", "company_name", "max_discount_percent", "max_sales_invoice_amount", "created_at", "updated_at")
+        fields = ("id", "company", "company_name", "max_discount_percent", "max_sales_invoice_amount", "max_purchase_invoice_amount", "max_payment_amount", "created_at", "updated_at")
         read_only_fields = ("created_at", "updated_at")
 
     def validate(self, attrs):
@@ -62,3 +62,33 @@ class SalesInvoiceApprovalSerializer(serializers.ModelSerializer):
             "requested_at", "decided_at",
         )
         read_only_fields = fields
+
+
+class FinancialApprovalRequestSerializer(serializers.ModelSerializer):
+    requested_by_name = serializers.CharField(source="requested_by.username", read_only=True)
+    decided_by_name = serializers.CharField(source="decided_by.username", read_only=True, allow_null=True)
+    document_number = serializers.SerializerMethodField()
+    document_total = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import FinancialApprovalRequest
+        model = FinancialApprovalRequest
+        fields = (
+            "id", "company", "document_type", "purchase_invoice", "supplier_payment",
+            "treasury_transaction", "document_number", "document_total",
+            "requested_by", "requested_by_name", "requested_limit", "requested_amount",
+            "requested_snapshot", "status", "decided_by", "decided_by_name",
+            "decision_note", "requested_at", "decided_at",
+        )
+        read_only_fields = fields
+
+    def get_document_number(self, obj):
+        document = obj.purchase_invoice or obj.supplier_payment or obj.treasury_transaction
+        if obj.document_type == "purchase_invoice":
+            return document.invoice_number
+        if obj.document_type == "supplier_payment":
+            return document.payment_number
+        return document.document_number
+
+    def get_document_total(self, obj):
+        return str(obj.requested_amount)
