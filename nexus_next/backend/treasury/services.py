@@ -11,7 +11,7 @@ from .models import TreasuryTransaction
 
 @transaction.atomic
 def post_treasury_transaction(transaction_id, user=None):
-    doc = TreasuryTransaction.objects.select_for_update().select_related(
+    doc = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "fiscal_year", "source_account__account",
         "destination_account__account", "counter_account",
     ).get(pk=transaction_id)
