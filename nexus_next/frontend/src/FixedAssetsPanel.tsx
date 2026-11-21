@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount } from "./api";
+import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport } from "./api";
 
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
@@ -26,6 +26,17 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [reportTab, setReportTab] = useState<"register"|"depreciation"|"movements"|"cashflow">("register");
+  const [reportBranch, setReportBranch] = useState("");
+  const [reportFrom, setReportFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [reportTo, setReportTo] = useState(today);
+  const [reportAsOf, setReportAsOf] = useState(today);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState("");
+  const [registerReport, setRegisterReport] = useState<AssetRegisterReport|null>(null);
+  const [depreciationReport, setDepreciationReport] = useState<AssetDepreciationReport|null>(null);
+  const [movementReport, setMovementReport] = useState<AssetMovementReport|null>(null);
+  const [cashFlowReport, setCashFlowReport] = useState<CashFlowReport|null>(null);
 
   const refresh = async () => {
     if (!companyId) return;
@@ -95,6 +106,19 @@ export default function FixedAssetsPanel({ companyId }: Props) {
       setError("تم الاستبعاد. رقم القيد: " + result.disposal_journal + " · " + (Number(result.gain) > 0 ? "ربح " + result.gain : Number(result.loss) > 0 ? "خسارة " + result.loss : "دون ربح أو خسارة"));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر استبعاد الأصل."); }
     finally { setSaving(false); }
+  };
+
+  const loadReport = async () => {
+    if (!companyId) return;
+    setReportLoading(true); setReportError("");
+    const branch = reportBranch ? Number(reportBranch) : undefined;
+    try {
+      if (reportTab === "register") setRegisterReport(await fixedAssetsApi.register(companyId, reportAsOf, branch));
+      else if (reportTab === "depreciation") setDepreciationReport(await fixedAssetsApi.depreciationReport(companyId, reportFrom, reportTo, branch));
+      else if (reportTab === "movements") setMovementReport(await fixedAssetsApi.movementReport(companyId, reportFrom, reportTo, branch));
+      else setCashFlowReport(await treasuryApi.cashFlow(companyId, reportFrom, reportTo, branch));
+    } catch (reason) { setReportError(reason instanceof Error ? reason.message : "تعذر تحميل التقرير."); }
+    finally { setReportLoading(false); }
   };
 
   if (!companyId) return <section className="work-panel"><p>اختر شركة لعرض الأصول الثابتة.</p></section>;
