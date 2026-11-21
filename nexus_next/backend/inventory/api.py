@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
-from companies.models import Branch, CompanyMembership
+from companies.models import Branch, Company, CompanyMembership
 
 from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
