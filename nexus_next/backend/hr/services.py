@@ -3,9 +3,9 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Q, Sum\n\nfrom accounting.models import JournalEntry, JournalLine\nfrom accounting.services import get_account_for_role, post_journal\nfrom companies.models import FiscalYear
 
-from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollResult, PayrollResultLine
+from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
 
 CENT = Decimal("0.01")
@@ -264,6 +264,111 @@ def calculate_payroll_cycle(cycle_id, actor=None):
     cycle.status = PayrollCycle.Status.CALCULATED
     cycle.save(update_fields=("status", "updated_at"))
     return {"cycle_id": cycle.pk, "employee_count": len(employees), **{key: str(money(value)) for key, value in totals.items()}}
+
+@transaction.atomic
+def post_payroll_cycle(cycle_id, actor=None):
+    cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
+    if cycle.status != PayrollCycle.Status.APPROVED:
+        raise ValidationError("يجب اعتماد دورة المرتبات قبل الترحيل المحاسبي.")
+    if cycle.postings.exists() or cycle.journal_entry_id:
+        raise ValidationError("تم ترحيل هذه الدورة أو جزء منها من قبل.")
+    if not cycle.results.exists():
+        raise ValidationError("لا توجد نتائج احتساب لترحيلها.")
+    fiscal_year = FiscalYear.objects.filter(
+        company=cycle.company,
+        start_date__lte=cycle.payment_date,
+        end_date__gte=cycle.payment_date,
+    ).first()
+    if not fiscal_year or fiscal_year.status != FiscalYear.Status.OPEN:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تغطي تاريخ صرف المرتبات.")
+
+    payroll_expense = get_account_for_role(cycle.company, "payroll_expense")
+    payroll_payable = get_account_for_role(cycle.company, "payroll_payable")
+    branch_ids = cycle.results.values_list("employee__branch_id", flat=True).distinct()
+    posted = []
+
+    def validate_account(account, nature, description):
+        if not account or account.company_id != cycle.company_id or not account.is_active or account.is_group or not account.allow_posting:
+            raise ValidationError(f"الحساب المرتبط بـ {description} غير صالح للترحيل.")
+        if account.nature != nature:
+            raise ValidationError(f"طبيعة حساب {description} غير صحيحة.")
+        return account
+
+    for branch_id in branch_ids:
+        from companies.models import Branch
+        branch = Branch.objects.get(pk=branch_id, company=cycle.company)
+        results = cycle.results.filter(employee__branch=branch).select_related("employee", "employee__cost_center").prefetch_related("lines__component")
+        entry = JournalEntry.objects.create(
+            company=cycle.company,
+            branch=branch,
+            fiscal_year=fiscal_year,
+            entry_number=f"PAY{cycle.pk}-{branch.pk}",
+            entry_date=cycle.payment_date,
+            description=f"استحقاق مرتبات الفترة {cycle.period_start} إلى {cycle.period_end}",
+            source_type=JournalEntry.Source.PAYROLL,
+            created_by=actor,
+        )
+        line_count = 0
+
+        def add_line(account, debit, credit, description, cost_center=None):
+            nonlocal line_count
+            debit = money(debit)
+            credit = money(credit)
+            if debit <= 0 and credit <= 0:
+                return
+            validate_account(account, "expense" if debit > 0 and credit == 0 else account.nature, description)
+            if cost_center and cost_center.company_id != cycle.company_id:
+                raise ValidationError("مركز تكلفة المرتبات لا يتبع نفس الشركة.")
+            JournalLine.objects.create(
+                entry=entry, account=account, debit=debit, credit=credit,
+                description=description[:300], cost_center=cost_center,
+            )
+            line_count += 1
+
+        for result in results:
+            if result.net_pay < 0:
+                raise ValidationError(f"صافي المرتب سالب للموظف {result.employee.code}؛ راجع الاستقطاعات.")
+            for line in result.lines.all():
+                component = line.component
+                if line.code_snapshot in ("EMPLOYER_SHARE_DISPLAY", "EMPLOYER_SHARE_OFFSET"):
+                    continue
+                if line.kind_snapshot == "earning" and not line.display_only:
+                    account = component.expense_account if component and component.expense_account_id else payroll_expense
+                    account = validate_account(account, "expense", "مصروف المرتبات")
+                    add_line(account, line.amount, 0, line.name_snapshot, result.employee.cost_center)
+                elif line.kind_snapshot == "employer_share" and line.display_only:
+                    if component and component.method == component.Method.EMPLOYER_INSURANCE:
+                        expense = component.expense_account or get_account_for_role(cycle.company, "employer_insurance_expense")
+                        payable = component.payable_account or get_account_for_role(cycle.company, "employer_insurance_payable")
+                    else:
+                        expense, payable = (component.expense_account, component.payable_account) if component else (None, None)
+                    expense = validate_account(expense, "expense", "حصة صاحب العمل")
+                    payable = validate_account(payable, "liability", "التزام حصة صاحب العمل")
+                    add_line(expense, line.amount, 0, line.name_snapshot, result.employee.cost_center)
+                    add_line(payable, 0, line.amount, line.name_snapshot, result.employee.cost_center)
+                elif line.kind_snapshot == "deduction" and not line.display_only:
+                    if line.code_snapshot.startswith("LOAN-"):
+                        installment_id = line.calculation_snapshot.get("installment_id")
+                        installment = LoanInstallment.objects.select_related("loan", "loan__receivable_account").get(pk=installment_id)
+                        account = validate_account(installment.loan.receivable_account, "asset", "ذمم سلف الموظفين")
+                    elif component and component.method == component.Method.EMPLOYEE_INSURANCE:
+                        account = component.payable_account or get_account_for_role(cycle.company, "employee_insurance_payable")
+                        account = validate_account(account, "liability", "تأمينات الموظفين")
+                    else:
+                        account = validate_account(component.payable_account if component else None, "liability", line.name_snapshot)
+                    add_line(account, 0, line.amount, line.name_snapshot, result.employee.cost_center)
+            add_line(payroll_payable, 0, result.net_pay, f"صافي مرتب {result.employee.full_name_ar}", result.employee.cost_center)
+
+        if line_count < 2:
+            raise ValidationError(f"لا توجد بنود محاسبية كافية لترحيل فرع {branch.name_ar}.")
+        posted_entry = post_journal(entry.pk)
+        PayrollPosting.objects.create(cycle=cycle, branch=branch, journal_entry=posted_entry)
+        posted.append({"branch_id": branch.pk, "branch_name": branch.name_ar, "journal_entry_id": posted_entry.pk, "entry_number": posted_entry.entry_number})
+
+    cycle.journal_entry = JournalEntry.objects.get(pk=posted[0]["journal_entry_id"])
+    cycle.status = PayrollCycle.Status.POSTED
+    cycle.save(update_fields=("journal_entry", "status", "updated_at"))
+    return {"cycle_id": cycle.pk, "status": cycle.status, "postings": posted}
 
 
 def models_q_end(start_date):
