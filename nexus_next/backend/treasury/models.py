@@ -116,11 +116,27 @@ class TreasuryTransaction(models.Model):
             raise ValidationError("سند القبض أو الصرف يتطلب حسابًا مقابلًا فقط.")
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
-            raise ValidationError("المستند المرحّل غير قابل للتعديل.")
+        if self.pk:
+            old = type(self).objects.filter(pk=self.pk).first()
+            if old and old.status == self.Status.POSTED:
+                raise ValidationError("المستند المرحّل غير قابل للتعديل.")
+            if old:
+                from hr.models import PayrollPosting
+                if PayrollPosting.objects.filter(payment_treasury_transaction_id=self.pk).exists():
+                    immutable_fields = (
+                        "company_id", "branch_id", "fiscal_year_id", "source_account_id",
+                        "destination_account_id", "counter_account_id", "kind", "document_number",
+                        "transaction_date", "amount", "description", "reference", "cash_flow_category",
+                        "created_by_id",
+                    )
+                    if any(getattr(old, field) != getattr(self, field) for field in immutable_fields):
+                        raise ValidationError("مستند صرف المرتبات مرتبط بدورة مرتبات ولا يمكن تغيير بياناته؛ ألغِ إعداد الصرف من دورة المرتبات.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        from hr.models import PayrollPosting
+        if PayrollPosting.objects.filter(payment_treasury_transaction_id=self.pk).exists():
+            raise ValidationError("مستند صرف المرتبات مرتبط بدورة مرتبات ولا يمكن حذفه؛ ألغِ إعداد الصرف من دورة المرتبات.")
         if self.status != self.Status.DRAFT:
             raise ValidationError("لا يمكن حذف مستند خزينة مرحّل.")
         return super().delete(*args, **kwargs)
