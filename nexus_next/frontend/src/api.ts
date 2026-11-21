@@ -4,6 +4,7 @@ export type Account = {
   parent_code: string | null; nature: string; is_group: boolean; allow_posting: boolean; is_active: boolean;
 };
 export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string };
+export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; debit_total: string; credit_total: string; net_balance: string }[] };
 export type Journal = {
   id: number; company: number; branch: number; branch_code: string; fiscal_year: number;
   fiscal_year_name: string; entry_number: string; entry_date: string; description: string;
@@ -21,4 +22,5 @@ export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   accounts: (companyId: number) => request<Account[]>(`/api/accounting/accounts/?company=${companyId}&ordering=code`),
   journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
+  trialBalance: (companyId: number) => request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?company=${companyId}`),
 };
