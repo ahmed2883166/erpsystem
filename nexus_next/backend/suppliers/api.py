@@ -33,5 +33,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         company = serializer.validated_data.get("company", serializer.instance.company)
+        if company.pk != serializer.instance.company_id:
+            raise ValidationError("لا يمكن نقل سجل مورد إلى شركة أخرى بعد إنشائه.")
         self._check_company_write(company.pk)
         serializer.save()
