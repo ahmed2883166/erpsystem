@@ -272,11 +272,14 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         recon = self.get_object()
         lines = recon.lines.select_related("matched_transaction")
         matched_ids = list(lines.filter(matched_transaction__isnull=False).values_list("matched_transaction_id", flat=True))
-        book_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date)
+        branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
+        if recon.bank_account.branch_id:
+            branch_ids = [recon.bank_account.branch_id]
+        book_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
         totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         book_balance = (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
         statement_balance = recon.opening_balance + sum((line.amount for line in lines), Decimal("0"))
-        outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
+        outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
             models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
         ).order_by("transaction_date", "id")
         outstanding_rows = []
@@ -316,10 +319,13 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             if line_total != recon.closing_balance:
                 raise ValidationError("رصيد الإقفال لا يساوي الرصيد الافتتاحي مضافًا إليه صافي حركات الكشف.")
             matched_ids = list(recon.lines.values_list("matched_transaction_id", flat=True))
-            bank_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date)
+            branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
+            if recon.bank_account.branch_id:
+                branch_ids = [recon.bank_account.branch_id]
+            bank_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
             totals = bank_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             book_balance = (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
-            outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
+            outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
                 models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
             )
             outstanding_total = Decimal("0")
