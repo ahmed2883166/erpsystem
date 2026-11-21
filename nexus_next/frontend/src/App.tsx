@@ -24,8 +24,7 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
     const protectedText = /^[=+@-]/.test(text) || text.startsWith("\t") || text.startsWith("\r") ? "'" + text : text;
     return '"' + protectedText.replace(/"/g, '""') + '"';
   };
-  const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\r
-");
+  const csv = "\uFEFF" + [headers, ...rows].map(row => row.map(safe).join(";")).join("\r\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
