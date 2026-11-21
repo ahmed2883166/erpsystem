@@ -1,4 +1,4 @@
-# NEXUS ERP — Company Access & Discount Approval
+# NEXUS ERP — Company Access & Approval Controls
 
 ## Company roles
 
@@ -14,18 +14,20 @@ Only active users can be found through the company-scoped user lookup. Search re
 
 ## Discount policy and approval
 
-A company administrator configures a maximum line discount percentage in **الموافقات وحدود الخصم**.
+A company administrator configures two independent limits in **الموافقات وحدود الخصم**:
+- Maximum discount percentage per sales invoice line.
+- Optional maximum sales invoice total, measured in the company's base currency and including VAT.
 
 - If no policy exists, no additional discount approval threshold is enforced.
 - Once configured, the policy threshold is snapshotted onto each new sales invoice.
 - Discounts at or below the threshold can be posted normally.
-- Any invoice line discount above the snapshotted threshold automatically creates a pending approval request.
+- Any invoice line discount above the snapshotted percentage or any invoice grand total above the snapshotted amount threshold automatically creates a pending approval request.
 - The invoice remains a draft and posting is blocked until a different company administrator approves the request.
 - The invoice creator cannot approve their own request, even if they are a company administrator.
 - Rejection requires a reason. Approved/rejected decisions are final.
 - Rejected draft invoices can be revised and resubmitted. Each attempt keeps its own immutable discount snapshot and decision; older pending attempts are marked superseded rather than deleted.
-- Each attempt stores an immutable snapshot of all invoice lines, including quantity, price, tax code/rate, discount, and calculated amounts.
-- Editing line values after approval invalidates that approval and creates a fresh request when the revised discount still exceeds the threshold. Editing notes alone does not invalidate the approval.
+- Each attempt stores immutable snapshots of the discount limit, invoice amount limit, invoice total, and all invoice lines, including quantity, price, tax code/rate, discount, and calculated amounts.
+- Editing line values after approval invalidates that approval and creates a fresh request when either configured limit is still exceeded. Editing notes alone does not invalidate the approval.
 - Discount is calculated before VAT, so VAT is calculated on the discounted taxable base. The journal posts net sales after discount and the resulting VAT separately.
 
 Changing the policy affects newly created invoices; it does not rewrite approval limits already captured on existing invoices.
@@ -44,4 +46,4 @@ These are predefined roles, not yet a user-defined per-module permission matrix.
 
 ## Operational boundaries
 
-The approval workflow currently covers **sales invoice line discounts**. It does not yet apply to purchase discounts, credit notes, quotations, or promotional pricing. It does not change HR/payroll, which remains out of scope.
+The approval workflow currently covers **sales invoice line discounts and sales invoice total limits**. It does not yet apply to purchase discounts, credit notes, quotations, or promotional pricing. It does not change HR/payroll, which remains out of scope.
