@@ -33,6 +33,38 @@ class CompanySetupApiTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 403)
 
+    def test_first_company_can_be_created_by_system_admin_and_grants_company_admin(self):
+        system_admin = get_user_model().objects.create_superuser(
+            username="first-company-admin", email="admin@example.test", password="test-password"
+        )
+        self.client.force_authenticate(system_admin)
+        response = self.client.post("/api/setup/companies/", {
+            "code": "FIRST-CO",
+            "name_ar": "أول شركة",
+            "country": "EG",
+            "activity": "commercial",
+            "base_currency": self.currency.pk,
+            "is_active": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        company_id = response.data["id"]
+        membership = CompanyMembership.objects.get(user=system_admin, company_id=company_id)
+        self.assertEqual(membership.role, CompanyMembership.Role.ADMIN)
+        self.assertTrue(membership.all_branches)
+        self.assertTrue(membership.is_active)
+
+    def test_non_staff_user_cannot_create_first_company(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/setup/companies/", {
+            "code": "DENIED-CO",
+            "name_ar": "شركة مرفوضة",
+            "country": "EG",
+            "activity": "commercial",
+            "base_currency": self.currency.pk,
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Company.objects.filter(code="DENIED-CO").exists())
+
     def test_company_list_contains_only_active_memberships(self):
         CompanyMembership.objects.create(user=self.user, company=self.company, role="accountant")
         self.client.force_authenticate(self.user)
