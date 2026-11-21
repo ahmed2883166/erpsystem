@@ -49,3 +49,22 @@ class BackupConfigurationApiTests(TestCase):
         self.client.force_authenticate(self.user)
         response = self.client.post(self.url, {}, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+    def test_reset_requires_recent_verified_backup_and_password(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/backup/reset/",
+            {"password": "safe-password-123", "confirmation": "تصفير الحركات"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_reset_requires_exact_confirmation_and_superuser(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/backup/reset/",
+            {"password": "safe-password-123", "confirmation": "تصفير الحركات"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
