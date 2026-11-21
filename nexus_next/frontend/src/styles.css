@@ -609,3 +609,16 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 @media(max-width:900px){.finance-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.monitor-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 /* استجابة لوحة المؤشرات ومراقبة النظام للشاشات الأصغر. */
 @media(max-width:640px){.finance-kpi-grid,.monitor-kpis{grid-template-columns:1fr 1fr}.finance-balance-strip,.finance-aging-grid{grid-template-columns:1fr}.dashboard-filters{display:grid;grid-template-columns:1fr 1fr}.dashboard-filters .primary-button{grid-column:1/-1}.system-monitor .monitor-tabs{overflow:auto}.system-monitor .monitor-tabs button{white-space:nowrap}}
+
+
+/* شاشة تسجيل الدخول: خلفية مستقلة وبطاقة دخول متجاوبة قبل فتح مساحة العمل. */
+.auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 12% 15%,#dce9ff 0,transparent 34%),linear-gradient(135deg,#f4f7fc,#e9eef7)}
+.auth-card{width:min(100%,420px);display:flex;flex-direction:column;gap:15px;padding:34px;background:#fff;border:1px solid #e1e8f2;border-radius:22px;box-shadow:0 22px 65px #152b4a18}
+.auth-brand-mark{width:48px;height:48px;display:grid;place-items:center;border-radius:15px;background:linear-gradient(145deg,#3b82f6,#2356bd);color:#fff;font-size:26px;font-weight:800}
+.auth-eyebrow{margin:2px 0 -12px;color:#3569b6;font-size:11px;font-weight:800;letter-spacing:2px}
+.auth-card h1{margin:0;color:#172033;font-size:26px}
+.auth-description{margin:0 0 8px;color:#738198;font-size:13px;line-height:1.8}
+.auth-card label{display:flex;flex-direction:column;gap:7px;color:#34445c;font-size:12px;font-weight:700}
+.auth-card input{width:100%;min-height:44px;padding:10px 12px;border:1px solid #dce4ef;border-radius:10px;background:#fbfcfe;color:#172033;font:inherit;outline:none}
+.auth-card input:focus{border-color:#4b83d4;box-shadow:0 0 0 3px #3b82f61a}
+.auth-submit{width:100%;min-height:46px;margin-top:5px}
