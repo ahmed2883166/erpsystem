@@ -302,7 +302,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
         {cycles.map(c=><tr key={c.id}><td>{c.period_start} — {c.period_end}</td><td>{c.payment_date}</td><td>{c.results_count}</td><td><span className="status-pill">{cycleLabels[c.status]||c.status}</span></td><td style={{display:"flex",gap:6,flexWrap:"wrap"}}>
           {["draft","calculated","review"].includes(c.status)&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.calculatePayroll(c.id),"تم احتساب الدورة. راجع النتائج قبل إرسالها للاعتماد.")}>احتساب</button>}
           {c.status==="calculated"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.sendPayrollToReview(c.id),"تم إرسال الدورة للمراجعة.")}>إرسال للمراجعة</button>}
-          {c.status==="review"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.approvePayroll(c.id),"تم اعتماد الدورة.")}>اعتماد</button>}
+          {c.status==="review"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void action(()=>hrApi.approvePayroll(c.id),"تم اعتماد الدورة.")}>اعتماد</button>}\n          {c.status==="approved"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void action(()=>hrApi.postPayroll(c.id),"تم ترحيل استحقاق المرتبات محاسبيًا لكل فرع.")}>ترحيل محاسبي</button>}
           <button type="button" className="subtle-button" disabled={busy} onClick={()=>void showResults(c.id)}>النتائج</button>
         </td></tr>)}
       </tbody></table>{!cycles.length&&<div className="table-empty">لا توجد دورات مرتبات بعد.</div>}</div>
