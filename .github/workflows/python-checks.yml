@@ -5,7 +5,7 @@ concurrency:
   cancel-in-progress: true
 on:
   push:
-    branches: [main, feature/company-setup-currency-tax-activity, work/phase7-bootstrap-ux]
+    branches: [main, feature/company-setup-currency-tax-activity, work/phase7-bootstrap-ux, work/postgresql-native-rebuild]
   pull_request:
     branches: [main]
 jobs:
