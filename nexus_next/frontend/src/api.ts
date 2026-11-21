@@ -180,7 +180,21 @@ export type TaxCode = {
   rate: string; effective_from: string; effective_to: string | null;
   input_tax_recoverable: boolean; is_active: boolean; created_at: string;
 };
+export type AuditEvent = {
+  id: number; request_id: string; created_at: string; actor: string;
+  company_id: number | null; company: string | null; branch_id: number | null; branch: string | null;
+  action: "create" | "update" | "delete" | "action"; resource: string; object_id: string;
+  http_method: string; status_code: number; succeeded: boolean; ip_address: string | null;
+  user_agent: string; metadata: Record<string, unknown>;
+};
+export type AuditEventResponse = { count: number; results: AuditEvent[] };
+
 export const api = {
+  auditEvents: (companyId: number, dateFrom: string, dateTo: string, action?: string) => {
+    const q = new URLSearchParams({ company: String(companyId), date_from: dateFrom, date_to: dateTo, limit: "200" });
+    if (action) q.set("action", action);
+    return request<AuditEventResponse>(`/api/audit/events/?${q.toString()}`);
+  },
   taxCodes: (companyId: number) => request<TaxCode[]>(`/api/accounting/tax-codes/?company=${companyId}&ordering=code`),
   createTaxCode: async (payload: Partial<TaxCode>) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>("/api/accounting/tax-codes/", { method: "POST", body: JSON.stringify(payload) }); },
   deactivateTaxCode: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>(`/api/accounting/tax-codes/${id}/`, { method: "PATCH", body: JSON.stringify({ is_active: false }) }); },
