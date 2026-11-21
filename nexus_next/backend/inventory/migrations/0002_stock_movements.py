@@ -37,7 +37,7 @@ class Migration(migrations.Migration):
                 ("quantity", models.DecimalField(decimal_places=4, max_digits=18, validators=[django.core.validators.MinValueValidator(0.0001)])),
                 ("unit_cost", models.DecimalField(decimal_places=4, default=0, max_digits=18, validators=[django.core.validators.MinValueValidator(0)])),
                 ("adjustment_direction", models.CharField(blank=True, choices=[("in", "زيادة"), ("out", "عجز")], max_length=3)),
-                ("movement", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="lines", to="inventory.stockmovement")),
+                ("movement", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="lines", to="inventory.stockmovement")),
                 ("product", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="stock_movement_lines", to="inventory.product")),
             ],
             options={"ordering": ("id",)},
