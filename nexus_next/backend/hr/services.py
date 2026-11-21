@@ -365,6 +365,9 @@ def post_payroll_cycle(cycle_id, actor=None):
                     elif component and component.method == component.Method.EMPLOYEE_INSURANCE:
                         account = component.payable_account or get_account_for_role(cycle.company, "employee_insurance_payable")
                         account = validate_account(account, "liability", "تأمينات الموظفين")
+                    elif component and component.method == component.Method.PROGRESSIVE_TAX:
+                        account = component.payable_account or get_account_for_role(cycle.company, "payroll_tax_payable")
+                        account = validate_account(account, "liability", "ضريبة المرتبات")
                     else:
                         account = validate_account(component.payable_account if component else None, "liability", line.name_snapshot)
                     add_line(account, 0, line.amount, line.name_snapshot, result.employee.cost_center)
