@@ -5,6 +5,10 @@ cd /d "%~dp0"
 REM Always initialize the configured company database in the normal local launcher.
 set "NEXUS_SKIP_DB_INIT=0"
 
+REM Preview-only isolated storage; never reuse the normal company data folder.
+set "NEXUS_DATA_DIR=%~dp0test_data"
+set "NEXUS_BACKUP_DIR=%USERPROFILE%\NEXUS ERP Test Backups"
+
 title ADMRAIL ERP - Local Server
 REM Local developer-only license bypass. Do not ship this launcher to customers.
 set "NEXUS_DEMO_MODE=1"
