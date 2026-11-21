@@ -1,4 +1,18 @@
 $ErrorActionPreference = "Stop"
+foreach ($command in @("docker", "py", "node", "npm")) {
+  if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+    throw "المتطلب غير مثبت أو غير موجود في PATH: $command"
+  }
+}
+& docker compose version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "يلزم تثبيت Docker Desktop مع Docker Compose." }
+& py -3.12 --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "يلزم تثبيت Python 3.12 وإتاحته من خلال py launcher." }
+& node --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "يلزم تثبيت Node.js 22 أو أحدث." }
+& npm --version | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "تعذر تشغيل npm." }
+
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Backend = Join-Path $Root "backend"
 $Frontend = Join-Path $Root "frontend"
@@ -33,12 +47,12 @@ try {
   } finally { Pop-Location }
   if (-not (Test-Path (Join-Path $Frontend "node_modules"))) { npm --prefix $Frontend install }
   if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Frontend." }
-  Start-Process powershell.exe -WorkingDirectory $Backend -ArgumentList @("-NoExit", "-Command", ".\.venv\Scripts\Activate.ps1; python manage.py runserver 127.0.0.1:8000")
-  Start-Process powershell.exe -WorkingDirectory $Frontend -ArgumentList @("-NoExit", "-Command", "npm run dev -- --host 127.0.0.1")
+  Start-Process -FilePath $Python -WorkingDirectory $Backend -ArgumentList @("manage.py", "runserver", "127.0.0.1:8000")
+  Start-Process -FilePath "cmd.exe" -WorkingDirectory $Frontend -ArgumentList @("/c", "npm run dev -- --host 127.0.0.1")
   $SuperuserCount = & $Python (Join-Path $Backend "manage.py") shell -c "from django.contrib.auth import get_user_model; print(get_user_model().objects.filter(is_superuser=True).count())"
   if ($LASTEXITCODE -ne 0) { throw "تعذر التحقق من مستخدم الإدارة." }
   if ([int]($SuperuserCount | Select-Object -Last 1) -eq 0) {
-    Start-Process powershell.exe -WorkingDirectory $Backend -ArgumentList @("-NoExit", "-Command", ".\.venv\Scripts\Activate.ps1; python manage.py createsuperuser")
+    Start-Process -FilePath $Python -WorkingDirectory $Backend -ArgumentList @("manage.py", "createsuperuser")
   }
   Write-Host "NEXUS Next بدأ محليًا: http://127.0.0.1:5173" -ForegroundColor Green
 } finally { Pop-Location }
