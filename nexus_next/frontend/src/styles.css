@@ -253,3 +253,25 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
   .print-active h2,.print-active h3{color:#111!important;break-after:avoid}
   .print-active .asset-cashflow-totals{background:#f3f3f3!important;color:#111!important}
 }
+
+
+.audit-panel .audit-filters {
+  align-items: end;
+}
+.audit-panel .audit-count {
+  margin-inline-start: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 10px;
+  color: var(--muted-text, #94a3b8);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.audit-panel .audit-time {
+  min-width: 150px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.audit-panel .data-table-wrap {
+  overflow-x: auto;
+}
