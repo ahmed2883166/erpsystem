@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import ChartOfAccount, JournalEntry, JournalLine
+from .models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from .services import post_journal
 
 
