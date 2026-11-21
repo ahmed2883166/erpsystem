@@ -140,12 +140,14 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
     def get_approval_status(self, obj):
         limit = obj.discount_approval_limit
-        if limit is None or not obj.lines.filter(discount_percent__gt=limit).exists():
+        lines = list(obj.lines.all())
+        if limit is None or not any(line.discount_percent > limit for line in lines):
             return "not_required"
-        approval = obj.approval_requests.order_by("-requested_at", "-pk").first()
+        attempts = list(obj.approval_requests.all())
+        approval = max(attempts, key=lambda row: (row.requested_at, row.pk), default=None)
         if not approval:
             return "pending"
-        max_discount = max(obj.lines.values_list("discount_percent", flat=True), default=Decimal("0"))
+        max_discount = max((line.discount_percent for line in lines), default=Decimal("0"))
         if (
             approval.requested_discount_total != obj.discount_total
             or approval.requested_max_discount_percent != max_discount
