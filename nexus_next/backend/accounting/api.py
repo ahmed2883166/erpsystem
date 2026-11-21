@@ -678,23 +678,26 @@ class JournalEntryViewSet(AccountingViewSet):
             for item in AccountRole.objects.filter(company_id=company_id, role__in=role_codes).select_related("account")
         }
 
-        def account_balance(account, cutoff, inclusive=False):
-            qs = account.journal_lines.filter(
+        role_account_ids = list({account.pk for account in role_accounts.values()})
+        opening_balance_filter = (
+            Q(entry__entry_date__lt=date_from)
+            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        )
+        closing_balance_filter = Q(entry__entry_date__lte=date_to)
+        role_balance_rows = {
+            row["account_id"]: row
+            for row in JournalLine.objects.filter(
+                account_id__in=role_account_ids,
                 entry__status=JournalEntry.Status.POSTED,
                 entry__company_id=company_id,
+                entry__branch__in=visible_branches,
+            ).values("account_id").annotate(
+                opening_debit=Sum("debit", filter=opening_balance_filter),
+                opening_credit=Sum("credit", filter=opening_balance_filter),
+                closing_debit=Sum("debit", filter=closing_balance_filter),
+                closing_credit=Sum("credit", filter=closing_balance_filter),
             )
-            if inclusive:
-                qs = qs.filter(entry__entry_date__lte=cutoff)
-            else:
-                qs = qs.filter(
-                    Q(entry__entry_date__lt=cutoff)
-                    | Q(entry__entry_date=cutoff, entry__source_type=JournalEntry.Source.OPENING)
-                )
-            qs = qs.filter(entry__branch__in=visible_branches)
-            totals = qs.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-            debit = totals["debit"] or Decimal("0")
-            credit = totals["credit"] or Decimal("0")
-            return debit - credit if account.nature == ChartOfAccount.Nature.ASSET else credit - debit
+        }
 
         working_capital = []
         operating_adjustments = Decimal("0")
@@ -704,12 +707,15 @@ class JournalEntryViewSet(AccountingViewSet):
             if not account:
                 missing_roles.append(role)
                 continue
-            opening = account_balance(account, date_from, inclusive=False)
-            closing = account_balance(account, date_to, inclusive=True)
+            totals = role_balance_rows.get(account.pk, {})
+            opening_debit = totals.get("opening_debit") or Decimal("0")
+            opening_credit = totals.get("opening_credit") or Decimal("0")
+            closing_debit = totals.get("closing_debit") or Decimal("0")
+            closing_credit = totals.get("closing_credit") or Decimal("0")
+            is_current_asset = account.nature == ChartOfAccount.Nature.ASSET
+            opening = opening_debit - opening_credit if is_current_asset else opening_credit - opening_debit
+            closing = closing_debit - closing_credit if is_current_asset else closing_credit - closing_debit
             movement = closing - opening
-            is_current_asset = role in (
-                AccountRole.Role.ACCOUNTS_RECEIVABLE, AccountRole.Role.INVENTORY, AccountRole.Role.VAT_INPUT
-            )
             adjustment = -movement if is_current_asset else movement
             operating_adjustments += adjustment
             working_capital.append({
