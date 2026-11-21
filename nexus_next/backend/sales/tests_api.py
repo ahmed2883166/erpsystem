@@ -663,3 +663,28 @@ class SalesWorkflowTests(APITestCase):
             f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
         )
         self.assertEqual(posted.status_code, 200, posted.data)
+
+
+    def test_requested_invoice_amount_limit_is_immutable_in_postgresql(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_discount_percent=Decimal("100"),
+            max_sales_invoice_amount=Decimal("200"),
+            created_by=self.user, updated_by=self.user,
+        )
+        delivery_id, line_id = self._create_delivery("DEL-AMOUNT-IMMUTABLE")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-AMOUNT-IMMUTABLE", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE approvals_salesinvoiceapproval SET requested_invoice_limit = %s WHERE id = %s",
+                        ["999", approval.pk],
+                    )
+        approval.refresh_from_db()
+        self.assertEqual(approval.requested_invoice_limit, Decimal("200.0000"))
