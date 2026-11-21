@@ -119,10 +119,14 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
 
+        alternate_bank = ChartOfAccount.objects.create(
+            company=self.company, code="1110", name_ar="البنك الفرعي", nature=ChartOfAccount.Nature.ASSET
+        )
         payment_response = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-001", "payment_date": "2026-03-15",
-            "method": "bank", "amount": "100.0000", "reference": "BANK-REF-1",
+            "method": "bank", "payment_account": alternate_bank.pk,
+            "amount": "100.0000", "reference": "BANK-REF-1",
         }, format="json")
         self.assertEqual(payment_response.status_code, 201, payment_response.data)
         payment_id = payment_response.data["id"]
@@ -130,6 +134,11 @@ class PurchasingWorkflowTests(APITestCase):
             f"/api/purchasing/payments/{payment_id}/post/", {}, format="json"
         )
         self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+        self.assertEqual(posted_payment.data["payment_account"], alternate_bank.pk)
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted_payment.data["journal_entry"], account=alternate_bank,
+            credit=Decimal("100.0000"),
+        ).exists())
         invoice_data = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
         self.assertEqual(invoice_data["paid_total"], "100.0000")
         self.assertEqual(invoice_data["balance_due"], "128.0000")
