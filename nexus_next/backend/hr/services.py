@@ -218,7 +218,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
         for assignment in statutory_assignments:
             component = assignment.component
-            amount = calculate_component(
+            amount = safe_component_amount(
                 component, assignment.value, effective_basic_salary, payable_days,
                 overtime_hours, daily_divisor, friday_days, rule_configuration,
                 taxable_base, insurance_base,
