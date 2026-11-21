@@ -1,4 +1,5 @@
-from datetime import timedelta\nfrom decimal import Decimal, ROUND_HALF_UP
+from datetime import timedelta
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
