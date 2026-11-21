@@ -632,3 +632,97 @@ class TaxCodeConfigurationApiTests(TestCase):
         }, format="json")
         self.assertEqual(response.status_code, 403)
         self.assertEqual(TaxCode.objects.count(), 0)
+
+
+class AccountExcelImportTests(TestCase):
+    def setUp(self):
+        from io import BytesIO
+        from openpyxl import Workbook
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.BytesIO = BytesIO
+        self.Workbook = Workbook
+        self.SimpleUploadedFile = SimpleUploadedFile
+        self.client = APIClient()
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(code="XLS", name_ar="شركة الاستيراد", country="EG",
+            activity="commercial", base_currency=self.currency)
+        self.user = User.objects.create_user(username="excel_admin", password="test-password")
+        CompanyMembership.objects.create(user=self.user, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(user=self.user)
+
+    def make_file(self, rows):
+        workbook = self.Workbook()
+        sheet = workbook.active
+        sheet.append(["كود الحساب", "اسم الحساب", "كود الأب", "طبيعة الحساب", "التصنيف"])
+        for row in rows:
+            sheet.append(row)
+        stream = self.BytesIO()
+        workbook.save(stream)
+        return self.SimpleUploadedFile(
+            "chart.xlsx", stream.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def test_preview_is_read_only_and_import_creates_parent_before_child(self):
+        upload = self.make_file([
+            ["1000", "الأصول", None, "أصول", "مجموعة"],
+            ["1100", "الأصول المتداولة", "1000", "أصول", "مجموعة"],
+            ["1110", "الصندوق", "1100", "أصول", "تفصيلي"],
+        ])
+        url = "/api/accounting/account-import/"
+        preview = self.client.post(url, {"company": self.company.pk, "action": "preview", "file": upload}, format="multipart")
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["summary"]["ready_to_create"], 3)
+        self.assertEqual(ChartOfAccount.objects.filter(company=self.company).count(), 0)
+
+        upload = self.make_file([
+            ["1000", "الأصول", None, "أصول", "مجموعة"],
+            ["1100", "الأصول المتداولة", "1000", "أصول", "مجموعة"],
+            ["1110", "الصندوق", "1100", "أصول", "تفصيلي"],
+        ])
+        imported = self.client.post(url, {"company": self.company.pk, "action": "import", "file": upload}, format="multipart")
+        self.assertEqual(imported.status_code, 200, imported.data)
+        self.assertEqual(imported.data["created_accounts"], ["1000", "1100", "1110"])
+        cash = ChartOfAccount.objects.get(company=self.company, code="1110")
+        self.assertEqual(cash.parent.code, "1100")
+        self.assertTrue(cash.allow_posting)
+
+    def test_conflicting_code_blocks_whole_import_without_changes(self):
+        ChartOfAccount.objects.create(company=self.company, code="1000", name_ar="النقدية", nature="asset")
+        upload = self.make_file([
+            ["1000", "الأصول", None, "أصول", "مجموعة"],
+            ["1100", "الأصول المتداولة", "1000", "أصول", "مجموعة"],
+        ])
+        response = self.client.post(
+            "/api/accounting/account-import/",
+            {"company": self.company.pk, "action": "import", "file": upload}, format="multipart",
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(ChartOfAccount.objects.filter(company=self.company).count(), 1)
+        self.assertTrue(response.data["errors"])
+
+    def test_duplicate_codes_and_missing_parent_are_reported(self):
+        upload = self.make_file([
+            ["1110", "الصندوق", "9999", "أصول", "تفصيلي"],
+            ["1110", "صندوق آخر", None, "أصول", "تفصيلي"],
+        ])
+        response = self.client.post(
+            "/api/accounting/account-import/",
+            {"company": self.company.pk, "action": "preview", "file": upload}, format="multipart",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["summary"]["blocked"], 2)
+        self.assertGreaterEqual(len(response.data["errors"]), 2)
+
+    def test_non_admin_cannot_commit_excel_import(self):
+        viewer = User.objects.create_user(username="excel_viewer", password="test-password")
+        CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=viewer)
+        upload = self.make_file([["1000", "الأصول", None, "أصول", "مجموعة"]])
+        response = self.client.post(
+            "/api/accounting/account-import/",
+            {"company": self.company.pk, "action": "import", "file": upload}, format="multipart",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(ChartOfAccount.objects.filter(company=self.company).count(), 0)
