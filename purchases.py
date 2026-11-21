@@ -305,6 +305,7 @@ def init_purchase_schema(c):
         ("activity_code", "TEXT"),
         ("tax_category", "TEXT NOT NULL DEFAULT ''"),
         ("tax_treatment", "TEXT NOT NULL DEFAULT 'standard'"),
+        ("tax_reference", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in bill_columns:
             execute_compat(c, "ALTER TABLE supplier_bills ADD COLUMN " + name + " " + declaration)
@@ -2258,6 +2259,9 @@ def new_bill():
             if tax_treatment != "standard" and rate != 0:
                 raise ValueError("المشتريات الصفرية أو المعفاة أو خارج النطاق يجب أن تكون نسبة ضريبتها صفرًا.")
             tax_category = validate_tax_category(tax_country, "purchase", request.form.get("tax_category", ""), tax_treatment)
+            tax_reference = str(request.form.get("tax_reference", "")).strip()[:200]
+            if tax_category.endswith("_customs_vat") and not tax_reference:
+                raise ValueError("رقم البيان الجمركي أو مرجع مستند سداد ضريبة الاستيراد مطلوب لهذا التصنيف.")
             deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
             if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
@@ -2328,14 +2332,14 @@ def new_bill():
             due_date=request.form.get("due_date") or request.form["bill_date"]
             if due_date < request.form["bill_date"]: raise ValueError("تاريخ استحقاق المورد لا يمكن أن يسبق تاريخ الفاتورة.")
             bid=insert_and_get_id(c,"""INSERT INTO supplier_bills(bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,
-                subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,tax_category,tax_treatment,
+                subtotal,tax_rate,tax_amount,total_amount,input_vat_deductible_percent,created_by,branch_id,cost_center_id,project_id,tax_category,tax_treatment,tax_reference,
                 status,bill_kind,expense_account_id,asset_code,asset_name,asset_category,asset_ready_date,
                 asset_residual_value,asset_useful_life_months,asset_depreciation_method,asset_annual_rate,
                 asset_account_id,asset_accum_account_id,asset_expense_account_id,activity_code)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (no,supplier,request.form["bill_date"],due_date,supplier_invoice_no,str(subtotal),str(rate),
                  str(tax),str(total),str(deductible_percent),session["user_id"],dimensions["branch_id"],dimensions["cost_center_id"],
-                 dimensions["project_id"],tax_category,tax_treatment,bill_kind,expense_account_id,
+                 dimensions["project_id"],tax_category,tax_treatment,tax_reference,bill_kind,expense_account_id,
                  asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
@@ -2416,6 +2420,9 @@ def edit_bill(bill_id):
             if tax_treatment != "standard" and rate != 0:
                 raise ValueError("المشتريات الصفرية أو المعفاة أو خارج النطاق يجب أن تكون نسبة ضريبتها صفرًا.")
             tax_category = validate_tax_category(tax_country, "purchase", request.form.get("tax_category", ""), tax_treatment)
+            tax_reference = str(request.form.get("tax_reference", "")).strip()[:200]
+            if tax_category.endswith("_customs_vat") and not tax_reference:
+                raise ValueError("رقم البيان الجمركي أو مرجع مستند سداد ضريبة الاستيراد مطلوب لهذا التصنيف.")
             deductible_percent = Decimal(request.form.get("input_vat_deductible_percent", "100"))
             if not deductible_percent.is_finite() or not Decimal("0") <= deductible_percent <= Decimal("100"):
                 raise ValueError("نسبة خصم ضريبة المدخلات يجب أن تكون من 0 إلى 100.")
@@ -2480,7 +2487,7 @@ def edit_bill(bill_id):
 
             updated = execute_compat(c, """UPDATE supplier_bills SET supplier_id=?,bill_date=?,due_date=?,
                 supplier_invoice_no=?,subtotal=?,tax_rate=?,tax_amount=?,total_amount=?,input_vat_deductible_percent=?,
-                branch_id=?,cost_center_id=?,project_id=?,tax_category=?,tax_treatment=?,bill_kind=?,expense_account_id=?,
+                branch_id=?,cost_center_id=?,project_id=?,tax_category=?,tax_treatment=?,tax_reference=?,bill_kind=?,expense_account_id=?,
                 asset_code=?,asset_name=?,asset_category=?,asset_ready_date=?,asset_residual_value=?,
                 asset_useful_life_months=?,asset_depreciation_method=?,asset_annual_rate=?,
                 asset_account_id=?,asset_accum_account_id=?,asset_expense_account_id=?,
@@ -2489,7 +2496,7 @@ def edit_bill(bill_id):
                 WHERE id=? AND status IN ('draft','rejected') AND journal_entry_id IS NULL""",
                 (supplier, bill_date, due_date, supplier_invoice_no, str(subtotal), str(rate),
                  str(tax), str(total), str(deductible_percent), dimensions["branch_id"], dimensions["cost_center_id"],
-                 dimensions["project_id"], tax_category, tax_treatment, bill_kind, expense_account_id,
+                 dimensions["project_id"], tax_category, tax_treatment, tax_reference, bill_kind, expense_account_id,
                  asset_data.get("asset_code"),asset_data.get("asset_name"),asset_data.get("asset_category"),
                  asset_data.get("asset_ready_date"),asset_data.get("asset_residual_value","0"),
                  asset_data.get("asset_useful_life_months"),asset_data.get("asset_depreciation_method","straight_line"),
