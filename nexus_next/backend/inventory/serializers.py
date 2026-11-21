@@ -112,10 +112,12 @@ class StorageLocationSerializer(serializers.ModelSerializer):
 class StockMovementLineSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source="product.code", read_only=True)
     product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    source_location_name = serializers.CharField(source="source_location.name_ar", read_only=True)
+    destination_location_name = serializers.CharField(source="destination_location.name_ar", read_only=True)
 
     class Meta:
         model = StockMovementLine
-        fields = ("id", "product", "product_code", "product_name", "quantity", "unit_cost", "adjustment_direction")
+        fields = ("id", "product", "product_code", "product_name", "source_location", "source_location_name", "destination_location", "destination_location_name", "expiry_date", "quantity", "unit_cost", "adjustment_direction")
         read_only_fields = ("id",)
 
     def validate(self, attrs):
@@ -171,6 +173,17 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "يوجد صنف لا يتبع الشركة المحددة."})
             if product.product_type != Product.ProductType.GOODS:
                 raise serializers.ValidationError({"lines": "الخدمات لا تقبل حركات مخزنية."})
+            source_location = line.get("source_location")
+            destination_location = line.get("destination_location")
+            if source_location and (not source or source_location.warehouse_id != source.pk):
+                raise serializers.ValidationError({"lines": "موقع المصدر لا يتبع مخزن المصدر المحدد."})
+            if destination_location and (not destination or destination_location.warehouse_id != destination.pk):
+                raise serializers.ValidationError({"lines": "موقع الوجهة لا يتبع مخزن الوجهة المحدد."})
+            expiry_date = line.get("expiry_date")
+            if product.track_expiry and not expiry_date:
+                raise serializers.ValidationError({"lines": "تاريخ الصلاحية مطلوب للصنف المتتبع."})
+            if not product.track_expiry and expiry_date:
+                raise serializers.ValidationError({"lines": "الصنف لا يتطلب تتبع الصلاحية."})
             if movement_type == StockMovement.MovementType.ADJUSTMENT and not line.get("adjustment_direction"):
                 raise serializers.ValidationError({"lines": "حدد الزيادة أو العجز لكل صنف في التسوية."})
         return attrs
@@ -205,7 +218,8 @@ class StockBalanceSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source="product.code", read_only=True)
     product_name = serializers.CharField(source="product.name_ar", read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+    location_name = serializers.CharField(source="location.name_ar", read_only=True, allow_null=True)
 
     class Meta:
         model = StockBalance
-        fields = ("id", "product", "product_code", "product_name", "warehouse", "warehouse_name", "quantity", "average_cost", "inventory_value", "updated_at")
+        fields = ("id", "product", "product_code", "product_name", "warehouse", "warehouse_name", "location", "location_name", "expiry_date", "quantity", "average_cost", "inventory_value", "updated_at")
