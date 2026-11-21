@@ -244,6 +244,7 @@ export default function App() {
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [trialBalanceFrom, setTrialBalanceFrom] = useState(new Date().getFullYear()+"-01-01");
   const [trialBalanceTo, setTrialBalanceTo] = useState(new Date().toISOString().slice(0,10));
+  const [excludeClosingEntries, setExcludeClosingEntries] = useState(false);
   const [customerAging, setCustomerAging] = useState<CustomerAging | null>(null);
   const [supplierAging, setSupplierAging] = useState<SupplierAging | null>(null);
   const [agingLoading, setAgingLoading] = useState(false);
@@ -351,11 +352,11 @@ export default function App() {
     if (active !== "reports" || !companyId) return;
     let cancelled = false;
     setLoading(true);
-    api.trialBalance(companyId, trialBalanceFrom, trialBalanceTo).then((result) => { if (!cancelled) setTrialBalance(result); })
+    api.trialBalance(companyId, trialBalanceFrom, trialBalanceTo, excludeClosingEntries).then((result) => { if (!cancelled) setTrialBalance(result); })
       .catch((reason: Error) => { if (!cancelled) setError(reason.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [active, companyId, trialBalanceFrom, trialBalanceTo]);
+  }, [active, companyId, trialBalanceFrom, trialBalanceTo, excludeClosingEntries]);
 
   return (
     <div className="app-shell" dir="rtl">
@@ -440,6 +441,7 @@ export default function App() {
             <div className="asset-report-filters">
               <label>من تاريخ<input type="date" value={trialBalanceFrom} onChange={e=>setTrialBalanceFrom(e.target.value)}/></label>
               <label>إلى تاريخ<input type="date" value={trialBalanceTo} onChange={e=>setTrialBalanceTo(e.target.value)}/></label>
+              <label className="checkbox-filter"><input type="checkbox" checked={excludeClosingEntries} onChange={e=>setExcludeClosingEntries(e.target.checked)}/> استبعاد قيود الإقفال</label>
             </div>
             {trialBalance && <><div className="metrics-grid report-metrics">
               <article className="metric-card"><div className="metric-top">إجمالي المدين</div><strong className="metric-value">{Number(trialBalance.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></article>
