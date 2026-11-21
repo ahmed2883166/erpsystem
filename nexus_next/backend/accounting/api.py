@@ -583,10 +583,21 @@ class JournalEntryViewSet(AccountingViewSet):
             if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             visible_branches = visible_branches.filter(pk=int(branch_raw))
+        equity_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
+        ).order_by("-start_date").first()
+        has_equity_opening = bool(equity_fiscal_year and JournalEntry.objects.filter(
+            company_id=company_id, fiscal_year=equity_fiscal_year,
+            status=JournalEntry.Status.POSTED,
+            source_type=JournalEntry.Source.OPENING,
+            entry_date__lte=date_from, branch__in=visible_branches,
+        ).exists())
         opening_filter = (
             Q(entry__entry_date__lt=date_from)
             | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
         )
+        if has_equity_opening:
+            opening_filter &= Q(entry__entry_date__gte=equity_fiscal_year.start_date)
         movement_filter = (
             Q(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to)
             & ~Q(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
@@ -704,11 +715,34 @@ class JournalEntryViewSet(AccountingViewSet):
         }
 
         role_account_ids = list({account.pk for account in role_accounts.values()})
+        opening_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
+        ).order_by("-start_date").first()
+        has_opening_snapshot = bool(opening_fiscal_year and JournalEntry.objects.filter(
+            company_id=company_id, fiscal_year=opening_fiscal_year,
+            status=JournalEntry.Status.POSTED,
+            source_type=JournalEntry.Source.OPENING,
+            entry_date__lte=date_from, branch__in=visible_branches,
+        ).exists())
         opening_balance_filter = (
             Q(entry__entry_date__lt=date_from)
             | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
         )
+        if has_opening_snapshot:
+            opening_balance_filter &= Q(entry__entry_date__gte=opening_fiscal_year.start_date)
+
+        closing_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_to, end_date__gte=date_to
+        ).order_by("-start_date").first()
+        has_closing_snapshot = bool(closing_fiscal_year and JournalEntry.objects.filter(
+            company_id=company_id, fiscal_year=closing_fiscal_year,
+            status=JournalEntry.Status.POSTED,
+            source_type=JournalEntry.Source.OPENING,
+            entry_date__lte=date_to, branch__in=visible_branches,
+        ).exists())
         closing_balance_filter = Q(entry__entry_date__lte=date_to)
+        if has_closing_snapshot:
+            closing_balance_filter &= Q(entry__entry_date__gte=closing_fiscal_year.start_date)
         role_balance_rows = {
             row["account_id"]: row
             for row in JournalLine.objects.filter(
