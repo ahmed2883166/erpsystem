@@ -10,12 +10,14 @@ type Props = { companyId: number | null; currency: string; onNavigate: (section:
 const money = (value?: string | number, currency = "") => `${Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ${currency}`.trim();
 const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const monthStart = (date: Date) => localDate(new Date(date.getFullYear(), date.getMonth(), 1));
+// حساب حدود الشهر السابق لاستخدامها في مقارنة مؤشرات الأداء.
 const previousMonth = (date: Date) => {
   const start = new Date(date.getFullYear(), date.getMonth() - 1, 1);
   const end = new Date(date.getFullYear(), date.getMonth(), 0);
   return { from: localDate(start), to: localDate(end) };
 };
 
+// لوحة المؤشرات المالية ومقارنة الفترات وعرض اختصارات الانتقال للتفاصيل.
 export default function DashboardPanel({ companyId, currency, onNavigate }: Props) {
   const today = localDate(new Date());
   const [from, setFrom] = useState(monthStart(new Date()));
@@ -29,7 +31,8 @@ export default function DashboardPanel({ companyId, currency, onNavigate }: Prop
   const [error, setError] = useState("");
 
   const prior = useMemo(() => previousMonth(new Date(from + "T12:00:00")), [from]);
-  const load = async () => {
+  // تحميل بيانات القوائم المالية وأعمار الديون للفترة المختارة من مصادرها الفعلية.
+const load = async () => {
     if (!companyId || !from || !to || from > to) return;
     setBusy(true); setError("");
     try {
