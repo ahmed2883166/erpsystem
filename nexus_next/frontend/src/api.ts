@@ -78,7 +78,7 @@ export type StockMovement = {
   id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "transfer" | "adjustment";
   movement_date: string; source_warehouse: number | null; source_warehouse_name: string | null;
   destination_warehouse: number | null; destination_warehouse_name: string | null;
-  status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; created_at: string; posted_at: string | null;
+  status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
 };
 export type StockBalance = {
   id: number; product: number; product_code: string; product_name: string; warehouse: number;
