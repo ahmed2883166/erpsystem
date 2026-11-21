@@ -9,6 +9,7 @@ type BackupConfig = {
   updated_at: string;
   can_manage: boolean;
   path_configured: boolean;
+  history: {id:number;status:"success"|"failure";backup_file:string;size_bytes:number;details:string;created_at:string}[];
 };
 
 async function call<T>(method = "GET", body?: unknown): Promise<T> {
@@ -33,6 +34,7 @@ export default function BackupPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [running, setRunning] = useState(false);
 
   const load = async () => {
     try {
@@ -42,6 +44,17 @@ export default function BackupPanel() {
     } catch (e) { setError(e instanceof Error ? e.message : "تعذر تحميل إعدادات النسخ."); }
   };
   useEffect(() => { void load(); }, []);
+
+  const runBackup = async () => {
+    if (!window.confirm("بدء نسخة احتياطية الآن في المسار المعتمد؟")) return;
+    setRunning(true); setError(""); setNotice("");
+    try {
+      const result = await call<{detail:string}>("POST");
+      setNotice(result.detail);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : "فشل تنفيذ النسخ الاحتياطي."); }
+    finally { setRunning(false); }
+  };
 
   const save = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
@@ -65,6 +78,7 @@ export default function BackupPanel() {
         <div><span>مسار النسخ المعتمد</span><strong dir="ltr">{config.backup_path || "لم يتم تحديده"}</strong></div>
         <div><span>صلاحية التعديل</span><strong>{config.can_manage ? "مدير النظام فقط" : "عرض فقط"}</strong></div>
       </div>
+      {config.can_manage && <div className="form-actions"><button type="button" className="primary-button" disabled={running || !config.enabled || !config.path_configured} onClick={() => void runBackup()}>{running ? "جارٍ إنشاء النسخة والتحقق منها…" : "إنشاء نسخة احتياطية الآن"}</button></div>}
       {config.can_manage ? <form className="journal-form" onSubmit={save}>
         <label className="form-wide">مجلد النسخ الاحتياطي على قرص غير C
           <input required dir="ltr" value={path} onChange={e=>setPath(e.target.value)} placeholder="D:\\NEXUS_Backups" />
@@ -76,6 +90,12 @@ export default function BackupPanel() {
         <label className="form-wide"><span><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> تفعيل النسخ الاحتياطي المجدول</span></label>
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ إعدادات النسخ"}</button></div>
       </form> : <p className="asset-report-note">يمكنك مشاهدة الإعدادات فقط. تغيير مسار النسخ أو الجدولة محجوز لمدير النظام الأعلى (Superuser).</p>}
+      <div className="work-panel-head"><div><h3>سجل النسخ الاحتياطية</h3><p>آخر 50 عملية، مع نتيجة التحقق وحجم الملف ومكان حفظه</p></div></div>
+      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>النتيجة</th><th>الحجم</th><th>مكان الحفظ</th></tr></thead><tbody>
+        {config.history.map(run=><tr key={run.id}><td>{new Date(run.created_at).toLocaleString("ar-EG")}</td><td>{run.status === "success" ? "ناجح ومتحقق" : "فشل"}</td><td>{run.size_bytes ? (run.size_bytes / (1024*1024)).toFixed(2) + " MB" : "—"}</td><td dir="ltr">{run.backup_file || run.details}</td></tr>)}
+        {!config.history.length && <tr><td colSpan={4}>لا توجد عمليات نسخ مسجلة بعد.</td></tr>}
+      </tbody></table></div>
+      <p className="asset-report-note">لا نعرض نسبة تقدم وهمية؛ أثناء التنفيذ تظهر حالة التشغيل، ولا تُسجل النسخة ناجحة إلا بعد التحقق من الأرشيف ووجود الملف بالحجم المتوقع. بعد تغيير الجدولة، أعد تشغيل scripts/install-backup-task.ps1 لتحديث مهمة Windows.</p>
     </>}
   </section>;
 }
