@@ -476,6 +476,12 @@ class SalesWorkflowTests(APITestCase):
         second = SalesInvoiceApproval.objects.order_by("-requested_at", "-pk").first()
         self.assertEqual(first.status, SalesInvoiceApproval.Status.REJECTED)
         self.assertEqual(second.status, SalesInvoiceApproval.Status.PENDING)
+        history = self.client.get(f"/api/approvals/requests/?company={self.company.pk}")
+        self.assertEqual(history.status_code, 200, history.data)
+        first_view = next(row for row in history.data if row["id"] == first.pk)
+        second_view = next(row for row in history.data if row["id"] == second.pk)
+        self.assertEqual(first_view["invoice_total"], "180.0000")
+        self.assertEqual(second_view["invoice_total"], "184.0000")
 
         self.client.force_authenticate(manager)
         approved = self.client.post(
