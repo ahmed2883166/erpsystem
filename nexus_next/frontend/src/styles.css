@@ -302,3 +302,24 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .approval-snapshot[open] { min-width: 520px; }
 .approval-snapshot .data-table-wrap { margin-top: 10px; max-width: min(760px, 75vw); }
 .approval-snapshot table { font-size: 12px; }
+
+
+.work-panel-subsection {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border, #333);
+}
+.work-panel-subsection .work-panel-head h3 { margin: 0 0 6px; }
+.approval-snapshot pre {
+  max-width: min(680px, 75vw);
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-muted, #171a20);
+  direction: ltr;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
