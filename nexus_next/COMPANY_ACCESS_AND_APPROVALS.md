@@ -23,13 +23,15 @@ A company administrator configures a maximum line discount percentage in **ال�
 - The invoice remains a draft and posting is blocked until a different company administrator approves the request.
 - The invoice creator cannot approve their own request, even if they are a company administrator.
 - Rejection requires a reason. Approved/rejected decisions are final.
+- Rejected draft invoices can be revised and resubmitted. Each attempt keeps its own immutable discount snapshot and decision; older pending attempts are marked superseded rather than deleted.
+- Editing line values after approval invalidates that approval and creates a fresh request when the revised discount still exceeds the threshold. Editing notes alone does not invalidate the approval.
 - Discount is calculated before VAT, so VAT is calculated on the discounted taxable base. The journal posts net sales after discount and the resulting VAT separately.
 
 Changing the policy affects newly created invoices; it does not rewrite approval limits already captured on existing invoices.
 
 ## History and security
 
-- Approval requests are read-only through the API and cannot be deleted.
+- Approval requests are read-only through the API and cannot be deleted. Multiple attempts can be attached to one invoice, preserving the full decision history.
 - PostgreSQL guards approval identity fields, disallows deletion, and prevents changing a final decision.
 - API mutations are captured by the existing audit middleware.
 - Company membership changes, discount policy changes, and approval decisions are company-scoped and role-checked.
