@@ -151,6 +151,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
       <label>الهاتف<input maxLength={40} value={phone} onChange={e => setPhone(e.target.value)} /></label>
       <label>البريد الإلكتروني<input type="email" maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></label>
       <label className="form-wide">العنوان<textarea rows={2} value={address} onChange={e => setAddress(e.target.value)} /></label>
+      {activity === "industrial" && <p className="asset-report-note form-wide">النشاط الصناعي هنا لتجهيز الحسابات والمخزون فقط؛ أوامر الإنتاج وقوائم المواد وتحويل الخام إلى منتج نهائي غير مفعّلة في هذه المرحلة.</p>}
       <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !currencies.length}>{busy ? "جارٍ إنشاء الشركة…" : "إنشاء الشركة والانتقال للخطوة التالية"}</button></div>
       <p className="asset-report-note form-wide">إنشاء الشركة متاح لحساب مسؤول النظام الأول الذي تم إنشاؤه أثناء تشغيل البرنامج لأول مرة. لا يتم إنشاء نسب ضريبية قانونية تلقائيًا.</p>
     </form>}
