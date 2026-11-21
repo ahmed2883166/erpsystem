@@ -37,8 +37,8 @@ class Customer(models.Model):
             models.UniqueConstraint(fields=("company", "code"), name="uq_customer_company_code"),
         ]
         indexes = [
-            models.Index(fields=("company", "is_active", "name_ar"), name="customer_company_active_name_idx"),
-            models.Index(fields=("company", "tax_number"), name="customer_company_tax_idx"),
+            models.Index(fields=("company", "is_active", "name_ar"), name="cust_co_active_name_idx"),
+            models.Index(fields=("company", "tax_number"), name="cust_co_tax_idx"),
         ]
         verbose_name = "عميل"
         verbose_name_plural = "العملاء"
