@@ -46,10 +46,10 @@ class SalesWorkflowTests(APITestCase):
         )
         post_stock_movement(receipt.pk, self.user)
 
-    def _create_delivery(self):
+    def _create_delivery(self, number="DEL-001"):
         response = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": self.warehouse.pk,
-            "delivery_number": "DEL-001", "delivery_date": "2026-03-10",
+            "delivery_number": number, "delivery_date": "2026-03-10",
             "lines": [{"product": self.product.pk, "quantity": "2"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -109,3 +109,83 @@ class SalesWorkflowTests(APITestCase):
         rejected = self.client.post(f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json")
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.SALES, status="posted").count(), 1)
+
+
+    def _create_posted_invoice(self, number, invoice_date):
+        delivery_id, line_id = self._create_delivery(f"DEL-{number}")
+        response = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": number, "invoice_date": invoice_date,
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        invoice_id = response.data["id"]
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return invoice_id
+
+    def _post_customer_receipt(self, invoice_id, number, receipt_date, amount):
+        invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
+        response = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": number, "receipt_date": receipt_date, "method": "bank",
+            "amount": str(amount),
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        posted = self.client.post(f"/api/sales-documents/receipts/{response.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+    def test_customer_aging_buckets_and_as_of_partial_receipts(self):
+        # Supply enough stock for the five independent delivery/invoice documents.
+        stock = StockMovement.objects.create(
+            company=self.company, movement_number="AGING-STOCK",
+            movement_type=StockMovement.MovementType.RECEIPT, movement_date=date(2026, 1, 1),
+            destination_warehouse=self.warehouse, created_by=self.user,
+        )
+        StockMovementLine.objects.create(movement=stock, product=self.product, quantity=20, unit_cost=40)
+        post_stock_movement(stock.pk, self.user)
+        self.customer.payment_terms_days = 10
+        self.customer.save(update_fields=("payment_terms_days",))
+
+        not_due = self._create_posted_invoice("AGE-0", "2026-06-25")
+        one_to_thirty = self._create_posted_invoice("AGE-1", "2026-06-10")
+        thirty_one_to_sixty = self._create_posted_invoice("AGE-2", "2026-05-20")
+        sixty_one_to_ninety = self._create_posted_invoice("AGE-3", "2026-04-20")
+        over_ninety = self._create_posted_invoice("AGE-4", "2026-03-01")
+        self._post_customer_receipt(one_to_thirty, "AGE-R1", "2026-06-20", "50")
+        # A receipt after the report date must not reduce the historical balance.
+        self._post_customer_receipt(one_to_thirty, "AGE-R2", "2026-07-02", "25")
+
+        response = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-06-30"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["totals"]["not_due"], "200.0000")
+        self.assertEqual(response.data["totals"]["1_30"], "150.0000")
+        self.assertEqual(response.data["totals"]["31_60"], "200.0000")
+        self.assertEqual(response.data["totals"]["61_90"], "200.0000")
+        self.assertEqual(response.data["totals"]["over_90"], "200.0000")
+        self.assertEqual(response.data["totals"]["total_due"], "950.0000")
+        invoice_rows = {
+            row["invoice_number"]: row
+            for customer in response.data["customers"]
+            for row in customer["invoices"]
+        }
+        self.assertEqual(invoice_rows["AGE-1"]["balance_due"], "150.0000")
+        self.assertEqual(invoice_rows["AGE-1"]["overdue_days"], 10)
+        self.assertEqual(invoice_rows["AGE-0"]["bucket"], "not_due")
+        self.assertEqual(len(invoice_rows), 5)
+
+    def test_customer_aging_is_company_and_branch_scoped(self):
+        response = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&branch={self.branch.pk}&as_of=2026-06-30"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        other = Company.objects.create(
+            code="OTHER-AGE", name_ar="شركة أخرى", country="EG",
+            activity="commercial", base_currency=self.company.base_currency,
+        )
+        denied = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={other.pk}&as_of=2026-06-30"
+        )
+        self.assertEqual(denied.status_code, 403)
