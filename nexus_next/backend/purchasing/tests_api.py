@@ -147,6 +147,43 @@ class PurchasingWorkflowTests(APITestCase):
             2,
         )
 
+    def test_supplier_statement_reports_opening_balance_and_running_payable(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-STAT-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        invoice_id = invoice_response.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        payment_response = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-STAT-001", "payment_date": "2026-03-18",
+            "method": "bank", "amount": "50.0000",
+        }, format="json")
+        self.assertEqual(payment_response.status_code, 201, payment_response.data)
+        posted_payment = self.client.post(
+            f"/api/purchasing/payments/{payment_response.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+
+        statement = self.client.get(
+            "/api/purchasing/invoices/supplier-statement/",
+            {"company": self.company.pk, "supplier": self.supplier.pk,
+             "date_from": "2026-03-15", "date_to": "2026-03-31"},
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["opening_balance"], "228.0000")
+        self.assertEqual(statement.data["closing_balance"], "178.0000")
+        self.assertEqual(len(statement.data["rows"]), 1)
+        self.assertEqual(statement.data["rows"][0]["document_type"], "payment")
+        self.assertEqual(statement.data["rows"][0]["debit"], "50.0000")
+
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         response = self.client.post("/api/purchasing/invoices/", {
