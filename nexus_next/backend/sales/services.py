@@ -65,6 +65,13 @@ def post_sales_invoice(invoice_id, user):
     invoice = SalesInvoice.objects.select_for_update().get(pk=invoice_id)
     if invoice.status != SalesInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المبيعات مرحلة بالفعل.")
+    if invoice.discount_approval_limit is not None:
+        from approvals.models import SalesInvoiceApproval
+        exceeds_limit = invoice.lines.filter(discount_percent__gt=invoice.discount_approval_limit).exists()
+        if exceeds_limit:
+            approval = SalesInvoiceApproval.objects.filter(invoice=invoice).first()
+            if not approval or approval.status != SalesInvoiceApproval.Status.APPROVED:
+                raise ValidationError("تجاوز الخصم الحد المسموح؛ يجب اعتماد مدير الشركة قبل ترحيل الفاتورة.")
     delivery = invoice.delivery
     if delivery.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
