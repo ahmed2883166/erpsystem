@@ -476,6 +476,39 @@ def build_tax_report_snapshot(conn, period_value):
     }
     summary["period_start"] = start.isoformat()
     summary["period_end"] = end.isoformat()
+
+    # Special mechanisms are reported separately from standard VAT. Only
+    # explicitly posted rows for this exact tax period are included.
+    special_tax_rows = []
+    special_tax_totals = {
+        "egypt_table_tax": Decimal("0"),
+        "saudi_reverse_charge_output": Decimal("0"),
+        "saudi_reverse_charge_recoverable": Decimal("0"),
+        "saudi_reverse_charge_nonrecoverable": Decimal("0"),
+    }
+    if _table_exists(conn, "tax_document_mechanisms"):
+        mechanism_rows = execute_compat(conn, """
+            SELECT country_code,document_kind,document_id,mechanism_code,tax_type,
+                   taxable_base,tax_rate,quantity,amount_per_unit,deductible_percent,
+                   output_tax,recoverable_input_tax,nonrecoverable_input_tax,
+                   tax_amount,tax_reference,journal_entry_id,status
+            FROM tax_document_mechanisms
+            WHERE country_code=? AND tax_period=? AND status='posted'
+            ORDER BY document_kind,document_id,mechanism_code
+        """, (country, period)).fetchall()
+        for mechanism in mechanism_rows:
+            item = dict(mechanism)
+            for field in ("taxable_base","tax_rate","quantity","amount_per_unit",
+                          "deductible_percent","output_tax","recoverable_input_tax",
+                          "nonrecoverable_input_tax","tax_amount"):
+                item[field] = Decimal(str(item.get(field) or "0"))
+            special_tax_rows.append(item)
+            if item["mechanism_code"] in {"eg_table_tax_t2","eg_table_tax_t3"}:
+                special_tax_totals["egypt_table_tax"] += item["tax_amount"]
+            elif item["mechanism_code"] == "sa_reverse_charge":
+                special_tax_totals["saudi_reverse_charge_output"] += item["output_tax"]
+                special_tax_totals["saudi_reverse_charge_recoverable"] += item["recoverable_input_tax"]
+                special_tax_totals["saudi_reverse_charge_nonrecoverable"] += item["nonrecoverable_input_tax"]
     ledger_reconciliation = _tax_ledger_reconciliation(conn, summary)
     saudi_preparation = (
         _build_saudi_tax_preparation(conn, period, summary)
@@ -571,6 +604,8 @@ def build_tax_report_snapshot(conn, period_value):
         "saudi_preparation": saudi_preparation,
         "sales_category_breakdown": sales_category_breakdown,
         "purchase_category_breakdown": purchase_category_breakdown,
+        "special_tax_rows": special_tax_rows,
+        "special_tax_totals": special_tax_totals,
     }
 
 
