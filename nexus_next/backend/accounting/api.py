@@ -584,7 +584,6 @@ class JournalEntryViewSet(AccountingViewSet):
         net_change = operating_cash_flow + investing_cash_flow + financing_cash_flow
 
         treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
-        from django.db.models import Q
         treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
         cash_lines = JournalLine.objects.filter(
