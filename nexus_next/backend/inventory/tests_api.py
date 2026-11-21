@@ -265,6 +265,31 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
 
 
+    def test_multi_line_receipt_posts_all_products_and_balanced_total(self):
+        first = Product.objects.create(company=self.company, unit=self.unit, code="ML-1", name_ar="صنف متعدد 1")
+        second = Product.objects.create(company=self.company, unit=self.unit, code="ML-2", name_ar="صنف متعدد 2")
+        warehouse = self._warehouse("ML-WH")
+        created = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk,
+            "movement_number": "ML-RCV-1",
+            "movement_type": "receipt",
+            "movement_date": "2026-11-21",
+            "destination_warehouse": warehouse.pk,
+            "lines": [
+                {"product": first.pk, "quantity": "2", "unit_cost": "10"},
+                {"product": second.pk, "quantity": "3", "unit_cost": "5"},
+            ],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/inventory/movements/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(StockBalance.objects.get(product=first, warehouse=warehouse).quantity, 2)
+        self.assertEqual(StockBalance.objects.get(product=second, warehouse=warehouse).quantity, 3)
+        link = StockMovementJournalLink.objects.get(movement_id=created.data["id"])
+        lines = list(link.journal_entry.lines.select_related("account"))
+        self.assertEqual(sum((line.debit for line in lines), 0), 35)
+        self.assertEqual(sum((line.credit for line in lines), 0), 35)
+
     def test_receipt_posts_balanced_inventory_journal(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="GL-R1", name_ar="استلام محاسبي")
         warehouse = self._warehouse("GL-WH1")
