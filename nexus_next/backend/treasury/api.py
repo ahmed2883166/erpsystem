@@ -1,5 +1,5 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
-from rest_framework import decorators, response, status, viewsets
+from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
@@ -9,7 +9,7 @@ from .services import post_treasury_transaction
 
 
 class TreasuryBaseViewSet(viewsets.ModelViewSet):
-    permission_classes = ()
+    permission_classes = (permissions.IsAuthenticated,)
     def _write(self, company_id):
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب.")
@@ -27,7 +27,8 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
     def get_queryset(self):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser:
-            qs = qs.filter(branch__isnull=True) | qs.filter(branch__in=accessible_branches(self.request.user))
+            from django.db.models import Q
+            qs = qs.filter(Q(branch__isnull=True) | Q(branch__in=accessible_branches(self.request.user)))
         return qs
 
     def perform_create(self, serializer):
