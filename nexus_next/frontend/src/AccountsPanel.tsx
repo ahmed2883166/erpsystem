@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { accountRoleApi, api, type Account, type AccountRole, type AccountTemplateInfo } from "./api";
+import { accountRoleApi, api, type Account, type AccountRole, type AccountTemplateInfo, type AccountImportPreview, type AccountImportResult } from "./api";
 
 type Props = {
   companyId: number | null;
@@ -61,6 +61,9 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<AccountImportPreview | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
 
   const loadMeta = async () => {
     if (!companyId) { setRoles([]); setTemplate(null); return; }
@@ -151,6 +154,33 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
     } finally { setBusy(false); }
   };
 
+
+  const previewWorkbook = async () => {
+    if (!companyId || !importFile || importBusy) return;
+    setImportBusy(true); setError(""); setNotice(""); setImportPreview(null);
+    try {
+      const result = await api.importAccountWorkbook(companyId, importFile, "preview") as AccountImportPreview;
+      setImportPreview(result);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذرت معاينة ملف Excel.");
+    } finally { setImportBusy(false); }
+  };
+
+  const commitWorkbook = async () => {
+    if (!companyId || !importFile || !importPreview || importPreview.errors.length || importBusy) return;
+    if (!window.confirm("سيتم إضافة الحسابات الجديدة فقط. الحسابات المطابقة سيتم تخطيها، ولن يتم تعديل أو حذف أي حساب موجود. هل تعتمد الاستيراد؟")) return;
+    setImportBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api.importAccountWorkbook(companyId, importFile, "import") as AccountImportResult;
+      await onRefresh();
+      setImportPreview(null); setImportFile(null);
+      setNotice(`تم استيراد ${result.created_accounts.length} حسابًا جديدًا وتخطي ${result.skipped_existing} حساب مطابق. لم يتم تعديل الحسابات الموجودة.`);
+    } catch (reason) {
+      const details = (reason as Error & {data?: {errors?: string[]}}).data?.errors || [];
+      setError([reason instanceof Error ? reason.message : "تعذر اعتماد الاستيراد.", ...details].join(" · "));
+    } finally { setImportBusy(false); }
+  };
+
   const renderNode = (item: Account, depth = 0): ReactNode => {
     if (!visibleIds.has(item.id)) return null;
     const children = (childrenByParent.get(item.id) || []).filter(child => visibleIds.has(child.id));
@@ -206,6 +236,23 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
 
     {error && <div className="error-banner">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+
+    <div className="account-import-card">
+      <div className="account-import-heading"><div><strong>استيراد شجرة من Excel</strong><p>ارفع ملف .xlsx لمعاينته وفحص الأكواد والحسابات الأب قبل أي حفظ.</p></div><span>معاينة آمنة</span></div>
+      <div className="account-import-controls">
+        <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => { setImportFile(event.target.files?.[0] || null); setImportPreview(null); }} aria-label="اختيار ملف شجرة الحسابات Excel" />
+        <button type="button" className="subtle-button" disabled={!importFile || importBusy} onClick={() => void previewWorkbook()}>{importBusy ? "جارٍ الفحص…" : "معاينة وفحص الملف"}</button>
+        {importPreview && <button type="button" className="primary-button" disabled={importBusy || importPreview.errors.length > 0 || importPreview.summary.blocked > 0} onClick={() => void commitWorkbook()}>{importBusy ? "جارٍ الاعتماد…" : "اعتماد الاستيراد"}</button>}
+      </div>
+      <small>الأعمدة المطلوبة: كود الحساب، اسم الحساب، طبيعة الحساب، التصنيف (مجموعة/تفصيلي). كود الأب اختياري للحسابات الرئيسية.</small>
+      {importPreview && <div className="account-import-preview">
+        <div className="account-import-summary"><span>إجمالي الصفوف: <b>{importPreview.summary.total}</b></span><span>جديد: <b>{importPreview.summary.ready_to_create}</b></span><span>مطابق موجود: <b>{importPreview.summary.already_exists}</b></span><span>يحتاج مراجعة: <b>{importPreview.summary.blocked}</b></span></div>
+        {importPreview.errors.length > 0 && <div className="error-banner">{importPreview.errors.slice(0, 12).map((item, index) => <div key={index}>{item}</div>)}{importPreview.errors.length > 12 && <div>… و{importPreview.errors.length - 12} ملاحظة أخرى</div>}</div>}
+        <div className="data-table-wrap"><table><thead><tr><th>صف Excel</th><th>الكود</th><th>اسم الحساب</th><th>الأب</th><th>الحالة</th></tr></thead><tbody>{importPreview.rows.slice(0, 30).map(row => <tr key={row.excel_row}><td>{row.excel_row}</td><td dir="ltr">{row.code}</td><td>{row.name_ar}</td><td dir="ltr">{row.parent_code || "—"}</td><td>{row.errors.length ? row.errors.join(" ") : row.status}</td></tr>)}</tbody></table></div>
+        {importPreview.rows.length > 30 && <small>تم عرض أول 30 صفًا من أصل {importPreview.rows.length}.</small>}
+        {importPreview.errors.length === 0 && <div className="success-banner">الفحص سليم. لم يتم حفظ أي بيانات بعد؛ اضغط اعتماد الاستيراد لإضافة الحسابات الجديدة.</div>}
+      </div>}
+    </div>
 
     <div className="account-tree-toolbar">
       <div className="account-tree-toolbar-title"><div><h3>الشجرة المحاسبية</h3><p>افتح المجموعات للوصول إلى الحسابات التفصيلية والأدوار المرتبطة بها.</p></div><span>{visibleIds.size.toLocaleString("ar-EG")} ظاهر</span></div>
