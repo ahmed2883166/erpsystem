@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import TreasuryAccount, TreasuryTransaction
+from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
 class TreasuryAccountSerializer(serializers.ModelSerializer):
@@ -65,3 +65,27 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
         if kind != TreasuryTransaction.Kind.TRANSFER and (not counter or dest):
             raise serializers.ValidationError("القبض والصرف يتطلبان حسابًا مقابلًا فقط.")
         return attrs
+
+
+class BankStatementLineSerializer(serializers.ModelSerializer):
+    matched_document = serializers.CharField(source="matched_transaction.document_number", read_only=True, default="")
+    matched_amount = serializers.DecimalField(source="matched_transaction.amount", max_digits=20, decimal_places=4, read_only=True, default=None)
+
+    class Meta:
+        model = BankStatementLine
+        fields = ("id", "reconciliation", "line_number", "transaction_date", "description", "reference",
+                  "amount", "matched_transaction", "matched_document", "matched_amount", "matched_at")
+        read_only_fields = ("matched_transaction", "matched_at")
+
+
+class BankReconciliationSerializer(serializers.ModelSerializer):
+    bank_name = serializers.CharField(source="bank_account.name_ar", read_only=True)
+    bank_code = serializers.CharField(source="bank_account.code", read_only=True)
+    line_count = serializers.IntegerField(source="lines.count", read_only=True)
+
+    class Meta:
+        model = BankReconciliation
+        fields = ("id", "company", "bank_account", "bank_name", "bank_code", "statement_number",
+                  "statement_date", "opening_balance", "closing_balance", "status", "line_count",
+                  "created_at", "reconciled_at")
+        read_only_fields = ("status", "created_at", "reconciled_at", "line_count")
