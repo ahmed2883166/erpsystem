@@ -106,24 +106,32 @@ def post_stock_movement(movement_id, user):
             return cost_parts
 
         if movement.movement_type == StockMovement.MovementType.RECEIPT:
+            line.cost_amount = (line.quantity * line.unit_cost).quantize(Decimal("0.0001"))
+            line.save(update_fields=("cost_amount",))
             receive(balances[destination_key], line.quantity, line.unit_cost, line)
         elif movement.movement_type == StockMovement.MovementType.ISSUE:
             cost_parts = issue(balances[source_key], line.quantity)
-            line.unit_cost = sum((qty * cost for qty, cost in cost_parts), Decimal("0")) / line.quantity
-            line.save(update_fields=("unit_cost",))
+            line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost in cost_parts)
+            line.unit_cost = line.cost_amount / line.quantity
+            line.save(update_fields=("unit_cost", "cost_amount"))
         elif movement.movement_type == StockMovement.MovementType.TRANSFER:
             cost_parts = issue(balances[source_key], line.quantity)
             for qty, cost in cost_parts:
                 receive(balances[destination_key], qty, cost, line)
-            line.unit_cost = sum((qty * cost for qty, cost in cost_parts), Decimal("0")) / line.quantity
-            line.save(update_fields=("unit_cost",))
+            line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost in cost_parts)
+            line.unit_cost = line.cost_amount / line.quantity
+            line.save(update_fields=("unit_cost", "cost_amount"))
         elif movement.movement_type == StockMovement.MovementType.ADJUSTMENT:
             if line.adjustment_direction == StockMovementLine.AdjustmentDirection.IN:
                 receive(balances[destination_key], line.quantity, line.unit_cost, line)
             else:
                 cost_parts = issue(balances[source_key], line.quantity)
-                line.unit_cost = sum((qty * cost for qty, cost in cost_parts), Decimal("0")) / line.quantity
-                line.save(update_fields=("unit_cost",))
+                line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost in cost_parts)
+                line.unit_cost = line.cost_amount / line.quantity
+                line.save(update_fields=("unit_cost", "cost_amount"))
+
+    from .posting import post_movement_journals
+    post_movement_journals(movement, user)
 
     movement.status = StockMovement.Status.POSTED
     movement.posted_by = user
