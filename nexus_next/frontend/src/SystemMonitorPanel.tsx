@@ -1,3 +1,7 @@
+/*
+ * مركز مراقبة النظام: عرض مؤشرات أداء الطلبات وقاعدة PostgreSQL والانتقال لسجل التدقيق.
+ * تعرض القياسات المتاحة من الخادم مع توضيح حدود البيانات التي يوفرها.
+ */
 import { lazy, Suspense, useEffect, useState } from "react";
 
 const AuditPanel = lazy(() => import("./AuditPanel"));
