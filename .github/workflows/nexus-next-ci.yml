@@ -1,4 +1,4 @@
-name: NEXUS Next CI
+name: Admrail ERP v2 CI
 
 on:
   push:
@@ -70,10 +70,15 @@ jobs:
       - name: Parse Windows operational scripts
         shell: pwsh
         run: |
-          Get-ChildItem nexus_next/scripts/*.ps1 | ForEach-Object {
+          $scripts = @(
+            Get-ChildItem nexus_next/scripts/*.ps1
+            Get-Item nexus_next/start-local.ps1
+            Get-Item nexus_next/start-production.ps1
+          )
+          foreach ($script in $scripts) {
             $tokens = $null
             $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error $_.Message }
               exit 1
@@ -85,7 +90,7 @@ jobs:
       - name: Upload Windows trial package
         uses: actions/upload-artifact@v4
         with:
-          name: NEXUS-ERP-Trial-Windows
+          name: Admrail-ERP-v2-Trial-Windows
           path: ${{ runner.temp }}/nexus-trial/*
           if-no-files-found: error
           retention-days: 14
