@@ -123,6 +123,8 @@ def post_stock_movement(movement_id, user):
             line.save(update_fields=("unit_cost", "cost_amount"))
         elif movement.movement_type == StockMovement.MovementType.ADJUSTMENT:
             if line.adjustment_direction == StockMovementLine.AdjustmentDirection.IN:
+                line.cost_amount = (line.quantity * line.unit_cost).quantize(Decimal("0.0001"))
+                line.save(update_fields=("cost_amount",))
                 receive(balances[destination_key], line.quantity, line.unit_cost, line)
             else:
                 cost_parts = issue(balances[source_key], line.quantity)
