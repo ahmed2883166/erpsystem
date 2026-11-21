@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from django.test import SimpleTestCase, TestCase
@@ -7,7 +8,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency
 
-from hr.models import PayrollResult, PayrollComponent
+from hr.models import Employee, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent
 from hr.services import calculate_component, money
 
 
