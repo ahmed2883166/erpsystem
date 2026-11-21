@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseReceipt, SupplierPayment
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseReceipt, SupplierPayment
 
 
 class PurchaseInvoiceLineInline(admin.TabularInline):
@@ -31,3 +31,18 @@ class SupplierPaymentAdmin(admin.ModelAdmin):
     list_filter = ("company", "status", "method", "payment_date")
     search_fields = ("payment_number", "supplier__name_ar", "invoice__invoice_number", "reference")
     readonly_fields = ("status", "journal_entry", "posted_at")
+
+
+class PurchaseOrderLineInline(admin.TabularInline):
+    model = PurchaseOrderLine
+    extra = 0
+    readonly_fields = ("received_quantity",)
+
+
+@admin.register(PurchaseOrder)
+class PurchaseOrderAdmin(admin.ModelAdmin):
+    list_display = ("order_number", "company", "supplier", "warehouse", "order_date", "expected_date", "status")
+    list_filter = ("company", "status", "order_date")
+    search_fields = ("order_number", "supplier__name_ar")
+    inlines = (PurchaseOrderLineInline,)
+    readonly_fields = ("status", "confirmed_at")
