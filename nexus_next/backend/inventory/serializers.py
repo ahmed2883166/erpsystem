@@ -134,16 +134,28 @@ class StockMovementSerializer(serializers.ModelSerializer):
     lines = StockMovementLineSerializer(many=True)
     source_warehouse_name = serializers.CharField(source="source_warehouse.name_ar", read_only=True)
     destination_warehouse_name = serializers.CharField(source="destination_warehouse.name_ar", read_only=True)
+    journal_entries = serializers.SerializerMethodField()
 
     class Meta:
         model = StockMovement
         fields = (
             "id", "company", "movement_number", "movement_type", "movement_date",
             "source_warehouse", "source_warehouse_name", "destination_warehouse",
-            "destination_warehouse_name", "status", "notes", "lines", "created_at",
+            "destination_warehouse_name", "status", "notes", "lines", "journal_entries", "created_at",
             "posted_at",
         )
         read_only_fields = ("status", "created_at", "posted_at")
+
+    def get_journal_entries(self, obj):
+        return [
+            {
+                "id": link.journal_entry_id,
+                "entry_number": link.journal_entry.entry_number,
+                "branch_code": link.journal_entry.branch.code,
+                "status": link.journal_entry.status,
+            }
+            for link in obj.journal_links.select_related("journal_entry", "journal_entry__branch").all()
+        ]
 
     def validate(self, attrs):
         company = attrs.get("company", getattr(self.instance, "company", None))
