@@ -69,7 +69,7 @@ class FixedAssetWorkflowTests(APITestCase):
         url = f"/api/assets/fixed-assets/{created.data['id']}/depreciate/"
         payload = {"period_date": "2026-02-28", "fiscal_year": self.year.pk}
         first = self.client.post(url, payload, format="json")
-        second = self.client.post(url, payload, format="json")
+        second = self.client.post(url, {"period_date": "2026-02-15", "fiscal_year": self.year.pk}, format="json")
         self.assertEqual(first.status_code, 201, first.data)
         self.assertEqual(second.status_code, 400)
         self.assertEqual(JournalEntry.objects.count(), 2)
