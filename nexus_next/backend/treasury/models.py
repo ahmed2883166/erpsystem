@@ -150,10 +150,6 @@ class BankReconciliation(models.Model):
             raise ValidationError({"bank_account": "الحساب البنكي لا يتبع الشركة."})
         if self.bank_account_id and self.bank_account.kind != TreasuryAccount.Kind.BANK:
             raise ValidationError({"bank_account": "التسوية متاحة للحسابات البنكية فقط."})
-        if self.closing_balance < 0:
-            raise ValidationError({"closing_balance": "رصيد كشف البنك لا يمكن أن يكون سالبًا."})
-
-
 class BankStatementLine(models.Model):
     reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name="lines")
     line_number = models.PositiveIntegerField()
