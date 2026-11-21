@@ -1,3 +1,7 @@
+/*
+ * النسخ الاحتياطي والاستعادة: إعداد الجدولة والاحتفاظ بالنسخ ومراجعة سجل العمليات.
+ * تتضمن الشاشة معاينة إعادة ضبط البيانات قبل طلب تنفيذها وفق صلاحيات المستخدم.
+ */
 import { useEffect, useState, type FormEvent } from "react";
 
 type ResetPreview = { counts: Record<string,number>; total_records:number; backup_ready:boolean; last_backup_at:string|null; preserved:string[]; removed:string[] };
