@@ -78,14 +78,23 @@ class AuditTrailMiddleware:
         prior_object_id, prior_company_id, prior_branch_id = (
             _target_before_request(request) if should_audit else (None, None, None)
         )
+        raw_body = b""
+        if should_audit and "json" in request.META.get("CONTENT_TYPE", "").lower():
+            try:
+                content_length = int(request.META.get("CONTENT_LENGTH") or 0)
+                if content_length <= 65536:
+                    # Cache the body before DRF consumes the request stream.
+                    raw_body = request.body
+            except (ValueError, OSError):
+                raw_body = b""
         response = self.get_response(request)
         if not should_audit:
             return response
 
         try:
             payload = {}
-            if "json" in request.META.get("CONTENT_TYPE", "").lower():
-                payload = _json_object(request.body)
+            if raw_body:
+                payload = _json_object(raw_body)
 
             company_id = _numeric_id(
                 request.GET.get("company") or payload.get("company") or payload.get("company_id")
