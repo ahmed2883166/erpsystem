@@ -25,7 +25,7 @@ class TaxMechanismSchemaSQLiteTests(unittest.TestCase):
 
             columns = _columns(conn, "tax_document_mechanisms")
             self.assertTrue({
-                "country_code", "document_kind", "document_id", "mechanism_code",
+                "country_code", "document_kind", "document_id", "tax_period", "mechanism_code",
                 "tax_type", "taxable_base", "tax_rate", "quantity",
                 "amount_per_unit", "deductible_percent", "output_tax",
                 "recoverable_input_tax", "nonrecoverable_input_tax",
