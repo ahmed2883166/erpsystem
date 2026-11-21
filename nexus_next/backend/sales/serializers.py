@@ -139,29 +139,91 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         return str(max(obj.grand_total - paid, Decimal("0")))
 
     def get_approval_status(self, obj):
-        approval = getattr(obj, "approval_request", None)
-        return approval.status if approval else "not_required"
+        limit = obj.discount_approval_limit
+        if limit is None or not obj.lines.filter(discount_percent__gt=limit).exists():
+            return "not_required"
+        approval = obj.approval_requests.order_by("-requested_at", "-pk").first()
+        return approval.status if approval else "pending"
 
     def validate(self, attrs):
-        company, customer, delivery = attrs.get("company"), attrs.get("customer"), attrs.get("delivery")
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        customer = attrs.get("customer", instance.customer if instance else None)
+        delivery = attrs.get("delivery", instance.delivery if instance else None)
+        invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
+
+        if instance:
+            if instance.status != SalesInvoice.Status.DRAFT:
+                raise serializers.ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
+            immutable = {
+                "company": instance.company_id,
+                "customer": instance.customer_id,
+                "delivery": instance.delivery_id,
+                "invoice_number": instance.invoice_number,
+                "invoice_date": instance.invoice_date,
+            }
+            for field, current in immutable.items():
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "بيانات الفاتورة الأساسية لا تتغير بعد إنشائها."})
+            if "lines" not in attrs:
+                return attrs
+
         if not delivery or delivery.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"delivery": "يجب ترحيل إذن التسليم أولًا."})
         if delivery.company_id != company.pk or delivery.customer_id != customer.pk:
             raise serializers.ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة."})
         if not customer.is_active:
             raise serializers.ValidationError({"customer": "العميل موقوف."})
+
+        lines = attrs.get("lines", [])
         expected = set(delivery.stock_movement.lines.values_list("id", flat=True))
-        supplied = [line["delivery_line"].pk for line in attrs.get("lines", [])]
+        supplied = [line["delivery_line"].pk for line in lines]
         if not supplied or set(supplied) != expected or len(supplied) != len(expected):
             raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن التسليم مرة واحدة دون حذف أو تكرار."})
-        invoice_date = attrs.get("invoice_date")
-        for line in attrs.get("lines", []):
+        for line in lines:
             code = line.get("tax_code")
-            if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
-                         or code.category == TaxCode.Category.REVERSE_CHARGE
-                         or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
+            if code and (
+                code.company_id != company.pk or code.country != company.country or not code.is_active
+                or code.category == TaxCode.Category.REVERSE_CHARGE
+                or code.effective_from > invoice_date
+                or (code.effective_to and code.effective_to < invoice_date)
+            ):
                 raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح للشركة أو تاريخ الفاتورة."})
         return attrs
+
+    def _recalculate_invoice(self, invoice, lines_changed):
+        from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
+        invoice_lines = list(invoice.lines.all())
+        invoice.net_total = sum((line.net_amount for line in invoice_lines), Decimal("0"))
+        invoice.discount_total = sum((line.discount_amount for line in invoice_lines), Decimal("0"))
+        invoice.tax_total = sum((line.tax_amount for line in invoice_lines), Decimal("0"))
+        invoice.grand_total = invoice.net_total + invoice.tax_total
+        update_fields = ["net_total", "discount_total", "tax_total", "grand_total"]
+        if invoice.discount_approval_limit is None:
+            policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
+            if policy:
+                invoice.discount_approval_limit = policy.max_discount_percent
+                update_fields.append("discount_approval_limit")
+        invoice.save(update_fields=update_fields)
+
+        if lines_changed and invoice.discount_approval_limit is not None:
+            for old_request in invoice.approval_requests.filter(status=SalesInvoiceApproval.Status.PENDING):
+                old_request.status = SalesInvoiceApproval.Status.SUPERSEDED
+                old_request.decision_note = "تم تعديل الفاتورة؛ أُنشئ طلب أحدث عند الحاجة."
+                old_request.save()
+            max_discount = max((line.discount_percent for line in invoice_lines), default=Decimal("0"))
+            if max_discount > invoice.discount_approval_limit:
+                SalesInvoiceApproval.objects.create(
+                    company=invoice.company,
+                    invoice=invoice,
+                    requested_by=self.context["request"].user,
+                    requested_limit=invoice.discount_approval_limit,
+                    requested_discount_total=invoice.discount_total,
+                    requested_max_discount_percent=max_discount,
+                )
 
     @transaction.atomic
     def create(self, validated_data):
@@ -169,22 +231,25 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         invoice = SalesInvoice.objects.create(**validated_data, created_by=self.context["request"].user)
         for line in lines:
             SalesInvoiceLine.objects.create(invoice=invoice, **line)
-        invoice.net_total = sum((x.net_amount for x in invoice.lines.all()), Decimal("0"))
-        invoice.discount_total = sum((x.discount_amount for x in invoice.lines.all()), Decimal("0"))
-        invoice.tax_total = sum((x.tax_amount for x in invoice.lines.all()), Decimal("0"))
-        invoice.grand_total = invoice.net_total + invoice.tax_total
-        from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
-        policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
-        if policy:
-            invoice.discount_approval_limit = policy.max_discount_percent
-            invoice.save(update_fields=("net_total", "discount_total", "discount_approval_limit", "tax_total", "grand_total"))
-            if any(line.discount_percent > policy.max_discount_percent for line in invoice.lines.all()):
-                SalesInvoiceApproval.objects.create(
-                    company=invoice.company, invoice=invoice, requested_by=self.context["request"].user,
-                    requested_limit=policy.max_discount_percent,
-                )
-        else:
-            invoice.save(update_fields=("net_total", "discount_total", "tax_total", "grand_total"))
+        self._recalculate_invoice(invoice, lines_changed=True)
+        return invoice
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        lines = validated_data.pop("lines", None)
+        if lines is not None:
+            existing = {line.delivery_line_id: line for line in instance.lines.all()}
+            for data in lines:
+                delivery_line = data.pop("delivery_line")
+                line = existing[delivery_line.pk]
+                line.unit_price = data.get("unit_price", line.unit_price)
+                line.tax_rate = data.get("tax_rate", line.tax_rate)
+                line.tax_code = data.get("tax_code", line.tax_code)
+                line.discount_percent = data.get("discount_percent", line.discount_percent)
+                line.save()
+        invoice = super().update(instance, validated_data)
+        if lines is not None:
+            self._recalculate_invoice(invoice, lines_changed=True)
         return invoice
 
 
