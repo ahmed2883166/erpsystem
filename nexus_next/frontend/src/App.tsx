@@ -123,6 +123,12 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
   const [to, setTo] = useState(today);
   const [balance, setBalance] = useState<BalanceSheetReport|null>(null);
   const [income, setIncome] = useState<IncomeStatementReport|null>(null);
+  const [selectedLedger, setSelectedLedger] = useState<GeneralLedgerReport|null>(null);
+  const [ledgerBusy, setLedgerBusy] = useState(false);
+  const [ledgerError, setLedgerError] = useState("");
+  const [selectedJournal, setSelectedJournal] = useState<Journal|null>(null);
+  const [journalBusy, setJournalBusy] = useState(false);
+  const [journalError, setJournalError] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = async () => {
@@ -133,12 +139,27 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
         api.balanceSheet(companyId, to), api.incomeStatement(companyId, from, to),
       ]);
       setBalance(balanceData); setIncome(incomeData);
+      setSelectedLedger(null); setSelectedJournal(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل القوائم المالية."); }
     finally { setBusy(false); }
   };
   useEffect(() => { void load(); }, [companyId]);
   const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
-  const rows = (items: {account_id:number|null;code:string;name_ar:string;balance:string}[]) => items.map(item=><tr key={item.account_id ?? item.code}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.balance)}</td></tr>);
+  const openLedger = async (accountId: number | null) => {
+    if (!companyId || accountId === null || !balance) return;
+    setLedgerBusy(true); setLedgerError(""); setSelectedJournal(null);
+    try {
+      setSelectedLedger(await api.generalLedger(companyId, accountId, from, balance.as_of));
+    } catch (reason) { setLedgerError(reason instanceof Error ? reason.message : "تعذر فتح دفتر الأستاذ."); }
+    finally { setLedgerBusy(false); }
+  };
+  const openJournal = async (journalId: number) => {
+    setJournalBusy(true); setJournalError("");
+    try { setSelectedJournal(await api.journalDetail(journalId)); }
+    catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر فتح القيد."); }
+    finally { setJournalBusy(false); }
+  };
+  const rows = (items: {account_id:number|null;code:string;name_ar:string;balance:string}[]) => items.map(item=><tr key={item.account_id ?? item.code}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.balance)}</td><td><button type="button" className="text-action-button" disabled={item.account_id===null || ledgerBusy} onClick={()=>void openLedger(item.account_id)}>عرض الحركة ←</button></td></tr>);
   const incomeRows = (items: {account_id:number;code:string;name_ar:string;amount:string}[]) => items.map(item=><tr key={item.account_id}><td>{item.code}</td><td>{item.name_ar}</td><td>{money(item.amount)}</td></tr>);
   return <div className="asset-reports">
     <div className="work-panel-head"><div><h2>القوائم المالية</h2><p>الميزانية العمومية وقائمة الدخل من القيود المرحلة فقط</p></div><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القوائم"}</button></div>
@@ -157,7 +178,7 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
       </div>
       {[["الأصول",balance.assets],["الالتزامات",balance.liabilities],["حقوق الملكية",balance.equity]].map(([label,items])=><div key={label as string}>
         <h3>{label as string}</h3>
-        <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد</th></tr></thead><tbody>{rows(items as BalanceSheetReport["assets"])}</tbody></table></div>
+        <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الرصيد</th><th>التفاصيل</th></tr></thead><tbody>{rows(items as BalanceSheetReport["assets"])}</tbody></table></div>
       </div>)}
       <h3>قائمة الدخل من {income.date_from} إلى {income.date_to}</h3>
       <div className="asset-cashflow-totals">
@@ -172,6 +193,23 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
         <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>القيمة</th></tr></thead><tbody>{incomeRows(items as IncomeStatementReport["revenues"])}</tbody></table></div>
       </div>)}
       <p className="asset-report-note">{income.note}</p>
+      {ledgerError && <div className="error-banner">{ledgerError}</div>}
+      {ledgerBusy && <div className="table-empty">جارٍ تحميل دفتر الأستاذ…</div>}
+      {selectedLedger && <section className="report-drilldown">
+        <div className="work-panel-head"><div><h3>دفتر الأستاذ: {selectedLedger.account_code} — {selectedLedger.account_name}</h3><p>من {selectedLedger.date_from} إلى {selectedLedger.date_to}</p></div><button type="button" className="subtle-button" onClick={()=>{setSelectedLedger(null);setSelectedJournal(null);}}>إغلاق التفاصيل</button></div>
+        <div className="asset-cashflow-totals"><span>رصيد أول المدة: {money(selectedLedger.opening_balance)}</span><b>رصيد آخر المدة: {money(selectedLedger.closing_balance)}</b></div>
+        <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>الفرع</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>
+          {selectedLedger.rows.map(line=><tr key={line.line_id}><td>{line.date}</td><td><button type="button" className="text-action-button" onClick={()=>void openJournal(line.entry_id)}>{line.entry_number}</button></td><td>{line.description}</td><td>{line.branch}</td><td>{money(line.debit)}</td><td>{money(line.credit)}</td><td>{money(line.running_balance)}</td></tr>)}
+        </tbody></table>{!selectedLedger.rows.length&&<div className="table-empty">لا توجد حركات خلال الفترة المحددة.</div>}</div>
+        {journalBusy && <div className="table-empty">جارٍ تحميل القيد…</div>}
+        {journalError && <div className="error-banner">{journalError}</div>}
+        {selectedJournal && <div className="journal-detail-inline">
+          <div className="work-panel-head"><div><h3>القيد {selectedJournal.entry_number}</h3><p>{selectedJournal.entry_date} · {selectedJournal.description} · {selectedJournal.status}</p></div><button type="button" className="subtle-button" onClick={()=>setSelectedJournal(null)}>إغلاق القيد</button></div>
+          <div className="data-table-wrap"><table><thead><tr><th>الحساب</th><th>البيان</th><th>مدين</th><th>دائن</th></tr></thead><tbody>
+            {selectedJournal.lines.map(line=><tr key={line.id}><td>{line.account_code} — {line.account_name}</td><td>{line.description}</td><td>{money(line.debit)}</td><td>{money(line.credit)}</td></tr>)}
+          </tbody></table></div>
+        </div>}
+      </section>}
     </>}
     {!balance && !busy && !error && <div className="table-empty">اختر الفترة ثم حدّث القوائم المالية.</div>}
   </div>;
