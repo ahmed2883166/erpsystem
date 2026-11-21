@@ -123,6 +123,10 @@ class WarehouseProductSetting(models.Model):
     is_active = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def company_id(self):
+        return self.warehouse.company_id
+
     class Meta:
         ordering = ("warehouse__code", "product__code")
         constraints = [
