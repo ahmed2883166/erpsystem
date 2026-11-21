@@ -1,3 +1,7 @@
+/*
+ * إدارة المخزون: الأصناف والتصنيفات والوحدات والمخازن والمواقع وحركات ورصيد المخزون.
+ * تشمل كارت الصنف ونقاط إعادة الطلب والتقارير ومطابقة قيمة المخزون محاسبيًا.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
