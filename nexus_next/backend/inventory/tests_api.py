@@ -193,3 +193,19 @@ class InventoryApiTests(APITestCase):
         response = self.client.delete(f"/api/inventory/movements/{created.data['id']}/")
         self.assertEqual(response.status_code, 204)
         self.assertFalse(StockMovement.objects.filter(pk=created.data["id"]).exists())
+
+
+    def test_costing_method_cannot_change_with_existing_stock(self):
+        self.product = Product.objects.create(company=self.company, unit=self.unit, code="LOCK-COST", name_ar="تثبيت التقييم")
+        warehouse = self._warehouse("LOCK-WH")
+        receipt = self._movement("LOCK-R1", "receipt", destination=warehouse, quantity="2", cost="8")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code, 200)
+        response = self.client.patch(
+            f"/api/inventory/products/{self.product.pk}/",
+            {"costing_method": "fifo"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
