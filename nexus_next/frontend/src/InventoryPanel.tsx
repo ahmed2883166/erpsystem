@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 export default function InventoryPanel({ companyId }: { companyId: number | null }) {
@@ -22,6 +22,9 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
   const [reconciliation, setReconciliation] = useState<InventoryReconciliation | null>(null);
   const [reconciliationError, setReconciliationError] = useState("");
   const [reconciling, setReconciling] = useState(false);
+  const [valuationIntegrity, setValuationIntegrity] = useState<InventoryValuationIntegrity | null>(null);
+  const [valuationIntegrityError, setValuationIntegrityError] = useState("");
+  const [valuationIntegrityBusy, setValuationIntegrityBusy] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [roleAssignments, setRoleAssignments] = useState<AccountRole[]>([]);
   const [search, setSearch] = useState("");
@@ -69,6 +72,13 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
     try { setReconciliation(await stockApi.reconciliation(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
     catch (reason) { setReconciliation(null); setReconciliationError(reason instanceof Error ? reason.message : "تعذرت مطابقة المخزون مع دفتر الأستاذ."); }
     finally { setReconciling(false); }
+  };
+  const loadValuationIntegrity = async () => {
+    if (!companyId) return;
+    setValuationIntegrityBusy(true); setValuationIntegrityError("");
+    try { setValuationIntegrity(await stockApi.valuationIntegrity(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
+    catch (reason) { setValuationIntegrity(null); setValuationIntegrityError(reason instanceof Error ? reason.message : "تعذر فحص سلامة تقييم المخزون."); }
+    finally { setValuationIntegrityBusy(false); }
   };
   const filteredProducts = useMemo(() => products.filter((p) => `${p.code} ${p.barcode} ${p.name_ar}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
   const warehouseValuation = useMemo(() => warehouses.map((warehouse) => {
@@ -249,6 +259,23 @@ export default function InventoryPanel({ companyId }: { companyId: number | null
         </section>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تنبيهات الصلاحية</h3><p>الأصناف المنتهية أو التي تنتهي خلال 30 يوماً</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الموقع</th><th>تاريخ الصلاحية</th><th>الأيام المتبقية</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{expiryAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_name}</td><td>{row.location_name || "عام"}</td><td>{row.expiry_date}</td><td><span className={row.days < 0 ? "status-pill reversed" : "status-pill draft"}>{row.days < 0 ? `منتهي منذ ${Math.abs(row.days)} يوم` : row.days === 0 ? "ينتهي اليوم" : `${row.days} يوم`}</span></td><td>{Number(row.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!expiryAlerts.length && <tr><td colSpan={7}>لا توجد تنبيهات صلاحية خلال الفترة المحددة.</td></tr>}</tbody></table></div>
+        </section>
+        <section className="activity-panel inventory-report-section">
+          <div className="activity-title"><div><h3>سلامة تقييم المخزون والحركات المعلقة</h3><p>مراجعة طبقات FIFO مقابل أرصدة المخزون، وحصر المسودات التي لم تُرحّل</p></div><button type="button" className="primary-button" disabled={valuationIntegrityBusy} onClick={() => void loadValuationIntegrity()}>{valuationIntegrityBusy ? "جارٍ الفحص…" : "فحص التقييم والحركات"}</button></div>
+          {valuationIntegrityError && <div className="error-banner">{valuationIntegrityError}</div>}
+          {valuationIntegrity && <>
+            <div className="metrics-grid inventory-report-metrics">
+              <article className="metric-card"><div className="metric-top">اختلافات FIFO</div><strong className="metric-value">{valuationIntegrity.fifo_mismatch_count.toLocaleString("ar-EG")}</strong><small>مقارنة الكمية والقيمة بين الرصيد وطبقات التكلفة</small></article>
+              <article className="metric-card"><div className="metric-top">حركات غير مرحلة</div><strong className="metric-value">{valuationIntegrity.pending_movements_count.toLocaleString("ar-EG")}</strong><small>مسودات تحتاج مراجعة أو استكمال</small></article>
+            </div>
+            <h4>اختلافات طبقات FIFO</h4>
+            <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>كمية الرصيد</th><th>كمية الطبقات</th><th>فرق الكمية</th><th>قيمة الرصيد</th><th>قيمة الطبقات</th><th>فرق القيمة</th></tr></thead><tbody>{valuationIntegrity.fifo_mismatches.map((row) => <tr key={`${row.product}-${row.warehouse}-${row.location || 0}-${row.expiry_date || ""}`}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_code} - {row.warehouse_name}</td><td>{Number(row.balance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.layer_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.quantity_difference).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.balance_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.layer_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.value_difference).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}{!valuationIntegrity.fifo_mismatches.length && <tr><td colSpan={8}>لا توجد اختلافات بين طبقات FIFO والأرصدة الحالية.</td></tr>}</tbody></table></div>
+            <h4>الحركات المسودة غير المرحلة</h4>
+            <div className="data-table-wrap"><table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>المخزن المصدر</th><th>المخزن الوجهة</th><th>عدد السطور</th><th>أنشأها</th></tr></thead><tbody>{valuationIntegrity.pending_movements.map((row) => <tr key={row.id}><td>{row.movement_number}</td><td>{row.movement_type}</td><td>{row.movement_date}</td><td>{row.source_warehouse || "—"}</td><td>{row.destination_warehouse || "—"}</td><td>{row.lines_count}</td><td>{row.created_by || "—"}</td></tr>)}{!valuationIntegrity.pending_movements.length && <tr><td colSpan={7}>لا توجد حركات مسودة ضمن النطاق المحدد.</td></tr>}</tbody></table></div>
+            {valuationIntegrity.pending_movements_truncated && <p className="inventory-report-note">تم عرض أول 100 حركة من إجمالي الحركات المسودة.</p>}
+            <p className="inventory-report-note">{valuationIntegrity.scope_note}</p>
+          </>}
+          {!valuationIntegrity && !valuationIntegrityError && <div className="table-empty">نفّذ الفحص لعرض اختلافات التقييم والحركات المسودة.</div>}
         </section>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>مطابقة المخزون مع دفتر الأستاذ</h3><p>مقارنة قيمة الأرصدة الحالية برصيد حساب المخزون في القيود المرحلة</p></div><button type="button" className="primary-button" disabled={reconciling} onClick={() => void loadReconciliation()}>{reconciling ? "جارٍ الفحص…" : "تنفيذ المطابقة"}</button></div>
           <div className="stock-card-filters"><label>نطاق المطابقة<select value={reconciliationBranch} onChange={(e) => { setReconciliationBranch(e.target.value); setReconciliation(null); setReconciliationError(""); }}><option value="">كل الفروع المسموح بها</option>{branches.map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label></div>
