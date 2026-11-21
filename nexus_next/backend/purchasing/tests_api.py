@@ -205,6 +205,13 @@ class PurchasingWorkflowTests(APITestCase):
         posted_payment = self.client.post(f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json")
         self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
 
+        historical_aging = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-15"},
+        )
+        self.assertEqual(historical_aging.status_code, 200, historical_aging.data)
+        self.assertEqual(historical_aging.data["totals"]["total_due"], "228.0000")
+
         aging = self.client.get(
             "/api/purchasing/invoices/supplier-aging/",
             {"company": self.company.pk, "as_of": "2026-03-25"},
