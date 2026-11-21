@@ -1,6 +1,6 @@
 import logging
 
-from django.contrib.admin.models import LogEntry
+from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
 from django.contrib.auth.signals import user_logged_in, user_logged_out, user_login_failed
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -70,9 +70,9 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
     if not created:
         return
     action_by_flag = {
-        LogEntry.ActionFlag.ADDITION: AuditEvent.Action.CREATE,
-        LogEntry.ActionFlag.CHANGE: AuditEvent.Action.UPDATE,
-        LogEntry.ActionFlag.DELETION: AuditEvent.Action.DELETE,
+        ADDITION: AuditEvent.Action.CREATE,
+        CHANGE: AuditEvent.Action.UPDATE,
+        DELETION: AuditEvent.Action.DELETE,
     }
     action = action_by_flag.get(instance.action_flag, AuditEvent.Action.ACTION)
     if instance.content_type_id is None:
@@ -80,7 +80,7 @@ def audit_django_admin_change(sender, instance, created, **kwargs):
     model = instance.content_type.model_class()
     company = None
     branch = None
-    if model is not None and instance.action_flag != LogEntry.ActionFlag.DELETION:
+    if model is not None and instance.action_flag != DELETION:
         obj = model._default_manager.filter(pk=instance.object_id).first()
         if obj is not None:
             from companies.models import Branch, Company
