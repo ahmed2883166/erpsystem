@@ -63,6 +63,10 @@ class AccountRole(models.Model):
         RETAINED_EARNINGS = "retained_earnings", "الأرباح المحتجزة"
         PAYROLL_EXPENSE = "payroll_expense", "مصروف المرتبات"
         PAYROLL_PAYABLE = "payroll_payable", "مرتبات مستحقة"
+        GOODS_RECEIVED_NOT_INVOICED = "goods_received_not_invoiced", "بضاعة مستلمة غير مفوترة"
+        INVENTORY_ADJUSTMENT_GAIN = "inventory_adjustment_gain", "أرباح تسوية المخزون"
+        INVENTORY_ADJUSTMENT_LOSS = "inventory_adjustment_loss", "خسائر تسوية المخزون"
+        INTER_BRANCH_CLEARING = "inter_branch_clearing", "حساب تسوية بين الفروع"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="account_roles")
     role = models.CharField(max_length=32, choices=Role.choices)
