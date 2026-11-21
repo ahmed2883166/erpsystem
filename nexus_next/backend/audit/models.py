@@ -23,7 +23,7 @@ class AuditEvent(models.Model):
     request_id = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True)
     actor = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True,
-        on_delete=models.SET_NULL, related_name="audit_events",
+        on_delete=models.PROTECT, related_name="audit_events",
     )
     company = models.ForeignKey(
         "companies.Company", null=True, blank=True,
