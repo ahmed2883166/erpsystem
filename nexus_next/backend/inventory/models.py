@@ -146,3 +146,97 @@ class StorageLocation(models.Model):
             raise ValidationError({"parent": "الموقع الأب يجب أن يتبع نفس المخزن."})
         if self.parent_id == self.pk and self.pk:
             raise ValidationError({"parent": "لا يمكن أن يكون الموقع أبًا لنفسه."})
+
+
+
+class StockMovement(models.Model):
+    class MovementType(models.TextChoices):
+        RECEIPT = "receipt", "استلام"
+        ISSUE = "issue", "صرف"
+        TRANSFER = "transfer", "تحويل"
+        ADJUSTMENT = "adjustment", "تسوية جرد"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="stock_movements")
+    movement_number = models.CharField(max_length=40)
+    movement_type = models.CharField(max_length=12, choices=MovementType.choices)
+    movement_date = models.DateField()
+    source_warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="outgoing_movements")
+    destination_warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="incoming_movements")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_stock_movements")
+    posted_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="posted_stock_movements")
+    posted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-movement_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "movement_number"), name="uq_stock_movement_company_number"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "movement_date"), name="inv_move_status_date_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        for warehouse in (self.source_warehouse, self.destination_warehouse):
+            if warehouse and warehouse.company_id != self.company_id:
+                raise ValidationError("كل المخازن يجب أن تتبع نفس الشركة.")
+        if self.movement_type == self.MovementType.RECEIPT and not self.destination_warehouse_id:
+            raise ValidationError({"destination_warehouse": "حدد مخزن الاستلام."})
+        if self.movement_type == self.MovementType.ISSUE and not self.source_warehouse_id:
+            raise ValidationError({"source_warehouse": "حدد مخزن الصرف."})
+        if self.movement_type == self.MovementType.TRANSFER:
+            if not self.source_warehouse_id or not self.destination_warehouse_id:
+                raise ValidationError("التحويل يتطلب مخزن مصدر ومخزن وجهة.")
+            if self.source_warehouse_id == self.destination_warehouse_id:
+                raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
+        if self.movement_type == self.MovementType.ADJUSTMENT and bool(self.source_warehouse_id) == bool(self.destination_warehouse_id):
+            raise ValidationError("التسوية تتطلب تحديد مخزن واحد فقط.")
+
+
+class StockMovementLine(models.Model):
+    class AdjustmentDirection(models.TextChoices):
+        IN = "in", "زيادة"
+        OUT = "out", "عجز"
+
+    movement = models.ForeignKey(StockMovement, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_movement_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0.0001)])
+    unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
+    adjustment_direction = models.CharField(max_length=3, choices=AdjustmentDirection.choices, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+
+    def clean(self):
+        super().clean()
+        if self.product_id and self.movement_id and self.product.company_id != self.movement.company_id:
+            raise ValidationError({"product": "الصنف لا يتبع شركة الحركة."})
+        if self.movement_id and self.movement.status == StockMovement.Status.POSTED:
+            raise ValidationError("لا يمكن تعديل سطور حركة مرحلة.")
+        if self.movement_id and self.movement.movement_type == StockMovement.MovementType.ADJUSTMENT and not self.adjustment_direction:
+            raise ValidationError({"adjustment_direction": "حدد الزيادة أو العجز للتسوية."})
+
+
+class StockBalance(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_balances")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="stock_balances")
+    quantity = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    inventory_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    average_cost = models.DecimalField(max_digits=20, decimal_places=6, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("product", "warehouse"), name="uq_stock_balance_product_warehouse"),
+            models.CheckConstraint(condition=Q(quantity__gte=0), name="ck_stock_balance_nonnegative"),
+            models.CheckConstraint(condition=Q(inventory_value__gte=0), name="ck_stock_balance_value_nonnegative"),
+        ]
+        indexes = [models.Index(fields=("warehouse", "product"), name="inv_balance_wh_product_idx")]
+
