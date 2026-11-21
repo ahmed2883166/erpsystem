@@ -61,6 +61,27 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         return delivery_id, line_id
 
+    def test_draft_delivery_can_be_corrected_and_deleted_safely(self):
+        created = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk, "warehouse": self.warehouse.pk,
+            "delivery_number": "DEL-DRAFT-EDIT", "delivery_date": "2026-03-10",
+            "notes": "قبل التعديل", "lines": [{"product": self.product.pk, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        delivery_id = created.data["id"]
+        updated = self.client.patch(
+            f"/api/sales-documents/deliveries/{delivery_id}/",
+            {"notes": "بعد التعديل", "lines": [{"product": self.product.pk, "quantity": "2"}]},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["notes"], "بعد التعديل")
+        self.assertEqual(updated.data["line_items"][0]["quantity"], "2.0000")
+        movement_id = StockMovement.objects.get(sales_delivery__pk=delivery_id).pk
+        deleted = self.client.delete(f"/api/sales-documents/deliveries/{delivery_id}/")
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(StockMovement.objects.filter(pk=movement_id).exists())
+
     def test_delivery_invoice_and_customer_receipt_post_once(self):
         delivery_id, line_id = self._create_delivery()
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
