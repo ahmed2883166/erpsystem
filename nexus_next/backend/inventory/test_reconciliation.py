@@ -24,6 +24,9 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         cls.second_branch = Branch.objects.create(
             company=cls.company, code="BR2", name_ar="الفرع الثاني",
         )
+        cls.archived_branch = Branch.objects.create(
+            company=cls.company, code="OLD", name_ar="فرع مؤرشف", is_active=False,
+        )
         cls.year = FiscalYear.objects.create(
             company=cls.company, name="2026",
             start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
@@ -52,6 +55,9 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         second_warehouse = Warehouse.objects.create(
             company=cls.company, branch=cls.second_branch, code="WH-2", name_ar="مخزن الفرع الثاني",
         )
+        archived_warehouse = Warehouse.objects.create(
+            company=cls.company, branch=cls.archived_branch, code="WH-OLD", name_ar="مخزن الفرع المؤرشف",
+        )
         StockBalance.objects.create(
             product=product, warehouse=head_warehouse, quantity=Decimal("10"),
             inventory_value=Decimal("100"), average_cost=Decimal("10"),
@@ -64,8 +70,13 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
             product=product, warehouse=second_warehouse, quantity=Decimal("5"),
             inventory_value=Decimal("50.0000"), average_cost=Decimal("10"),
         )
+        StockBalance.objects.create(
+            product=product, warehouse=archived_warehouse, quantity=Decimal("1"),
+            inventory_value=Decimal("5.0000"), average_cost=Decimal("5"),
+        )
         cls._post_inventory_balance("RECON-HQ", cls.head_office, offset, Decimal("120.0000"))
         cls._post_inventory_balance("RECON-BR2", cls.second_branch, offset, Decimal("50.0000"))
+        cls._post_inventory_balance("RECON-OLD", cls.archived_branch, offset, Decimal("5.0000"))
 
         cls.full_user = User.objects.create_user(username="inventory_full", password="test-password")
         CompanyMembership.objects.create(
@@ -95,11 +106,11 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         self.client.force_authenticate(user=self.full_user)
         response = self.client.get(f"/api/inventory/balances/reconciliation/?company={self.company.pk}")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["stock_value"], "170.0000")
+        self.assertEqual(response.data["stock_value"], "175.0000")
         self.assertEqual(response.data["gl_balance"], "170.0000")
         self.assertEqual(response.data["difference"], "0.0000")
         self.assertCountEqual(
-            response.data["scope_branch_ids"], [self.head_office.pk, self.second_branch.pk],
+            response.data["scope_branch_ids"], [self.head_office.pk, self.second_branch.pk, self.archived_branch.pk],
         )
 
     def test_branch_filter_reconciles_only_the_selected_branch(self):
