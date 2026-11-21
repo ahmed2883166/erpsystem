@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import (
-    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan,
+    AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
     PayrollRuleSet,
 )
@@ -180,3 +180,11 @@ class PayrollResultSerializer(serializers.ModelSerializer):
             "kind": line.kind_snapshot, "amount": str(line.amount),
             "display_only": line.display_only, "calculation": line.calculation_snapshot,
         } for line in obj.lines.all()]
+
+class EmployeeSalaryHistorySerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.full_name_ar", read_only=True)
+
+    class Meta:
+        model = EmployeeSalaryHistory
+        fields = "__all__"
+        read_only_fields = ("previous_salary", "changed_by", "created_at")
