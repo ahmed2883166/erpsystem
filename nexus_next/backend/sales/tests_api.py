@@ -77,15 +77,24 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         self.assertEqual(posted.data["grand_total"], "228.0000")
         self.assertEqual(posted.data["balance_due"], "228.0000")
+        alternate_bank = ChartOfAccount.objects.create(
+            company=self.company, code="1110", name_ar="البنك الفرعي", nature=ChartOfAccount.Nature.ASSET
+        )
         receipt_response = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
             "receipt_number": "RC-001", "receipt_date": "2026-03-11",
-            "method": "bank", "amount": "100",
+            "method": "bank", "payment_account": alternate_bank.pk, "amount": "100",
         }, format="json")
         self.assertEqual(receipt_response.status_code, 201, receipt_response.data)
         receipt_id = receipt_response.data["id"]
         posted_receipt = self.client.post(f"/api/sales-documents/receipts/{receipt_id}/post/", {}, format="json")
         self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        self.assertEqual(posted_receipt.data["payment_account"], alternate_bank.pk)
+        from accounting.models import JournalLine
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted_receipt.data["journal_entry"], account=alternate_bank,
+            debit=Decimal("100.0000"),
+        ).exists())
         invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         self.assertEqual(invoice["paid_total"], "100.0000")
         self.assertEqual(invoice["balance_due"], "128.0000")
