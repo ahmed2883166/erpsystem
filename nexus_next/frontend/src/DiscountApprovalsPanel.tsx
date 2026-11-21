@@ -1,3 +1,7 @@
+/*
+ * موافقات الخصومات: ضبط سياسة حدود الخصم ومراجعة طلبات الموافقة على فواتير البيع.
+ * تعرض حالة الطلب وتتيح الإجراءات وفق صلاحيات الاعتماد الممنوحة للمستخدم.
+ */
 import { useEffect, useState, type FormEvent } from "react";
 import { api, approvalsApi, type DiscountApprovalPolicy, type SalesInvoiceApproval, type FinancialApprovalRequest } from "./api";
 
