@@ -1,0 +1,113 @@
+import json
+import logging
+import re
+import uuid
+
+from companies.models import Branch, Company
+from .models import AuditEvent
+
+logger = logging.getLogger(__name__)
+_ID_RE = re.compile(r"^\\d+$")
+_ACTIONS = {
+    "POST": AuditEvent.Action.CREATE,
+    "PUT": AuditEvent.Action.UPDATE,
+    "PATCH": AuditEvent.Action.UPDATE,
+    "DELETE": AuditEvent.Action.DELETE,
+}
+
+
+def _numeric_id(value):
+    if isinstance(value, dict):
+        value = value.get("id") or value.get("pk")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, str) and _ID_RE.fullmatch(value):
+        return int(value)
+    return None
+
+
+def _json_object(raw):
+    if not raw or len(raw) > 65536:
+        return {}
+    try:
+        value = json.loads(raw.decode("utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        return {}
+
+
+class AuditTrailMiddleware:
+    """Record API write attempts without persisting request/response payloads."""
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        method = request.method.upper()
+        if not request.path.startswith("/api/") or method not in _ACTIONS:
+            return response
+
+        try:
+            payload = {}
+            if "json" in request.META.get("CONTENT_TYPE", "").lower():
+                payload = _json_object(request.body)
+
+            company_id = _numeric_id(
+                request.GET.get("company") or payload.get("company") or payload.get("company_id")
+            )
+            branch_id = _numeric_id(
+                request.GET.get("branch") or payload.get("branch") or payload.get("branch_id")
+            )
+            company = Company.objects.filter(pk=company_id).only("id").first() if company_id else None
+            branch = Branch.objects.select_related("company").filter(pk=branch_id).first() if branch_id else None
+            if branch and company and branch.company_id != company.pk:
+                branch = None
+            if branch and company is None:
+                company = branch.company
+
+            response_data = {}
+            content_type = response.get("Content-Type", "")
+            if "json" in content_type.lower() and not getattr(response, "streaming", False):
+                response_data = _json_object(response.content)
+            object_id = _numeric_id(response_data.get("id"))
+            if object_id is None:
+                path_parts = [part for part in request.path.rstrip("/").split("/") if part]
+                object_id = _numeric_id(path_parts[-1]) if path_parts else None
+
+            user = getattr(request, "user", None)
+            actor = user if getattr(user, "is_authenticated", False) else None
+            request_id = request.META.get("HTTP_X_REQUEST_ID", "")
+            try:
+                request_id = uuid.UUID(request_id) if request_id else uuid.uuid4()
+            except (ValueError, TypeError, AttributeError):
+                request_id = uuid.uuid4()
+
+            ip_address = request.META.get("REMOTE_ADDR")
+            if ip_address:
+                import ipaddress
+                try:
+                    ip_address = str(ipaddress.ip_address(ip_address))
+                except ValueError:
+                    ip_address = None
+
+            resource = request.path.removeprefix("/api/").strip("/")[:180] or "api"
+            AuditEvent.objects.create(
+                request_id=request_id,
+                actor=actor,
+                company=company,
+                branch=branch,
+                action=_ACTIONS[method],
+                resource=resource,
+                object_id=str(object_id or ""),
+                http_method=method,
+                status_code=response.status_code,
+                succeeded=response.status_code < 400,
+                ip_address=ip_address,
+                user_agent=request.META.get("HTTP_USER_AGENT", "")[:300],
+                metadata={"status_code": response.status_code},
+            )
+        except Exception:
+            # Auditing must never turn a completed business request into a 500.
+            logger.exception("Could not persist NEXUS audit event")
+        return response
