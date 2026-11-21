@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
-from accounting.services import post_journal
+from accounting.services import get_account_for_role, post_journal
 from companies.models import Branch, FiscalYear
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
@@ -17,14 +17,7 @@ from .models import CustomerReceipt, SalesDelivery, SalesInvoice
 
 
 def _account(company, role):
-    assignment = AccountRole.objects.select_related("account").filter(company=company, role=role).first()
-    if not assignment:
-        raise ValidationError(f"يجب ربط دور الحساب ({role}) في إعدادات الشركة.")
-    account = assignment.account
-    if account.company_id != company.pk or not account.is_active or account.is_group or not account.allow_posting:
-        raise ValidationError(f"الحساب المرتبط بالدور ({role}) غير صالح للترحيل.")
-    return account
-
+    return get_account_for_role(company, role)
 
 def _branch_and_year(delivery, entry_date):
     warehouse = delivery.warehouse
