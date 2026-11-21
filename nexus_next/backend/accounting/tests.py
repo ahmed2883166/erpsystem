@@ -106,4 +106,4 @@ class AccountingApiTests(TestCase):
         self.client.force_authenticate(user=user)
         response = self.client.get("/api/accounting/accounts/?company=" + str(self.company.pk))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(len(response.data), 1)
