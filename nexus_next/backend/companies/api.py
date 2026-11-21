@@ -77,6 +77,11 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         if not has_company_role(self.request.user, company_id, ("admin",)):
             raise PermissionDenied("إدارة المستخدمين والصلاحيات متاحة لمدير الشركة فقط.")
 
+    def get_object(self):
+        instance = super().get_object()
+        self._require_admin(instance.company_id)
+        return instance
+
     def _protect_last_admin(self, membership, new_role, new_active):
         from rest_framework.exceptions import ValidationError
         remains_admin = (
