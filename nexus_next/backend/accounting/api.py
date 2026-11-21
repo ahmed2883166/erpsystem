@@ -190,12 +190,14 @@ class JournalEntryViewSet(AccountingViewSet):
             if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
 
+        visible_branches = accessible_branches(request.user, company_id)
+        if branch_id:
+            visible_branches = visible_branches.filter(pk=branch_id)
         entries = JournalEntry.objects.filter(
             company_id=company_id, status=JournalEntry.Status.POSTED,
             entry_date__gte=date_from, entry_date__lte=date_to,
+            branch__in=visible_branches,
         )
-        if branch_id:
-            entries = entries.filter(branch_id=branch_id)
         period_lines = JournalLine.objects.filter(entry__in=entries)
         profit_lines = period_lines.exclude(entry__source_type__in=(JournalEntry.Source.CLOSING, JournalEntry.Source.OPENING))
 
@@ -232,8 +234,7 @@ class JournalEntryViewSet(AccountingViewSet):
                     Q(entry__entry_date__lt=cutoff)
                     | Q(entry__entry_date=cutoff, entry__source_type=JournalEntry.Source.OPENING)
                 )
-            if branch_id:
-                qs = qs.filter(entry__branch_id=branch_id)
+            qs = qs.filter(entry__branch__in=visible_branches)
             totals = qs.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             debit = totals["debit"] or Decimal("0")
             credit = totals["credit"] or Decimal("0")
@@ -265,8 +266,7 @@ class JournalEntryViewSet(AccountingViewSet):
             asset__company_id=company_id, period_date__gte=date_from, period_date__lte=date_to,
             journal_entry__status=JournalEntry.Status.POSTED,
         )
-        if branch_id:
-            depreciation_qs = depreciation_qs.filter(asset__branch_id=branch_id)
+        depreciation_qs = depreciation_qs.filter(asset__branch__in=visible_branches)
         depreciation_addback = depreciation_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
 
         disposals = FixedAsset.objects.filter(
@@ -274,8 +274,7 @@ class JournalEntryViewSet(AccountingViewSet):
             disposed_at__gte=date_from, disposed_at__lte=date_to,
             disposal_journal__status=JournalEntry.Status.POSTED,
         ).select_related("disposal_journal")
-        if branch_id:
-            disposals = disposals.filter(branch_id=branch_id)
+        disposals = disposals.filter(branch__in=visible_branches)
         disposal_ids = list(disposals.values_list("disposal_journal_id", flat=True))
         disposal_lines = JournalLine.objects.filter(
             entry_id__in=disposal_ids
@@ -295,8 +294,7 @@ class JournalEntryViewSet(AccountingViewSet):
             company_id=company_id, status=TreasuryTransaction.Status.POSTED,
             transaction_date__gte=date_from, transaction_date__lte=date_to,
         ).exclude(kind=TreasuryTransaction.Kind.TRANSFER)
-        if branch_id:
-            treasury_rows = treasury_rows.filter(branch_id=branch_id)
+        treasury_rows = treasury_rows.filter(branch__in=visible_branches)
         investing_rows = treasury_rows.filter(cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING)
         financing_rows = treasury_rows.filter(cash_flow_category=TreasuryTransaction.CashFlowCategory.FINANCING)
 
@@ -310,16 +308,14 @@ class JournalEntryViewSet(AccountingViewSet):
         net_change = operating_cash_flow + investing_cash_flow + financing_cash_flow
 
         treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
-        if branch_id:
-            from django.db.models import Q
-            treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch_id=branch_id))
+        from django.db.models import Q
+        treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
         cash_lines = JournalLine.objects.filter(
             account_id__in=cash_account_ids, entry__status=JournalEntry.Status.POSTED,
             entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
         ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
-        if branch_id:
-            cash_lines = cash_lines.filter(entry__branch_id=branch_id)
+        cash_lines = cash_lines.filter(entry__branch__in=visible_branches)
         cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         ledger_cash_change = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
 
