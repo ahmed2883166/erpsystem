@@ -1,5 +1,5 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Sum
+from django.db import transaction
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
@@ -20,7 +20,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser:
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
-        return qs.annotate(accumulated_depreciation=Sum("depreciations__amount"))
+        return qs
 
     def _write(self, company_id):
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
@@ -31,9 +31,10 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         if not can_access_company(self.request.user, data["company"].pk) or not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
             raise PermissionDenied("لا تملك صلاحية الوصول للشركة أو الفرع.")
         self._write(data["company"].pk)
-        asset = serializer.save()
         try:
-            acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
+            with transaction.atomic():
+                asset = serializer.save()
+                acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
             raise ValidationError(detail) from exc
