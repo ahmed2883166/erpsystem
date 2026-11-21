@@ -126,7 +126,8 @@ def inspect_account_workbook(upload, company):
         if current:
             current_parent = current.parent.code if current.parent_id else None
             same = (current.name_ar == row["name_ar"] and current.nature == row["nature"]
-                    and current_parent == row["parent_code"] and current.is_group == row["is_group"])
+                    and current_parent == row["parent_code"] and current.is_group == row["is_group"]
+                    and current.allow_posting == (not row["is_group"]) and current.is_active)
             if same:
                 row["status"] = "موجود مطابق - سيتم تخطيه"
             else:
