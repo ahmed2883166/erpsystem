@@ -26,6 +26,16 @@ class TaxCategoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_tax_category("EG", "sale", "sa_sales_standard", "standard")
 
+    def test_egypt_and_saudi_purchase_categories_are_country_scoped(self):
+        egypt = {item.code: item for item in tax_category_options("EG", "purchase")}
+        saudi = {item.code: item for item in tax_category_options("SA", "purchase")}
+        self.assertIn("eg_purchase_customs_vat", egypt)
+        self.assertIn("sa_purchase_customs_vat", saudi)
+        self.assertEqual(egypt["eg_purchase_customs_vat"].treatment, "standard")
+        self.assertEqual(saudi["sa_purchase_customs_vat"].treatment, "standard")
+        self.assertNotIn("sa_purchase_reverse_charge", saudi)
+        self.assertNotIn("eg_purchase_reverse_charge", egypt)
+
     def test_category_must_match_existing_generic_tax_treatment(self):
         with self.assertRaises(ValueError):
             validate_tax_category("SA", "sale", "sa_sales_zero_export", "standard")
