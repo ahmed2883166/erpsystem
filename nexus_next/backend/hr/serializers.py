@@ -138,6 +138,12 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
         installment_amount = attrs.get("installment_amount", getattr(self.instance, "installment_amount", 0))
         if principal <= 0 or installments <= 0 or installment_amount <= 0 or balance < 0 or balance > principal:
             raise serializers.ValidationError("راجع مبلغ السلفة والأقساط والرصيد المتبقي.")
+        employee = attrs.get("employee", getattr(self.instance, "employee", None))
+        account = attrs.get("receivable_account", getattr(self.instance, "receivable_account", None))
+        if account and employee and account.company_id != employee.company_id:
+            raise serializers.ValidationError({"receivable_account": "حساب السلفة يجب أن يتبع نفس الشركة."})
+        if account and account.nature != "asset":
+            raise serializers.ValidationError({"receivable_account": "اختر حساب أصل لذمم الموظفين."})
         return attrs
 
 
