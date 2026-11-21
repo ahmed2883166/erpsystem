@@ -51,6 +51,13 @@ class PurchaseReceipt(models.Model):
         ):
             raise ValidationError({"stock_movement": "حركة المخزون لا تطابق إذن الاستلام."})
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.select_related("stock_movement").filter(pk=self.pk).first()
+            if previous and previous.stock_movement.status != StockMovement.Status.DRAFT:
+                raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return self.receipt_number
 
