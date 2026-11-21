@@ -1,3 +1,7 @@
+/*
+ * طبقة الاتصال الخلفية للواجهة: تعريف أنواع البيانات ودوال طلب واجهات Django API.
+ * توحّد مسارات الطلبات ومعالجة الاستجابات المستخدمة في شاشات النظام.
+ */
 export type Currency = { id: number; code: string; name_ar: string; name_en: string; symbol: string; decimal_places: number; is_active: boolean };
 export type Company = { id: number; code: string; name_ar: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean };
 export type Branch = { id: number; company: number; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean };
