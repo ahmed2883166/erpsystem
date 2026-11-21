@@ -105,6 +105,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceRecord
         fields = "__all__"
+        read_only_fields = ("entered_by",)
 
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
