@@ -5,6 +5,7 @@ from rest_framework.views import exception_handler
 
 
 def nexus_exception_handler(exc, context):
+    """توحيد صياغة استجابات الأخطاء مع الحفاظ على رموز HTTP وتفاصيل التحقق."""
     if isinstance(exc, ProtectedError):
         protected = getattr(exc, "protected_objects", ())
         labels = sorted({obj._meta.verbose_name for obj in protected})
