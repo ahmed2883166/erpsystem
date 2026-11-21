@@ -175,6 +175,17 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
         leave.save(update_fields=("status", "approved_by"))
         return response.Response(self.get_serializer(leave).data)
 
+    @decorators.action(detail=True, methods=("post",))
+    def reject(self, request, pk=None):
+        leave = self.get_object()
+        self.check_employee_write(leave.employee, admin_only=True)
+        if leave.status != LeaveRequest.Status.PENDING:
+            raise ValidationError("لا يمكن رفض طلب تمت معالجته.")
+        leave.status = LeaveRequest.Status.REJECTED
+        leave.approved_by = request.user
+        leave.save(update_fields=("status", "approved_by"))
+        return response.Response(self.get_serializer(leave).data)
+
 
 class EmployeeLoanViewSet(EmployeeScopedViewSet):
     queryset = EmployeeLoan.objects.select_related("employee", "employee__company").all()
