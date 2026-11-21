@@ -79,3 +79,13 @@ jobs:
               exit 1
             }
           }
+      - name: Build Windows trial package
+        shell: pwsh
+        run: ./nexus_next/scripts/package-trial.ps1 -OutputDirectory "$env:RUNNER_TEMP/nexus-trial"
+      - name: Upload Windows trial package
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXUS-ERP-Trial-Windows
+          path: ${{ runner.temp }}/nexus-trial/*
+          if-no-files-found: error
+          retention-days: 14
