@@ -1,0 +1,63 @@
+from datetime import date
+from decimal import Decimal
+from django.core.exceptions import ValidationError
+from django.test import TestCase
+
+from accounts.models import User
+from companies.models import Branch, Company, Currency, FiscalYear
+from .models import ChartOfAccount, JournalEntry, JournalLine
+from .services import post_journal
+
+
+class PostingEngineTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        cls.company = Company.objects.create(code="TST", name_ar="شركة اختبار", country="EG",
+            activity="commercial", base_currency=currency)
+        cls.branch = Branch.objects.create(company=cls.company, code="HQ", name_ar="الرئيسي", is_head_office=True)
+        cls.year = FiscalYear.objects.create(company=cls.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        cls.cash = ChartOfAccount.objects.create(company=cls.company, code="1001",
+            name_ar="الصندوق", nature="asset")
+        cls.capital = ChartOfAccount.objects.create(company=cls.company, code="3001",
+            name_ar="رأس المال", nature="equity")
+
+    def make_entry(self, debit="100.00", credit="100.00"):
+        entry = JournalEntry.objects.create(company=self.company, branch=self.branch,
+            fiscal_year=self.year, entry_number="JV-001", entry_date=date(2026, 1, 2),
+            description="اختبار")
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal(debit))
+        JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal(credit))
+        return entry
+
+    def test_balanced_entry_posts(self):
+        entry = self.make_entry()
+        post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.POSTED)
+
+    def test_unbalanced_entry_is_rejected(self):
+        entry = self.make_entry(credit="90.00")
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+
+    def test_closed_year_rejects_posting(self):
+        self.year.status = FiscalYear.Status.CLOSED
+        self.year.save(update_fields=["status"])
+        entry = self.make_entry()
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+
+    def test_account_from_another_company_is_rejected(self):
+        other_currency = Currency.objects.create(code="SAR", name_ar="ريال سعودي")
+        other_company = Company.objects.create(code="OTH", name_ar="شركة أخرى", country="SA",
+            activity="service", base_currency=other_currency)
+        other_account = ChartOfAccount.objects.create(company=other_company, code="1001",
+            name_ar="صندوق آخر", nature="asset")
+        entry = JournalEntry.objects.create(company=self.company, branch=self.branch,
+            fiscal_year=self.year, entry_number="JV-002", entry_date=date(2026, 1, 2), description="اختبار")
+        JournalLine.objects.create(entry=entry, account=other_account, debit=Decimal("10"))
+        JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal("10"))
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
