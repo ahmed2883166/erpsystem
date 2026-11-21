@@ -76,5 +76,5 @@ try {
   if ([int]($SuperuserCount | Select-Object -Last 1) -eq 0) {
     Start-Process -FilePath $Python -WorkingDirectory $Backend -ArgumentList @("manage.py", "createsuperuser")
   }
-  Write-Host "NEXUS Next بدأ محليًا: http://127.0.0.1:5173" -ForegroundColor Green
+  Write-Host "Admrail ERP v2 بدأ محليًا: http://127.0.0.1:5173" -ForegroundColor Green
 } finally { Pop-Location }
