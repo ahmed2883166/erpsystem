@@ -135,6 +135,21 @@ class EmployeeViewSet(CompanyScopedViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الموظف.")
         serializer.save()
 
+    def perform_destroy(self, instance):
+        self.check_company_write(instance.company_id, roles=("admin",))
+        related = (
+            ("عناصر الأجر", instance.compensation_items.exists()),
+            ("سجلات الحضور", instance.attendance.exists()),
+            ("طلبات الإجازة", instance.leave_requests.exists()),
+            ("السلف", instance.loans.exists()),
+            ("تاريخ الرواتب", instance.salary_history.exists()),
+            ("نتائج المرتبات", instance.payroll_results.exists()),
+        )
+        linked = [label for label, exists in related if exists]
+        if linked:
+            raise ValidationError({"employee": "لا يمكن حذف الموظف لوجود سجلات مرتبطة: " + "، ".join(linked) + ". أوقف الموظف بدلًا من حذفه."})
+        instance.delete()
+
 
 class PayrollComponentViewSet(CompanyScopedViewSet):
     queryset = PayrollComponent.objects.select_related("company", "expense_account", "payable_account").all()
