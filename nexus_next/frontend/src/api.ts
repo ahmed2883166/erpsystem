@@ -19,7 +19,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (response.status === 403 || response.status === 401) {
     throw new Error("يلزم تسجيل الدخول ومنحك صلاحية عرض بيانات المحاسبة. افتح لوحة الإدارة ثم أعد المحاولة.");
   }
-  if (!response.ok) throw new Error(`تعذر تحميل البيانات (HTTP ${response.status}).`);
+  if (!response.ok) {
+    let message = `تعذر تنفيذ الطلب (HTTP ${response.status}).`;
+    try {
+      const body = await response.json() as Record<string, unknown>;
+      if (typeof body.detail === "string") message = body.detail;
+      else {
+        const parts = Object.entries(body).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join("، ") : typeof value === "string" ? value : JSON.stringify(value)}`);
+        if (parts.length) message = parts.join(" | ");
+      }
+    } catch { /* keep the HTTP fallback message */ }
+    throw new Error(message);
+  }
   return response.json() as Promise<T>;
 }
 export const api = {
