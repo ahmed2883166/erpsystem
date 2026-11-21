@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
+const BackupPanel = lazy(() => import("./BackupPanel"));
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
 const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
 const PurchasingPanel = lazy(() => import("./PurchasingPanel"));
@@ -15,7 +16,7 @@ const AccountsPanel = lazy(() => import("./AccountsPanel"));
 const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "tax" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
+type Section = "overview" | "journals" | "accounts" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
 function downloadCsv(filename: string, headers: string[], rows: (string | number)[][]) {
@@ -47,6 +48,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "hr", label: "الموارد البشرية والمرتبات", icon: "♙", group: "الموارد البشرية" },
   { id: "reports", label: "التقارير المالية", icon: "▤", group: "التقارير" },
   { id: "tax", label: "الضرائب والإقرارات", icon: "%", group: "التقارير" },
+  { id: "backup", label: "النسخ الاحتياطي والتصفير", icon: "▣", group: "الإدارة" },
   { id: "setup", label: "إعدادات الشركة", icon: "⚙", group: "الإدارة" },
   { id: "audit", label: "سجل المراجعة والتدقيق", icon: "⌕", group: "الإدارة" },
   { id: "approvals", label: "الموافقات وحدود الخصم", icon: "✓", group: "الإدارة" },
@@ -672,6 +674,7 @@ export default function App() {
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
             <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
           {active === "tax" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><VATReturnPanel companyId={companyId} /></section></>}
+          {active === "backup" && <Suspense fallback={panelFallback}><BackupPanel /></Suspense>}
           {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}
           {active === "sales-workflow" && <Suspense fallback={panelFallback}><SalesPanel companyId={companyId} /></Suspense>}
           {active === "suppliers" && <Suspense fallback={panelFallback}><SuppliersPanel companyId={companyId} /></Suspense>}
