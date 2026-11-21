@@ -10,6 +10,7 @@ const actionNames: Record<Exclude<AuditAction, "">, string> = {
   create: "إنشاء", update: "تعديل", delete: "حذف", action: "إجراء",
 };
 
+// شاشة سجل التدقيق مع فلاتر الفترة ونوع العملية وعرض تفاصيل الأحداث.
 export default function AuditPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(new Date().getFullYear() + "-01-01");
@@ -20,7 +21,8 @@ export default function AuditPanel({ companyId }: { companyId: number | null }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  // إعادة تحميل سجل التدقيق عند تغير الشركة أو فلاتر الفترة ونوع الإجراء.
+useEffect(() => {
     let cancelled = false;
     if (!companyId || from > to) {
       setItems([]);
@@ -47,12 +49,14 @@ export default function AuditPanel({ companyId }: { companyId: number | null }) 
     return () => { cancelled = true; };
   }, [companyId, from, to, action]);
 
-  const dateTime = (value: string) => new Date(value).toLocaleString("ar-EG", {
+  // تنسيق وقت الحدث للعرض بالتنسيق المحلي العربي.
+const dateTime = (value: string) => new Date(value).toLocaleString("ar-EG", {
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
 
-  const resourceLabel = (resource: string) => {
+  // تحويل اسم نوع السجل البرمجي إلى تسمية مفهومة في واجهة المستخدم.
+const resourceLabel = (resource: string) => {
     const approval = resource.match(/^approvals\/requests\/(\d+)\/(approve|reject)$/);
     if (approval) {
       return `طلبات الخصم · ${approval[2] === "approve" ? "اعتماد" : "رفض"} رقم ${approval[1]}`;
