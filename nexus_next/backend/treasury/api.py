@@ -167,6 +167,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise ValidationError("الحركة لا تخص الحساب البنكي محل التسوية.")
         if line.amount != signed_amount:
             raise ValidationError("قيمة السطر واتجاهه لا يطابقان حركة الدفاتر.")
+        if BankStatementLine.objects.filter(matched_transaction=doc).exclude(reconciliation=recon).exists():
+            raise ValidationError("هذه الحركة مرتبطة بالفعل بتسوية أخرى؛ لا يمكن مطابقتها مرتين.")
         if TreasuryTransaction.objects.filter(bank_statement_matches__isnull=False, bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED, pk=doc.pk).exists():
             raise ValidationError("هذه الحركة سبق تسويتها في كشف بنكي معتمد.")
         if BankStatementLine.objects.filter(reconciliation=recon, matched_transaction=doc).exclude(pk=line.pk).exists():
@@ -270,6 +272,8 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("التسوية ليست مسودة.")
+        if recon.bank_account.branch_id and not can_access_branch(self.request.user, recon.bank_account.branch_id, recon.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
         serializer.save()
 
     def perform_update(self, serializer):
@@ -277,6 +281,8 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT or serializer.instance.matched_transaction_id:
             raise ValidationError("لا يمكن تعديل سطر مطابق أو ضمن تسوية معتمدة.")
+        if serializer.validated_data.get("reconciliation", recon).pk != recon.pk:
+            raise ValidationError("لا يمكن نقل سطر كشف بين تسويتين.")
         serializer.save()
 
     def perform_destroy(self, instance):
