@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, type Account, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse, type TaxCode } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -10,7 +10,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
@@ -37,16 +37,16 @@ export default function PurchasingPanel({ companyId }: Props) {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, t, a] = await Promise.all([
+      const [s, p, w, o, r, i, pay, t, ta] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId), api.accounts(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setAccounts(a.filter(x => x.is_active && x.allow_posting && !x.is_group && x.nature === "asset"));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
-      setPaymentForm((old) => ({ ...old, payment_account: old.payment_account || String(a.find(x => x.is_active && x.allow_posting && !x.is_group && x.nature === "asset")?.id || "") }));
+      setPaymentForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
       setReceiptLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المشتريات."); }
     finally { setBusy(false); }
@@ -221,8 +221,8 @@ export default function PurchasingPanel({ companyId }: Props) {
       <label className="inventory-wide">فاتورة المورد<select required value={paymentForm.invoice} onChange={(e) => { const invoice = invoices.find((x) => x.id === Number(e.target.value)); setPaymentForm({ ...paymentForm, invoice: e.target.value, amount: invoice?.balance_due || "" }); }}><option value="">اختر الفاتورة</option>{paymentableInvoices.map((x) => <option key={x.id} value={x.id}>{x.invoice_number} - {x.supplier_name} - المتبقي {money(x.balance_due)}</option>)}</select></label>
       <label>رقم سند الصرف<input required value={paymentForm.payment_number} onChange={(e) => setPaymentForm({ ...paymentForm, payment_number: e.target.value })} /></label>
       <label>تاريخ الصرف<input required type="date" value={paymentForm.payment_date} onChange={(e) => setPaymentForm({ ...paymentForm, payment_date: e.target.value })} /></label>
-      <label>طريقة الصرف<select value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value as "cash" | "bank" })}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
-      <label className="inventory-wide">حساب الخزينة / البنك<select required value={paymentForm.payment_account} onChange={(e) => setPaymentForm({ ...paymentForm, payment_account: e.target.value })}><option value="">اختر الحساب</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.code} - {account.name_ar}</option>)}</select></label>
+      <label>طريقة الصرف<select value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value as "cash" | "bank", payment_account: String(treasuryAccounts.find(x => x.is_active && x.kind === (e.target.value as "cash" | "bank"))?.account || "") })}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
+      <label className="inventory-wide">حساب الخزينة / البنك<select required value={paymentForm.payment_account} onChange={(e) => setPaymentForm({ ...paymentForm, payment_account: e.target.value })}><option value="">اختر الحساب</option>{treasuryAccounts.filter(account => account.is_active && account.kind === paymentForm.method).map((account) => <option key={account.id} value={account.account}>{account.code} - {account.name_ar} ({account.account_code})</option>)}</select></label>
       <label>المبلغ<input required type="number" min="0.0001" step="0.0001" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} /></label>
       <label>مرجع التحويل/الإيصال<input value={paymentForm.reference} onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ سند الصرف كمسودة"}</button></div>
