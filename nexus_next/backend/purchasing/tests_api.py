@@ -214,6 +214,54 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(aging.data["totals"]["total_due"], "178.0000")
         self.assertEqual(aging.data["suppliers"][0]["invoices"][0]["overdue_days"], 15)
 
+    def test_purchase_order_supports_partial_receipts_and_blocks_over_receipt(self):
+        order_response = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-001", "order_date": "2026-03-01", "expected_date": "2026-03-20",
+            "lines": [{"product": self.product.pk, "quantity": "10", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(order_response.status_code, 201, order_response.data)
+        order_id = order_response.data["id"]
+        order_line_id = order_response.data["line_items"][0]["id"]
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data["status"], "confirmed")
+
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-001", "receipt_date": "2026-03-05",
+            "lines": [{"product": self.product.pk, "quantity": "4", "unit_cost": "100",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted = self.client.post(f"/api/purchasing/receipts/{receipt.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        order = self.client.get(f"/api/purchasing/orders/{order_id}/").data
+        self.assertEqual(order["status"], "partially_received")
+        self.assertEqual(order["line_items"][0]["received_quantity"], "4.0000")
+        self.assertEqual(order["line_items"][0]["remaining_quantity"], "6.0000")
+
+        over_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-002", "receipt_date": "2026-03-06",
+            "lines": [{"product": self.product.pk, "quantity": "7", "unit_cost": "100",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(over_receipt.status_code, 400, over_receipt.data)
+
+        second_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-003", "receipt_date": "2026-03-07",
+            "lines": [{"product": self.product.pk, "quantity": "6", "unit_cost": "100",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(second_receipt.status_code, 201, second_receipt.data)
+        second_posted = self.client.post(f"/api/purchasing/receipts/{second_receipt.data['id']}/post/", {}, format="json")
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+        order = self.client.get(f"/api/purchasing/orders/{order_id}/").data
+        self.assertEqual(order["status"], "received")
+        self.assertEqual(order["line_items"][0]["received_quantity"], "10.0000")
+
     def test_invoice_rejects_price_mismatch_against_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         response = self.client.post("/api/purchasing/invoices/", {
