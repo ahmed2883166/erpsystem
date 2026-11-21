@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Account, type Company, type Journal } from "./api";
+import { api, type Account, type Company, type Journal, type TrialBalance } from "./api";
 
 type Section = "overview" | "journals" | "accounts" | "reports" | "setup";
 const navigation: { id: Section; label: string; icon: string; group: string }[] = [
@@ -28,6 +28,7 @@ export default function App() {
   const [companyId, setCompanyId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
+  const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -59,6 +60,16 @@ export default function App() {
   const filteredJournals = useMemo(() => journals.filter((entry) =>
     `${entry.entry_number} ${entry.description}`.toLowerCase().includes(search.toLowerCase())), [journals, search]);
   const selectedCompany = companies.find((company) => company.id === companyId);
+
+  useEffect(() => {
+    if (active !== "reports" || !companyId) return;
+    let cancelled = false;
+    setLoading(true);
+    api.trialBalance(companyId).then((result) => { if (!cancelled) setTrialBalance(result); })
+      .catch((reason: Error) => { if (!cancelled) setError(reason.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [active, companyId]);
 
   return (
     <div className="app-shell" dir="rtl">
@@ -123,8 +134,16 @@ export default function App() {
               <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td></tr>)}</tbody></table>
               {!loading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div></section>}
 
-          {(active === "reports" || active === "setup") && <section className="work-panel"><div className="work-panel-head"><div><h2>{current?.label}</h2><p>سيتم بناء هذه الوحدة وربطها بالخدمات المحاسبية تباعاً.</p></div><span className="coming-soon">ضمن خطة التطوير</span></div>
-            <div className="empty-state"><div className="empty-graphic">◇</div><strong>الوحدة التالية في مسار البناء</strong><p>لم نعرض بيانات تجريبية أو أرقامًا غير موجودة في قاعدة البيانات.</p></div></section>}
+          {active === "reports" && <section className="work-panel"><div className="work-panel-head"><div><h2>ميزان المراجعة</h2><p>أرصدة الحسابات من القيود المرحلة فقط — للشركة المحددة</p></div><span className="coming-soon">{trialBalance?.accounts.length ?? 0} حساب</span></div>
+            {trialBalance && <><div className="metrics-grid report-metrics">
+              <article className="metric-card"><div className="metric-top">إجمالي المدين</div><strong className="metric-value">{Number(trialBalance.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></article>
+              <article className="metric-card"><div className="metric-top">إجمالي الدائن</div><strong className="metric-value">{Number(trialBalance.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></article>
+              <article className="metric-card"><div className="metric-top">الفرق</div><strong className="metric-value">{Number(trialBalance.difference).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong></article>
+            </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
+              <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
+            {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}</section>}
+          {active === "setup" && <section className="work-panel"><div className="work-panel-head"><div><h2>إعدادات الشركة</h2><p>بيانات الشركة الأساسية والفروع والسنوات المالية.</p></div><span className="coming-soon">إعدادات أساسية</span></div>
+            <div className="data-table-wrap"><table><thead><tr><th>كود الشركة</th><th>اسم الشركة</th><th>العملة الأساسية</th></tr></thead><tbody>{companies.map((company) => <tr key={company.id}><td className="code-cell">{company.code}</td><td>{company.name_ar}</td><td>{company.base_currency_code}</td></tr>)}</tbody></table></div></section>}
           <footer className="page-footer"><span>© 2026 NEXUS ERP</span><span><i /> واجهة التطوير المحلية</span><span>الإصدار التأسيسي 0.1.0</span></footer>
         </div>
       </main>
