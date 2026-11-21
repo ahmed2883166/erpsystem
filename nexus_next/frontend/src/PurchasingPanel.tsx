@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseReceipt, type Supplier, type SupplierPayment, type SupplierStatement, type Warehouse } from "./api";
+import { api, inventoryApi, purchasingApi, type Product, type PurchaseInvoice, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type Warehouse } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
 
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"receipts" | "invoices" | "payments" | "statement">("receipts");
+  const [tab, setTab] = useState<"receipts" | "invoices" | "payments" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -17,6 +17,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [statementFrom, setStatementFrom] = useState("");
   const [statementTo, setStatementTo] = useState("");
   const [statement, setStatement] = useState<SupplierStatement | null>(null);
+  const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
+  const [aging, setAging] = useState<SupplierAging | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -59,6 +61,14 @@ export default function PurchasingPanel({ companyId }: Props) {
       const result = await purchasingApi.supplierStatement(companyId, Number(statementSupplier), statementFrom, statementTo);
       setStatement(result);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف حساب المورد."); }
+    finally { setBusy(false); }
+  };
+
+  const loadAging = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try { setAging(await purchasingApi.supplierAging(companyId, agingAsOf)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أعمار مديونية الموردين."); }
     finally { setBusy(false); }
   };
 
@@ -131,9 +141,9 @@ export default function PurchasingPanel({ companyId }: Props) {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button></div>
+    <div className="inventory-tabs"><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
     {showForm && tab === "receipts" && <form className="inventory-form" onSubmit={(event) => void saveReceipt(event)}>
       <label>المورد<select required value={receiptForm.supplier} onChange={(e) => setReceiptForm({ ...receiptForm, supplier: e.target.value })}><option value="">اختر المورد</option>{suppliers.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
@@ -178,6 +188,24 @@ export default function PurchasingPanel({ companyId }: Props) {
       {statement && <div className="inventory-wide">
         <div className="stock-card-summary"><div><span>المورد</span><strong>{statement.supplier_name}</strong></div><div><span>الرصيد الافتتاحي</span><strong>{money(statement.opening_balance)}</strong></div><div><span>الرصيد الختامي</span><strong>{money(statement.closing_balance)}</strong></div></div>
         <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>نوع المستند</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statement.rows.map((row, index) => <tr key={row.document_type + row.document_number + index}><td>{row.date}</td><td>{row.document_type === "invoice" ? "فاتورة مورد" : "سداد"}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table>{statement.rows.length === 0 && <div className="table-empty">لا توجد حركة خلال الفترة المحددة.</div>}</div>
+      </div>}
+    </div>}
+    {tab === "aging" && <div className="inventory-form">
+      <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={(e) => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={() => void loadAging()}>{busy ? "جارٍ التحميل…" : "عرض أعمار المديونية"}</button></div>
+      {aging && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>غير مستحق</span><strong>{money(aging.totals.not_due)}</strong></div>
+          <div><span>1–30 يوم</span><strong>{money(aging.totals["1_30"])}</strong></div>
+          <div><span>31–60 يوم</span><strong>{money(aging.totals["31_60"])}</strong></div>
+          <div><span>61–90 يوم</span><strong>{money(aging.totals["61_90"])}</strong></div>
+          <div><span>أكثر من 90 يوم</span><strong>{money(aging.totals.over_90)}</strong></div>
+          <div><span>إجمالي المستحق</span><strong>{money(aging.totals.total_due)}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>كود المورد</th><th>المورد</th><th>غير مستحق</th><th>1–30</th><th>31–60</th><th>61–90</th><th>أكثر من 90</th><th>الإجمالي</th></tr></thead>
+          <tbody>{aging.suppliers.map((row) => <tr key={row.supplier}><td className="code-cell">{row.supplier_code}</td><td>{row.supplier_name}</td><td>{money(row.not_due)}</td><td>{money(row["1_30"])}</td><td>{money(row["31_60"])}</td><td>{money(row["61_90"])}</td><td>{money(row.over_90)}</td><td><strong>{money(row.total_due)}</strong></td></tr>)}</tbody>
+        </table>{aging.suppliers.length === 0 && <div className="table-empty">لا توجد أرصدة مستحقة على الموردين في تاريخ التقرير.</div>}</div>
+        <p className="inventory-report-note">يُحسب تاريخ الاستحقاق من تاريخ الفاتورة مضافًا إليه أجل السداد المسجل للمورد، وتُخصم السدادات المرحلة فقط.</p>
       </div>}
     </div>}
     <div className="customer-toolbar"><div className="customer-count">{tab === "receipts" ? "عدد أذون الاستلام" : tab === "invoices" ? "عدد فواتير الموردين" : "عدد سندات الصرف"} <strong>{(tab === "receipts" ? receipts : tab === "invoices" ? invoices : payments).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو المورد…" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="subtle-button" type="button" onClick={() => void refresh()} disabled={busy}>{busy ? "تحديث…" : "تحديث"}</button></div>
