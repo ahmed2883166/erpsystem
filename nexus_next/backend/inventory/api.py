@@ -21,10 +21,12 @@ from .serializers import (
 
 
 def _default_branch(company_id):
+    """تنفيذ وظيفة _default_branch ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
     return Branch.objects.filter(company_id=company_id, is_active=True).order_by("-is_head_office", "code").first()
 
 
 def _can_access_warehouse(user, warehouse):
+    """تنفيذ وظيفة _can_access_warehouse ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
     if warehouse.branch_id:
         return can_access_branch(user, warehouse.branch_id, warehouse.company_id)
     default_branch = _default_branch(warehouse.company_id)
@@ -32,6 +34,7 @@ def _can_access_warehouse(user, warehouse):
 
 
 def _default_branch_company_ids(user, companies):
+    """تنفيذ وظيفة _default_branch_company_ids ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
     if user.is_superuser:
         return list(companies.values_list("id", flat=True))
     allowed = []
@@ -48,12 +51,14 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
     company_field = "company"
 
     def _check_company_write(self, company_id):
+        """التحقق من صلاحية الكتابة داخل الشركة قبل حفظ التغييرات."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         # Reject unauthorized writes before serializer validation can expose field errors.
         company_id = request.data.get("company")
         if company_id not in (None, ""):
@@ -64,6 +69,7 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         company = serializer.validated_data.get("company")
         if company is None:
             raise PermissionDenied("يجب تحديد الشركة.")
@@ -72,6 +78,7 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         company = serializer.validated_data.get("company", serializer.instance.company)
         if company.pk != serializer.instance.company_id:
             raise ValidationError("لا يمكن نقل سجل المخزون إلى شركة أخرى بعد إنشائه.")
@@ -80,9 +87,11 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def _check_related_scope(self, data):
+        """التحقق من صلاحية الوصول إلى العلاقات والكيانات المرتبطة بالمستند."""
         return None
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف البيانات متاح لمدير الشركة فقط.")
         instance.is_active = False
@@ -97,6 +106,7 @@ class ProductCategoryViewSet(CompanyScopedViewSet):
     ordering_fields = ("code", "name_ar")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
 
@@ -108,6 +118,7 @@ class UnitOfMeasureViewSet(CompanyScopedViewSet):
     ordering_fields = ("code", "name_ar")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
 
@@ -119,6 +130,7 @@ class ProductViewSet(CompanyScopedViewSet):
     ordering_fields = ("code", "name_ar", "sale_price", "purchase_price", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
 
@@ -130,6 +142,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
     ordering_fields = ("code", "name_ar", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         if self.request.user.is_superuser:
             return self.queryset.filter(company__in=companies)
@@ -140,6 +153,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
         )
 
     def _check_related_scope(self, data):
+        """التحقق من صلاحية الوصول إلى العلاقات والكيانات المرتبطة بالمستند."""
         branch = data.get("branch")
         company = data.get("company")
         if branch and not can_access_branch(
@@ -152,6 +166,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
                 raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         instance = serializer.instance
         company = serializer.validated_data.get("company", instance.company)
         branch = serializer.validated_data.get("branch", instance.branch)
@@ -176,6 +191,7 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
     ordering_fields = ("warehouse__code", "product__code", "min_stock", "updated_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         queryset = self.queryset.filter(warehouse__company__in=companies)
         if self.request.user.is_superuser:
@@ -188,12 +204,14 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
         )
 
     def _check_write(self, company_id):
+        """التحقق من صلاحية تنفيذ عملية تعديل داخل نطاق الشركة."""
         if not can_access_company(self.request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
             raise PermissionDenied("التعديل متاح لمدير الشركة والمحاسب فقط.")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         warehouse = serializer.validated_data["warehouse"]
         self._check_write(warehouse.company_id)
         if not _can_access_warehouse(self.request.user, warehouse):
@@ -201,6 +219,7 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         warehouse = serializer.validated_data.get("warehouse", serializer.instance.warehouse)
         self._check_write(warehouse.company_id)
         if not _can_access_warehouse(self.request.user, warehouse):
@@ -208,6 +227,7 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         if not has_company_role(self.request.user, instance.warehouse.company_id, ("admin",)):
             raise PermissionDenied("حذف الإعدادات متاح لمدير الشركة فقط.")
         instance.is_active = False
@@ -223,6 +243,7 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
     ordering_fields = ("code", "name_ar")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         if self.request.user.is_superuser:
             return self.queryset.filter(warehouse__company__in=companies)
@@ -234,6 +255,7 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         )
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         warehouse_id = request.data.get("warehouse")
         if warehouse_id not in (None, ""):
             warehouse = Warehouse.objects.filter(pk=warehouse_id).first()
@@ -242,11 +264,13 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         self._check_write(instance.warehouse)
         instance.is_active = False
         instance.save(update_fields=("is_active",))
 
     def _check_write(self, warehouse):
+        """التحقق من صلاحية تنفيذ عملية تعديل داخل نطاق الشركة."""
         if not can_access_company(self.request.user, warehouse.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         if not has_company_role(self.request.user, warehouse.company_id, ("admin", "accountant")):
@@ -255,11 +279,13 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         warehouse = serializer.validated_data["warehouse"]
         self._check_write(warehouse)
         serializer.save()
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         warehouse = serializer.validated_data.get("warehouse", serializer.instance.warehouse)
         self._check_write(warehouse)
         serializer.save()
@@ -276,6 +302,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
     ordering_fields = ("movement_date", "movement_number", "created_at")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         queryset = self.queryset.filter(company__in=companies)
         if self.request.user.is_superuser:
@@ -290,6 +317,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         ).distinct()
 
     def create(self, request, *args, **kwargs):
+        """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
         company_id = request.data.get("company")
         if company_id not in (None, ""):
             try:
@@ -299,6 +327,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         return super().create(request, *args, **kwargs)
 
     def _check_warehouse(self, warehouse, company_id):
+        """تنفيذ وظيفة _check_warehouse ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         if not warehouse.is_active:
             raise PermissionDenied("لا يمكن استخدام مخزن موقوف.")
         if warehouse.company_id != company_id:
@@ -311,6 +340,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
 
     def perform_create(self, serializer):
+        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         company = serializer.validated_data["company"]
         CompanyScopedViewSet._check_company_write(self, company.pk)
         for key in ("source_warehouse", "destination_warehouse"):
@@ -320,6 +350,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
+        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         movement = serializer.instance
         if movement.status != StockMovement.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل حركة مرحلة.")
@@ -331,6 +362,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         if instance.status != StockMovement.Status.DRAFT:
             raise PermissionDenied("لا يمكن حذف حركة مرحلة.")
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
@@ -339,6 +371,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="stock-card")
     def stock_card(self, request):
+        """إعداد بطاقة الصنف مع الرصيد الافتتاحي والحركة والرصيد الجاري."""
         product_id = request.query_params.get("product")
         warehouse_id = request.query_params.get("warehouse")
         if not product_id or not warehouse_id:
@@ -442,6 +475,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
+        """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         from .services import post_stock_movement
 
         movement = self.get_object()
@@ -461,6 +495,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ("product__code", "warehouse__code", "quantity", "inventory_value")
 
     def get_queryset(self):
+        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         queryset = self.queryset.filter(warehouse__company__in=companies)
         if self.request.user.is_superuser:
@@ -474,6 +509,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="valuation-integrity")
     def valuation_integrity(self, request):
+        """فحص تطابق قيمة المخزون التشغيلي مع الحسابات المحاسبية."""
         company_id = request.query_params.get("company")
         if not company_id:
             return Response({"detail": "حدد الشركة لفحص سلامة تقييم المخزون."}, status=status.HTTP_400_BAD_REQUEST)
@@ -540,6 +576,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
         def dimension_key(row):
+            """تنفيذ وظيفة dimension_key ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
             return (row["product_id"], row["warehouse_id"], row["location_id"], row["expiry_date"])
 
         balance_map = {dimension_key(row): row for row in balances}
@@ -611,6 +648,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="reconciliation")
     def reconciliation(self, request):
+        """إعداد تقرير مطابقة المخزون مع دفتر الأستاذ وإظهار الفروق."""
         company_id = request.query_params.get("company")
         if not company_id:
             return Response({"detail": "حدد الشركة لإجراء مطابقة المخزون."}, status=status.HTTP_400_BAD_REQUEST)
