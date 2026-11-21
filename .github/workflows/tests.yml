@@ -11,6 +11,7 @@ on:
       - draft/postgresql-stock-compat
       - work/phase6-industry-packs
       - work/phase7-bootstrap-ux
+      - work/postgresql-native-rebuild
   pull_request:
     branches:
       - main
