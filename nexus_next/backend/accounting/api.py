@@ -5,7 +5,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
-from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry
+from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
 from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer
 from .services import post_journal
@@ -196,12 +196,13 @@ class JournalEntryViewSet(AccountingViewSet):
         )
         if branch_id:
             entries = entries.filter(branch_id=branch_id)
-        period_lines = __import__("accounting.models", fromlist=["JournalLine"]).JournalLine.objects.filter(entry__in=entries)
+        period_lines = JournalLine.objects.filter(entry__in=entries)
+        profit_lines = period_lines.exclude(entry__source_type=JournalEntry.Source.CLOSING)
 
-        revenue_totals = period_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
+        revenue_totals = profit_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
             credit=Sum("credit"), debit=Sum("debit")
         )
-        expense_totals = period_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
+        expense_totals = profit_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
             debit=Sum("debit"), credit=Sum("credit")
         )
         net_profit = (
@@ -272,7 +273,7 @@ class JournalEntryViewSet(AccountingViewSet):
         if branch_id:
             disposals = disposals.filter(branch_id=branch_id)
         disposal_ids = list(disposals.values_list("disposal_journal_id", flat=True))
-        disposal_lines = __import__("accounting.models", fromlist=["JournalLine"]).JournalLine.objects.filter(
+        disposal_lines = JournalLine.objects.filter(
             entry_id__in=disposal_ids
         )
         disposal_gain = (
@@ -309,7 +310,7 @@ class JournalEntryViewSet(AccountingViewSet):
             from django.db.models import Q
             treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch_id=branch_id))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
-        cash_lines = __import__("accounting.models", fromlist=["JournalLine"]).JournalLine.objects.filter(
+        cash_lines = JournalLine.objects.filter(
             account_id__in=cash_account_ids, entry__status=JournalEntry.Status.POSTED,
             entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
         )
