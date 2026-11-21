@@ -139,5 +139,14 @@ class PurchaseInvoiceLine(models.Model):
                 raise ValidationError({"receipt_line": "لا يمكن فوترة خدمة من خلال استلام مخزني."})
 
     def save(self, *args, **kwargs):
+        if self.invoice_id and PurchaseInvoice.objects.filter(
+            pk=self.invoice_id, status=PurchaseInvoice.Status.POSTED
+        ).exists():
+            raise ValidationError("لا يمكن تعديل سطور فاتورة مورد مرحلة.")
         self.calculate()
         return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.invoice.status == PurchaseInvoice.Status.POSTED:
+            raise ValidationError("لا يمكن حذف سطور فاتورة مورد مرحلة.")
+        return super().delete(*args, **kwargs)
