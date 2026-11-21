@@ -119,7 +119,16 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
-        return qs.filter(Q(delivery__warehouse__branch__isnull=True) | Q(delivery__warehouse__branch__in=accessible_branches(self.request.user)))
+        branches = accessible_branches(self.request.user)
+        default_company_ids = []
+        for company_id in accessible_companies(self.request.user).values_list("id", flat=True):
+            default_branch = Branch.objects.filter(company_id=company_id, is_active=True).order_by("-is_head_office", "code").first()
+            if default_branch and can_access_branch(self.request.user, default_branch.pk, company_id):
+                default_company_ids.append(company_id)
+        return qs.filter(
+            Q(delivery__warehouse__branch__in=branches)
+            | Q(delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+        )
 
     def create(self, request, *args, **kwargs):
         try:
@@ -132,7 +141,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         warehouse = data["delivery"].warehouse
-        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, data["company"].pk):
+        if not _sales_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
         serializer.save()
 
@@ -142,7 +151,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         if invoice.status != SalesInvoice.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
         warehouse = invoice.delivery.warehouse
-        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, invoice.company_id):
+        if not _sales_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
@@ -151,7 +160,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         invoice = self.get_object()
         self._check_write(invoice.company_id)
         warehouse = invoice.delivery.warehouse
-        if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, invoice.company_id):
+        if not _sales_warehouse_accessible(request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
         invoice = post_sales_invoice(invoice.pk, request.user)
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
