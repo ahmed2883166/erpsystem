@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine
+from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 
 
 @admin.register(ChartOfAccount)
@@ -59,3 +59,12 @@ class JournalEntryAdmin(admin.ModelAdmin):
             obj is None or obj.status == JournalEntry.Status.DRAFT
         )
     readonly_fields = ("status", "posted_at", "created_at")
+
+
+
+@admin.register(TaxCode)
+class TaxCodeAdmin(admin.ModelAdmin):
+    list_display = ("code", "name_ar", "company", "country", "category", "rate", "effective_from", "effective_to", "is_active")
+    list_filter = ("company", "country", "category", "is_active", "input_tax_recoverable")
+    search_fields = ("code", "name_ar")
+    list_select_related = ("company",)
