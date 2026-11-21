@@ -57,22 +57,30 @@ function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [report, setReport] = useState<CashFlowReport|null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
-    try { setReport(await treasuryApi.cashFlow(companyId, from, to)); }
+    try { setReport(await treasuryApi.cashFlow(companyId, from, to, branchId ? Number(branchId) : undefined)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل التدفقات النقدية."); }
     finally { setBusy(false); }
   };
-  useEffect(() => { void load(); }, [companyId]);
+  useEffect(() => {
+    if (!companyId) { setBranches([]); setBranchId(""); return; }
+    api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
+      .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
+  }, [companyId]);
+  useEffect(() => { void load(); }, [companyId, branchId]);
   return <div className="asset-reports">
     <div className="work-panel-head"><div><h2>التدفقات النقدية حسب النشاط</h2><p>الحركات النقدية المرحلة، مع فصل الأنشطة التشغيلية والاستثمارية والتمويلية</p></div><div className="report-actions"><button type="button" className="subtle-button" disabled={!report} onClick={()=>report&&downloadCsv(`cash-flow-${report.date_from||from}-${report.date_to||to}.csv`,["التاريخ","المستند","البيان","الفرع","النشاط","القيمة","رقم القيد"],report.rows.map(x=>[x.date,x.document_number,x.description,x.branch,x.category,x.signed_amount,x.journal_entry||""]))}>تصدير Excel</button><button type="button" className="subtle-button" onClick={(event)=>{const target=event.currentTarget.closest(".asset-reports");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة / PDF</button><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث التقرير"}</button></div></div>
     <div className="asset-report-filters">
       <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
       <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+      <label>الفرع<select value={branchId} onChange={e=>setBranchId(e.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map(item=><option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label>
     </div>
     {error && <div className="error-banner">{error}</div>}
     {report && <>
@@ -88,23 +96,31 @@ function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }
   const today = new Date().toISOString().slice(0,10);
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [report, setReport] = useState<IndirectCashFlowReport|null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
-    try { setReport(await treasuryApi.indirectCashFlow(companyId, from, to)); }
+    try { setReport(await treasuryApi.indirectCashFlow(companyId, from, to, branchId ? Number(branchId) : undefined)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل القائمة غير المباشرة."); }
     finally { setBusy(false); }
   };
-  useEffect(() => { void load(); }, [companyId]);
+  useEffect(() => {
+    if (!companyId) { setBranches([]); setBranchId(""); return; }
+    api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
+      .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
+  }, [companyId]);
+  useEffect(() => { void load(); }, [companyId, branchId]);
   const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
   return <div className="asset-reports">
     <div className="work-panel-head"><div><h2>قائمة التدفقات النقدية — الطريقة غير المباشرة</h2><p>صافي الربح والتعديلات غير النقدية ورأس المال العامل ثم الاستثمار والتمويل</p></div><div className="report-actions"><button type="button" className="subtle-button" disabled={!report} onClick={()=>report&&downloadCsv(`indirect-cash-flow-${report.date_from}-${report.date_to}.csv`,["البند","القيمة","ملاحظات"],[["صافي الربح",report.net_profit,""],["تعديلات غير نقدية",report.non_cash_adjustments.net,""],["التدفقات التشغيلية",report.operating_cash_flow,""],["التدفقات الاستثمارية",report.investing_cash_flow,""],["التدفقات التمويلية",report.financing_cash_flow,""],["صافي التغير النقدي",report.net_change_in_cash,""],["التغير النقدي بالدفاتر",report.ledger_cash_change,""],["فرق المطابقة",report.reconciliation_difference,""],...report.working_capital.map(x=>[`رأس مال عامل — ${x.role} — ${x.account_code}`,x.cash_flow_adjustment,x.account_name]),...report.investing_transactions.map(x=>[`استثمار — ${x.document_number}`,x.amount,x.description]),...report.financing_transactions.map(x=>[`تمويل — ${x.document_number}`,x.amount,x.description])])}>تصدير Excel</button><button type="button" className="subtle-button" onClick={(event)=>{const target=event.currentTarget.closest(".asset-reports");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة / PDF</button><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القائمة"}</button></div></div>
     <div className="asset-report-filters">
       <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
       <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+      <label>الفرع<select value={branchId} onChange={e=>setBranchId(e.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map(item=><option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label>
     </div>
     {error && <div className="error-banner">{error}</div>}
     {report && <>
