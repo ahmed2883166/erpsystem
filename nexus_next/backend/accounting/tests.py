@@ -120,6 +120,7 @@ class AccountingApiTests(TestCase):
         user = User.objects.create_user(username="reporter", password="test-password")
         permission = Permission.objects.get(codename="view_journalentry")
         user.user_permissions.add(permission)
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer")
         self.client.force_authenticate(user=user)
         response = self.client.get(f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}")
         self.assertEqual(response.status_code, 200)
