@@ -1,3 +1,4 @@
+from collections import defaultdict
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -49,6 +50,18 @@ def post_journal(entry_id: int) -> JournalEntry:
             raise ValidationError("القيد الأصلي غير صالح للعكس.")
         if JournalEntry.objects.filter(reversal_of=original).exclude(pk=entry.pk).exists():
             raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
+        expected = defaultdict(lambda: [Decimal("0"), Decimal("0")])
+        actual = defaultdict(lambda: [Decimal("0"), Decimal("0")])
+        for line in original.lines.all():
+            key = (line.account_id, line.cost_center_id)
+            expected[key][0] += line.credit
+            expected[key][1] += line.debit
+        for line in lines:
+            key = (line.account_id, line.cost_center_id)
+            actual[key][0] += line.debit
+            actual[key][1] += line.credit
+        if dict(expected) != dict(actual):
+            raise ValidationError("القيد العكسي يجب أن يعكس حسابات ومبالغ القيد الأصلي بالكامل.")
         JournalEntry.objects.filter(pk=original.pk).update(status=JournalEntry.Status.REVERSED)
 
     entry.status = JournalEntry.Status.POSTED
