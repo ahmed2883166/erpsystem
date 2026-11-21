@@ -22,6 +22,7 @@ class ReceiptLineInputSerializer(serializers.Serializer):
     purchase_order_line = serializers.IntegerField(required=False, allow_null=True)
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
         if product.product_type != Product.ProductType.GOODS or not product.is_active:
             raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
@@ -51,6 +52,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "movement_status", "movement_number", "line_items")
 
     def get_line_items(self, obj):
+        """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
             "product_name": line.product.name_ar, "quantity": str(line.quantity),
@@ -59,6 +61,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company")
         supplier = attrs.get("supplier")
         warehouse = attrs.get("warehouse")
@@ -107,6 +110,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         company = validated_data["company"]
         warehouse = validated_data["warehouse"]
@@ -191,6 +195,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         )
 
     def get_paid_total(self, obj):
+        """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""
         paid = sum(
             (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
             Decimal("0"),
@@ -198,6 +203,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         return str(paid)
 
     def get_balance_due(self, obj):
+        """حساب الرصيد المتبقي بعد خصم الدفعات المرحلة."""
         paid = sum(
             (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
             Decimal("0"),
@@ -205,6 +211,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         return str(max(obj.grand_total - paid, Decimal("0")))
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         supplier = attrs.get("supplier", instance.supplier if instance else None)
@@ -258,6 +265,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         invoice = PurchaseInvoice.objects.create(
             **validated_data, created_by=self.context["request"].user
@@ -282,6 +290,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         invoice = PurchaseInvoice.objects.select_for_update().get(pk=instance.pk)
         if invoice.status != PurchaseInvoice.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل فاتورة مورد مرحلة.")
@@ -331,6 +340,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company")
         supplier = attrs.get("supplier")
         invoice = attrs.get("invoice")
@@ -357,6 +367,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         payment = SupplierPayment.objects.create(
             **validated_data, created_by=self.context["request"].user
         )
@@ -388,6 +399,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "line_items", "created_at", "confirmed_at")
 
     def get_line_items(self, obj):
+        """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
             "product_name": line.product.name_ar, "quantity": str(line.quantity),
@@ -396,6 +408,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         } for line in obj.lines.select_related("product").all()]
 
     def validate(self, attrs):
+        """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         supplier = attrs.get("supplier", instance.supplier if instance else None)
@@ -434,6 +447,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         order = PurchaseOrder.objects.create(**validated_data, created_by=self.context["request"].user)
         PurchaseOrderLine.objects.bulk_create([PurchaseOrderLine(order=order, **line) for line in lines])
@@ -441,6 +455,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         order = PurchaseOrder.objects.select_for_update().get(pk=instance.pk)
         if order.status != PurchaseOrder.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل أمر شراء معتمد أو مرتبط باستلام.")
