@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP
+from datetime import timedelta\nfrom decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -59,11 +59,12 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         employment_start = max(cycle.period_start, employee.hire_date)
         employment_end = min(cycle.period_end, employee.termination_date or cycle.period_end)
         calendar_days = Decimal(max(0, (employment_end - employment_start).days + 1))
+        last_day_of_month = ((cycle.period_end.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day
         full_calendar_month = (
             cycle.period_start.day == 1
             and cycle.period_end.month == cycle.period_start.month
             and cycle.period_end.year == cycle.period_start.year
-            and cycle.period_end.day == (cycle.period_end.replace(day=28) + __import__("datetime").timedelta(days=4)).replace(day=1).day - 1
+            and cycle.period_end.day == last_day_of_month
         )
         attendance = AttendanceRecord.objects.filter(employee=employee, work_date__range=(employment_start, employment_end))
         attendance_count = attendance.count()
