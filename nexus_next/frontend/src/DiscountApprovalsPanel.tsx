@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, approvalsApi, type DiscountApprovalPolicy, type SalesInvoiceApproval } from "./api";
+import { api, approvalsApi, type DiscountApprovalPolicy, type SalesInvoiceApproval, type FinancialApprovalRequest } from "./api";
 
 type Props = { companyId: number | null };
 const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
@@ -13,6 +13,9 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
   const [requests, setRequests] = useState<SalesInvoiceApproval[]>([]);
   const [limit, setLimit] = useState("");
   const [invoiceAmountLimit, setInvoiceAmountLimit] = useState("");
+  const [purchaseAmountLimit, setPurchaseAmountLimit] = useState("");
+  const [paymentAmountLimit, setPaymentAmountLimit] = useState("");
+  const [financialRequests, setFinancialRequests] = useState<FinancialApprovalRequest[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -21,8 +24,9 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
     if (!companyId) { setPolicy(null); setRequests([]); return; }
     setBusy(true); setError("");
     try {
-      const [membership, policies, rows] = await Promise.all([
+      const [membership, policies, rows, financialRows] = await Promise.all([
         api.currentMembership(companyId), approvalsApi.policies(companyId), approvalsApi.requests(companyId),
+        approvalsApi.financialRequests(companyId),
       ]);
       setCanManage(membership.role === "admin");
       const current = policies[0] || null;
@@ -30,11 +34,16 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
       if (current) {
         setLimit(current.max_discount_percent || "");
         setInvoiceAmountLimit(current.max_sales_invoice_amount || "");
+        setPurchaseAmountLimit(current.max_purchase_invoice_amount || "");
+        setPaymentAmountLimit(current.max_payment_amount || "");
       } else {
         setLimit("");
         setInvoiceAmountLimit("");
+        setPurchaseAmountLimit("");
+        setPaymentAmountLimit("");
       }
       setRequests(rows);
+      setFinancialRequests(financialRows);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تحميل إعدادات وطلبات الموافقة.");
     } finally { setBusy(false); }
@@ -49,13 +58,36 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
       const payload = {
         max_discount_percent: limit.trim() || null,
         max_sales_invoice_amount: invoiceAmountLimit.trim() || null,
+        max_purchase_invoice_amount: purchaseAmountLimit.trim() || null,
+        max_payment_amount: paymentAmountLimit.trim() || null,
       };
       if (policy) await approvalsApi.updatePolicy(policy.id, payload);
       else await approvalsApi.createPolicy({ company: companyId, ...payload });
-      setNotice("تم حفظ حدود الاعتماد. تسري الحدود الجديدة على الفواتير الجديدة.");
+      setNotice("تم حفظ حدود الاعتماد. تسري الحدود الجديدة على المستندات الجديدة.");
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر حفظ حد الخصم.");
+    } finally { setBusy(false); }
+  };
+
+  const decideFinancial = async (row: FinancialApprovalRequest, decision: "approve" | "reject") => {
+    let note = "";
+    if (decision === "reject") {
+      const entered = window.prompt("اكتب سبب رفض طلب الموافقة المالية:");
+      if (entered === null) return;
+      note = entered.trim();
+      if (!note) { setError("سبب الرفض مطلوب."); return; }
+    } else {
+      note = window.prompt("ملاحظة الموافقة (اختياري):") || "";
+    }
+    setBusy(true); setError(""); setNotice("");
+    try {
+      if (decision === "approve") await approvalsApi.approveFinancial(row.id, note);
+      else await approvalsApi.rejectFinancial(row.id, note);
+      setNotice(decision === "approve" ? "تم اعتماد المستند المالي." : "تم رفض طلب الموافقة المالية.");
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ قرار الموافقة.");
     } finally { setBusy(false); }
   };
 
@@ -81,7 +113,10 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
   };
 
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر الشركة لعرض الموافقات.</div></section>;
-  const pending = requests.filter(row => row.status === "pending").length;
+  const pending = requests.filter(row => row.status === "pending").length + financialRequests.filter(row => row.status === "pending").length;
+  const financialDocumentLabel: Record<FinancialApprovalRequest["document_type"], string> = {
+    purchase_invoice: "فاتورة مشتريات", supplier_payment: "سند صرف مورد", treasury_payment: "سند صرف خزينة",
+  };
 
   return <section className="work-panel">
     <div className="work-panel-head">
@@ -92,9 +127,11 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
     {notice && <div className="success-banner">{notice}</div>}
     {canManage && <form className="inventory-form" onSubmit={savePolicy}>
       <label>أقصى خصم دون موافقة (%)<input type="number" min="0" max="100" step="0.0001" value={limit} onChange={e => setLimit(e.target.value)} placeholder="اتركه فارغًا لتعطيل الحد" /></label>
-      <label>أقصى إجمالي فاتورة دون موافقة (عملة الشركة الأساسية)<input type="number" min="0" step="0.0001" value={invoiceAmountLimit} onChange={e => setInvoiceAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
+      <label>أقصى إجمالي فاتورة مبيعات دون موافقة<input type="number" min="0" step="0.0001" value={invoiceAmountLimit} onChange={e => setInvoiceAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
+      <label>أقصى إجمالي فاتورة مشتريات دون موافقة<input type="number" min="0" step="0.0001" value={purchaseAmountLimit} onChange={e => setPurchaseAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
+      <label>أقصى قيمة سند صرف دون موافقة<input type="number" min="0" step="0.0001" value={paymentAmountLimit} onChange={e => setPaymentAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : policy ? "تحديث سياسة الموافقات" : "تفعيل سياسة الموافقات"}</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button></div>
-      <p className="inventory-report-note inventory-wide">{policy ? "الحدود الحالية محفوظة للشركة. تغييرها لا يغيّر الحدود المسجلة على الفواتير السابقة." : "لم يتم إعداد سياسة موافقات لهذه الشركة بعد."} يمكن ضبط حد واحد أو الحدين معًا، ولا يمكن تركهما فارغين معًا. يجب تحديد حد واحد على الأقل. إعداد السياسة وتعديلها متاحان لمدير الشركة فقط.</p>
+      <p className="inventory-report-note inventory-wide">{policy ? "الحدود الحالية محفوظة للشركة. تغييرها لا يغيّر الحدود المسجلة على الفواتير السابقة." : "لم يتم إعداد سياسة موافقات لهذه الشركة بعد."} يمكن ضبط أي حد أو أكثر، ولا يمكن ترك جميع الحدود فارغة معًا. جميع الحدود النقدية بعملة الشركة الأساسية. إعداد السياسة وتعديلها متاحان لمدير الشركة فقط.</p>
     </form>}
     {!canManage && <p className="inventory-report-note">عرض طلبات الموافقة متاح حسب صلاحيات الشركة؛ تعديل السياسة واعتماد الطلبات متاحان لمدير الشركة فقط.</p>}
     <div className="data-table-wrap">
@@ -121,6 +158,23 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
         {!requests.length && <tr><td colSpan={11}>لا توجد طلبات موافقة مالية لهذه الشركة.</td></tr>}</tbody>
       </table>
     </div>
+
+    <section className="work-panel-subsection">
+      <div className="work-panel-head"><div><h3>موافقات فواتير المشتريات وسندات الصرف</h3><p>تتطلب المستندات التي تتجاوز حدودها اعتماد مدير الشركة قبل الترحيل.</p></div></div>
+      <div className="data-table-wrap">
+        <table><thead><tr><th>نوع المستند</th><th>رقم المستند</th><th>المبلغ وقت الطلب</th><th>الحد وقت الطلب</th><th>مقدم الطلب</th><th>تاريخ الطلب</th><th>الحالة</th><th>تفاصيل النسخة</th><th>القرار</th></tr></thead>
+          <tbody>{financialRequests.map(row => <tr key={row.id}>
+            <td>{financialDocumentLabel[row.document_type]}</td><td className="code-cell">{row.document_number}</td>
+            <td>{money(row.requested_amount)}</td><td>{money(row.requested_limit)}</td>
+            <td>{row.requested_by_name}</td><td>{new Date(row.requested_at).toLocaleString("ar-EG")}</td>
+            <td>{statusLabel[row.status]}</td>
+            <td><details className="approval-snapshot"><summary>عرض التفاصيل</summary><pre>{JSON.stringify(row.requested_snapshot, null, 2)}</pre></details></td>
+            <td>{row.status === "pending" ? canManage ? <div className="table-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void decideFinancial(row, "approve")}>اعتماد</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void decideFinancial(row, "reject")}>رفض</button></div> : "بانتظار قرار المدير" : <span>{row.decided_by_name || "—"}{row.decision_note ? ` · ${row.decision_note}` : ""}</span>}</td>
+          </tr>)}
+          {!financialRequests.length && <tr><td colSpan={9}>لا توجد طلبات موافقة مشتريات أو صرف.</td></tr>}</tbody>
+        </table>
+      </div>
+    </section>
     <p className="inventory-report-note">لا يمكن لمُنشئ طلب الموافقة اعتماده بنفسه. قرارات الموافقة والرفض نهائية ومحفوظة في سجل التدقيق، ولا يمكن حذف طلب الموافقة.</p>
   </section>;
 }
