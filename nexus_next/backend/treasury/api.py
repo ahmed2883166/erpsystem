@@ -41,11 +41,24 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
 
     def perform_create(self, serializer):
         company_id = serializer.validated_data["company"].pk
-        self._scope(company_id); self._write(company_id); serializer.save()
+        branch = serializer.validated_data.get("branch")
+        self._scope(company_id)
+        self._write(company_id)
+        if branch and not can_access_branch(self.request.user, branch.pk, company_id):
+            raise PermissionDenied("لا تملك صلاحية إدارة حساب خزينة في هذا الفرع.")
+        serializer.save()
 
     def perform_update(self, serializer):
-        company_id = serializer.validated_data.get("company", serializer.instance.company).pk
-        self._scope(company_id); self._write(company_id); serializer.save()
+        instance = serializer.instance
+        company_id = serializer.validated_data.get("company", instance.company).pk
+        if company_id != instance.company_id:
+            raise ValidationError("لا يمكن نقل حساب الخزينة بين الشركات بعد إنشائه.")
+        branch = serializer.validated_data.get("branch", instance.branch)
+        self._scope(company_id)
+        self._write(company_id)
+        if branch and not can_access_branch(self.request.user, branch.pk, company_id):
+            raise PermissionDenied("لا تملك صلاحية نقل حساب الخزينة إلى هذا الفرع.")
+        serializer.save()
 
     def perform_destroy(self, instance):
         self._write(instance.company_id)
@@ -82,10 +95,22 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
         if instance.status != TreasuryTransaction.Status.DRAFT:
             raise ValidationError("المستند المرحّل غير قابل للتعديل.")
         company = serializer.validated_data.get("company", instance.company)
-        self._scope(company.pk); self._write(company.pk); serializer.save()
+        branch = serializer.validated_data.get("branch", instance.branch)
+        if company.pk != instance.company_id:
+            raise ValidationError("لا يمكن نقل مستند الخزينة بين الشركات.")
+        self._scope(company.pk)
+        self._write(company.pk)
+        if not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية نقل مستند الخزينة إلى هذا الفرع.")
+        serializer.save()
 
     def perform_destroy(self, instance):
-        self._write(instance.company_id); instance.delete()
+        self._write(instance.company_id)
+        if not can_access_branch(self.request.user, instance.branch_id, instance.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المستند.")
+        if instance.status == TreasuryTransaction.Status.POSTED:
+            raise ValidationError("لا يمكن حذف مستند خزينة مرحّل؛ استخدم إجراء العكس المحاسبي المعتمد.")
+        instance.delete()
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
@@ -177,9 +202,16 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
-        if serializer.instance.status != BankReconciliation.Status.DRAFT:
+        instance = serializer.instance
+        if instance.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("التسوية المعتمدة غير قابلة للتعديل.")
-        self._write(serializer.instance.company_id)
+        company = serializer.validated_data.get("company", instance.company)
+        bank = serializer.validated_data.get("bank_account", instance.bank_account)
+        if company.pk != instance.company_id:
+            raise ValidationError("لا يمكن نقل تسوية البنك بين الشركات.")
+        self._write(instance.company_id)
+        if bank.branch_id and not can_access_branch(self.request.user, bank.branch_id, instance.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
         serializer.save()
 
     def perform_destroy(self, instance):
