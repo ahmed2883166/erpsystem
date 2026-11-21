@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport } from "./api";
+import { api, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport } from "./api";
 import CustomersPanel from "./CustomersPanel";
 import SuppliersPanel from "./SuppliersPanel";
 import PurchasingPanel from "./PurchasingPanel";
@@ -173,6 +173,63 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
       <p className="asset-report-note">{income.note}</p>
     </>}
     {!balance && !busy && !error && <div className="table-empty">اختر الفترة ثم حدّث القوائم المالية.</div>}
+  </div>;
+}
+
+
+function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
+  const today = new Date().toISOString().slice(0,10);
+  const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [to, setTo] = useState(today);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountId, setAccountId] = useState("");
+  const [ledger, setLedger] = useState<GeneralLedgerReport|null>(null);
+  const [equity, setEquity] = useState<EquityChangesReport|null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!companyId) { setAccounts([]); setAccountId(""); return; }
+    api.accounts(companyId).then(items => {
+      setAccounts(items);
+      setAccountId(current => current || String(items.find(item=>!item.is_group)?.id || ""));
+    }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الحسابات."));
+  }, [companyId]);
+  const load = async () => {
+    if (!companyId || !accountId) return;
+    setBusy(true); setError("");
+    try {
+      const [ledgerData, equityData] = await Promise.all([
+        api.generalLedger(companyId, Number(accountId), from, to),
+        api.changesInEquity(companyId, from, to),
+      ]);
+      setLedger(ledgerData); setEquity(equityData);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل دفتر الأستاذ والتغيرات في حقوق الملكية."); }
+    finally { setBusy(false); }
+  };
+  const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+  return <div className="asset-reports">
+    <div className="work-panel-head"><div><h2>دفتر الأستاذ والتغيرات في حقوق الملكية</h2><p>كشف حركة تفصيلي للحساب مع رصيد متحرك، وتسوية حقوق الملكية خلال الفترة</p></div><button className="primary-button" disabled={busy || !companyId || !accountId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"عرض التقريرين"}</button></div>
+    <div className="asset-report-filters">
+      <label>الحساب<select value={accountId} onChange={e=>setAccountId(e.target.value)}><option value="">اختر الحساب</option>{accounts.filter(item=>!item.is_group).map(item=><option key={item.id} value={item.id}>{item.code} — {item.name_ar}</option>)}</select></label>
+      <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
+      <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+    </div>
+    {error && <div className="error-banner">{error}</div>}
+    {ledger && <>
+      <h3>دفتر الأستاذ: {ledger.account_code} — {ledger.account_name}</h3>
+      <div className="asset-cashflow-totals"><span>رصيد أول المدة: {money(ledger.opening_balance)}</span><b>رصيد آخر المدة: {money(ledger.closing_balance)}</b></div>
+      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>الفرع</th><th>مدين</th><th>دائن</th><th>الرصيد المتحرك</th></tr></thead><tbody>
+        {ledger.rows.map(row=><tr key={row.line_id}><td>{row.date}</td><td>{row.entry_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.running_balance)}</td></tr>)}
+      </tbody></table>{!ledger.rows.length&&<div className="table-empty">لا توجد حركات على الحساب خلال الفترة.</div>}</div>
+    </>}
+    {equity && <>
+      <h3>قائمة التغيرات في حقوق الملكية</h3>
+      <div className="asset-cashflow-totals"><span>حقوق الملكية أول المدة: {money(equity.opening_equity)}</span><span>حركة الحسابات: {money(equity.equity_movements)}</span><span>صافي ربح الفترة: {money(equity.period_net_profit)}</span><b>حقوق الملكية آخر المدة: {money(equity.closing_equity)}</b></div>
+      <div className="data-table-wrap"><table><thead><tr><th>الحساب</th><th>أول المدة</th><th>الحركة</th><th>آخر المدة قبل الربح</th></tr></thead><tbody>
+        {equity.accounts.map(row=><tr key={row.account_id}><td>{row.code} — {row.name_ar}</td><td>{money(row.opening_balance)}</td><td>{money(row.period_movement)}</td><td>{money(row.closing_balance_before_profit)}</td></tr>)}
+      </tbody></table></div>
+      <p className="asset-report-note">{equity.note}</p>
+    </>}
   </div>;
 }
 
@@ -384,7 +441,7 @@ export default function App() {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
-            <FinancialStatementsPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
+            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /></section>}
           {active === "customers" && <CustomersPanel companyId={companyId} />}
           {active === "sales-workflow" && <SalesPanel companyId={companyId} />}
           {active === "suppliers" && <SuppliersPanel companyId={companyId} />}
