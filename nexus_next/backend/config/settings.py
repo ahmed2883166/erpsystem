@@ -12,7 +12,9 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhos
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
-    "rest_framework", "django_filters", "corsheaders", "core", "accounts", "companies", "accounting", "customers", "inventory", "suppliers", "purchasing", "sales", "treasury", "assets",
+    "rest_framework", "django_filters", "corsheaders", "core", "accounts", "companies",
+    "accounting", "customers", "inventory", "suppliers", "purchasing", "sales",
+    "treasury", "assets", "audit",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -21,6 +23,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "audit.middleware.AuditTrailMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -42,7 +45,7 @@ DATABASES = {"default": {
     "ENGINE": "django.db.backends.postgresql",
     "NAME": env("POSTGRES_DB", default="nexus_dev"),
     "USER": env("POSTGRES_USER", default="nexus_app"),
-    "PASSWORD": env("POSTGRES_PASSWORD", default="change-me"),
+    "PASSWORD": env("POSTGRES_PASSWORD"),
     "HOST": env("POSTGRES_HOST", default="127.0.0.1"),
     "PORT": env("POSTGRES_PORT", default="5432"),
     "CONN_MAX_AGE": 60,
@@ -50,6 +53,12 @@ DATABASES = {"default": {
 }}
 
 AUTH_USER_MODEL = "accounts.User"
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 LANGUAGE_CODE = "ar"
 TIME_ZONE = "Africa/Cairo"
 USE_I18N = True
@@ -57,6 +66,17 @@ USE_TZ = True
 STATIC_URL = "static/"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:5173"])
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=False)
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = env.bool("CSRF_COOKIE_SECURE", default=False)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)
+SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=0)
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
