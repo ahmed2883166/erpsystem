@@ -49,6 +49,7 @@ class ProcessPostgresPoolTests(unittest.TestCase):
 
     def test_rejects_every_connection_and_pool_setting_change(self):
         changes = {
+            "NEXUS_POSTGRES_DSN": "postgresql://other/db",
             "NEXUS_POSTGRES_SCHEMA": "another_schema",
             "NEXUS_PG_CONNECT_TIMEOUT_SECONDS": "6",
             "NEXUS_PG_APPLICATION_NAME": "NEXUS worker",
