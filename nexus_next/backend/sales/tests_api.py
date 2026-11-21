@@ -597,6 +597,7 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(invoice.data["invoice_approval_limit"], "200.0000")
         self.assertEqual(invoice.data["approval_status"], "pending")
         approval = SalesInvoiceApproval.objects.get(invoice_id=invoice.data["id"])
+        self.assertIsNone(approval.requested_limit)
         self.assertEqual(approval.requested_invoice_limit, Decimal("200.0000"))
         blocked = self.client.post(
             f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
