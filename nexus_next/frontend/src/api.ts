@@ -115,6 +115,8 @@ export const purchasingApi = {
   createOrder: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>("/api/purchasing/orders/", { method: "POST", body: JSON.stringify(payload) }); },
   // تأكيد أمر الشراء المحدد للانتقال إلى مرحلة التنفيذ.
   confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
+  // إلغاء أمر شراء مسودة أو معتمد قبل تسجيل أي استلام.
+  cancelOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/cancel/`, { method: "POST" }); },
 
   // جلب تقرير أعمار أرصدة الموردين في تاريخ القياس المحدد.
   supplierAging: (companyId: number, asOf = "", branchId?: number) => request<SupplierAging>(`/api/purchasing/invoices/supplier-aging/?company=${companyId}${asOf ? `&as_of=${asOf}` : ""}${branchId ? `&branch=${branchId}` : ""}`),
