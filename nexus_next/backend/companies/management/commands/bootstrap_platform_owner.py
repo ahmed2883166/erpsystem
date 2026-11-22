@@ -18,8 +18,8 @@ class Command(BaseCommand):
         except User.DoesNotExist as exc:
             raise CommandError("The specified user does not exist.") from exc
 
-        if not user.is_active or not user.is_superuser:
-            raise CommandError("Only an active Django superuser can be registered as platform owner.")
+        if not user.is_active:
+            raise CommandError("Only an active user can be registered as platform owner.")
 
         if PlatformOwner.objects.exclude(user=user).exists():
             raise CommandError("A platform owner is already registered. Use the controlled recovery process.")
