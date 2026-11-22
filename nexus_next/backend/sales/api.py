@@ -430,7 +430,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
 
 class CustomerReceiptViewSet(SalesBaseViewSet):
     serializer_class = CustomerReceiptSerializer
-    queryset = CustomerReceipt.objects.select_related("company", "customer", "invoice", "journal_entry")
+    queryset = CustomerReceipt.objects.select_related("company", "customer", "invoice", "journal_entry", "journal_entry__reversal_entry")
     filterset_fields = ("company", "customer", "invoice", "status", "receipt_date", "method")
     search_fields = ("receipt_number", "reference", "customer__name_ar", "invoice__invoice_number")
     ordering_fields = ("receipt_date", "receipt_number", "amount", "created_at")
