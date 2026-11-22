@@ -219,6 +219,49 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(payment.status, TreasuryTransaction.Status.DRAFT)
         self.assertFalse(JournalEntry.objects.filter(entry_number=f"TR-{payment.pk}").exists())
 
+    def test_revaluation_rejects_date_before_latest_posted_treasury_movement(self):
+        self.setUp_fx_roles()
+        self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-LATE",
+            amount=Decimal("3200"), rate=Decimal("32"),
+            foreign_amount=Decimal("100"), rate_date=date(2026, 3, 2),
+        )
+        receipt = TreasuryTransaction.objects.get(document_number="FX-R-LATE")
+        post_treasury_transaction(receipt.pk)
+        with self.assertRaises(ValidationError):
+            revalue_treasury_fx_account(
+                account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+                revaluation_date=date(2026, 3, 1), rate_date=date(2026, 3, 1),
+                branch=self.branch,
+            )
+        self.assertFalse(TreasuryFxRevaluation.objects.filter(account=self.bank).exists())
+
+    def test_backdated_or_same_day_movement_is_rejected_after_revaluation(self):
+        self.setUp_fx_roles()
+        self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-BEFORE-REV",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        receipt = TreasuryTransaction.objects.get(document_number="FX-R-BEFORE-REV")
+        post_treasury_transaction(receipt.pk)
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
+        revalue_treasury_fx_account(
+            account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+            revaluation_date=date(2026, 3, 2), rate_date=date(2026, 3, 2),
+            branch=self.branch,
+        )
+        backdated = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-BACKDATED",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        with self.assertRaises(ValidationError):
+            post_treasury_transaction(backdated.pk)
+
     def test_revaluation_cannot_be_repeated_for_same_account_and_date(self):
         self.setUp_fx_roles()
         self.make_postable_transaction(
