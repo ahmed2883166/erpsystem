@@ -686,6 +686,22 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(later.data["previous_carrying_amount"], "200.0000")
         self.assertEqual(later.data["new_carrying_amount"], "204.0000")
 
+        # Keep both the reversed and replacement valuations visible without
+        # carrying forward the reversed unrealized amount.
+        history_after = self.client.get(f"/api/purchasing/invoices/{invoice_id}/revaluations/")
+        self.assertEqual(history_after.status_code, 200, history_after.data)
+        self.assertEqual(len(history_after.data), 2)
+        self.assertEqual(history_after.data[0]["status"], "posted")
+        self.assertEqual(history_after.data[1]["status"], "reversed")
+        self.assertEqual(history_after.data[1]["previous_carrying_amount"], "200.0000")
+        self.assertEqual(history_after.data[1]["new_carrying_amount"], "212.0000")
+
+        reverse_again = self.client.post(
+            f"/api/accounting/journal-entries/{reversed_entry.data['id']}/reverse/",
+            {"entry_date": "2026-04-03"}, format="json",
+        )
+        self.assertEqual(reverse_again.status_code, 400, reverse_again.data)
+
     def test_supplier_fx_revaluation_is_released_to_realized_fx_on_partial_and_final_payments(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
