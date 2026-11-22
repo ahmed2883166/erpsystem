@@ -8,6 +8,18 @@ export type Branch = { id: number; company: number; company_code?: string; code:
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
 export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
+export type FiscalYearClosingReview = {
+  fiscal_year: number;
+  status: string;
+  draft_entries: number;
+  unbalanced_entries: number;
+  closing_entry_posted: boolean;
+  next_fiscal_year: number | null;
+  opening_entry_required: boolean;
+  opening_entry_posted: boolean;
+  can_close: boolean;
+  checks: { no_drafts: boolean; balanced_entries: boolean; closing_entry: boolean; next_year_opening: boolean };
+};
 export type ExchangeRate = { id: number; company: number; company_code: string; currency: number; currency_code: string; base_currency_code: string; rate_date: string; rate: string; source: string; notes: string; created_at: string };
 export type Account = {
   id: number; company: number; code: string; name_ar: string; parent: number | null;
@@ -343,6 +355,12 @@ export const api = {
   fiscalYears: (id: number) => request<FiscalYear[]>("/api/setup/fiscal-years/?company=" + id),
   // إنشاء سنة مالية جديدة للشركة.
   createFiscalYear: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<FiscalYear>("/api/setup/fiscal-years/", { method: "POST", body: JSON.stringify(payload) }); },
+  // تعديل بيانات سنة مالية قبل تسجيل أي قيود عليها.
+  updateFiscalYear: async (id: number, payload: Partial<Pick<FiscalYear, "name" | "start_date" | "end_date">>) => { await request<{ detail: string }>("/api/csrf/"); return request<FiscalYear>(`/api/setup/fiscal-years/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
+  // مراجعة جاهزية الإقفال دون إجراء أي تغيير على البيانات.
+  fiscalYearClosingReview: (id: number) => request<FiscalYearClosingReview>(`/api/setup/fiscal-years/${id}/closing_review/`),
+  // تنفيذ الإقفال بعد اجتياز ضوابط الخادم.
+  closeFiscalYear: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<{ detail: string; review: FiscalYearClosingReview }>(`/api/setup/fiscal-years/${id}/close/`, { method: "POST", body: JSON.stringify({}) }); },
   // إنشاء قيد يومية جديد بحالته الأولية.
   createJournal: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل قيد اليومية المحدد.
