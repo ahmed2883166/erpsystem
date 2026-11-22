@@ -10,7 +10,7 @@ from accounting.models import (
     AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine,
 )
 from accounting.services import get_account_for_role, post_journal
-from companies.models import ExchangeRate, FiscalYear
+from companies.models import ExchangeRate
 from purchasing.models import PurchaseInvoice, SupplierPayment
 from sales.models import CustomerReceipt, SalesInvoice
 
@@ -95,6 +95,25 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         revaluation_date=revaluation_date,
     ).exists():
         raise ValidationError("تمت إعادة تقييم هذه الفاتورة في التاريخ المحدد بالفعل.")
+
+    if direction == "receivable":
+        later_settlements = CustomerReceipt.objects.filter(
+            invoice=invoice, status=CustomerReceipt.Status.POSTED,
+            receipt_date__gt=revaluation_date,
+        ).exists()
+        later_revaluations = FxSubledgerRevaluation.objects.filter(
+            sales_invoice=invoice, revaluation_date__gt=revaluation_date,
+        ).exists()
+    else:
+        later_settlements = SupplierPayment.objects.filter(
+            invoice=invoice, status=SupplierPayment.Status.POSTED,
+            payment_date__gt=revaluation_date,
+        ).exists()
+        later_revaluations = FxSubledgerRevaluation.objects.filter(
+            purchase_invoice=invoice, revaluation_date__gt=revaluation_date,
+        ).exists()
+    if later_settlements or later_revaluations:
+        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو إعادة تقييم مرحّلة.")
 
     approved = ExchangeRate.objects.filter(
         company=invoice.company, currency=invoice.transaction_currency,
