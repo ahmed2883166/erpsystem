@@ -22,6 +22,15 @@ const AccountsPanel = lazy(() => import("./AccountsPanel"));
 const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
+// استخدام التاريخ المحلي بدل UTC حتى لا يتغير اليوم عند التشغيل في مناطق زمنية مختلفة.
+const localISODate = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
 type Section = "overview" | "journals" | "accounts" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
@@ -207,7 +216,7 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
 
 // تقرير التدفقات النقدية: تحميل وعرض حركة النقد للفترة المختارة.
 function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = localISODate();
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -247,7 +256,7 @@ function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
 
 // تقرير التدفقات النقدية بالطريقة غير المباشرة مع تسوية صافي الربح إلى النقد.
 function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = localISODate();
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -305,7 +314,7 @@ function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }
 
 // شاشة القوائم المالية: الميزانية وقائمة الدخل والتفاصيل وروابط الأستاذ والقيود.
 function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = localISODate();
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -414,7 +423,7 @@ function FinancialStatementsPanel({ companyId }: { companyId: number | null }) {
 
 // شاشة الأستاذ العام وحقوق الملكية: عرض الحركات والتغيرات المرتبطة بالحسابات.
 function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
-  const today = new Date().toISOString().slice(0,10);
+  const today = localISODate();
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -490,7 +499,7 @@ export default function App() {
   const [journals, setJournals] = useState<Journal[]>([]);
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [trialBalanceFrom, setTrialBalanceFrom] = useState(new Date().getFullYear()+"-01-01");
-  const [trialBalanceTo, setTrialBalanceTo] = useState(new Date().toISOString().slice(0,10));
+  const [trialBalanceTo, setTrialBalanceTo] = useState(localISODate());
   const [excludeClosingEntries, setExcludeClosingEntries] = useState(false);
   const [customerAging, setCustomerAging] = useState<CustomerAging | null>(null);
   const [supplierAging, setSupplierAging] = useState<SupplierAging | null>(null);
