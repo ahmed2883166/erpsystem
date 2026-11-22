@@ -40,7 +40,7 @@ cd nexus_next
 .\\scripts\\backup-postgres.ps1
 ```
 
-The script creates a PostgreSQL custom-format archive, validates it with `pg_restore --list`, encrypts it with AES-256-GCM using the DPAPI-protected machine key, decrypts it to a temporary location to authenticate and compare its SHA-256 digest, then deletes the plaintext source. Daily and monthly archives use the `.dump.nexusenc` extension. Retention runs only on encrypted archives. If encryption fails, the job reports failure and does not record a successful backup.
+The script creates a PostgreSQL custom-format archive, validates it with `pg_restore --list`, encrypts it with AES-256-GCM using the DPAPI-protected machine key, decrypts it to a temporary location to authenticate and compare its SHA-256 digest, then deletes the plaintext source. Daily and monthly archives use the `.dump.nexusenc` extension. Retention runs only on encrypted archives. Existing legacy plaintext `.dump` archives in the daily/monthly folders are validated, encrypted, and their history references updated before a new scheduled backup begins. The original plaintext archive is removed only after authenticated encryption succeeds. If encryption fails, the original is retained and the job reports failure.
 
 ## Restore test without overwriting the active database
 
