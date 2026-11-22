@@ -1,3 +1,3 @@
-# NEXUS frontend
+# Admrail ERP v2 — الواجهة الأمامية
 
-React + TypeScript + Vite. Arabic RTL is the default direction and language. Keep API calls isolated from view components; use typed domain contracts. Do not place accounting rules in the browser.
+واجهة Admrail ERP v2 مبنية باستخدام React وTypeScript وVite، والاتجاه واللغة الافتراضيان هما العربية RTL. تُعزل طلبات API عن مكونات العرض، وتُستخدم عقود بيانات typed واضحة. لا توضع قواعد المحاسبة أو الترحيل داخل المتصفح.
