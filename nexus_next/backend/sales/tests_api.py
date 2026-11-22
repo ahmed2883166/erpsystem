@@ -32,6 +32,7 @@ class SalesWorkflowTests(APITestCase):
             AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED: ("2100", "بضاعة مستلمة غير مفوترة", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.ACCOUNTS_RECEIVABLE: ("1200", "العملاء", ChartOfAccount.Nature.ASSET),
             AccountRole.Role.SALES: ("4000", "المبيعات", ChartOfAccount.Nature.REVENUE),
+            AccountRole.Role.SALES_RETURNS: ("4090", "مردودات المبيعات", ChartOfAccount.Nature.REVENUE),
             AccountRole.Role.VAT_OUTPUT: ("2200", "ضريبة مخرجات", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.BANK: ("1100", "البنك", ChartOfAccount.Nature.ASSET),
         }
@@ -874,3 +875,58 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+
+
+    def test_sales_return_posts_stock_cost_and_tax_and_blocks_over_return(self):
+        delivery_id, delivery_line_id = self._create_delivery("DEL-RETURN-001")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-RETURN-001", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": delivery_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        created = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-001", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["line_items"][0]["net_amount"], "100.0000")
+        self.assertEqual(created.data["line_items"][0]["tax_amount"], "14.0000")
+        self.assertEqual(created.data["line_items"][0]["cost_amount"], "40.0000")
+
+        posted = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], "posted")
+        self.assertEqual(posted.data["grand_total"], "114.0000")
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("4.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("160.0000"))
+        cost_entry = JournalEntry.objects.get(pk=posted.data["cost_journal_entry"])
+        self.assertEqual(
+            sum((line.debit for line in cost_entry.lines.all()), Decimal("0")),
+            Decimal("40.0000"),
+        )
+        self.assertEqual(
+            sum((line.credit for line in cost_entry.lines.all()), Decimal("0")),
+            Decimal("40.0000"),
+        )
+
+        excessive = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-002", "return_date": "2026-03-13",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "2"}],
+        }, format="json")
+        self.assertEqual(excessive.status_code, 201, excessive.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/returns/{excessive.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("4.0000"))
