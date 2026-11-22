@@ -17,3 +17,6 @@ backups/
 nexus_license.json
 **/nexus_license.json
 test_data/
+
+**/.secrets/
+*.nexusenc
