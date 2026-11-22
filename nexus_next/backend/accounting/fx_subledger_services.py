@@ -78,7 +78,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         ).get(pk=invoice_id)
         invoice_model = SalesInvoice
     elif direction == "payable":
-        invoice = PurchaseInvoice.objects.select_for_update().select_related(
+        invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
             "company", "transaction_currency", "receipt__warehouse",
         ).get(pk=invoice_id)
         invoice_model = PurchaseInvoice
