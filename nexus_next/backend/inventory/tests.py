@@ -208,6 +208,50 @@ class StockPostingServiceTests(TestCase):
         self.assertEqual(layers, [(Decimal("4.0000"), Decimal("10.0000")),
                                   (Decimal("0.0000"), Decimal("20.0000"))])
 
+    def test_fifo_inventory_shortage_adjustment_posts_actual_layer_cost_to_loss(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+
+        for number, quantity, cost in (
+            ("ADJ-OUT-R1", "5", "20"),
+            ("ADJ-OUT-R2", "5", "10"),
+        ):
+            receipt = self._movement(
+                number, StockMovement.MovementType.RECEIPT,
+                destination=self.warehouse, quantity=quantity, unit_cost=cost,
+            )
+            post_stock_movement(receipt.pk, self.user)
+
+        adjustment = self._movement(
+            "ADJ-OUT-01", StockMovement.MovementType.ADJUSTMENT,
+            source=self.warehouse, quantity="6",
+            direction=StockMovementLine.AdjustmentDirection.OUT,
+        )
+        post_stock_movement(adjustment.pk, self.user)
+
+        line = adjustment.lines.get()
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(line.cost_amount, Decimal("110.0000"))
+        self.assertEqual(line.unit_cost, Decimal("18.33333333333333333333333333"))
+        self.assertEqual((balance.quantity, balance.inventory_value), (
+            Decimal("4.0000"), Decimal("40.0000"),
+        ))
+        remaining = list(
+            self.product.cost_layers.filter(warehouse=self.warehouse)
+            .order_by("source_line__movement_id", "id")
+            .values_list("quantity_remaining", "unit_cost")
+        )
+        self.assertEqual(remaining, [
+            (Decimal("0.0000"), Decimal("20.000000")),
+            (Decimal("4.0000"), Decimal("10.000000")),
+        ])
+        entry = adjustment.journal_links.select_related("journal_entry").get().journal_entry
+        self.assertEqual(entry.status, JournalEntry.Status.POSTED)
+        debit = entry.lines.filter(account=self.loss_account).aggregate(total=Sum("debit"))["total"]
+        credit = entry.lines.filter(account=self.inventory_account).aggregate(total=Sum("credit"))["total"]
+        self.assertEqual(debit, Decimal("110.0000"))
+        self.assertEqual(credit, Decimal("110.0000"))
+
     def test_cross_branch_transfer_preserves_fifo_cost_and_posts_balanced_interbranch_entries(self):
         self.product.costing_method = Product.CostingMethod.FIFO
         self.product.save(update_fields=("costing_method",))
