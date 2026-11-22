@@ -141,11 +141,11 @@ class StockPostingServiceTests(TestCase):
 
         first_receipt = self._movement(
             "FIFO-R1", StockMovement.MovementType.RECEIPT,
-            destination=self.warehouse, quantity="5", unit_cost="10",
+            destination=self.warehouse, quantity="5", unit_cost="20",
         )
         second_receipt = self._movement(
             "FIFO-R2", StockMovement.MovementType.RECEIPT,
-            destination=self.warehouse, quantity="5", unit_cost="20",
+            destination=self.warehouse, quantity="5", unit_cost="10",
         )
         post_stock_movement(first_receipt.pk, self.user)
         post_stock_movement(second_receipt.pk, self.user)
@@ -162,11 +162,11 @@ class StockPostingServiceTests(TestCase):
             self.product.cost_layers.filter(warehouse=self.warehouse)
             .order_by("unit_cost").values_list("quantity_remaining", "unit_cost")
         )
-        self.assertEqual(issue_line.cost_amount, Decimal("70.0000"))
+        self.assertEqual(issue_line.cost_amount, Decimal("110.0000"))
         self.assertEqual(balance.quantity, Decimal("4"))
-        self.assertEqual(balance.inventory_value, Decimal("80.0000"))
-        self.assertEqual(layers, [(Decimal("0.0000"), Decimal("10.0000")),
-                                  (Decimal("4.0000"), Decimal("20.0000"))])
+        self.assertEqual(balance.inventory_value, Decimal("40.0000"))
+        self.assertEqual(layers, [(Decimal("4.0000"), Decimal("10.0000")),
+                                  (Decimal("0.0000"), Decimal("20.0000"))])
 
     def test_cross_branch_transfer_preserves_fifo_cost_and_posts_balanced_interbranch_entries(self):
         self.product.costing_method = Product.CostingMethod.FIFO
