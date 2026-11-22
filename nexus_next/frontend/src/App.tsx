@@ -498,6 +498,7 @@ export default function App() {
   const effectiveTheme = themePreference === "system" ? (systemPrefersDark ? "dark" : "light") : themePreference;
   const [active, setActive] = useState<Section>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyId, setCompanyId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -703,11 +704,11 @@ const postDraft = async (entry: Journal) => {
   }
 
   return (
-    <div className="app-shell" dir="rtl" data-theme={effectiveTheme}>
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`} dir="rtl" data-theme={effectiveTheme}>
       {sidebarOpen && <button className="mobile-scrim" aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-lockup"><div className="brand-symbol">A</div><div><strong>ADMRAIL</strong><span>ENTERPRISE PLATFORM</span></div>
-          <button className="sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="إغلاق القائمة">×</button></div>
+          <button className="sidebar-collapse-toggle" type="button" onClick={() => setSidebarCollapsed(value => !value)} aria-label={sidebarCollapsed ? "توسيع القائمة" : "طي القائمة"} title={sidebarCollapsed ? "توسيع القائمة" : "طي القائمة"}>{sidebarCollapsed ? "⟨" : "⟩"}</button><button className="sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="إغلاق القائمة">×</button></div>
         <div className="workspace"><div className="workspace-avatar">AE</div><div><strong>مساحة العمل</strong><small>{selectedCompany?.name_ar || "اختر الشركة"}</small></div>
           <select aria-label="الشركة" value={companyId ?? ""} onChange={(event) => setCompanyId(Number(event.target.value) || null)}>
             <option value="">—</option>{companies.map((company) => <option key={company.id} value={company.id}>{company.name_ar}</option>)}
