@@ -348,7 +348,15 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             invoice.invoice_approval_limit = policy.max_sales_invoice_amount
             invoice.save(update_fields=("discount_approval_limit", "invoice_approval_limit"))
         for line in lines:
-            SalesInvoiceLine.objects.create(invoice=invoice, **line)
+            SalesInvoiceLine.objects.create(
+                invoice=invoice,
+                unit_price=line.get("unit_price", Decimal("0")),
+                transaction_unit_price=line.get("transaction_unit_price"),
+                delivery_line=line["delivery_line"],
+                tax_rate=line.get("tax_rate", Decimal("0")),
+                tax_code=line.get("tax_code"),
+                discount_percent=line.get("discount_percent", Decimal("0")),
+            )
         self._recalculate_invoice(invoice, lines_changed=True)
         return invoice
 
