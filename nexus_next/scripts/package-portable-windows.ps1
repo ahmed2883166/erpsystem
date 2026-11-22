@@ -46,8 +46,8 @@ try {
     "data", "backups", "media", "logs", "staticfiles", "node_modules"
   )
   Get-ChildItem -LiteralPath $Backend -File -Recurse -Force | ForEach-Object {
-    $Relative = $_.FullName.Substring($Backend.Length).TrimStart("\\", "/")
-    $Segments = $Relative -split "[\\\\/]"
+    $Relative = $_.FullName.Substring($Backend.Length).TrimStart([char[]]@('\', '/'))
+    $Segments = $Relative -split '[\\/]'
     if (($Segments | Where-Object { $ExcludedBackendSegments -contains $_ }).Count -gt 0 -or
         $_.Name -eq ".env" -or
         ($_.Name -like ".env.*" -and $_.Name -ne ".env.example") -or
