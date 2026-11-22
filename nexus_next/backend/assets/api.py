@@ -6,6 +6,7 @@ from django.db.models import Q, Sum
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone, dateparse
+from decimal import Decimal
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import FixedAsset, AssetDepreciation
@@ -282,7 +283,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "asset_account", "accumulated_depreciation_account", "depreciation_expense_account"
         ).prefetch_related("depreciations")
         date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
-        date_from = dateparse.parse_date(date_from_raw) if date_from_raw else as_of.replace(month=1, day=1)
+        date_from = dateparse.parse_date(date_from_raw) if date_from_raw else (as_of.replace(month=1, day=1) if as_of else None)
         date_to = dateparse.parse_date(date_to_raw) if date_to_raw else as_of
         if not as_of or not date_from or not date_to or date_from > date_to:
             raise ValidationError("حدد تاريخ مطابقة وفترة إهلاك صحيحة.")
