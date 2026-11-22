@@ -381,8 +381,9 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         instance.delete()
 
     def _closing_review(self, fiscal_year):
-        """فحص محاسبي قبل الإقفال دون تعديل أي قيد أو رصيد."""
-        from accounting.models import JournalEntry
+        """فحص توازن القيود وإقفال نتائج الأعمال ومطابقة افتتاح السنة التالية."""
+        from accounting.models import JournalEntry, JournalLine, ChartOfAccount
+
         entries = JournalEntry.objects.filter(fiscal_year=fiscal_year)
         drafts = entries.filter(status=JournalEntry.Status.DRAFT).count()
         financial_entries = entries.filter(
@@ -401,39 +402,104 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         invalid_entries = financial_entries.filter(
             Q(line_count__lt=2) | ~Q(debit_total=F("credit_total"))
         ).count()
-        closing_entry = entries.filter(
+
+        pnl_lines = JournalLine.objects.filter(
+            entry__fiscal_year=fiscal_year,
+            entry__status=JournalEntry.Status.POSTED,
+            account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+        )
+        pnl_before_closing = pnl_lines.exclude(entry__source_type=JournalEntry.Source.CLOSING).values(
+            "entry__branch_id", "account_id"
+        ).annotate(net=Sum(F("debit") - F("credit"))).exclude(net=Decimal("0"))
+        pnl_activity_accounts = pnl_before_closing.count()
+        pnl_after_closing = pnl_lines.values(
+            "entry__branch_id", "account_id"
+        ).annotate(net=Sum(F("debit") - F("credit"))).exclude(net=Decimal("0"))
+        unclosed_pnl_accounts = pnl_after_closing.count()
+
+        closing_entry_exists = entries.filter(
             source_type=JournalEntry.Source.CLOSING,
             status=JournalEntry.Status.POSTED,
             entry_date=fiscal_year.end_date,
         ).exists()
+        closing_entry_ok = (
+            pnl_activity_accounts == 0
+            or (closing_entry_exists and unclosed_pnl_accounts == 0)
+        )
+
         next_year = FiscalYear.objects.filter(
             company_id=fiscal_year.company_id,
             start_date__gt=fiscal_year.end_date,
         ).order_by("start_date").first()
-        opening_entry_required = bool(next_year)
-        opening_entry = False
+        opening_entry_exists = False
+        opening_entry_required = False
+        opening_balance_mismatches = 0
         if next_year:
-            opening_entry = JournalEntry.objects.filter(
+            balance_sheet_natures = (
+                ChartOfAccount.Nature.ASSET,
+                ChartOfAccount.Nature.LIABILITY,
+                ChartOfAccount.Nature.EQUITY,
+            )
+            expected_rows = JournalLine.objects.filter(
+                entry__company_id=fiscal_year.company_id,
+                entry__entry_date__lte=fiscal_year.end_date,
+                entry__status=JournalEntry.Status.POSTED,
+                account__nature__in=balance_sheet_natures,
+            ).values("entry__branch_id", "account_id").annotate(
+                net=Sum(F("debit") - F("credit"))
+            )
+            expected = {
+                (row["entry__branch_id"], row["account_id"]): row["net"]
+                for row in expected_rows if row["net"] != 0
+            }
+            opening_entries = JournalEntry.objects.filter(
                 fiscal_year=next_year,
                 source_type=JournalEntry.Source.OPENING,
                 status=JournalEntry.Status.POSTED,
                 entry_date=next_year.start_date,
-            ).exists()
+            )
+            opening_entry_exists = opening_entries.exists()
+            opening_entry_required = bool(expected)
+            actual_rows = JournalLine.objects.filter(
+                entry__in=opening_entries,
+                account__nature__in=balance_sheet_natures,
+            ).values("entry__branch_id", "account_id").annotate(
+                net=Sum(F("debit") - F("credit"))
+            )
+            actual = {
+                (row["entry__branch_id"], row["account_id"]): row["net"]
+                for row in actual_rows if row["net"] != 0
+            }
+            opening_balance_mismatches = sum(
+                1 for key in (set(expected) | set(actual))
+                if expected.get(key, Decimal("0")) != actual.get(key, Decimal("0"))
+            )
+            opening_non_balance_sheet_lines = JournalLine.objects.filter(
+                entry__in=opening_entries,
+            ).exclude(account__nature__in=balance_sheet_natures).count()
+            opening_balance_mismatches += opening_non_balance_sheet_lines
+
+        opening_entry_ok = not next_year or opening_balance_mismatches == 0
         checks = {
             "no_drafts": drafts == 0,
             "balanced_entries": invalid_entries == 0,
-            "closing_entry": closing_entry,
-            "next_year_opening": (not opening_entry_required) or opening_entry,
+            "closing_entry": closing_entry_ok,
+            "next_year_opening": opening_entry_ok,
         }
         return {
             "fiscal_year": fiscal_year.pk,
             "status": fiscal_year.status,
             "draft_entries": drafts,
             "unbalanced_entries": invalid_entries,
-            "closing_entry_posted": closing_entry,
+            "closing_entry_required": pnl_activity_accounts > 0,
+            "closing_entry_exists": closing_entry_exists,
+            "closing_entry_posted": closing_entry_ok,
+            "unclosed_income_statement_accounts": unclosed_pnl_accounts,
             "next_fiscal_year": next_year.pk if next_year else None,
             "opening_entry_required": opening_entry_required,
-            "opening_entry_posted": opening_entry,
+            "opening_entry_exists": opening_entry_exists,
+            "opening_entry_posted": opening_entry_ok,
+            "opening_balance_mismatches": opening_balance_mismatches,
             "can_close": fiscal_year.status == FiscalYear.Status.OPEN and all(checks.values()),
             "checks": checks,
         }
