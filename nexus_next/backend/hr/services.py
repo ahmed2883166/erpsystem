@@ -1,3 +1,5 @@
+"""خدمات احتساب المرتبات ومكوناتها والحضور والسلف وتجهيز وترحيل وصرف المستحقات."""
+
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
