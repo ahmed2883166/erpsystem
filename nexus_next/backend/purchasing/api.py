@@ -9,6 +9,8 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
+from accounting.models import FxSubledgerRevaluation
+from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from inventory.models import Warehouse
 from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment
@@ -187,6 +189,51 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         ):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
+
+    @action(detail=True, methods=("post",), url_path="revalue")
+    def revalue(self, request, pk=None):
+        invoice = self.get_object()
+        self._check_write(invoice.company_id)
+        if invoice.receipt.warehouse.branch_id and not can_access_branch(
+            request.user, invoice.receipt.warehouse.branch_id, invoice.company_id
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        revaluation_date = parse_date(request.data.get("revaluation_date", ""))
+        rate_date = parse_date(request.data.get("rate_date", ""))
+        try:
+            rate = Decimal(str(request.data.get("rate")))
+        except Exception as exc:
+            raise ValidationError({"rate": "أدخل سعر صرف صحيحًا."}) from exc
+        if not revaluation_date or not rate_date:
+            raise ValidationError({"revaluation_date": "حدد تاريخ إعادة التقييم وتاريخ سعر الصرف."})
+        record = revalue_fx_invoice(
+            direction="payable", invoice_id=invoice.pk,
+            revaluation_date=revaluation_date, rate_date=rate_date, rate=rate,
+            user=request.user,
+        )
+        return Response({
+            "id": record.pk, "invoice": invoice.pk, "revaluation_date": record.revaluation_date,
+            "rate_date": record.rate_date, "rate": str(record.rate),
+            "foreign_balance": str(record.foreign_balance),
+            "previous_carrying_amount": str(record.previous_carrying_amount),
+            "new_carrying_amount": str(record.new_carrying_amount),
+            "difference": str(record.difference),
+            "journal_entry": record.journal_entry_id,
+            "journal_number": record.journal_entry.entry_number if record.journal_entry_id else None,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=("get",), url_path="revaluations")
+    def revaluations(self, request, pk=None):
+        invoice = self.get_object()
+        rows = FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).select_related("journal_entry")
+        return Response([{
+            "id": row.pk, "revaluation_date": row.revaluation_date, "rate_date": row.rate_date,
+            "rate": str(row.rate), "foreign_balance": str(row.foreign_balance),
+            "previous_carrying_amount": str(row.previous_carrying_amount),
+            "new_carrying_amount": str(row.new_carrying_amount), "difference": str(row.difference),
+            "journal_entry": row.journal_entry_id,
+            "journal_number": row.journal_entry.entry_number if row.journal_entry_id else None,
+        } for row in rows])
 
     @action(detail=False, methods=("get",), url_path="supplier-statement")
     def supplier_statement(self, request):
