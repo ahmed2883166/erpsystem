@@ -46,3 +46,21 @@ class SupplierApiTests(APITestCase):
             "company": self.other_company.pk, "code": "S-004", "name_ar": "شركة أخرى",
         }, format="json")
         self.assertEqual(response.status_code, 403)
+
+    def test_supplier_can_be_updated_and_deactivated_without_deleting_history(self):
+        supplier = Supplier.objects.create(
+            company=self.company, code="S-EDIT", name_ar="مورد قبل التعديل"
+        )
+        updated = self.client.patch(
+            f"/api/purchases/suppliers/{supplier.pk}/",
+            {"name_ar": "مورد بعد التعديل", "is_active": False},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["name_ar"], "مورد بعد التعديل")
+        self.assertFalse(updated.data["is_active"])
+        supplier.refresh_from_db()
+        self.assertFalse(supplier.is_active)
+        deleted = self.client.delete(f"/api/purchases/suppliers/{supplier.pk}/")
+        self.assertEqual(deleted.status_code, 400, getattr(deleted, "data", None))
+        self.assertTrue(Supplier.objects.filter(pk=supplier.pk).exists())
