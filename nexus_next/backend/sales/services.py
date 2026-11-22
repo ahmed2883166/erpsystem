@@ -1,3 +1,5 @@
+"""خدمات ترحيل التسليم وفواتير المبيعات وتحصيلات العملاء وربطها بالمخزون والأستاذ العام."""
+
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
