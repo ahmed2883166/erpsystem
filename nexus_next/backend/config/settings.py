@@ -1,7 +1,7 @@
+"""إعدادات تشغيل Admrail ERP v2 مع اعتماد PostgreSQL وضوابط الجلسات والنشر المحلي."""
+
 from pathlib import Path
 import environ
-
-"""إعدادات تشغيل Admrail ERP v2 مع اعتماد PostgreSQL وضوابط الجلسات والنشر المحلي."""
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(DJANGO_DEBUG=(bool, False))
