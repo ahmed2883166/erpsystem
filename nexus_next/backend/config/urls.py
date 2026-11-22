@@ -1,3 +1,5 @@
+"""مسارات Admrail ERP v2: واجهات API ولوحة الإدارة ونقطة عرض تطبيق React."""
+
 from django.contrib import admin
 from django.urls import include, path
 from core.frontend import frontend_index
