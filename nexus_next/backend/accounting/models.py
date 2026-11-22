@@ -193,6 +193,7 @@ class JournalEntry(models.Model):
         ASSETS = "assets", "أصول ثابتة"
         OPENING = "opening", "افتتاحي"
         CLOSING = "closing", "إقفال"
+        FX_REVALUATION = "fx_revaluation", "إعادة تقييم عملة"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="journal_entries")
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="journal_entries")
