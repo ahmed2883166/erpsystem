@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db import models
+from companies.models import Currency
 from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
@@ -28,6 +29,9 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا."})
         if account and account.nature != account.Nature.ASSET:
             raise serializers.ValidationError({"account": "يجب أن يكون حساب الخزينة من طبيعة الأصول."})
+        currency_code = attrs.get("currency_code", getattr(self.instance, "currency_code", "EGP"))
+        if not Currency.objects.filter(code=currency_code, is_active=True).exists():
+            raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة من قائمة العملات المعتمدة."})
         opening_balance = attrs.get("opening_balance", getattr(self.instance, "opening_balance", 0))
         if opening_balance < 0:
             raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
