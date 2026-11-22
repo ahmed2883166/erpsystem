@@ -1,3 +1,5 @@
+"""نموذج العملاء وبيانات الاتصال والائتمان الخاصة بكل شركة."""
+
 from django.core.validators import MinValueValidator
 from django.db import models
 
