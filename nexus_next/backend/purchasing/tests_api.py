@@ -8,7 +8,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
-from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
 from purchasing.models import SupplierPayment
@@ -33,6 +33,9 @@ class PurchasingWorkflowTests(APITestCase):
             AccountRole.Role.ACCOUNTS_PAYABLE: ("2200", "الموردون", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.VAT_INPUT: ("1300", "ضريبة مدخلات", ChartOfAccount.Nature.ASSET),
             AccountRole.Role.BANK: ("1100", "البنك", ChartOfAccount.Nature.ASSET),
+            AccountRole.Role.CASH: ("1005", "الصندوق", ChartOfAccount.Nature.ASSET),
+            AccountRole.Role.REALIZED_FX_GAIN: ("4900", "أرباح فروق عملة محققة", ChartOfAccount.Nature.REVENUE),
+            AccountRole.Role.REALIZED_FX_LOSS: ("6900", "خسائر فروق عملة محققة", ChartOfAccount.Nature.EXPENSE),
         }
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
@@ -590,3 +593,54 @@ class PurchasingWorkflowTests(APITestCase):
             f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
         )
         self.assertEqual(posted.status_code, 200, posted.data)
+
+    def test_foreign_supplier_invoice_partial_and_final_payments_post_realized_fx(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=date(2026, 3, 10), rate=Decimal("50"))
+        ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=date(2026, 3, 11), rate=Decimal("48"))
+        ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=date(2026, 3, 12), rate=Decimal("52"))
+
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-FX-001", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "transaction_unit_price": "2", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_id = created.data["id"]
+        posted = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["grand_total"], "200.0000")
+        self.assertEqual(posted.data["transaction_grand_total"], "4.0000")
+
+        first = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-FX-001", "payment_date": "2026-03-11", "method": "cash",
+            "amount": "48.0000", "transaction_currency": usd.pk, "transaction_amount": "1",
+            "exchange_rate": "48", "exchange_rate_date": "2026-03-11",
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        first_posted = self.client.post(f"/api/purchasing/payments/{first.data['id']}/post/", {}, format="json")
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertEqual(first_posted.data["carrying_base_amount"], "50.0000")
+        self.assertEqual(first_posted.data["realized_fx_gain"], "2.0000")
+        gain_line = JournalLine.objects.get(entry_id=first_posted.data["journal_entry"], account__code="4900")
+        self.assertEqual(gain_line.credit, Decimal("2.0000"))
+
+        final = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-FX-002", "payment_date": "2026-03-12", "method": "cash",
+            "amount": "52.0000", "transaction_currency": usd.pk, "transaction_amount": "1",
+            "exchange_rate": "52", "exchange_rate_date": "2026-03-12",
+        }, format="json")
+        self.assertEqual(final.status_code, 201, final.data)
+        final_posted = self.client.post(f"/api/purchasing/payments/{final.data['id']}/post/", {}, format="json")
+        self.assertEqual(final_posted.status_code, 200, final_posted.data)
+        self.assertEqual(final_posted.data["carrying_base_amount"], "150.0000")
+        self.assertEqual(final_posted.data["realized_fx_loss"], "2.0000")
+        loss_line = JournalLine.objects.get(entry_id=final_posted.data["journal_entry"], account__code="6900")
+        self.assertEqual(loss_line.debit, Decimal("2.0000"))
+        refreshed = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
+        self.assertEqual(refreshed["paid_total"], "200.0000")
+        self.assertEqual(refreshed["balance_due"], "0.0000")
