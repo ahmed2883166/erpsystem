@@ -987,6 +987,46 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(refreshed["paid_total"], "10000.0000")
         self.assertEqual(refreshed["balance_due"], "0.0000")
 
+    def test_fx_revaluation_journal_can_be_reversed_before_any_later_settlement(self):
+        delivery_id, line_id = self._create_delivery("DEL-FX-REV")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        for rate_date, rate in (
+            (date(2026, 3, 10), "50"), (date(2026, 3, 31), "53"),
+            (date(2026, 4, 2), "51"),
+        ):
+            ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate))
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-FX-REV", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_id = created.data["id"]
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        revalued = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/revalue/", {
+            "revaluation_date": "2026-03-31", "rate_date": "2026-03-31", "rate": "53",
+        }, format="json")
+        self.assertEqual(revalued.status_code, 201, revalued.data)
+
+        reversed_entry = self.client.post(
+            f"/api/accounting/journal-entries/{revalued.data['journal_entry']}/reverse/",
+            {"entry_date": "2026-04-01"}, format="json",
+        )
+        self.assertEqual(reversed_entry.status_code, 201, reversed_entry.data)
+        history = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/revaluations/")
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertEqual(history.data[0]["status"], "reversed")
+        self.assertEqual(JournalEntry.objects.get(pk=revalued.data["journal_entry"]).status, JournalEntry.Status.REVERSED)
+
+        later = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/revalue/", {
+            "revaluation_date": "2026-04-02", "rate_date": "2026-04-02", "rate": "51",
+        }, format="json")
+        self.assertEqual(later.status_code, 201, later.data)
+        self.assertEqual(later.data["previous_carrying_amount"], "10000.0000")
+        self.assertEqual(later.data["new_carrying_amount"], "10200.0000")
+
     def test_customer_fx_revaluation_is_released_to_realized_fx_on_partial_and_final_receipts(self):
         delivery_id, line_id = self._create_delivery("DEL-FX-REVAL")
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
@@ -1049,3 +1089,8 @@ class SalesWorkflowTests(APITestCase):
             entry_id=final_posted.data["journal_entry"], account__code="7210",
             debit=Decimal("480.0000"),
         ).exists())
+        blocked_reversal = self.client.post(
+            f"/api/accounting/journal-entries/{revalued.data['journal_entry']}/reverse/",
+            {"entry_date": "2026-04-03"}, format="json",
+        )
+        self.assertEqual(blocked_reversal.status_code, 400, blocked_reversal.data)
