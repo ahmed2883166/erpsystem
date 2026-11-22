@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import Product, ProductCategory, StockMovement, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -61,10 +61,19 @@ class ProductSerializer(serializers.ModelSerializer):
         if self.instance:
             costing_method = attrs.get("costing_method", self.instance.costing_method)
             next_type = attrs.get("product_type", self.instance.product_type)
-            if (costing_method != self.instance.costing_method or next_type != self.instance.product_type):
-                if self.instance.stock_balances.filter(quantity__gt=0).exists():
+            changing_stock_semantics = (
+                costing_method != self.instance.costing_method
+                or next_type != self.instance.product_type
+            )
+            if changing_stock_semantics:
+                has_stock_balance = self.instance.stock_balances.filter(quantity__gt=0).exists()
+                has_posted_history = self.instance.stock_movement_lines.filter(
+                    movement__status=StockMovement.Status.POSTED,
+                ).exists()
+                if has_stock_balance or has_posted_history:
                     raise serializers.ValidationError(
-                        "لا يمكن تغيير طريقة التقييم أو تحويل الصنف إلى خدمة مع وجود رصيد مخزني."
+                        "لا يمكن تغيير طريقة التقييم أو تحويل الصنف إلى خدمة بعد وجود رصيد أو حركات مخزنية مرحلة. "
+                        "أنشئ صنفًا جديدًا إذا كنت تحتاج طريقة مختلفة."
                     )
         return attrs
 
