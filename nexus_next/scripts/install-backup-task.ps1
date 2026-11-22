@@ -2,6 +2,9 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Backend = Join-Path $Root "backend"
 $Python = Join-Path $Backend ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    $Python = Join-Path (Split-Path -Parent $Root) "runtime\python.exe"
+}
 $BackupScript = Join-Path $PSScriptRoot "backup-postgres.ps1"
 if (-not (Test-Path $BackupScript)) { throw "Backup script not found: $BackupScript" }
 if (-not (Test-Path $Python)) { throw "Backend virtual-environment Python is missing." }
