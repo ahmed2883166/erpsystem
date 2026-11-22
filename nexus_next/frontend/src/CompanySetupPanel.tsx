@@ -275,14 +275,13 @@ const createYear = async (event: FormEvent) => {
       {branches.length > 0 && <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الفرع</th><th>نوع الفرع</th><th>العنوان</th><th>الهاتف</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>{branches.map(item => <tr key={item.id}>
         <td>{item.code}</td>
         {editingBranchId === item.id ? <>
-          <td colSpan={2}><form className="branch-inline-edit" onSubmit={event => saveBranchEdit(event, item.id)}>
+          <td colSpan={4}><form className="branch-inline-edit" onSubmit={event => saveBranchEdit(event, item.id)}>
             <input required maxLength={160} aria-label="اسم الفرع" value={editBranchName} onChange={event => setEditBranchName(event.target.value)} />
             <input maxLength={40} aria-label="هاتف الفرع" value={editBranchPhone} onChange={event => setEditBranchPhone(event.target.value)} placeholder="الهاتف" />
             <input aria-label="عنوان الفرع" value={editBranchAddress} onChange={event => setEditBranchAddress(event.target.value)} placeholder="العنوان" />
             <button className="primary-button" type="submit" disabled={busy}>حفظ</button>
             <button type="button" onClick={() => setEditingBranchId(null)} disabled={busy}>إلغاء</button>
           </form></td>
-          <td>{item.is_head_office ? "رئيسي" : "فرعي"}</td><td>{item.address || "—"}</td><td>{item.phone || "—"}</td>
         </> : <>
           <td>{item.name_ar}</td><td>{item.is_head_office ? "رئيسي" : "فرعي"}</td><td>{item.address || "—"}</td><td>{item.phone || "—"}</td>
         </>}
