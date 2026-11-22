@@ -213,7 +213,7 @@ class SalesReturn(models.Model):
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="returns")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_returns")
     stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_return")
-    return_number = models.CharField(max_length=40)
+    return_number = models.CharField(max_length=37)
     return_date = models.DateField()
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
