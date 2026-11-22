@@ -28,6 +28,54 @@ from .account_templates import ACTIVITY_LABELS, apply_activity_template, build_a
 from .account_imports import inspect_account_workbook, import_account_rows
 
 
+def _branch_aware_opening_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal_year_start, *, prefix="entry__"):
+    """Build opening-balance scope independently for branches with/without a fiscal-year snapshot."""
+    snapshot_ids = set(snapshot_branch_ids or ())
+    carry_forward_ids = set(branch_ids or ()) - snapshot_ids
+    result = Q(pk__in=[])
+    if snapshot_ids:
+        result |= Q(**{
+            f"{prefix}branch_id__in": snapshot_ids,
+            f"{prefix}entry_date__gte": fiscal_year_start,
+            f"{prefix}entry_date__lt": cutoff,
+        })
+        result |= Q(**{
+            f"{prefix}branch_id__in": snapshot_ids,
+            f"{prefix}entry_date": cutoff,
+            f"{prefix}source_type": JournalEntry.Source.OPENING,
+        })
+    if carry_forward_ids:
+        result |= Q(**{
+            f"{prefix}branch_id__in": carry_forward_ids,
+            f"{prefix}entry_date__lt": cutoff,
+        })
+        result |= Q(**{
+            f"{prefix}branch_id__in": carry_forward_ids,
+            f"{prefix}entry_date": cutoff,
+            f"{prefix}source_type": JournalEntry.Source.OPENING,
+        })
+    return result
+
+
+def _branch_aware_balance_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal_year_start, *, prefix="entry__"):
+    """Use the current fiscal-year opening snapshot only for branches that actually have one."""
+    snapshot_ids = set(snapshot_branch_ids or ())
+    carry_forward_ids = set(branch_ids or ()) - snapshot_ids
+    result = Q(pk__in=[])
+    if snapshot_ids:
+        result |= Q(**{
+            f"{prefix}branch_id__in": snapshot_ids,
+            f"{prefix}entry_date__gte": fiscal_year_start,
+            f"{prefix}entry_date__lte": cutoff,
+        })
+    if carry_forward_ids:
+        result |= Q(**{
+            f"{prefix}branch_id__in": carry_forward_ids,
+            f"{prefix}entry_date__lte": cutoff,
+        })
+    return result
+
+
 class AccountingViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
@@ -499,41 +547,35 @@ class JournalEntryViewSet(AccountingViewSet):
         if branch_raw:
             if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), int(company_id)):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            branch_ids = [int(branch_raw)]
             date_filter &= Q(journal_lines__entry__branch_id=int(branch_raw))
         elif not request.user.is_superuser or is_platform_owner(request.user):
-            date_filter &= Q(
-                journal_lines__entry__branch__in=accessible_branches(request.user, int(company_id))
-            )
+            branch_ids = list(accessible_branches(request.user, int(company_id)).values_list("pk", flat=True))
+            date_filter &= Q(journal_lines__entry__branch_id__in=branch_ids)
+        else:
+            branch_ids = list(JournalEntry.objects.filter(company_id=company_id).values_list("branch_id", flat=True).distinct())
         opening_filter = date_filter
         if date_from:
-            opening_filter &= (
-                Q(journal_lines__entry__entry_date__lt=date_from)
-                | Q(
-                    journal_lines__entry__entry_date=date_from,
-                    journal_lines__entry__source_type=JournalEntry.Source.OPENING,
-                )
-            )
-            date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
             opening_year = FiscalYear.objects.filter(
                 company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
             ).order_by("-start_date").first()
-            if branch_raw:
-                opening_scope = {"branch_id": int(branch_raw)}
-            elif not request.user.is_superuser or is_platform_owner(request.user):
-                opening_scope = {"branch__in": accessible_branches(request.user, int(company_id))}
-            else:
-                opening_scope = {}
-            has_opening_snapshot = bool(opening_year and JournalEntry.objects.filter(
-                company_id=company_id, fiscal_year=opening_year,
-                status=JournalEntry.Status.POSTED, source_type=JournalEntry.Source.OPENING,
-                entry_date__lte=date_from, **opening_scope,
-            ).exists())
-            if has_opening_snapshot:
-                opening_filter &= Q(journal_lines__entry__entry_date__gte=opening_year.start_date)
-                date_filter &= ~Q(
-                    journal_lines__entry__entry_date=date_from,
-                    journal_lines__entry__source_type=JournalEntry.Source.OPENING,
-                )
+            snapshot_branch_ids = set()
+            if opening_year:
+                snapshot_branch_ids = set(JournalEntry.objects.filter(
+                    company_id=company_id, fiscal_year=opening_year,
+                    status=JournalEntry.Status.POSTED, source_type=JournalEntry.Source.OPENING,
+                    entry_date__lte=date_from, branch_id__in=branch_ids,
+                ).values_list("branch_id", flat=True).distinct())
+            opening_filter &= _branch_aware_opening_filter(
+                branch_ids, snapshot_branch_ids, date_from,
+                opening_year.start_date if opening_year else date_from,
+                prefix="journal_lines__entry__",
+            )
+            date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
+            date_filter &= ~Q(
+                journal_lines__entry__entry_date=date_from,
+                journal_lines__entry__source_type=JournalEntry.Source.OPENING,
+            )
         if date_to:
             date_filter &= Q(journal_lines__entry__entry_date__lte=date_to)
         accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
