@@ -69,3 +69,21 @@ class CustomerApiTests(APITestCase):
             "company": self.other_company.pk, "code": "C-004", "name_ar": "شركة أخرى"
         }, format="json")
         self.assertEqual(response.status_code, 403)
+
+    def test_customer_can_be_updated_and_deactivated_without_deleting_history(self):
+        customer = Customer.objects.create(
+            company=self.company, code="C-EDIT", name_ar="عميل قبل التعديل"
+        )
+        updated = self.client.patch(
+            f"/api/sales/customers/{customer.pk}/",
+            {"name_ar": "عميل بعد التعديل", "is_active": False},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["name_ar"], "عميل بعد التعديل")
+        self.assertFalse(updated.data["is_active"])
+        customer.refresh_from_db()
+        self.assertFalse(customer.is_active)
+        deleted = self.client.delete(f"/api/sales/customers/{customer.pk}/")
+        self.assertEqual(deleted.status_code, 400, getattr(deleted, "data", None))
+        self.assertTrue(Customer.objects.filter(pk=customer.pk).exists())
