@@ -137,6 +137,13 @@ try {
     & $Python manage.py createsuperuser
     if ($LASTEXITCODE -ne 0) { throw "تعذر إنشاء مستخدم الإدارة." }
   }
+  $SuperuserNames = & $Python manage.py shell -c "from django.contrib.auth import get_user_model; print(','.join(get_user_model().objects.filter(is_superuser=True, is_active=True).values_list('username', flat=True)))"
+  if ($LASTEXITCODE -ne 0) { throw "تعذر مراجعة حسابات مشرفي النظام." }
+  $ActiveSuperusers = @($SuperuserNames | Select-Object -Last 1) -split ","
+  if ($ActiveSuperusers.Count -gt 2) {
+    Write-Warning ("عدد مشرفي النظام النشطين أكبر من الموصى به (2): " + ($ActiveSuperusers -join ", "))
+    Write-Warning "استخدم أدوار الشركة للاستخدام اليومي وراجع سجل قراءة المشرفين العام."
+  }
 } finally { Pop-Location }
 
 $Bind = "127.0.0.1:8000"
