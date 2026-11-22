@@ -221,14 +221,19 @@ class BranchViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
-        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
-        from rest_framework.exceptions import PermissionDenied
-        current_company_id = serializer.instance.company_id
-        target_company = serializer.validated_data.get("company", serializer.instance.company)
+        """حفظ التعديلات مع حماية هوية الفرع ومنع إيقاف آخر فرع نشط بالشركة."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        branch = serializer.instance
+        current_company_id = branch.company_id
+        target_company = serializer.validated_data.get("company", branch.company)
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل الفروع متاح لمدير الشركة فقط.")
         if target_company.pk != current_company_id:
             raise ValidationError({"company": "لا يمكن نقل فرع قائم إلى شركة أخرى."})
+        if branch.is_active and serializer.validated_data.get("is_active") is False:
+            active_count = Branch.objects.filter(company_id=current_company_id, is_active=True).count()
+            if active_count <= 1:
+                raise ValidationError({"is_active": "لا يمكن إيقاف آخر فرع نشط بالشركة؛ أضف فرعًا بديلًا أولًا."})
         serializer.save()
 
     def perform_destroy(self, instance):
