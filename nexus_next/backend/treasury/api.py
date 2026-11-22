@@ -18,6 +18,36 @@ from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
 
+def _signed_bank_transaction_amount(doc, bank_account):
+    """قيمة حركة البنك بعملة الحساب؛ الأجنبية اسمية وليست القيمة الوظيفية."""
+    foreign = bank_account.currency_code != bank_account.company.base_currency.code
+    value = doc.transaction_amount if foreign else doc.amount
+    if value is None:
+        raise ValidationError("الحركة الأجنبية لا تحتوي على مبلغ اسمي صالح للمطابقة.")
+    if doc.source_account_id == bank_account.pk:
+        return value if doc.kind == TreasuryTransaction.Kind.RECEIPT else -value
+    if doc.destination_account_id == bank_account.pk and doc.kind == TreasuryTransaction.Kind.TRANSFER:
+        return value
+    raise ValidationError("الحركة لا تخص الحساب البنكي محل التسوية.")
+
+
+def _bank_book_balance(bank_account, statement_date, branch_ids):
+    """الرصيد الدفتري بوحدة الحساب: اسمي للأجنبي ووظيفي للعملة الأساسية."""
+    if bank_account.currency_code != bank_account.company.base_currency.code:
+        docs = TreasuryTransaction.objects.filter(
+            company_id=bank_account.company_id, status=TreasuryTransaction.Status.POSTED,
+            transaction_date__lte=statement_date, branch_id__in=branch_ids,
+        ).filter(models.Q(source_account=bank_account) | models.Q(destination_account=bank_account))
+        return sum((_signed_bank_transaction_amount(doc, bank_account) for doc in docs), Decimal("0"))
+    book_lines = bank_account.account.journal_lines.filter(
+        entry__status__in=("posted", "reversed"),
+        entry__entry_date__lte=statement_date, entry__branch_id__in=branch_ids,
+    )
+    totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+    opening_base = Decimal("0") if bank_account.opening_journal_entry_id else bank_account.opening_balance
+    return opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+
+
 class TreasuryBaseViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
     def _write(self, company_id):
@@ -440,13 +470,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحركة المحاسبية.")
         if recon.bank_account.branch_id and doc.branch_id != recon.bank_account.branch_id:
             raise ValidationError("الحركة لا تخص فرع الحساب البنكي محل التسوية.")
-        bank_id = recon.bank_account_id
-        if doc.source_account_id == bank_id:
-            signed_amount = doc.amount if doc.kind == TreasuryTransaction.Kind.RECEIPT else -doc.amount
-        elif doc.destination_account_id == bank_id and doc.kind == TreasuryTransaction.Kind.TRANSFER:
-            signed_amount = doc.amount
-        else:
-            raise ValidationError("الحركة لا تخص الحساب البنكي محل التسوية.")
+        signed_amount = _signed_bank_transaction_amount(doc, recon.bank_account)
         if line.amount != signed_amount:
             raise ValidationError("قيمة السطر واتجاهه لا يطابقان حركة الدفاتر.")
         if BankStatementLine.objects.filter(matched_transaction=doc).exclude(reconciliation=recon).exists():
@@ -485,10 +509,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
         if recon.bank_account.branch_id:
             branch_ids = [recon.bank_account.branch_id]
-        book_lines = recon.bank_account.account.journal_lines.filter(entry__status__in=("posted", "reversed"), entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
-        totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        opening_base = Decimal("0") if recon.bank_account.opening_journal_entry_id else recon.bank_account.opening_balance
-        book_balance = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+        book_balance = _bank_book_balance(recon.bank_account, recon.statement_date, branch_ids)
         statement_balance = recon.opening_balance + sum((line.amount for line in lines), Decimal("0"))
         outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
             models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
@@ -496,7 +517,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         outstanding_rows = []
         outstanding_total = Decimal("0")
         for doc in outstanding:
-            signed = doc.amount if ((doc.source_account_id == recon.bank_account_id and doc.kind == TreasuryTransaction.Kind.RECEIPT) or (doc.destination_account_id == recon.bank_account_id)) else -doc.amount
+            signed = _signed_bank_transaction_amount(doc, recon.bank_account)
             outstanding_total += signed
             outstanding_rows.append({"id": doc.id, "date": doc.transaction_date, "document_number": doc.document_number, "description": doc.description, "amount": str(signed)})
         expected_book = recon.closing_balance + outstanding_total
@@ -534,16 +555,13 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
             if recon.bank_account.branch_id:
                 branch_ids = [recon.bank_account.branch_id]
-            bank_lines = recon.bank_account.account.journal_lines.filter(entry__status__in=("posted", "reversed"), entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
-            totals = bank_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-            opening_base = Decimal("0") if recon.bank_account.opening_journal_entry_id else recon.bank_account.opening_balance
-            book_balance = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+            book_balance = _bank_book_balance(recon.bank_account, recon.statement_date, branch_ids)
             outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
                 models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
             )
             outstanding_total = Decimal("0")
             for doc in outstanding:
-                outstanding_total += doc.amount if ((doc.source_account_id == recon.bank_account_id and doc.kind == TreasuryTransaction.Kind.RECEIPT) or doc.destination_account_id == recon.bank_account_id) else -doc.amount
+                outstanding_total += _signed_bank_transaction_amount(doc, recon.bank_account)
             unexplained = book_balance - (recon.closing_balance + outstanding_total)
             if unexplained != 0:
                 raise ValidationError({"difference": f"لا يمكن اعتماد التسوية؛ يوجد فرق غير مفسر في الدفاتر بقيمة {unexplained}."})
