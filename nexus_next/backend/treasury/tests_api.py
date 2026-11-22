@@ -116,6 +116,30 @@ class TreasuryWorkflowTests(APITestCase):
         foreign_bank.refresh_from_db()
         self.assertTrue(foreign_bank.is_active)
 
+    def test_treasury_account_currency_and_branch_are_immutable_after_posted_activity(self):
+        created = self._create(document_number="TR-HISTORY-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        currency_change = self.client.patch(
+            f"/api/treasury/accounts/{self.cash.pk}/",
+            {"currency_code": "USD"}, format="json",
+        )
+        self.assertEqual(currency_change.status_code, 400, currency_change.data)
+        branch = Branch.objects.create(company=self.company, code="HIST-BR", name_ar="فرع تاريخي")
+        branch_change = self.client.patch(
+            f"/api/treasury/accounts/{self.cash.pk}/",
+            {"branch": branch.pk}, format="json",
+        )
+        self.assertEqual(branch_change.status_code, 400, branch_change.data)
+
+        self.cash.refresh_from_db()
+        self.assertEqual(self.cash.currency_code, "EGP")
+        self.assertEqual(self.cash.branch_id, self.branch.pk)
+
     def test_transfer_posts_between_separate_cash_and_bank_ledgers(self):
         receipt = self._create(document_number="TR-SEED-001")
         self.assertEqual(receipt.status_code, 201, receipt.data)
