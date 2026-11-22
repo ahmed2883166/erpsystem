@@ -49,6 +49,16 @@ class BranchSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "company_code", "code", "name_ar", "address", "phone", "is_head_office", "is_active", "created_at")
         read_only_fields = ("created_at",)
 
+    def validate(self, attrs):
+        """منع تغيير هوية الفرع أو نقله بعد إنشائه مع السماح بتحديث بياناته التشغيلية."""
+        if self.instance:
+            if "company" in attrs and attrs["company"].pk != self.instance.company_id:
+                raise serializers.ValidationError({"company": "لا يمكن نقل فرع قائم إلى شركة أخرى."})
+            if "code" in attrs and attrs["code"] != self.instance.code:
+                raise serializers.ValidationError({"code": "كود الفرع ثابت بعد إنشائه حفاظًا على المراجع والسجلات."})
+        return attrs
+
+
 class FiscalYearSerializer(serializers.ModelSerializer):
     company_code = serializers.CharField(source="company.code", read_only=True)
 
