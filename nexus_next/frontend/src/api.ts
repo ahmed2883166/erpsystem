@@ -524,7 +524,7 @@ export const approvalsApi = {
   rejectFinancial: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
 };
 
-export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
+export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
