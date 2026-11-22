@@ -62,7 +62,7 @@ class TreasuryBaseViewSet(viewsets.ModelViewSet):
 
 class TreasuryAccountViewSet(TreasuryBaseViewSet):
     serializer_class = TreasuryAccountSerializer
-    queryset = TreasuryAccount.objects.select_related("company", "branch", "account").all()
+    queryset = TreasuryAccount.objects.select_related("company", "branch", "account", "fx_position").all()
     filterset_fields = ("company", "branch", "kind", "is_active")
     search_fields = ("code", "name_ar", "bank_name", "account_number")
 
