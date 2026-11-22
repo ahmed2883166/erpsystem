@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
-from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 
 
 class TreasuryAccountSerializer(serializers.ModelSerializer):
@@ -45,6 +45,8 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
                 or TreasuryTransaction.objects.filter(
                     models.Q(source_account=self.instance) | models.Q(destination_account=self.instance)
                 ).exists()
+                or TreasuryFxPosition.objects.filter(account=self.instance).exists()
+                or TreasuryFxRevaluation.objects.filter(account=self.instance).exists()
             )
             if has_history:
                 protected_fields = ("account", "kind", "code", "currency_code", "branch")
