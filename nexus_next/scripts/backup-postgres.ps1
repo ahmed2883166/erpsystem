@@ -70,7 +70,16 @@ try {
     & $PgRestorePath --list $DailyFile | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Backup archive verification failed." }
 
-    if ((Get-Date).Day -eq 1) { Copy-Item -LiteralPath $DailyFile -Destination (Join-Path $MonthlyRoot "nexus-$Tag.dump") }
+    Push-Location $Backend
+    try {
+        & $Python manage.py encrypt_backup_file --input $DailyFile --output $EncryptedFile --delete-source
+        if ($LASTEXITCODE -ne 0) { throw "Backup encryption or authenticated verification failed." }
+    } finally { Pop-Location }
+    if (-not (Test-Path -LiteralPath $EncryptedFile) -or (Get-Item -LiteralPath $EncryptedFile).Length -lt 1024) {
+        throw "Encrypted backup is missing or unexpectedly small."
+    }
+
+    if ((Get-Date).Day -eq 1) { Copy-Item -LiteralPath $EncryptedFile -Destination (Join-Path $MonthlyRoot "nexus-$Tag.dump.nexusenc") }
     $DailyKeep = 30
     $MonthlyKeep = 12
     Push-Location $Backend
