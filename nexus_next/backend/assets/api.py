@@ -117,7 +117,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
         if not as_of:
             raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
-        assets = assets.filter(acquisition_date__lte=as_of).annotate(
+        assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED).annotate(
             reported_accumulated=Sum("depreciations__amount", filter=Q(depreciations__period_date__lte=as_of))
         ).select_related("branch")
         rows = []
@@ -184,7 +184,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
     def movement_report(self, request):
         """إعداد تقرير حركة الأصول والإضافات والاستبعادات."""
-        assets = self._report_assets(request).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations")
+        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations")
         asset_id = request.query_params.get("asset")
         if asset_id:
             if not asset_id.isdigit():
@@ -287,7 +287,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         date_to = dateparse.parse_date(date_to_raw) if date_to_raw else as_of
         if not as_of or not date_from or not date_to or date_from > date_to:
             raise ValidationError("حدد تاريخ مطابقة وفترة إهلاك صحيحة.")
-        assets = assets.filter(acquisition_date__lte=as_of)
+        assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED)
         branch_ids = list(assets.values_list("branch_id", flat=True).distinct())
         company_id = int(request.query_params["company"])
         expected_cost = defaultdict(Decimal)
