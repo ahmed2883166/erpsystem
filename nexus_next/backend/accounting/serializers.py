@@ -1,3 +1,7 @@
+"""تحويل نماذج المحاسبة إلى صيغ API والتحقق من صحة مدخلات المستخدم.
+تتضمن بعض الحقول المقروءة فقط بيانات مساعدة لعرض الحسابات والقيود.
+"""
+
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import serializers
