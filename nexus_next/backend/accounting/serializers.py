@@ -92,7 +92,8 @@ class JournalLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = JournalLine
         fields = ("id", "account", "account_code", "account_name", "description",
-                  "debit", "credit", "cost_center")
+                  "debit", "credit", "transaction_currency", "transaction_amount",
+                  "exchange_rate", "exchange_rate_date", "cost_center")
         read_only_fields = ("id", "account_code", "account_name")
 
     def validate(self, attrs):
@@ -101,6 +102,20 @@ class JournalLineSerializer(serializers.ModelSerializer):
         credit = attrs.get("credit", getattr(self.instance, "credit", 0))
         if debit < 0 or credit < 0 or ((debit > 0) == (credit > 0)):
             raise serializers.ValidationError("يجب إدخال قيمة مدين أو دائن فقط في السطر.")
+        snapshot = (
+            attrs.get("transaction_currency", getattr(self.instance, "transaction_currency", None)),
+            attrs.get("transaction_amount", getattr(self.instance, "transaction_amount", None)),
+            attrs.get("exchange_rate", getattr(self.instance, "exchange_rate", None)),
+            attrs.get("exchange_rate_date", getattr(self.instance, "exchange_rate_date", None)),
+        )
+        if any(value is not None for value in snapshot) and any(value is None for value in snapshot):
+            raise serializers.ValidationError("بيانات العملة الأجنبية غير مكتملة؛ أدخل العملة والمبلغ والسعر وتاريخ السعر.")
+        if snapshot[1] is not None and snapshot[1] <= 0:
+            raise serializers.ValidationError({"transaction_amount": "مبلغ العملة يجب أن يكون أكبر من صفر."})
+        if snapshot[2] is not None and snapshot[2] <= 0:
+            raise serializers.ValidationError({"exchange_rate": "سعر الصرف يجب أن يكون أكبر من صفر."})
+        if snapshot[0] is not None and not snapshot[0].is_active:
+            raise serializers.ValidationError({"transaction_currency": "العملة المختارة موقوفة."})
         return attrs
 
 
