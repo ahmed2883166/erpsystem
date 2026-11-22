@@ -427,6 +427,11 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .company-profile-form { padding:16px; border:1px solid var(--border-color, #293548); border-radius:12px; }
 .company-status-field { display:flex; align-items:center; gap:9px; }
 .company-status-field input { width:18px; height:18px; }
+.branch-inline-edit { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)) auto auto; gap:8px; align-items:center; min-width:520px; }
+.branch-inline-edit input { min-width:0; width:100%; }
+.branch-inline-edit button, .table-actions button { white-space:nowrap; }
+.table-actions { display:flex; flex-wrap:wrap; gap:6px; }
+@media (max-width: 900px) { .branch-inline-edit { grid-template-columns:1fr 1fr; min-width:320px; } }
 /* قواعد تجاوب هذا الجزء مع عرض الشاشة، دون تغيير سلوك الوظائف. */
 @media (max-width: 680px) {
   .setup-company-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
