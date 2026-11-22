@@ -1,3 +1,5 @@
+"""نماذج الخزائن والحسابات البنكية والحركات المالية ومطابقة كشوف البنوك."""
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -6,6 +8,7 @@ from accounting.models import ChartOfAccount, JournalEntry
 
 
 class TreasuryAccount(models.Model):
+    """يمثل خزينة أو حسابًا بنكيًا مستقلًا داخل الشركة والفرع."""
     class Kind(models.TextChoices):
         CASH = "cash", "خزينة"
         BANK = "bank", "بنك"
@@ -53,6 +56,7 @@ class TreasuryAccount(models.Model):
 
 
 class TreasuryTransaction(models.Model):
+    """يمثل حركة قبض أو صرف مرتبطة بحساب الخزينة."""
     class Kind(models.TextChoices):
         RECEIPT = "receipt", "سند قبض"
         PAYMENT = "payment", "سند صرف"
@@ -147,6 +151,7 @@ class TreasuryTransaction(models.Model):
 
 
 class BankReconciliation(models.Model):
+    """يمثل جلسة مطابقة رصيد البنك مع الحركات الدفترية."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         RECONCILED = "reconciled", "تمت التسوية"
@@ -177,6 +182,7 @@ class BankReconciliation(models.Model):
         if self.bank_account_id and self.bank_account.kind != TreasuryAccount.Kind.BANK:
             raise ValidationError({"bank_account": "التسوية متاحة للحسابات البنكية فقط."})
 class BankStatementLine(models.Model):
+    """يمثل حركة واردة من كشف البنك أثناء المطابقة."""
     reconciliation = models.ForeignKey(BankReconciliation, on_delete=models.CASCADE, related_name="lines")
     line_number = models.PositiveIntegerField()
     transaction_date = models.DateField()
