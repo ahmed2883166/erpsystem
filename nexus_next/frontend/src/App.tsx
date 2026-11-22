@@ -725,7 +725,7 @@ const postDraft = async (entry: Journal) => {
             {companyId !== null && active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
 
           {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span></div>}
-          {active === "overview" && <Suspense fallback={panelFallback}><DashboardPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} onNavigate={(section) => setActive(section)} /></Suspense>}
+          {active === "overview" && <Suspense fallback={panelFallback}><DashboardPanel key={companyId ?? "none"} companyId={companyId} currency={selectedCompany?.base_currency_code || ""} branches={branches} onNavigate={(section) => setActive(section)} /></Suspense>}
           {active === "overview" && <>
             <div className="section-heading"><div><h2>ملخص البيانات</h2><p>الأرقام التالية مبنية على السجلات المحملة من قاعدة البيانات</p></div><span className="module-count">{loading ? "جارٍ التحديث…" : "تحديث مباشر"}</span></div>
             <div className="metrics-grid">
