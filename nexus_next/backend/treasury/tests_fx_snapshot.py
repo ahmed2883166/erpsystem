@@ -199,6 +199,7 @@ class TreasuryFxSnapshotTests(TestCase):
             foreign_amount=Decimal("50"),
         )
         post_treasury_transaction(payment.pk)
+        payment.refresh_from_db()
         position = TreasuryFxPosition.objects.get(account=self.bank)
         self.assertEqual(position.foreign_amount, Decimal("50.0000"))
         self.assertEqual(position.carrying_base_amount, Decimal("1500.0000"))
