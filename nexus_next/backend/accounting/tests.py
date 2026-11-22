@@ -1104,7 +1104,7 @@ class AccountRoleRuntimeValidationTests(TestCase):
         )
 
     def test_expense_analysis_groups_posted_expenses_by_account_branch_and_month(self):
-        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        currency = Currency.objects.get(code="EGP")
         company = Company.objects.create(code="EXP-AN", name_ar="شركة تحليل المصروفات",
             country="EG", activity="commercial", base_currency=currency)
         branch = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
