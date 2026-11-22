@@ -25,7 +25,7 @@ class CompanySetupApiTests(APITestCase):
         self.client.force_authenticate(admin)
         response = self.client.delete(f"/api/setup/companies/{self.company.pk}/")
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("بيانات مرتبطة", response.data["detail"])
+        self.assertIn("الحذف النهائي للشركات غير متاح", response.data["detail"])
         self.assertTrue(Company.objects.filter(pk=self.company.pk).exists())
         self.assertTrue(Branch.objects.filter(pk=branch.pk).exists())
 
@@ -47,7 +47,7 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual(response.status_code, 403)
 
     def test_first_company_can_be_created_by_system_admin_and_grants_company_admin(self):
-        system_admin = get_user_model().objects.create_superuser(
+        system_admin = get_user_model().objects.create_user(
             username="first-company-admin", email="admin@example.test", password="test-password"
         )
         PlatformOwner.objects.create(user=system_admin)
@@ -538,7 +538,7 @@ class CompanySetupApiTests(APITestCase):
         self.assertFalse(Company.objects.filter(code="STAFF-DENIED").exists())
 
     def test_platform_owner_can_list_company_registry_without_tenant_membership(self):
-        owner = get_user_model().objects.create_superuser(
+        owner = get_user_model().objects.create_user(
             username="platform-owner-registry", email="owner@example.test", password="test-password"
         )
         PlatformOwner.objects.create(user=owner)
