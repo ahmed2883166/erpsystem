@@ -403,8 +403,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         closing_entry = entries.filter(
             source_type=JournalEntry.Source.CLOSING,
             status=JournalEntry.Status.POSTED,
-            entry_date__gte=fiscal_year.start_date,
-            entry_date__lte=fiscal_year.end_date,
+            entry_date=fiscal_year.end_date,
         ).exists()
         next_year = FiscalYear.objects.filter(
             company_id=fiscal_year.company_id,
