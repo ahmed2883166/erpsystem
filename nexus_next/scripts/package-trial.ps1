@@ -26,11 +26,15 @@ try {
             $Segments -contains "node_modules" -or
             $Segments -contains "__pycache__" -or
             $Segments -contains ".pytest_cache" -or
+            $Segments -contains ".secrets" -or
+            $Segments -contains ".cache" -or
             $Segments -contains "dist" -or
             $Segments -contains "release" -or
             $Relative -eq "compose.yaml" -or
             $Segments -contains "data" -or
             $Segments -contains "backups" -or
+            $Segments -contains "media" -or
+            $Segments -contains "logs" -or
             $_.Name -eq ".env" -or
             ($_.Name -like ".env.*" -and $_.Name -ne ".env.example") -or
             $_.Extension -in @(".pyc", ".pyo", ".sqlite", ".sqlite3", ".db", ".dump") -or
