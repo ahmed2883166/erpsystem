@@ -1,8 +1,10 @@
+"""نموذج المستخدم المخصص وحقول العرض واللغة المفضلة في Admrail ERP v2."""
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 class User(AbstractUser):
-    """NEXUS user; authorization is managed through Django groups and permissions."""
+    """يمثل مستخدم النظام؛ وتُدار الصلاحيات عبر مجموعات Django وأذوناتها."""
     display_name = models.CharField(max_length=160, blank=True)
     preferred_language = models.CharField(max_length=8, default="ar")
 
