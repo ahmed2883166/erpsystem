@@ -280,6 +280,33 @@ class TreasuryWorkflowTests(APITestCase):
         )
         self.assertEqual(posted.status_code, 200, posted.data)
 
+        gain = ChartOfAccount.objects.create(
+            company=self.company, code="4902", name_ar="أرباح فروق عملة غير محققة",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.UNREALIZED_FX_GAIN, account=gain,
+        )
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 31), rate=Decimal("31"),
+        )
+        revalued = self.client.post(
+            f"/api/treasury/accounts/{foreign_bank.pk}/revalue/",
+            {"fiscal_year": self.year.pk, "revaluation_date": "2026-03-31", "rate_date": "2026-03-31"},
+            format="json",
+        )
+        self.assertEqual(revalued.status_code, 201, revalued.data)
+        self.assertEqual(revalued.data["difference"], "100.0000")
+        account_detail = self.client.get(f"/api/treasury/accounts/{foreign_bank.pk}/")
+        self.assertEqual(account_detail.status_code, 200, account_detail.data)
+        self.assertEqual(account_detail.data["fx_position_foreign_amount"], "100.0000")
+        self.assertEqual(account_detail.data["fx_position_carrying_base_amount"], "3100.0000")
+        history = self.client.get(f"/api/treasury/accounts/{foreign_bank.pk}/revaluations/")
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertEqual(len(history.data), 1)
+        self.assertEqual(history.data[0]["journal_number"], revalued.data["journal_number"])
+
         recon = self.client.post("/api/treasury/reconciliations/", {
             "company": self.company.pk, "bank_account": foreign_bank.pk,
             "statement_number": "USD-ST-001", "statement_date": "2026-03-31",
