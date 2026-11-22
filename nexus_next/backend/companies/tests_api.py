@@ -537,6 +537,18 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Company.objects.filter(code="STAFF-DENIED").exists())
 
+    def test_inactive_platform_owner_cannot_access_company_registry(self):
+        owner = get_user_model().objects.create_user(
+            username="inactive-platform-owner-registry", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        owner.is_active = False
+        owner.save(update_fields=["is_active"])
+        self.client.force_authenticate(owner)
+        response = self.client.get("/api/setup/companies/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data, [])
+
     def test_platform_owner_can_list_company_registry_without_tenant_membership(self):
         owner = get_user_model().objects.create_user(
             username="platform-owner-registry", email="owner@example.test", password="test-password"
