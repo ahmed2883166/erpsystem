@@ -26,7 +26,7 @@ export type AccountTemplateApplyResult = {
   role_assignments_created: string[]; role_conflicts: {role: string; existing_account_code: string; template_account_code: string}[];
   code_conflicts: {code: string; existing_name: string; template_name: string}[];
 };
-export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string };
+export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string; cost_center: number | null };
 export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; opening_debit: string; opening_credit: string; opening_balance: string; debit_total: string; credit_total: string; net_balance: string; closing_balance: string }[]; opening_debit_total: string; opening_credit_total: string; closing_debit_credit_difference: string };
 export type ThemePreference = "light" | "dark" | "system";
 export type SessionUser = { id: number; username: string; display_name: string; is_staff: boolean; is_superuser: boolean; is_platform_owner: boolean; theme_preference: ThemePreference };
