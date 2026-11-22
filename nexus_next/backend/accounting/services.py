@@ -197,6 +197,10 @@ def reverse_operational_journal(entry_id: int, user, entry_date, expected_source
             debit=line.credit,
             credit=line.debit,
             description=f"عكس: {line.description}"[:300],
+            transaction_currency=line.transaction_currency,
+            transaction_amount=line.transaction_amount,
+            exchange_rate=line.exchange_rate,
+            exchange_rate_date=line.exchange_rate_date,
         )
         for line in original_lines
     ])
