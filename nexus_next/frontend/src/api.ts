@@ -79,7 +79,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
   const response = await fetch(path, { credentials: "same-origin", ...options, headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-CSRFToken": csrfToken() } : {}), ...options.headers } });
   if (!response.ok) {
-    let message = `تعذر تنفيذ الطلب (HTTP ${response.status}).`;
+    let message = response.status === 401 ? "انتهت جلسة الدخول. سجّل الدخول مرة أخرى." : response.status === 403 ? "ليس لديك صلاحية لتنفيذ هذا الطلب." : `تعذر تنفيذ الطلب (HTTP ${response.status}).`;
     try {
       const body = await response.json() as Record<string, unknown>;
       if (typeof body.detail === "string") message = body.detail;
