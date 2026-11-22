@@ -212,6 +212,36 @@ class CompanySetupApiTests(APITestCase):
         }, format="json")
         self.assertEqual(year.status_code, 201, year.data)
 
+    def test_company_admin_can_update_branch_contact_details_and_deactivate(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        branch = Branch.objects.create(company=self.company, code="EDIT-BR", name_ar="الفرع قبل التعديل")
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/branches/{branch.pk}/",
+            {"name_ar": "الفرع بعد التعديل", "address": "عنوان جديد", "phone": "01000000000", "is_active": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        branch.refresh_from_db()
+        self.assertEqual(branch.name_ar, "الفرع بعد التعديل")
+        self.assertEqual(branch.phone, "01000000000")
+        self.assertFalse(branch.is_active)
+
+    def test_company_admin_cannot_change_existing_branch_code(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        branch = Branch.objects.create(company=self.company, code="FIXED-BR", name_ar="فرع ثابت")
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/branches/{branch.pk}/", {"code": "NEW-CODE"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        branch.refresh_from_db()
+        self.assertEqual(branch.code, "FIXED-BR")
+
     def test_foreign_company_branch_cannot_be_granted_through_membership(self):
         own = CompanyMembership.objects.create(user=self.user, company=self.company)
         foreign_branch = Branch.objects.create(
