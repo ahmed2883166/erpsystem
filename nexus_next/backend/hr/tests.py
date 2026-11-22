@@ -387,6 +387,18 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(salary_for_date(self.employee, date(2026, 11, 22)), Decimal("12000"))
 
 
+    def test_leave_request_api_records_authenticated_creator(self):
+        manager = User.objects.create_user(username="hr_leave_creator", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        created = self.client.post("/api/hr/leave-requests/", {
+            "employee": self.employee.pk, "kind": LeaveRequest.Kind.ANNUAL,
+            "start_date": "2026-10-1", "end_date": "2026-10-2", "days": "2",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        leave = LeaveRequest.objects.get(pk=created.data["id"])
+        self.assertEqual(leave.created_by_id, manager.pk)
+
     def test_leave_request_creator_cannot_approve_or_reject_own_request(self):
         from audit.models import AuditEvent
         manager = User.objects.create_user(username="hr_leave_self_manager", password="test-password")
