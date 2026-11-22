@@ -37,6 +37,48 @@ class TreasuryWorkflowTests(APITestCase):
         payload.update(extra)
         return self.client.post("/api/treasury/transactions/", payload, format="json")
 
+    def test_treasury_account_rejects_currency_missing_from_reference_data(self):
+        foreign_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1190", name_ar="حساب بعملة غير معرفة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        response = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": foreign_gl.pk,
+            "kind": "bank", "code": "BANK-UNKNOWN", "name_ar": "بنك بعملة غير معرفة",
+            "currency_code": "XYZ",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("currency_code", response.data)
+        self.assertFalse(TreasuryAccount.objects.filter(code="BANK-UNKNOWN").exists())
+
+    def test_treasury_account_accepts_only_active_foreign_currency_reference(self):
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي", is_active=True)
+        foreign_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1191", name_ar="حساب دولار",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        response = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": foreign_gl.pk,
+            "kind": "bank", "code": "BANK-USD-REF", "name_ar": "بنك دولار",
+            "currency_code": usd.code,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["currency_code"], "USD")
+
+        eur = Currency.objects.create(code="EUR", name_ar="يورو", is_active=False)
+        inactive_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1192", name_ar="حساب يورو",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        inactive_response = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": inactive_gl.pk,
+            "kind": "bank", "code": "BANK-EUR-INACTIVE", "name_ar": "بنك يورو موقوف",
+            "currency_code": eur.code,
+        }, format="json")
+        self.assertEqual(inactive_response.status_code, 400, inactive_response.data)
+        self.assertIn("currency_code", inactive_response.data)
+        self.assertFalse(TreasuryAccount.objects.filter(code="BANK-EUR-INACTIVE").exists())
+
     def test_opening_balance_creates_balanced_opening_journal_and_is_counted_once(self):
         retained = ChartOfAccount.objects.create(
             company=self.company, code="3000", name_ar="الأرباح المحتجزة",
