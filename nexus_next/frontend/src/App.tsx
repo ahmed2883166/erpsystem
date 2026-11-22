@@ -433,8 +433,6 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
   const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
   const [to, setTo] = useState(today);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
-  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [accountId, setAccountId] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -506,6 +504,7 @@ export default function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyId, setCompanyId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [trialBalanceFrom, setTrialBalanceFrom] = useState(new Date().getFullYear()+"-01-01");
