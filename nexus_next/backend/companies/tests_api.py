@@ -594,6 +594,48 @@ class CompanySetupApiTests(APITestCase):
         ).exists())
         self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
 
+    def test_platform_owner_can_update_company_profile_without_changing_financial_identity(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-company-profile", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {
+                "name_ar": "اسم شركة محدث",
+                "name_en": "Updated Legal Name",
+                "tax_registration_number": "EG-123456",
+                "address": "عنوان محدث",
+                "phone": "+201111111111",
+                "email": "finance@example.test",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.name_ar, "اسم شركة محدث")
+        self.assertEqual(self.company.tax_registration_number, "EG-123456")
+        self.assertEqual(self.company.base_currency_id, self.currency.pk)
+        self.assertEqual(self.company.country, "SA")
+        self.assertEqual(self.company.activity, "service")
+
+    def test_platform_owner_cannot_change_company_base_currency_after_creation(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-company-currency", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        other_currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {"base_currency": other_currency.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.base_currency_id, self.currency.pk)
+
     def test_platform_owner_can_create_regular_company_admin_account(self):
         owner = get_user_model().objects.create_user(
             username="platform-owner-create-admin", password="test-password"
