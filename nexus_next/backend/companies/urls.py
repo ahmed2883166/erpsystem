@@ -1,8 +1,8 @@
 from rest_framework.routers import DefaultRouter
-from .api import BranchViewSet, CompanyMembershipViewSet, CompanyViewSet, CurrencyViewSet, FiscalYearViewSet
+from .api import BranchViewSet, CompanyMembershipViewSet, CompanyViewSet, CurrencyViewSet, ExchangeRateViewSet, FiscalYearViewSet
 
 router = DefaultRouter()
-router.register("currencies", CurrencyViewSet)
+router.register("currencies", CurrencyViewSet)\nrouter.register("exchange-rates", ExchangeRateViewSet, basename="exchange-rate")
 router.register("companies", CompanyViewSet, basename="company")
 router.register("memberships", CompanyMembershipViewSet, basename="company-membership")
 router.register("branches", BranchViewSet, basename="branch")
