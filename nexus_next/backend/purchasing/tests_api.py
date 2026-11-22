@@ -799,3 +799,50 @@ class PurchasingWorkflowTests(APITestCase):
             f"/api/purchasing/orders/{order_id}/cancel/", {}, format="json"
         )
         self.assertEqual(repeated.status_code, 400, repeated.data)
+
+    def test_latest_supplier_payment_can_be_reversed_with_linked_journal(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-REV-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        from treasury.models import TreasuryAccount
+        bank = ChartOfAccount.objects.get(company=self.company, code="1100")
+        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-REV", name_ar="بنك العكس", currency_code="EGP")
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-REV-001", "payment_date": "2026-03-11",
+            "method": "bank", "payment_account": bank.pk, "amount": "100",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        payment_id = payment.data["id"]
+        posted_payment = self.client.post(f"/api/purchasing/payments/{payment_id}/post/", {}, format="json")
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+        original_entry_id = posted_payment.data["journal_entry"]
+
+        reversed_response = self.client.post(
+            f"/api/purchasing/payments/{payment_id}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        self.assertEqual(reversed_response.data["status"], "reversed")
+        reversal_id = reversed_response.data["reversal_journal_entry"]
+        original = JournalEntry.objects.get(pk=original_entry_id)
+        reversal = JournalEntry.objects.get(pk=reversal_id)
+        self.assertEqual(original.status, JournalEntry.Status.REVERSED)
+        self.assertEqual(reversal.reversal_of_id, original.pk)
+        self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
+        self.assertEqual(invoice_after["paid_total"], "0.0000")
+        self.assertEqual(invoice_after["balance_due"], "228.0000")
+        repeated = self.client.post(
+            f"/api/purchasing/payments/{payment_id}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(repeated.status_code, 400, repeated.data)
