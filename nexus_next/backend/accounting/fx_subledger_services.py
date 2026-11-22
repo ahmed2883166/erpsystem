@@ -1,6 +1,7 @@
 """Atomic foreign-currency revaluation for open customer and supplier invoices."""
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Sum
 from rest_framework.exceptions import ValidationError
@@ -167,7 +168,11 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
                         description="فرق إعادة تقييم العملة غير المحقق",
                         debit=0, credit=amount),
         ])
-        journal = post_journal(journal.pk)
+        try:
+            journal = post_journal(journal.pk)
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            raise ValidationError(detail) from exc
 
     record = FxSubledgerRevaluation.objects.create(
         company=invoice.company,
