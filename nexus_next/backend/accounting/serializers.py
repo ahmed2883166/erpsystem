@@ -43,6 +43,8 @@ class AccountRoleSerializer(serializers.ModelSerializer):
         "employee_insurance_payable": {"liability"}, "employer_insurance_payable": {"liability"},
         "payroll_payable": {"liability"}, "goods_received_not_invoiced": {"liability"},
         "inter_branch_clearing": {"liability"},
+        "realized_fx_gain": {"revenue"}, "unrealized_fx_gain": {"revenue"},
+        "realized_fx_loss": {"expense"}, "unrealized_fx_loss": {"expense"},
         "sales": {"revenue"}, "sales_returns": {"revenue"}, "inventory_adjustment_gain": {"revenue"},
         "cogs": {"expense"}, "operating_expense": {"expense"}, "payroll_expense": {"expense"},
         "employer_insurance_expense": {"expense"}, "inventory_adjustment_loss": {"expense"},
