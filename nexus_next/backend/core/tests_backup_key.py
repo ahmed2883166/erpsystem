@@ -87,3 +87,30 @@ class BackupKeyTests(SimpleTestCase):
             self.assertTrue(encrypted.is_file())
             decrypt_backup(encrypted, restored, phrase)
             self.assertEqual(restored.read_bytes(), payload)
+
+    def test_legacy_archive_migration_updates_existing_backup_history(self):
+        from django.core.management import call_command
+        from core.models import BackupRun
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "legacy.dump"
+            encrypted = Path(folder) / "legacy.dump.nexusenc"
+            source.write_bytes(b"legacy PostgreSQL dump" * 1000)
+            run = BackupRun.objects.create(
+                status=BackupRun.Status.SUCCESS,
+                backup_file=str(source),
+                size_bytes=source.stat().st_size,
+            )
+            phrase = base64.urlsafe_b64encode(bytes(range(32))).decode("ascii")
+            with patch(
+                "core.management.commands.encrypt_backup_file.machine_backup_passphrase",
+                return_value=phrase,
+            ):
+                call_command(
+                    "encrypt_backup_file", input=str(source), output=str(encrypted),
+                    delete_source=True, update_history=True, verbosity=0,
+                )
+            run.refresh_from_db()
+            self.assertFalse(source.exists())
+            self.assertEqual(run.backup_file, str(encrypted.resolve()))
+            self.assertEqual(run.size_bytes, encrypted.stat().st_size)
