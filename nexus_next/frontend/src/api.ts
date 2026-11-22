@@ -277,6 +277,8 @@ export const api = {
   companies: () => request<Company[]>("/api/setup/companies/"),
   // إنشاء شركة جديدة وإرسال إعداداتها الأساسية.
   createCompany: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Company>("/api/setup/companies/", { method: "POST", body: JSON.stringify(payload) }); },
+  // تحديث بيانات الشركة الحالية بصلاحية مدير الشركة دون إنشاء سجل شركة جديد.
+  updateCompany: async (id: number, payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Company>(`/api/setup/companies/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
   // جلب الفروع النشطة التابعة للشركة.
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
   // إنشاء فرع جديد للشركة.
