@@ -80,7 +80,7 @@ def windows_machine_fingerprint() -> str:
         raise LicenseError("بصمة التثبيت الحالية مدعومة على Windows فقط.")
     import winreg  # imported only on Windows
 
-    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\\Microsoft\\Cryptography")
+    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography")
     try:
         machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
     finally:
