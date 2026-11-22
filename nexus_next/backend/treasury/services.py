@@ -176,12 +176,14 @@ def post_treasury_transaction(transaction_id, user=None):
             raise ValidationError("الحساب المقابل غير صالح للترحيل.")
         debit_lines.append((doc.counter_account, doc.amount))
         credit_lines.append((source.account, carrying_amount))
-        if foreign and fx_difference:
-            from accounting.services import get_account_for_role
-            if fx_difference > 0:
-                credit_lines.append((get_account_for_role(doc.company, "realized_fx_gain"), fx_difference))
-            else:
-                debit_lines.append((get_account_for_role(doc.company, "realized_fx_loss"), -fx_difference))
+        if foreign:
+            if fx_difference:
+                from accounting.services import get_account_for_role
+                if fx_difference > 0:
+                    credit_lines.append((get_account_for_role(doc.company, "realized_fx_gain"), fx_difference))
+                else:
+                    debit_lines.append((get_account_for_role(doc.company, "realized_fx_loss"), -fx_difference))
+            # تحديث المركز الاسمي والدفترى واجب حتى عندما لا يوجد فرق عملة محقق.
             source_position.foreign_amount -= doc.transaction_amount
             source_position.carrying_base_amount -= carrying_amount
 
