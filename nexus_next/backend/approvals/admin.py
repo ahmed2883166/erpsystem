@@ -1,3 +1,5 @@
+"""تسجيل سياسات الاعتماد وطلبات اعتماد الفواتير والعمليات المالية في لوحة الإدارة."""
+
 from django.contrib import admin
 
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval, FinancialApprovalRequest
