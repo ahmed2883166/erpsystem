@@ -2,8 +2,8 @@
  * دورة المشتريات: أوامر الشراء والاستلام وفواتير الموردين والمدفوعات وكشوف الموردين.
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
-import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate } from "./api";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -39,6 +39,9 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
+  const [fxInvoice, setFxInvoice] = useState<PurchaseInvoice | null>(null);
+  const [fxHistory, setFxHistory] = useState<FxSubledgerRevaluation[]>([]);
+  const [fxForm, setFxForm] = useState({revaluation_date:new Date().toISOString().slice(0,10),rate_date:new Date().toISOString().slice(0,10),rate:""});
 
   // تحميل بيانات الموردين والأصناف والمخازن ومستندات الشراء للشركة.
 const refresh = async () => {
@@ -195,6 +198,9 @@ const postInvoice = async (id: number) => {
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل فاتورة المورد."); }
     finally { setBusy(false); }
   };
+
+  const beginFxRevaluation = async (invoice:PurchaseInvoice) => { setFxInvoice(invoice); setError(""); const today=new Date().toISOString().slice(0,10); const approved=findRate(String(invoice.transaction_currency),today); setFxForm({revaluation_date:today,rate_date:approved?.rate_date||today,rate:approved?.rate||""}); try { setFxHistory(await purchasingApi.fxRevaluations(invoice.id)); } catch(reason) { setFxHistory([]); setError(reason instanceof Error?reason.message:"تعذر تحميل سجل إعادة التقييم."); } };
+  const submitFxRevaluation = async (event:FormEvent) => { event.preventDefault(); if(!fxInvoice)return; setBusy(true);setError(""); try { await purchasingApi.revalueInvoice(fxInvoice.id,fxForm);setFxHistory(await purchasingApi.fxRevaluations(fxInvoice.id));await refresh();setFxInvoice(null); } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إعادة تقييم فاتورة المورد."); } finally { setBusy(false); } };
 
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
