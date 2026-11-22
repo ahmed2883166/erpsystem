@@ -299,7 +299,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأساسية مطلوب لكل بند."})
             code = line.get("tax_code")
             if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
-                         or (not code.input_tax_recoverable and code.rate > 0) or code.category == TaxCode.Category.REVERSE_CHARGE
+                         or code.category == TaxCode.Category.REVERSE_CHARGE
                          or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
                 raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو غير قابل للخصم للشركة أو تاريخ الفاتورة."})
         return attrs
