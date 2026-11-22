@@ -80,7 +80,7 @@ class BackupConfigurationView(APIView):
             )
             output = (result.stdout or "")[-6000:]
             error = (result.stderr or "")[-2000:]
-            match = re.search(r"Backup verified:\s*(.+)", output)
+            match = re.search(r"Encrypted backup verified:\s*(.+)", output)
             backup_file = match.group(1).strip() if match else ""
             file_path = Path(backup_file) if backup_file else None
             success = result.returncode == 0 and file_path is not None and file_path.is_file() and file_path.stat().st_size >= 1024
