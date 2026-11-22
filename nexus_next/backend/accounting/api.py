@@ -102,48 +102,6 @@ class AccountingViewSet(viewsets.ModelViewSet):
         if not has_company_role(self.request.user, company_id, roles):
             raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب لتنفيذ هذا الإجراء.")
 
-    @decorators.action(detail=False, methods=("post",), url_path="initialize-country-presets")
-    def initialize_country_presets(self, request):
-        """إضافة أكواد ضريبة قيمة مضافة ابتدائية مناسبة لبلد الشركة دون تعديل الأكواد الحالية."""
-        company_id = request.data.get("company")
-        if not str(company_id or "").isdigit():
-            raise ValidationError({"company": "حدد الشركة."})
-        if not can_access_company(request.user, int(company_id)):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
-        company = Company.objects.get(pk=int(company_id))
-        self._require_write_role(company.pk)
-        if company.country == Company.Country.EGYPT:
-            standard_rate, effective_from = Decimal("14"), parse_date("2017-07-01")
-            country_label = "مصر"
-        elif company.country == Company.Country.SAUDI_ARABIA:
-            standard_rate, effective_from = Decimal("15"), parse_date("2020-07-01")
-            country_label = "السعودية"
-        else:
-            raise ValidationError({"company": "الإعدادات الضريبية متاحة لمصر والسعودية فقط."})
-        presets = (
-            ("VAT-STD", "ضريبة قيمة مضافة قياسية", TaxCode.Category.STANDARD, standard_rate, True),
-            ("VAT-ZERO", "ضريبة قيمة مضافة بنسبة صفر", TaxCode.Category.ZERO_RATED, Decimal("0"), True),
-            ("VAT-EXEMPT", "توريدات معفاة من الضريبة", TaxCode.Category.EXEMPT, Decimal("0"), False),
-            ("VAT-OOS", "توريدات خارج نطاق الضريبة", TaxCode.Category.OUT_OF_SCOPE, Decimal("0"), False),
-        )
-        created_codes, existing_codes = [], []
-        for code, name, category, rate, recoverable in presets:
-            item, created = TaxCode.objects.get_or_create(
-                company=company, code=code, effective_from=effective_from,
-                defaults={
-                    "country": company.country, "name_ar": name, "category": category,
-                    "rate": rate, "input_tax_recoverable": recoverable, "is_active": True,
-                },
-            )
-            (created_codes if created else existing_codes).append(
-                {"id": item.pk, "code": item.code, "rate": str(item.rate), "is_active": item.is_active}
-            )
-        return response.Response({
-            "country": company.country, "country_label": country_label,
-            "created": created_codes, "existing": existing_codes,
-            "note": "هذه أكواد بداية قابلة للمراجعة وليست تصنيفًا قانونيًا تلقائيًا للأصناف أو الخدمات. راجع المعاملة الضريبية لكل نشاط وبند قبل الاستخدام.",
-        }, status=status.HTTP_200_OK)
-
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         self._validate_scope(serializer.validated_data)
@@ -369,6 +327,48 @@ class TaxCodeViewSet(AccountingViewSet):
                 Q(effective_to__isnull=True) | Q(effective_to__gte=tax_date)
             )
         return qs.filter(is_active=True) if self.request.query_params.get("active_only") == "true" else qs
+
+    @decorators.action(detail=False, methods=("post",), url_path="initialize-country-presets")
+    def initialize_country_presets(self, request):
+        """إضافة أكواد ضريبة قيمة مضافة ابتدائية مناسبة لبلد الشركة دون تعديل الأكواد الحالية."""
+        company_id = request.data.get("company")
+        if not str(company_id or "").isdigit():
+            raise ValidationError({"company": "حدد الشركة."})
+        if not can_access_company(request.user, int(company_id)):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+        company = Company.objects.get(pk=int(company_id))
+        self._require_write_role(company.pk)
+        if company.country == Company.Country.EGYPT:
+            standard_rate, effective_from = Decimal("14"), parse_date("2017-07-01")
+            country_label = "مصر"
+        elif company.country == Company.Country.SAUDI_ARABIA:
+            standard_rate, effective_from = Decimal("15"), parse_date("2020-07-01")
+            country_label = "السعودية"
+        else:
+            raise ValidationError({"company": "الإعدادات الضريبية متاحة لمصر والسعودية فقط."})
+        presets = (
+            ("VAT-STD", "ضريبة قيمة مضافة قياسية", TaxCode.Category.STANDARD, standard_rate, True),
+            ("VAT-ZERO", "ضريبة قيمة مضافة بنسبة صفر", TaxCode.Category.ZERO_RATED, Decimal("0"), True),
+            ("VAT-EXEMPT", "توريدات معفاة من الضريبة", TaxCode.Category.EXEMPT, Decimal("0"), False),
+            ("VAT-OOS", "توريدات خارج نطاق الضريبة", TaxCode.Category.OUT_OF_SCOPE, Decimal("0"), False),
+        )
+        created_codes, existing_codes = [], []
+        for code, name, category, rate, recoverable in presets:
+            item, created = TaxCode.objects.get_or_create(
+                company=company, code=code, effective_from=effective_from,
+                defaults={
+                    "country": company.country, "name_ar": name, "category": category,
+                    "rate": rate, "input_tax_recoverable": recoverable, "is_active": True,
+                },
+            )
+            (created_codes if created else existing_codes).append(
+                {"id": item.pk, "code": item.code, "rate": str(item.rate), "is_active": item.is_active}
+            )
+        return response.Response({
+            "country": company.country, "country_label": country_label,
+            "created": created_codes, "existing": existing_codes,
+            "note": "هذه أكواد بداية قابلة للمراجعة وليست تصنيفًا قانونيًا تلقائيًا للأصناف أو الخدمات. راجع المعاملة الضريبية لكل نشاط وبند قبل الاستخدام.",
+        }, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
