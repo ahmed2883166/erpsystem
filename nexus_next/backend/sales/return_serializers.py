@@ -45,6 +45,9 @@ class SalesReturnSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         invoice = attrs.get("invoice", self.instance.invoice if self.instance else None)
         company = attrs.get("company", self.instance.company if self.instance else None)
+        return_date = attrs.get("return_date", self.instance.return_date if self.instance else None)
+        if return_date and invoice and return_date < invoice.invoice_date:
+            raise serializers.ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
         if self.instance:
             if self.instance.status != SalesReturn.Status.DRAFT:
                 raise serializers.ValidationError("لا يمكن تعديل مردود مبيعات مرحّل.")
@@ -56,9 +59,6 @@ class SalesReturnSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "اختر فاتورة مبيعات مرحلة."})
         if invoice.company_id != company.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
-        return_date = attrs.get("return_date", self.instance.return_date if self.instance else None)
-        if return_date and return_date < invoice.invoice_date:
-            raise serializers.ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
         if not invoice.delivery.warehouse.is_active:
             raise serializers.ValidationError({"invoice": "مخزن الفاتورة الأصلية موقوف."})
         lines = attrs.get("lines", [])
