@@ -41,7 +41,7 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
     <div className="work-panel-head"><div><h2>تحليل المصروفات</h2><p>تحليل القيود المرحلة حسب الحساب والفرع ومركز التكلفة مع مقارنة شهرية</p></div>
       <div className="report-actions">
         <button type="button" className="subtle-button" disabled={!report} onClick={()=>report&&downloadCsv(`expense-analysis-${from}-${to}.csv`,exportRows)}>تصدير Excel (CSV)</button>
-        <button type="button" className="subtle-button" disabled={!report} onClick={()=>window.print()}>طباعة / PDF</button>
+        <button type="button" className="subtle-button" disabled={!report} onClick={(event)=>{const target=event.currentTarget.closest(".expense-analysis-panel");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة / PDF</button>
         <button type="button" className="primary-button" disabled={busy||!companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث التقرير"}</button>
       </div>
     </div>
