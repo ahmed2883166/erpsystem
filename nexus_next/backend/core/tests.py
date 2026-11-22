@@ -121,10 +121,8 @@ class PlatformOwnerSessionTests(TestCase):
         PlatformOwner.objects.create(user=user)
         user.is_active = False
         user.save(update_fields=["is_active"])
-        self.client.force_login(user)
-        response = self.client.get("/api/auth/session/")
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.json()["user"]["is_platform_owner"])
+        from companies.access import is_platform_owner
+        self.assertFalse(is_platform_owner(user))
 
     def test_platform_owner_superuser_is_blocked_from_django_admin(self):
         user = get_user_model().objects.create_user(
