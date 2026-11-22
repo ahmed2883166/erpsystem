@@ -298,6 +298,10 @@ export const api = {
   createMembership: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>("/api/setup/memberships/", {method:"POST",body:JSON.stringify(payload)}); },
   // تعديل دور العضوية ونطاق الفروع المسموح بها.
   updateMembership: async (id: number, payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>(`/api/setup/memberships/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
+  // جلب أسعار الصرف التاريخية للشركة.
+  exchangeRates: (companyId: number) => request<ExchangeRate[]>(`/api/setup/exchange-rates/?company=${companyId}`),
+  // إضافة سعر صرف بتاريخ سريان؛ لا يتم تعديل السجلات السابقة.
+  createExchangeRate: async (payload: { company: number; currency: number; rate_date: string; rate: string; source?: string; notes?: string }) => { await request<{ detail: string }>("/api/csrf/"); return request<ExchangeRate>("/api/setup/exchange-rates/", { method: "POST", body: JSON.stringify(payload) }); },
   // جلب السنوات المالية التابعة للشركة.
   fiscalYears: (id: number) => request<FiscalYear[]>("/api/setup/fiscal-years/?company=" + id),
   // إنشاء سنة مالية جديدة للشركة.
