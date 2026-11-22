@@ -94,6 +94,13 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
             name: attrs.get(name, getattr(self.instance, name, None))
             for name in fx_names
         }
+        source_account_for_currency = attrs.get("source_account", getattr(self.instance, "source_account", None))
+        if (
+            source_account_for_currency
+            and source_account_for_currency.currency_code != company.base_currency.code
+            and any(value is None for value in fx.values())
+        ):
+            raise serializers.ValidationError("حساب الخزينة بعملة أجنبية؛ يجب إدخال المبلغ الأجنبي وسعر الصرف المعتمد كاملًا.")
         if any(value is not None for value in fx.values()):
             if any(value is None for value in fx.values()):
                 raise serializers.ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
