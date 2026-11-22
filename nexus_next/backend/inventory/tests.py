@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 
 from .models import (
-    Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse,
+    Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse,
 )
 from .api import StockBalanceViewSet
 from .services import post_stock_movement
@@ -271,6 +271,88 @@ class StockPostingServiceTests(TestCase):
         if status != JournalEntry.Status.DRAFT:
             JournalEntry.objects.filter(pk=entry.pk).update(status=status)
         return entry
+
+    def test_fifo_integrity_keeps_location_and_expiry_dimensions_and_ignores_draft_layers(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.track_expiry = True
+        self.product.save(update_fields=("costing_method", "track_expiry"))
+        location_a = StorageLocation.objects.create(
+            warehouse=self.warehouse, code="A-01", name_ar="الموقع الأول",
+        )
+        location_b = StorageLocation.objects.create(
+            warehouse=self.warehouse, code="B-01", name_ar="الموقع الثاني",
+        )
+        expiry_a = date(2027, 1, 31)
+        expiry_b = date(2027, 2, 28)
+
+        StockBalance.objects.create(
+            product=self.product, warehouse=self.warehouse, location=location_a,
+            expiry_date=expiry_a, quantity=Decimal("5"), inventory_value=Decimal("50"),
+            average_cost=Decimal("10"),
+        )
+
+        posted_receipt = StockMovement.objects.create(
+            company=self.company, movement_number="FIFO-INTEGRITY-POSTED",
+            movement_type=StockMovement.MovementType.RECEIPT,
+            movement_date=date(2026, 2, 1), destination_warehouse=self.warehouse,
+            created_by=self.user, status=StockMovement.Status.POSTED,
+        )
+        posted_line = StockMovementLine.objects.create(
+            movement=posted_receipt, product=self.product,
+            destination_location=location_b, expiry_date=expiry_b,
+            quantity=Decimal("5"), unit_cost=Decimal("10"), cost_amount=Decimal("50"),
+        )
+        StockCostLayer.objects.create(
+            product=self.product, warehouse=self.warehouse, source_line=posted_line,
+            location=location_b, expiry_date=expiry_b,
+            quantity_remaining=Decimal("5"), unit_cost=Decimal("10"),
+        )
+
+        draft_receipt = StockMovement.objects.create(
+            company=self.company, movement_number="FIFO-INTEGRITY-DRAFT",
+            movement_type=StockMovement.MovementType.RECEIPT,
+            movement_date=date(2026, 2, 2), destination_warehouse=self.warehouse,
+            created_by=self.user, status=StockMovement.Status.DRAFT,
+        )
+        draft_line = StockMovementLine.objects.create(
+            movement=draft_receipt, product=self.product,
+            destination_location=location_a, expiry_date=expiry_a,
+            quantity=Decimal("5"), unit_cost=Decimal("10"), cost_amount=Decimal("50"),
+        )
+        # A stray layer linked to a draft movement must never enter the integrity totals.
+        StockCostLayer.objects.create(
+            product=self.product, warehouse=self.warehouse, source_line=draft_line,
+            location=location_a, expiry_date=expiry_a,
+            quantity_remaining=Decimal("5"), unit_cost=Decimal("10"),
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company,
+            role=CompanyMembership.Role.VIEWER, all_branches=True,
+        )
+
+        request = APIRequestFactory().get(
+            "/api/inventory/balances/valuation-integrity/",
+            {"company": self.company.pk},
+        )
+        force_authenticate(request, user=self.user)
+        response = StockBalanceViewSet.as_view({"get": "valuation_integrity"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["fifo_mismatch_count"], 2)
+        mismatch_keys = {
+            (row["location"], row["expiry_date"])
+            for row in response.data["fifo_mismatches"]
+        }
+        self.assertEqual(
+            mismatch_keys,
+            {(location_a.pk, expiry_a.isoformat()), (location_b.pk, expiry_b.isoformat())},
+        )
+        # Draft movements are reported as pending work, not counted as posted FIFO layers.
+        self.assertEqual(response.data["pending_movements_count"], 1)
+        self.assertEqual(
+            response.data["pending_movements"][0]["movement_number"],
+            "FIFO-INTEGRITY-DRAFT",
+        )
 
     def test_reconciliation_matches_stock_to_posted_gl_for_authorized_branch_only(self):
         second_branch = Branch.objects.create(
