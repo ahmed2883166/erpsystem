@@ -504,6 +504,11 @@ export const approvalsApi = {
 };
 
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
+export type CustomerStatement = {
+  company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
+  branch_filter:number|null; opening_balance:string; closing_balance:string;
+  rows:{date:string;document_type:"invoice"|"receipt";document_number:string;description:string;debit:string;credit:string;balance:string}[];
+};
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
   totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
@@ -512,6 +517,8 @@ export type CustomerAging = {
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const salesApi = {
+  // جلب كشف حساب العميل مع رصيد أول وآخر المدة والحركات المرحلة.
+  customerStatement: (companyId:number, customerId:number, dateFrom="", dateTo="") => request<CustomerStatement>(`/api/sales-documents/invoices/customer-statement/?company=${companyId}&customer=${customerId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
   // جلب مستندات تسليم المبيعات للشركة.
   deliveries: (companyId: number) => request<SalesDelivery[]>(`/api/sales-documents/deliveries/?company=${companyId}&ordering=-delivery_date`),
   // جلب فواتير الموردين للشركة.

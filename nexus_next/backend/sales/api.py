@@ -180,6 +180,96 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
 
 
+    @action(detail=False, methods=("get",), url_path="customer-statement")
+    def customer_statement(self, request):
+        """إعداد كشف حركة العميل ورصيده للفترة المحددة من الفواتير والتحصيلات المرحلة."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+            customer_id = int(request.query_params.get("customer", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"detail": "حدد الشركة والعميل لعرض كشف الحساب."})
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        date_from_raw = request.query_params.get("date_from")
+        date_to_raw = request.query_params.get("date_to")
+        date_from = parse_date(date_from_raw) if date_from_raw else None
+        date_to = parse_date(date_to_raw) if date_to_raw else None
+        if date_from_raw and not date_from:
+            raise ValidationError({"date_from": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if date_to_raw and not date_to:
+            raise ValidationError({"date_to": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية يجب ألا يسبق تاريخ البداية."})
+
+        from customers.models import Customer
+        customer = Customer.objects.filter(pk=customer_id, company_id=company_id).first()
+        if customer is None:
+            raise ValidationError({"customer": "العميل غير موجود في الشركة المحددة."})
+
+        branch_id_raw = request.query_params.get("branch")
+        branch_id = None
+        if branch_id_raw:
+            try:
+                branch_id = int(branch_id_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."})
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+
+        invoices = self.get_queryset().filter(
+            company_id=company_id, customer_id=customer_id,
+            status=SalesInvoice.Status.POSTED,
+        ).select_related("customer", "delivery__warehouse")
+        if branch_id:
+            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+
+        events = []
+        for invoice in invoices:
+            events.append({
+                "date": invoice.invoice_date, "kind": "invoice",
+                "number": invoice.invoice_number,
+                "description": f"فاتورة مبيعات {invoice.invoice_number}",
+                "debit": invoice.grand_total, "credit": Decimal("0"), "sort": 0,
+            })
+        receipts = CustomerReceipt.objects.filter(
+            invoice__in=invoices, status=CustomerReceipt.Status.POSTED,
+        ).select_related("invoice")
+        for receipt in receipts:
+            events.append({
+                "date": receipt.receipt_date, "kind": "receipt",
+                "number": receipt.receipt_number,
+                "description": f"سند قبض عن فاتورة {receipt.invoice.invoice_number}",
+                "debit": Decimal("0"), "credit": receipt.amount, "sort": 1,
+            })
+        events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
+
+        opening = sum(
+            (row["debit"] - row["credit"] for row in events if date_from and row["date"] < date_from),
+            Decimal("0"),
+        )
+        balance = opening
+        rows = []
+        for row in events:
+            if date_from and row["date"] < date_from:
+                continue
+            if date_to and row["date"] > date_to:
+                continue
+            balance += row["debit"] - row["credit"]
+            rows.append({
+                "date": row["date"].isoformat(), "document_type": row["kind"],
+                "document_number": row["number"], "description": row["description"],
+                "debit": str(row["debit"]), "credit": str(row["credit"]),
+                "balance": str(balance),
+            })
+        return Response({
+            "company": company_id, "customer": customer_id, "customer_name": customer.name_ar,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch_filter": branch_id,
+            "opening_balance": str(opening), "closing_balance": str(balance), "rows": rows,
+        })
+
     @action(detail=False, methods=("get",), url_path="customer-aging")
     def customer_aging(self, request):
         """تجميع أرصدة العملاء حسب شرائح أعمار الديون."""

@@ -829,3 +829,48 @@ class SalesWorkflowTests(APITestCase):
                 )
         self.assertFalse(DiscountApprovalPolicy.objects.filter(company=self.company).exists())
 
+
+    def test_customer_statement_reports_posted_invoice_and_opening_balance(self):
+        delivery_id, line_id = self._create_delivery("DEL-CUSTOMER-STATEMENT")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-CUSTOMER-STATEMENT", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        full_period = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(full_period.status_code, 200, full_period.data)
+        self.assertEqual(full_period.data["customer_name"], self.customer.name_ar)
+        self.assertEqual(len(full_period.data["rows"]), 1)
+        self.assertEqual(full_period.data["rows"][0]["debit"], "228.0000")
+        self.assertEqual(full_period.data["closing_balance"], "228.0000")
+
+        next_period = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-11&date_to=2026-03-31"
+        )
+        self.assertEqual(next_period.status_code, 200, next_period.data)
+        self.assertEqual(next_period.data["opening_balance"], "228.0000")
+        self.assertEqual(next_period.data["closing_balance"], "228.0000")
+        self.assertEqual(next_period.data["rows"], [])
+
+    def test_customer_statement_rejects_inaccessible_company(self):
+        other_currency = Currency.objects.create(code="SAR", name_ar="ريال سعودي")
+        other_company = Company.objects.create(
+            code="OTHER-STATEMENT", name_ar="شركة أخرى", country="SA",
+            activity="commercial", base_currency=other_currency,
+        )
+        response = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={other_company.pk}"
+            f"&customer={self.customer.pk}"
+        )
+        self.assertEqual(response.status_code, 403)
+

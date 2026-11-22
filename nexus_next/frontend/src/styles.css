@@ -645,3 +645,17 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 [data-theme="dark"] .page-footer{border-color:#293b54}
 [data-theme="dark"] .admin-shortcut:hover,[data-theme="dark"] .subtle-button:hover{background:#263b58;color:#fff}
 @media(max-width:760px){.theme-preference span{display:none}.theme-select{max-width:82px;padding:6px}}
+
+/* كشف حساب العميل داخل شاشة العملاء */
+.customer-statement{margin-top:18px;padding:18px;border:1px solid var(--nx-border);border-radius:14px;background:var(--surface,#fff);display:grid;gap:14px}
+.customer-statement-head,.customer-statement-filters,.customer-statement-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.customer-statement-head h3{margin:0 0 5px;color:var(--text,#263449);font-size:15px}
+.customer-statement-head p{margin:0;color:var(--muted,#718096);font-size:12px}
+.customer-statement-filters label{display:grid;gap:5px;color:var(--muted,#718096);font-size:11px}
+.customer-statement-filters input{min-width:145px}
+.customer-statement-summary>div{display:grid;gap:5px;min-width:130px;padding:12px 14px;border:1px solid var(--nx-border);border-radius:10px;background:var(--surface-soft,#f7f9fc)}
+.customer-statement-summary span{font-size:11px;color:var(--muted,#718096)}
+.customer-statement-summary strong{font-size:16px;color:var(--text,#263449);font-variant-numeric:tabular-nums}
+[data-theme="dark"] .customer-statement{background:#172337;border-color:#34465f}
+[data-theme="dark"] .customer-statement-head h3,[data-theme="dark"] .customer-statement-summary strong{color:#e6edf7}
+[data-theme="dark"] .customer-statement-summary>div{background:#1d2d44;border-color:#34465f}

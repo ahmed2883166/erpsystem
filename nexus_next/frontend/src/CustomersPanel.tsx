@@ -3,7 +3,7 @@
  * تشمل بيانات التعريف والاتصال والحد الائتماني وشروط السداد.
  */
 import { useEffect, useMemo, useState } from "react";
-import { api, type Customer } from "./api";
+import { api, salesApi, type Customer, type CustomerStatement } from "./api";
 
 type Props = { companyId: number | null };
 
@@ -17,6 +17,11 @@ export default function CustomersPanel({ companyId }: Props) {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
+  const [statement, setStatement] = useState<CustomerStatement | null>(null);
+  const [statementBusy, setStatementBusy] = useState(false);
+  const [statementFrom, setStatementFrom] = useState(`${new Date().getFullYear()}-01-01`);
+  const [statementTo, setStatementTo] = useState(new Date().toISOString().slice(0, 10));
   const [form, setForm] = useState({
     code: "", customer_type: "company" as "company" | "individual",
     name_ar: "", tax_number: "", phone: "", mobile: "", email: "",
@@ -65,6 +70,41 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     } finally { setSaving(false); }
   };
 
+  // تحميل كشف حركة العميل ورصيد أول وآخر المدة.
+  const loadStatement = async (customer: Customer) => {
+    if (!companyId) return;
+    setStatementCustomer(customer);
+    setStatementBusy(true);
+    setError("");
+    try {
+      setStatement(await salesApi.customerStatement(companyId, customer.id, statementFrom, statementTo));
+    } catch (reason) {
+      setStatement(null);
+      setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف حساب العميل.");
+    } finally { setStatementBusy(false); }
+  };
+
+  // تصدير كشف الحساب الحالي بصيغة CSV متوافقة مع Excel.
+  const exportStatement = () => {
+    if (!statement) return;
+    const values = [
+      ["التاريخ", "نوع المستند", "رقم المستند", "البيان", "مدين", "دائن", "الرصيد"],
+      ...statement.rows.map(row => [row.date, row.document_type === "invoice" ? "فاتورة" : "سند قبض", row.document_number, row.description, row.debit, row.credit, row.balance]),
+    ];
+    const safe = (value: string) => {
+      const text = String(value ?? "");
+      const protectedText = /^[=+@-]/.test(text) || text.startsWith("\\t") || text.startsWith("\\r") ? "'" + text : text;
+      return '"' + protectedText.replace(/"/g, '""') + '"';
+    };
+    const csv = "\\uFEFF" + values.map(row => row.map(value => safe(String(value))).join(";")).join("\\r\\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `customer-statement-${statement.customer}-${statement.date_from || "all"}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <section className="work-panel customers-panel">
       <div className="work-panel-head">
@@ -97,15 +137,43 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         <button className="subtle-button" type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "تحديث…" : "تحديث القائمة"}</button>
       </div>}
       {companyId && <div className="data-table-wrap"><table>
-        <thead><tr><th>الكود</th><th>اسم العميل</th><th>النوع</th><th>الهاتف</th><th>الرقم الضريبي</th><th>حد الائتمان</th><th>السداد</th><th>الحالة</th></tr></thead>
+        <thead><tr><th>الكود</th><th>اسم العميل</th><th>النوع</th><th>الهاتف</th><th>الرقم الضريبي</th><th>حد الائتمان</th><th>السداد</th><th>الحالة</th><th>كشف الحساب</th></tr></thead>
         <tbody>{filtered.map((customer) => <tr key={customer.id}>
           <td className="code-cell">{customer.code}</td><td>{customer.name_ar}</td>
           <td>{customer.customer_type === "company" ? "شركة" : "فرد"}</td>
           <td>{customer.mobile || customer.phone || "—"}</td><td>{customer.tax_number || "—"}</td>
           <td>{money(customer.credit_limit)}</td><td>{customer.payment_terms_days} يوم</td>
           <td><span className={customer.is_active ? "customer-status-active" : "customer-status-inactive"}>{customer.is_active ? "نشط" : "موقوف"}</span></td>
+          <td><button className="text-action-button" type="button" onClick={() => void loadStatement(customer)}>كشف الحساب ←</button></td>
         </tr>)}</tbody>
       </table>{!loading && filtered.length === 0 && <div className="table-empty">لا توجد سجلات مطابقة. أضف أول عميل للشركة.</div>}</div>}
+      {statementCustomer && <section className="customer-statement">
+        <div className="customer-statement-head">
+          <div><h3>كشف حساب: {statementCustomer.name_ar}</h3><p>الحركات المرحلة فقط، مع رصيد متحرك حسب التاريخ</p></div>
+          <button className="subtle-button" type="button" onClick={() => { setStatementCustomer(null); setStatement(null); }}>إغلاق الكشف</button>
+        </div>
+        <div className="customer-statement-filters">
+          <label>من تاريخ<input type="date" value={statementFrom} onChange={event => setStatementFrom(event.target.value)} /></label>
+          <label>إلى تاريخ<input type="date" value={statementTo} onChange={event => setStatementTo(event.target.value)} /></label>
+          <button className="primary-button" type="button" disabled={statementBusy || !statementFrom || !statementTo || statementFrom > statementTo} onClick={() => void loadStatement(statementCustomer)}>{statementBusy ? "جارٍ التحميل…" : "عرض الكشف"}</button>
+          <button className="subtle-button" type="button" disabled={!statement} onClick={exportStatement}>تصدير Excel (CSV)</button>
+        </div>
+        {statementBusy && <div className="table-empty">جارٍ تحميل كشف الحساب…</div>}
+        {statement && <>
+          <div className="customer-statement-summary">
+            <div><span>رصيد أول المدة</span><strong>{money(statement.opening_balance)}</strong></div>
+            <div><span>رصيد آخر المدة</span><strong>{money(statement.closing_balance)}</strong></div>
+            <div><span>عدد الحركات</span><strong>{statement.rows.length.toLocaleString("ar-EG")}</strong></div>
+          </div>
+          <div className="data-table-wrap"><table>
+            <thead><tr><th>التاريخ</th><th>نوع المستند</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead>
+            <tbody>{statement.rows.map((row, index) => <tr key={`${row.document_type}-${row.document_number}-${index}`}>
+              <td>{row.date}</td><td>{row.document_type === "invoice" ? "فاتورة مبيعات" : "سند قبض"}</td><td>{row.document_number}</td>
+              <td>{row.description}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.balance)}</td>
+            </tr>)}</tbody>
+          </table>{statement.rows.length === 0 && <div className="table-empty">لا توجد حركات خلال الفترة المحددة.</div>}</div>
+        </>}
+      </section>}
     </section>
   );
 }
