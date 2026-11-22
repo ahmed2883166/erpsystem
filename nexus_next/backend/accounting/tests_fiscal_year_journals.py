@@ -52,7 +52,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
 
     def test_company_admin_can_create_closing_draft_only_on_year_end(self):
         response = self.client.post(
-            "/api/accounting/journals/",
+            "/api/accounting/journal-entries/",
             self.payload(JournalEntry.Source.CLOSING, "2026-12-31"),
             format="json",
         )
@@ -61,7 +61,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
 
     def test_opening_and_closing_journals_reject_wrong_dates(self):
         response = self.client.post(
-            "/api/accounting/journals/",
+            "/api/accounting/journal-entries/",
             self.payload(JournalEntry.Source.CLOSING, "2026-12-30"),
             format="json",
         )
@@ -77,7 +77,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
         )
         self.client.force_authenticate(accountant)
         response = self.client.post(
-            "/api/accounting/journals/",
+            "/api/accounting/journal-entries/",
             self.payload(JournalEntry.Source.OPENING, "2026-01-01"),
             format="json",
         )
@@ -88,7 +88,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.year.status = FiscalYear.Status.CLOSED
         self.year.save(update_fields=("status",))
         response = self.client.post(
-            "/api/accounting/journals/",
+            "/api/accounting/journal-entries/",
             self.payload(JournalEntry.Source.MANUAL, "2026-06-01"),
             format="json",
         )
@@ -97,7 +97,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
 
     def test_duplicate_closing_draft_is_rejected_for_same_branch_and_year(self):
         first = self.client.post(
-            "/api/accounting/journals/",
+            "/api/accounting/journal-entries/",
             self.payload(JournalEntry.Source.CLOSING, "2026-12-31"),
             format="json",
         )
@@ -105,7 +105,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
         second_payload = self.payload(JournalEntry.Source.CLOSING, "2026-12-31")
         second_payload["entry_number"] = "CLOSING-002"
         second = self.client.post(
-            "/api/accounting/journals/", second_payload, format="json"
+            "/api/accounting/journal-entries/", second_payload, format="json"
         )
         self.assertEqual(second.status_code, 400, second.data)
         self.assertEqual(
@@ -132,7 +132,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.year.status = FiscalYear.Status.CLOSED
         self.year.save(update_fields=("status",))
         response = self.client.post(
-            f"/api/accounting/journals/{entry.pk}/post/", {}, format="json"
+            f"/api/accounting/journal-entries/{entry.pk}/post/", {}, format="json"
         )
         self.assertEqual(response.status_code, 400, response.data)
         entry.refresh_from_db()
