@@ -622,3 +622,26 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .auth-card input{width:100%;min-height:44px;padding:10px 12px;border:1px solid #dce4ef;border-radius:10px;background:#fbfcfe;color:#172033;font:inherit;outline:none}
 .auth-card input:focus{border-color:#4b83d4;box-shadow:0 0 0 3px #3b82f61a}
 .auth-submit{width:100%;min-height:46px;margin-top:5px}
+
+
+/* المظهر الشخصي: ألوان داكنة على مستوى مساحة المستخدم دون تعديل هوية الشركة أو زملائه. */
+.theme-preference{display:inline-flex;align-items:center;gap:6px;color:#748196;font-size:10px;white-space:nowrap}
+.theme-select{border:1px solid #e5eaf1;border-radius:8px;background:#fff;color:#435168;padding:7px 9px;font:inherit;font-size:10px;min-height:34px}
+[data-theme="dark"]{--surface:#172337;--surface-soft:#1d2d44;--text:#e6edf7;--muted:#a0aec1;--input-bg:#111d30;--nx-border:#34465f;--nx-primary:#6da4f5;color:var(--text);background:#0d1727}
+[data-theme="dark"].app-shell,[data-theme="dark"] .main-area,[data-theme="dark"] .page-content{background:#0d1727;color:var(--text)}
+[data-theme="dark"] .topbar,[data-theme="dark"] .work-panel,[data-theme="dark"] .metric-card,[data-theme="dark"] .module-card,[data-theme="dark"] .activity-panel,[data-theme="dark"] .period-select,[data-theme="dark"] .icon-button,[data-theme="dark"] .subtle-button,[data-theme="dark"] .admin-shortcut,[data-theme="dark"] .table-toolbar,[data-theme="dark"] .data-table-wrap,[data-theme="dark"] .journal-modal,[data-theme="dark"] .customer-form,[data-theme="dark"] .customer-toolbar,[data-theme="dark"] .asset-report-filters label,[data-theme="dark"] .module-count{background:#172337;border-color:#34465f;color:#dce6f4}
+[data-theme="dark"] .topbar{border-bottom-color:#293b54}
+[data-theme="dark"] .breadcrumb,[data-theme="dark"] .welcome-row h1,[data-theme="dark"] .section-heading h2,[data-theme="dark"] .activity-title h2,[data-theme="dark"] .work-panel h2,[data-theme="dark"] .metric-value,[data-theme="dark"] .module-card,[data-theme="dark"] .customer-count strong{color:#e6edf7}
+[data-theme="dark"] .welcome-copy,[data-theme="dark"] .eyebrow,[data-theme="dark"] .section-heading p,[data-theme="dark"] .activity-title p,[data-theme="dark"] .metric-top,[data-theme="dark"] .metric-card>small,[data-theme="dark"] .module-card small,[data-theme="dark"] .work-panel-head p,[data-theme="dark"] .page-footer,[data-theme="dark"] .customer-count{color:#9eacc0}
+[data-theme="dark"] .data-table-wrap th,[data-theme="dark"] .journal-lines-table th{background:#22334b;color:#bdcbe0}
+[data-theme="dark"] .data-table-wrap td,[data-theme="dark"] .journal-lines-table td{border-color:#2b3d56;color:#d2deed}
+[data-theme="dark"] .data-table-wrap tbody tr:hover,[data-theme="dark"] .journal-lines-table tbody tr:hover{background:#203149}
+[data-theme="dark"] input:not([type="checkbox"]),[data-theme="dark"] select:not(.workspace select),[data-theme="dark"] textarea{background:#111d30!important;border-color:#3a4d68!important;color:#e6edf7!important}
+[data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#8293ab}
+[data-theme="dark"] .theme-select{background:#111d30;color:#e6edf7;border-color:#3a4d68}
+[data-theme="dark"] .balance-preview,[data-theme="dark"] .balance-preview.form-wide,[data-theme="dark"] .review-meta>div,[data-theme="dark"] .review-totals>div,[data-theme="dark"] .table-head{background:#1d2d44;border-color:#34465f;color:#dce6f4}
+[data-theme="dark"] .customer-form,[data-theme="dark"] .customer-toolbar{background:#1b2a40}
+[data-theme="dark"] .empty-state strong,[data-theme="dark"] .table-empty{color:#aab9cd}
+[data-theme="dark"] .page-footer{border-color:#293b54}
+[data-theme="dark"] .admin-shortcut:hover,[data-theme="dark"] .subtle-button:hover{background:#263b58;color:#fff}
+@media(max-width:760px){.theme-preference span{display:none}.theme-select{max-width:82px;padding:6px}}
