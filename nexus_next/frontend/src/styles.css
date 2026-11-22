@@ -824,3 +824,81 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
 [data-theme="dark"] .asset-report-filters{background:#172337;border-color:#34465f}
 [data-theme="dark"] .asset-cashflow-totals>span{background:#172337;border-color:#34465f;color:#d2deed}
 [data-theme="dark"] .asset-cashflow-totals>b{background:#19365a;border-color:#315783;color:#c7e0ff}
+
+
+/* مساحة عمل قيود اليومية: إدخال واضح، مراجعة سريعة، وتفاصيل أكثر انسيابية. */
+.journal-register-panel{overflow:hidden}
+.journal-register-panel .work-panel-head{align-items:center;gap:14px}
+.journal-register-panel .table-toolbar{display:flex;align-items:center;gap:12px;margin:12px 0 14px;padding:12px 14px;border:1px solid #e7edf5;border-radius:12px;background:#f7f9fc}
+.journal-register-panel .table-toolbar input{flex:1;min-width:180px;max-width:420px;min-height:40px;border:1px solid #dce5f0;border-radius:9px;padding:9px 12px;background:#fff}
+.journal-register-panel .data-table-wrap{border-radius:13px}
+.journal-register-panel .data-table-wrap th{white-space:nowrap}
+.journal-register-panel .data-table-wrap tbody tr{transition:background .15s ease}
+.journal-register-panel .data-table-wrap td{vertical-align:middle}
+.journal-entry-workspace{position:relative;isolation:isolate;width:min(1120px,100%);padding:0;overflow:auto}
+.journal-entry-workspace:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#1e5eb8,#65a7f2 55%,#9cc9fa);z-index:1}
+.journal-entry-workspace>.modal-heading{position:sticky;top:0;z-index:3;margin:0;padding:25px 28px 20px;background:rgba(255,255,255,.96);backdrop-filter:blur(12px);border-bottom:1px solid #e9eef5}
+.journal-entry-workspace>.modal-heading h2{font-size:20px;letter-spacing:-.3px}
+.journal-entry-workspace>.modal-heading p{margin-top:6px;line-height:1.7}
+.journal-entry-workspace>.error-banner{margin:16px 26px 0}
+.journal-entry-workspace>.journal-form,.journal-entry-workspace>.journal-review{padding:22px 28px 26px}
+.journal-entry-workspace .journal-form{gap:16px}
+.journal-entry-workspace .journal-form label{gap:8px;font-size:11px;color:#52647c}
+.journal-entry-workspace .journal-form input,.journal-entry-workspace .journal-form select{min-height:45px;border-radius:10px;background:#fbfcfe;border-color:#dfe7f1}
+.journal-entry-workspace .journal-lines-head{padding:8px 0 12px}
+.journal-entry-workspace .journal-lines-head strong{font-size:14px;color:#263c59}
+.journal-entry-workspace .journal-lines-head span{font-size:10px}
+.journal-entry-workspace .add-line-button{min-height:36px;border:1px solid #d5e4f7;border-radius:9px;padding:7px 12px;background:#eff6ff;color:#245c9f;font-size:11px;font-weight:700}
+.journal-entry-workspace .journal-lines-wrap{border-radius:12px;box-shadow:0 5px 18px rgba(26,55,91,.035)}
+.journal-entry-workspace .journal-lines-table th{padding:13px 12px;background:#f3f7fc}
+.journal-entry-workspace .journal-lines-table td{padding:9px 10px}
+.journal-entry-workspace .journal-lines-table select,.journal-entry-workspace .journal-lines-table input{min-height:41px;border-radius:9px;border-color:#dce5ef;background:#fff}
+.journal-entry-workspace .balance-preview{padding:14px;border:1px solid #e1e9f3;border-radius:13px;background:#f7f9fc}
+.journal-entry-workspace .balance-preview>div{padding:12px 14px;border:1px solid #e5ebf3;border-radius:10px;background:#fff}
+.journal-entry-workspace .balance-preview strong{font-size:19px;font-variant-numeric:tabular-nums}
+.journal-entry-workspace .form-actions{padding-top:14px;border-top:1px solid #edf1f6}
+.journal-entry-workspace .form-actions button{min-height:43px;min-width:125px;border-radius:10px}
+.journal-entry-workspace .review-meta>div{background:#f7f9fc}
+.journal-entry-workspace .review-totals>div{background:#f7f9fc}
+.journal-entry-workspace .review-totals strong{font-size:19px;font-variant-numeric:tabular-nums}
+[data-theme="dark"] .journal-register-panel .table-toolbar{background:#172337;border-color:#34465f}
+[data-theme="dark"] .journal-register-panel .table-toolbar input{background:#111d30;border-color:#3a4d68;color:#e6edf7}
+[data-theme="dark"] .journal-entry-workspace>.modal-heading{background:rgba(23,35,55,.96);border-color:#34465f}
+[data-theme="dark"] .journal-entry-workspace .journal-form label{color:#bdcbe0}
+[data-theme="dark"] .journal-entry-workspace .journal-form input,[data-theme="dark"] .journal-entry-workspace .journal-form select,
+[data-theme="dark"] .journal-entry-workspace .journal-lines-table select,[data-theme="dark"] .journal-entry-workspace .journal-lines-table input{background:#111d30;border-color:#3a4d68;color:#e6edf7}
+[data-theme="dark"] .journal-entry-workspace .journal-lines-head strong{color:#e6edf7}
+[data-theme="dark"] .journal-entry-workspace .journal-lines-wrap,[data-theme="dark"] .journal-entry-workspace .balance-preview,
+[data-theme="dark"] .journal-entry-workspace .balance-preview>div,[data-theme="dark"] .journal-entry-workspace .review-meta>div,
+[data-theme="dark"] .journal-entry-workspace .review-totals>div{background:#172337;border-color:#34465f}
+[data-theme="dark"] .journal-entry-workspace .form-actions{border-color:#34465f}
+@media(max-width:760px){
+ .journal-entry-workspace>.modal-heading{padding:20px 18px 16px}
+ .journal-entry-workspace>.journal-form,.journal-entry-workspace>.journal-review{padding:16px 18px 20px}
+ .journal-register-panel .table-toolbar{align-items:stretch;flex-direction:column}
+ .journal-register-panel .table-toolbar input{max-width:none;width:100%}
+}
+@media(max-width:600px){
+ .journal-entry-workspace{width:100%;max-height:96vh}
+ .journal-entry-workspace .journal-lines-wrap{overflow:visible;border:0;box-shadow:none;background:transparent}
+ .journal-entry-workspace .journal-lines-table{display:block;min-width:0;width:100%}
+ .journal-entry-workspace .journal-lines-table thead{display:none}
+ .journal-entry-workspace .journal-lines-table tbody{display:grid;gap:11px}
+ .journal-entry-workspace .journal-lines-table tbody tr{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:13px;border:1px solid #e2eaf3;border-radius:12px;background:#fff;box-shadow:0 4px 14px rgba(25,52,86,.04)}
+ .journal-entry-workspace .journal-lines-table tbody td{display:flex;flex-direction:column;gap:5px;width:auto;min-width:0;padding:0;border:0;text-align:right}
+ .journal-entry-workspace .journal-lines-table tbody td:first-child{display:none}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(2),.journal-entry-workspace .journal-lines-table tbody td:nth-child(3){grid-column:1/-1}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(2):before{content:"الحساب";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(3):before{content:"بيان السطر";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(4):before{content:"مدين";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(5):before{content:"دائن";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(6){position:absolute;top:9px;left:9px}
+ .journal-entry-workspace .journal-lines-table select,.journal-entry-workspace .journal-lines-table input{min-width:0;min-height:42px;width:100%}
+ .journal-entry-workspace .balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .journal-entry-workspace .balance-preview>div{padding:10px}
+ .journal-entry-workspace .balance-preview strong{font-size:16px}
+ .journal-entry-workspace .form-actions.form-wide{display:flex;flex-direction:column-reverse;align-items:stretch;gap:8px}
+ .journal-entry-workspace .form-actions.form-wide button{width:100%}
+ [data-theme="dark"] .journal-entry-workspace .journal-lines-table tbody tr{background:#172337;border-color:#34465f}
+ [data-theme="dark"] .journal-entry-workspace .journal-lines-table tbody td:before{color:#9fb0c7}
+}
