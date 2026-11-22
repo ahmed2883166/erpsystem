@@ -4,7 +4,7 @@
  */
 export type Currency = { id: number; code: string; name_ar: string; name_en: string; symbol: string; decimal_places: number; is_active: boolean };
 export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
-export type Branch = { id: number; company: number; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean };
+export type Branch = { id: number; company: number; company_code?: string; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean; created_at?: string };
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
 export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
@@ -279,10 +279,14 @@ export const api = {
   createCompany: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Company>("/api/setup/companies/", { method: "POST", body: JSON.stringify(payload) }); },
   // تحديث بيانات الشركة الحالية بصلاحية مدير الشركة دون إنشاء سجل شركة جديد.
   updateCompany: async (id: number, payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Company>(`/api/setup/companies/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
-  // جلب الفروع النشطة التابعة للشركة.
+  // جلب الفروع النشطة للاستخدام في شاشات التشغيل.
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
+  // جلب جميع الفروع بما فيها الموقوفة لإدارة بيانات الشركة.
+  allBranches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id),
   // إنشاء فرع جديد للشركة.
   createBranch: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Branch>("/api/setup/branches/", { method: "POST", body: JSON.stringify(payload) }); },
+  // تحديث بيانات فرع قائم دون تغيير كوده أو الشركة التابعة له.
+  updateBranch: async (id: number, payload: Partial<Pick<Branch, "name_ar" | "address" | "phone" | "is_active">>) => { await request<{ detail: string }>("/api/csrf/"); return request<Branch>(`/api/setup/branches/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
   // جلب عضويات المستخدمين في الشركة.
   memberships: (companyId: number) => request<CompanyMembership[]>(`/api/setup/memberships/?company=${companyId}`),
   // جلب عضوية المستخدم الحالي بالشركة وصلاحياته.
