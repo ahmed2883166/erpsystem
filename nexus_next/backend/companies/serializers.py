@@ -110,6 +110,16 @@ class FiscalYearSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "end_date": "تاريخ نهاية السنة المالية يجب أن يكون في أو بعد تاريخ البداية."
             })
+        if company and start_date and end_date:
+            overlapping_years = FiscalYear.objects.filter(
+                company=company, start_date__lte=end_date, end_date__gte=start_date
+            )
+            if self.instance:
+                overlapping_years = overlapping_years.exclude(pk=self.instance.pk)
+            if overlapping_years.exists():
+                raise serializers.ValidationError({
+                    "start_date": "فترة السنة المالية تتداخل مع سنة أخرى للشركة؛ يجب فصل الفترات دون تداخل."
+                })
         return attrs
 
 class CompanyMembershipSerializer(serializers.ModelSerializer):
