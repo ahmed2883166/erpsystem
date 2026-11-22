@@ -1,3 +1,7 @@
+/*
+ * شاشة دخول Admrail ERP v2: جمع بيانات المستخدم وإرسال طلب المصادقة مع CSRF.
+ * بعد نجاح تسجيل الدخول تُبلغ التطبيق الرئيسي لعرض وحدات الشركة المصرح بها.
+ */
 import { useState, type FormEvent } from "react";
 import { authApi } from "./api";
 
