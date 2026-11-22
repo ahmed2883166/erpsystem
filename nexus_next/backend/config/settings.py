@@ -101,6 +101,13 @@ SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
 SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)
 SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=False)
+SECURE_HSTS_PRELOAD = env.bool("SECURE_HSTS_PRELOAD", default=False)
+# لا نثق في X-Forwarded-Proto إلا عند تشغيل التطبيق خلف Proxy موثوق يزيل أي قيمة واردة من العميل ويضبطها بنفسه.
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if env.bool("DJANGO_HTTPS_TERMINATED_BY_PROXY", default=False) else None
+)
 # توحيد المصادقة والصلاحيات ومعالجة الأخطاء على مستوى واجهات API.
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
