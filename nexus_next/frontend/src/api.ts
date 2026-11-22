@@ -288,8 +288,8 @@ export type AuditEventResponse = { count: number; results: AuditEvent[] };
 // واجهات الإعدادات والمحاسبة والعملاء والموردون: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const api = {
   // جلب سجل التدقيق مع فلاتر الشركة والفترة ونوع الإجراء.
-  auditEvents: (companyId: number, dateFrom: string, dateTo: string, action?: string) => {
-    const q = new URLSearchParams({ company: String(companyId), date_from: dateFrom, date_to: dateTo, limit: "200" });
+  auditEvents: (companyId: number, dateFrom: string, dateTo: string, action = "", limit = 50, offset = 0) => {
+    const q = new URLSearchParams({ company: String(companyId), date_from: dateFrom, date_to: dateTo, limit: String(limit), offset: String(offset) });
     if (action) q.set("action", action);
     return request<AuditEventResponse>(`/api/audit/events/?${q.toString()}`);
   },
