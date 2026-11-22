@@ -67,6 +67,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build React assets for portable runtime
+        working-directory: nexus_next/frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
       - name: Parse Windows operational scripts
         shell: pwsh
         run: |
@@ -92,5 +104,15 @@ jobs:
         with:
           name: Admrail-ERP-v2-Trial-Windows
           path: ${{ runner.temp }}/nexus-trial/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build embedded Python Windows package
+        shell: pwsh
+        run: ./nexus_next/scripts/package-portable-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP/nexus-portable"
+      - name: Upload portable Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Admrail-ERP-v2-Portable-Windows
+          path: ${{ runner.temp }}/nexus-portable/*
           if-no-files-found: error
           retention-days: 14
