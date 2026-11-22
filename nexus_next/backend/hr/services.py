@@ -5,7 +5,6 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.utils import timezone
 from django.db.models import Q, Sum
 
 from accounting.models import JournalEntry, JournalLine
