@@ -776,3 +776,68 @@ class CompanySetupApiTests(APITestCase):
         self.company.refresh_from_db()
         self.assertFalse(self.company.is_active)
         self.assertTrue(Branch.objects.filter(pk=branch.pk, company=self.company).exists())
+
+
+class FiscalYearClosingApiTests(APITestCase):
+    def setUp(self):
+        from .models import FiscalYear
+        self.user = get_user_model().objects.create_user(
+            username="fiscal-close-admin", password="test-password"
+        )
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="FY-CLOSE", name_ar="شركة اختبار الإقفال", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="MAIN", name_ar="الفرع الرئيسي"
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026",
+            start_date="2026-01-01", end_date="2026-12-31",
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_closing_review_does_not_close_or_change_the_fiscal_year(self):
+        response = self.client.get(
+            f"/api/setup/fiscal-years/{self.year.pk}/closing_review/"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["can_close"])
+        self.year.refresh_from_db()
+        self.assertEqual(self.year.status, "open")
+
+    def test_close_is_blocked_until_a_posted_closing_entry_exists(self):
+        response = self.client.post(
+            f"/api/setup/fiscal-years/{self.year.pk}/close/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.year.refresh_from_db()
+        self.assertEqual(self.year.status, "open")
+
+    def test_direct_status_patch_cannot_close_or_reopen_a_fiscal_year(self):
+        response = self.client.patch(
+            f"/api/setup/fiscal-years/{self.year.pk}/",
+            {"status": "closed"}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.year.refresh_from_db()
+        self.assertEqual(self.year.status, "open")
+
+    def test_closing_review_reports_draft_entries_as_blocker(self):
+        from accounting.models import JournalEntry
+        JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="DRAFT-001", entry_date="2026-06-01",
+            description="مسودة تمنع الإقفال", source_type=JournalEntry.Source.MANUAL,
+        )
+        response = self.client.get(
+            f"/api/setup/fiscal-years/{self.year.pk}/closing_review/"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["draft_entries"], 1)
+        self.assertFalse(response.data["checks"]["no_drafts"])
+        self.assertFalse(response.data["can_close"])
