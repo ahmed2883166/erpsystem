@@ -10,7 +10,10 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = Join-Path $Root "runtime\python.exe"
 }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw "Backend Python runtime is missing." }
-if (-not (Test-Path -LiteralPath $RecoveryFile -PathType Leaf)) { throw "Recovery USB file does not exist." }
+$RecoveryDirectory = Split-Path -Parent $RecoveryFile
+if (-not $RecoveryDirectory) { $RecoveryDirectory = (Get-Location).Path }
+if (-not (Test-Path -LiteralPath $RecoveryDirectory -PathType Container)) { throw "Recovery USB folder is unavailable." }
+if (Test-Path -LiteralPath $RecoveryFile) { throw "Recovery file already exists; it will not be replaced." }
 $KeyFile = Join-Path $Backend ".secrets\backup-key.dpapi"
 if (Test-Path -LiteralPath $KeyFile) { throw "A local backup key already exists; it will not be replaced." }
 Push-Location $Backend
