@@ -3,7 +3,7 @@
  * تشمل التسوية البنكية ومطابقة كشف البنك مع الحركات المسجلة.
  */
 import { useCallback, useEffect, useState } from "react";
-import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary } from "./api";
+import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -17,12 +17,16 @@ export default function TreasuryPanel({companyId}: Props) {
   const [branches,setBranches]=useState<Branch[]>([]);
   const [years,setYears]=useState<FiscalYear[]>([]);
   const [gl,setGl]=useState<Account[]>([]);
+  const [currencies,setCurrencies]=useState<Currency[]>([]);
+  const [exchangeRates,setExchangeRates]=useState<ExchangeRate[]>([]);
+  const [baseCurrencyCode,setBaseCurrencyCode]=useState("EGP");
+  const [reval,setReval]=useState({account:"",fiscal_year:"",revaluation_date:today(),rate_date:today()});
   const [reconciliations,setReconciliations]=useState<BankReconciliation[]>([]);
   const [selectedRecon,setSelectedRecon]=useState("");
   const [summary,setSummary]=useState<BankReconciliationSummary|null>(null);
   const [loading,setLoading]=useState(true), [busy,setBusy]=useState(false), [error,setError]=useState("");
   const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});
-  const [doc,setDoc]=useState({branch:"",fiscal_year:"",source_account:"",destination_account:"",counter_account:"",kind:"receipt",document_number:"",transaction_date:today(),amount:"",description:"",reference:""});
+  const [doc,setDoc]=useState({branch:"",fiscal_year:"",source_account:"",destination_account:"",counter_account:"",kind:"receipt",document_number:"",transaction_date:today(),amount:"",transaction_amount:"",exchange_rate:"",exchange_rate_date:today(),description:"",reference:""});
   const [rec,setRec]=useState({bank_account:"",statement_number:"",statement_date:today(),opening_balance:"0",closing_balance:"0"});
   const [line,setLine]=useState({line_number:"1",transaction_date:today(),description:"",reference:"",amount:""});
   const [matchIds,setMatchIds]=useState<Record<number,string>>({});
@@ -30,8 +34,8 @@ export default function TreasuryPanel({companyId}: Props) {
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
-      const [a,t,b,y,g,rs]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId)]);
-      setAccounts(a);setTransactions(t);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);
+      const [a,t,b,y,g,rs,cs,xr,companies]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies()]);
+      setAccounts(a);setTransactions(t);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companies.find(v=>v.id===companyId)?.base_currency_code||"EGP");
       setDoc(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),source_account:old.source_account||String(a.find(v=>v.is_active)?.id||"")}));
       setRec(old=>({...old,bank_account:old.bank_account||String(a.find(v=>v.kind==="bank"&&v.is_active)?.id||"")}));
       setSelectedRecon(old=>old||String(rs[0]?.id||""));
@@ -47,11 +51,18 @@ const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setErr
   }catch(e){setError((e as Error).message||"تعذر حفظ الحساب.");}finally{setBusy(false);}};
   // تسجيل مستند حركة نقدية أو بنكية حسب نوع العملية المختار.
 const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
-    await treasuryApi.createTransaction({company:companyId,branch:Number(doc.branch),fiscal_year:Number(doc.fiscal_year),source_account:Number(doc.source_account),destination_account:doc.kind==="transfer"?Number(doc.destination_account):null,counter_account:doc.kind==="transfer"?null:Number(doc.counter_account),kind:doc.kind,document_number:doc.document_number,transaction_date:doc.transaction_date,amount:doc.amount,description:doc.description,reference:doc.reference});
-    setDoc(old=>({...old,document_number:"",amount:"",description:"",reference:""}));await load();
+    const source=accounts.find(a=>a.id===Number(doc.source_account));
+    const foreign=!!source&&source.currency_code!==baseCurrencyCode;
+    const currency=foreign?currencies.find(v=>v.code===source?.currency_code):undefined;
+    if(foreign&&(!currency||Number(doc.transaction_amount)<=0||Number(doc.exchange_rate)<=0||!doc.exchange_rate_date))throw new Error("أدخل المبلغ الأجنبي وسعر الصرف وتاريخه المعتمد.");
+    const baseAmount=foreign?(Number(doc.transaction_amount)*Number(doc.exchange_rate)).toFixed(4):doc.amount;
+    if(foreign&&!exchangeRates.some(v=>v.currency_code===source?.currency_code&&v.rate_date===doc.exchange_rate_date&&Number(v.rate)===Number(doc.exchange_rate)))throw new Error("سعر الصرف غير موجود ضمن الأسعار المعتمدة للشركة في التاريخ المحدد.");
+    await treasuryApi.createTransaction({company:companyId,branch:Number(doc.branch),fiscal_year:Number(doc.fiscal_year),source_account:Number(doc.source_account),destination_account:doc.kind==="transfer"?Number(doc.destination_account):null,counter_account:doc.kind==="transfer"?null:Number(doc.counter_account),kind:doc.kind,document_number:doc.document_number,transaction_date:doc.transaction_date,amount:baseAmount,...(foreign?{transaction_currency:currency!.id,transaction_amount:doc.transaction_amount,exchange_rate:doc.exchange_rate,exchange_rate_date:doc.exchange_rate_date}:{}),description:doc.description,reference:doc.reference});
+    setDoc(old=>({...old,document_number:"",amount:"",transaction_amount:"",exchange_rate:"",description:"",reference:""}));await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ المستند.");}finally{setBusy(false);}};
   // ترحيل حركة الخزينة المحددة ثم تحديث الأرصدة والحركات.
-const post=async(id:number)=>{setBusy(true);setError("");try{await treasuryApi.postTransaction(id);await load();}catch(e){setError((e as Error).message||"تعذر الترحيل.");}finally{setBusy(false);}};
+const submitRevaluation=async(e:React.FormEvent)=>{e.preventDefault();if(!reval.account)return;setBusy(true);setError("");try{const result=await treasuryApi.revalueAccount(Number(reval.account),{fiscal_year:Number(reval.fiscal_year),revaluation_date:reval.revaluation_date,rate_date:reval.rate_date});setError(result.difference==="0.0000"?"تم تسجيل إعادة التقييم دون فرق محاسبي.":`تمت إعادة التقييم؛ فرق العملة ${money(result.difference)} ${baseCurrencyCode}. ${result.journal_number?`القيد ${result.journal_number}`:""}`);await load();}catch(e){setError((e as Error).message||"تعذرت إعادة التقييم.");}finally{setBusy(false);}};
+  const post=async(id:number)=>{setBusy(true);setError("");try{await treasuryApi.postTransaction(id);await load();}catch(e){setError((e as Error).message||"تعذر الترحيل.");}finally{setBusy(false);}};
   // إنشاء جلسة تسوية بنكية مرتبطة بحساب البنك وتاريخ كشف الحساب.
 const createRecon=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
     const created=await bankReconciliationApi.create({company:companyId,bank_account:Number(rec.bank_account),statement_number:rec.statement_number,statement_date:rec.statement_date,opening_balance:rec.opening_balance,closing_balance:rec.closing_balance});
@@ -88,11 +99,12 @@ const eligible=(lineAmount:string)=>transactions.filter(t=>t.status==="posted"&&
         <label>الاسم<input required value={acc.name_ar} onChange={e=>setAcc({...acc,name_ar:e.target.value})}/></label>
         <label>الحساب بدليل الحسابات<select required value={acc.account} onChange={e=>setAcc({...acc,account:e.target.value})}><option value="">اختر الحساب</option>{gl.filter(a=>a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         <label>الفرع<select value={acc.branch} onChange={e=>setAcc({...acc,branch:e.target.value})}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
-        <label>العملة<input maxLength={3} value={acc.currency_code} onChange={e=>setAcc({...acc,currency_code:e.target.value.toUpperCase()})}/></label>
+        <label>العملة<select value={acc.currency_code} onChange={e=>setAcc({...acc,currency_code:e.target.value})}>{currencies.map(v=><option key={v.id} value={v.code}>{v.code} · {v.name_ar}</option>)}</select></label>
         <label>الرصيد الافتتاحي<input type="number" min="0" step="0.0001" value={acc.opening_balance} onChange={e=>setAcc({...acc,opening_balance:e.target.value})}/></label>
         {acc.kind==="bank"&&<><label>اسم البنك<input value={acc.bank_name} onChange={e=>setAcc({...acc,bank_name:e.target.value})}/></label><label>رقم الحساب<input value={acc.account_number} onChange={e=>setAcc({...acc,account_number:e.target.value})}/></label><label>IBAN<input value={acc.iban} onChange={e=>setAcc({...acc,iban:e.target.value})}/></label></>}
         <div className="treasury-form-actions"><button className="primary-button" disabled={busy}>حفظ الحساب</button></div>
       </form>
+      <form className="treasury-form" onSubmit={submitRevaluation}><h3 className="form-wide">إعادة تقييم أرصدة العملات الأجنبية</h3><label>حساب أجنبي<select required value={reval.account} onChange={e=>setReval({...reval,account:e.target.value})}><option value="">اختر الحساب</option>{active.filter(a=>a.currency_code!==baseCurrencyCode).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar} · {a.currency_code}</option>)}</select></label><label>السنة المالية<select required value={reval.fiscal_year} onChange={e=>setReval({...reval,fiscal_year:e.target.value})}><option value="">اختر السنة المفتوحة</option>{years.filter(y=>y.status==="open").map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label><label>تاريخ إعادة التقييم<input required type="date" value={reval.revaluation_date} onChange={e=>setReval({...reval,revaluation_date:e.target.value})}/></label><label>تاريخ سعر الصرف المعتمد<input required type="date" value={reval.rate_date} onChange={e=>setReval({...reval,rate_date:e.target.value})}/></label><div className="treasury-form-actions"><button className="primary-button" disabled={busy||!reval.account||!reval.fiscal_year}>تنفيذ إعادة التقييم</button></div><p className="form-wide">يُنشأ قيد فرق عملة غير محقق تلقائيًا، ولا يمكن تكرار التقييم للحساب في التاريخ نفسه. الحسابات ذات الأرصدة الافتتاحية الأجنبية القديمة تتطلب معالجة افتتاحية أولًا.</p></form>
       <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الاسم</th><th>النوع</th><th>الحساب المحاسبي</th><th>العملة</th><th>افتتاحي</th><th>الرصيد بالحركات</th></tr></thead><tbody>{accounts.map(a=><tr key={a.id}><td>{a.code}</td><td>{a.name_ar}{a.bank_name?" · "+a.bank_name:""}</td><td>{a.kind==="cash"?"خزينة":"بنك"}</td><td>{a.account_code} · {a.account_name}</td><td>{a.currency_code}</td><td>{money(a.opening_balance)}</td><td>{money(balance(a.id))}</td></tr>)}</tbody></table>{!loading&&!accounts.length&&<div className="table-empty">لا توجد حسابات بعد.</div>}</div>
     </>:tab==="transactions"?<>
       <form className="treasury-form" onSubmit={saveDoc}>
@@ -103,7 +115,7 @@ const eligible=(lineAmount:string)=>transactions.filter(t=>t.status==="posted"&&
         <label>السنة المالية<select required value={doc.fiscal_year} onChange={e=>setDoc({...doc,fiscal_year:e.target.value})}><option value="">السنة المفتوحة</option>{years.filter(y=>y.status==="open").map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label>
         <label>الخزينة / البنك<select required value={doc.source_account} onChange={e=>setDoc({...doc,source_account:e.target.value})}><option value="">اختر الحساب</option>{active.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         {doc.kind==="transfer"?<label>إلى حساب<select required value={doc.destination_account} onChange={e=>setDoc({...doc,destination_account:e.target.value})}><option value="">الحساب المستلم</option>{active.filter(a=>String(a.id)!==doc.source_account).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>:<label>الحساب المقابل<select required value={doc.counter_account} onChange={e=>setDoc({...doc,counter_account:e.target.value})}><option value="">اختر الحساب</option>{gl.filter(a=>a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>}
-        <label>المبلغ<input required type="number" min="0.0001" step="0.0001" value={doc.amount} onChange={e=>setDoc({...doc,amount:e.target.value})}/></label>
+        {accounts.find(a=>a.id===Number(doc.source_account))?.currency_code!==baseCurrencyCode&&doc.source_account?<><label>المبلغ بالعملة الأجنبية<input required type="number" min="0.0001" step="0.0001" value={doc.transaction_amount} onChange={e=>setDoc({...doc,transaction_amount:e.target.value})}/></label><label>سعر الصرف المعتمد<input required type="number" min="0.0000000001" step="0.0000000001" value={doc.exchange_rate} onChange={e=>setDoc({...doc,exchange_rate:e.target.value})}/></label><label>تاريخ سعر الصرف<input required type="date" value={doc.exchange_rate_date} onChange={e=>setDoc({...doc,exchange_rate_date:e.target.value})}/></label><label>القيمة بالعملة الأساسية<input readOnly value={(Number(doc.transaction_amount)>0&&Number(doc.exchange_rate)>0?(Number(doc.transaction_amount)*Number(doc.exchange_rate)).toFixed(4):"")}/></label></>:<label>المبلغ<input required type="number" min="0.0001" step="0.0001" value={doc.amount} onChange={e=>setDoc({...doc,amount:e.target.value})}/></label>}
         <label className="form-wide">البيان<input required value={doc.description} onChange={e=>setDoc({...doc,description:e.target.value})}/></label>
         <label>المرجع<input value={doc.reference} onChange={e=>setDoc({...doc,reference:e.target.value})}/></label>
         <div className="treasury-form-actions"><button className="primary-button" disabled={busy||!active.length||!years.some(y=>y.status==="open")}>حفظ كمسودة</button></div>
