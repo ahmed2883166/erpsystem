@@ -382,6 +382,27 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
         if supplier and invoice.supplier_id != supplier.pk:
             raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد الفاتورة."})
+        if invoice.transaction_currency_id:
+            from accounting.fx_arap import validate_snapshot
+            currency = attrs.get("transaction_currency")
+            amount = attrs.get("transaction_amount")
+            rate = attrs.get("exchange_rate")
+            rate_date = attrs.get("exchange_rate_date")
+            if currency != invoice.transaction_currency or amount is None or rate is None or rate_date is None:
+                raise serializers.ValidationError({"transaction_currency": "أدخل عملة ومبلغ السداد وسعر الصرف وتاريخه بما يطابق فاتورة المورد."})
+            approved = ExchangeRate.objects.filter(company=company, currency=currency, rate_date=rate_date).first()
+            if not approved:
+                raise serializers.ValidationError({"exchange_rate": "لا يوجد سعر صرف معتمد بتاريخ السداد."})
+            try:
+                base_amount = validate_snapshot(base_currency_code=company.base_currency.code,
+                    currency_code=currency.code, foreign_amount=amount, rate=rate,
+                    rate_date=rate_date, document_date=attrs.get("payment_date"), approved_rate=approved.rate)
+            except ValueError as exc:
+                raise serializers.ValidationError({"exchange_rate": str(exc)}) from exc
+            if base_amount != attrs.get("amount"):
+                raise serializers.ValidationError({"amount": "المبلغ الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
+        elif any(attrs.get(field) is not None for field in ("transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date")):
+            raise serializers.ValidationError({"transaction_currency": "لا تستخدم بيانات عملة أجنبية مع فاتورة بالعملة الأساسية."})
         account = attrs.get("payment_account")
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
