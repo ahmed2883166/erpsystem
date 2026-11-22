@@ -462,4 +462,21 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
             })
         fiscal_year.status = FiscalYear.Status.CLOSED
         fiscal_year.save(update_fields=("status",))
+        from audit.models import AuditEvent
+        AuditEvent.objects.create(
+            actor=request.user,
+            company_id=fiscal_year.company_id,
+            action=AuditEvent.Action.ACTION,
+            resource="companies.fiscal_year.closed",
+            object_id=str(fiscal_year.pk),
+            http_method="POST",
+            status_code=200,
+            succeeded=True,
+            metadata={
+                "name": fiscal_year.name,
+                "start_date": fiscal_year.start_date.isoformat(),
+                "end_date": fiscal_year.end_date.isoformat(),
+                "review": review,
+            },
+        )
         return Response({"detail": "تم إقفال السنة المالية بعد اجتياز المراجعة.", "review": self._closing_review(fiscal_year)})
