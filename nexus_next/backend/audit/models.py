@@ -1,3 +1,5 @@
+"""نماذج سجل التدقيق غير القابل للتعديل لتوثيق أحداث المستخدمين والعمليات."""
+
 import uuid
 
 from django.conf import settings
