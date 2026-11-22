@@ -154,6 +154,12 @@ class JournalEntrySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
         if year and company and year.company_id != company.id:
             raise serializers.ValidationError({"fiscal_year": "السنة المالية لا تتبع الشركة المحددة."})
+        source_type = attrs.get("source_type", self.instance.source_type if self.instance else JournalEntry.Source.MANUAL)
+        entry_date = attrs.get("entry_date", self.instance.entry_date if self.instance else None)
+        if year and entry_date and source_type == JournalEntry.Source.OPENING and entry_date != year.start_date:
+            raise serializers.ValidationError({"entry_date": "القيد الافتتاحي يجب أن يكون بتاريخ بداية السنة المالية."})
+        if year and entry_date and source_type == JournalEntry.Source.CLOSING and entry_date != year.end_date:
+            raise serializers.ValidationError({"entry_date": "قيد الإقفال يجب أن يكون بتاريخ نهاية السنة المالية."})
         if self.instance and self.instance.status != JournalEntry.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل قيد غير مسودة.")
         lines = attrs.get("lines")
