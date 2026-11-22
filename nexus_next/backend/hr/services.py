@@ -1,7 +1,7 @@
 """خدمات احتساب المرتبات ومكوناتها والحضور والسلف وتجهيز وترحيل وصرف المستحقات."""
 
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -19,6 +19,35 @@ from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallme
 
 
 CENT = Decimal("0.01")
+
+# Egypt salary-tax tables under Law 7/2024, effective for salaries from 2024-03-01.
+# The income ceiling selects the applicable column; lower brackets disappear as income rises.
+EGYPT_2026_TAX_BRACKET_GROUPS = [
+    {"income_max": "600000", "brackets": [
+        {"up_to": "40000", "rate": "0"}, {"up_to": "55000", "rate": "10"},
+        {"up_to": "70000", "rate": "15"}, {"up_to": "200000", "rate": "20"},
+        {"up_to": "400000", "rate": "22.5"}, {"up_to": None, "rate": "25"},
+    ]},
+    {"income_max": "700000", "brackets": [
+        {"up_to": "55000", "rate": "10"}, {"up_to": "70000", "rate": "15"},
+        {"up_to": "200000", "rate": "20"}, {"up_to": "400000", "rate": "22.5"},
+        {"up_to": None, "rate": "25"},
+    ]},
+    {"income_max": "800000", "brackets": [
+        {"up_to": "70000", "rate": "15"}, {"up_to": "200000", "rate": "20"},
+        {"up_to": "400000", "rate": "22.5"}, {"up_to": None, "rate": "25"},
+    ]},
+    {"income_max": "900000", "brackets": [
+        {"up_to": "200000", "rate": "20"}, {"up_to": "400000", "rate": "22.5"},
+        {"up_to": None, "rate": "25"},
+    ]},
+    {"income_max": "1200000", "brackets": [
+        {"up_to": "400000", "rate": "22.5"}, {"up_to": None, "rate": "25"},
+    ]},
+    {"income_max": None, "brackets": [
+        {"up_to": "1200000", "rate": "25"}, {"up_to": None, "rate": "27.5"},
+    ]},
+]
 
 
 def money(value):
@@ -77,10 +106,17 @@ def calculate_component(
     elif component.method == component.Method.PROGRESSIVE_TAX:
         tax = rule_configuration.get("tax") or {}
         exemption = _config_decimal(tax, "annual_personal_exemption")
-        brackets = tax.get("annual_brackets")
-        if exemption < 0 or not isinstance(brackets, list) or not brackets:
-            raise ValidationError("شرائح ضريبة المرتبات غير مكتملة.")
         annual_taxable = max(Decimal("0"), taxable_base * Decimal("12") - exemption)
+        annual_taxable = (annual_taxable / Decimal("10")).to_integral_value(rounding=ROUND_DOWN) * Decimal("10")
+        bracket_groups = tax.get("annual_bracket_groups")
+        if isinstance(bracket_groups, list) and bracket_groups:
+            selected_group = next((group for group in bracket_groups
+                if group.get("income_max") in (None, "") or annual_taxable <= Decimal(str(group["income_max"]))), None)
+            brackets = selected_group.get("brackets") if selected_group else None
+        else:
+            brackets = tax.get("annual_brackets")
+        if exemption < 0 or not isinstance(brackets, list) or not brackets:
+            raise ValidationError("شرائح ضريبة المرتبات غير مكتملة أو لا تغطي الوعاء السنوي.")
         lower = Decimal("0")
         annual_tax = Decimal("0")
         has_open_ended_bracket = False
@@ -189,7 +225,11 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         taxable_base = basic_amount
         insurance_base = basic_amount
         lines = [(None, "BASIC", "الراتب الأساسي", "earning", basic_amount, False, {"method": "monthly_prorated", "payable_days": str(payable_days), "daily_divisor": str(daily_divisor)})]
-        rule_configuration = cycle.rule_set.configuration if cycle.rule_set_id else {}
+        rule_configuration = cycle.rule_set.configuration.copy() if cycle.rule_set_id else {}
+        if cycle.company.country == "EG" and cycle.period_start.year == 2026:
+            rule_configuration["tax"] = (rule_configuration.get("tax") or {}).copy()
+            rule_configuration["tax"].setdefault("annual_personal_exemption", "20000")
+            rule_configuration["tax"].setdefault("annual_bracket_groups", EGYPT_2026_TAX_BRACKET_GROUPS)
 
         def safe_component_amount(*args):
             """تنفيذ مسؤولية الدالة safe_component_amount ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
