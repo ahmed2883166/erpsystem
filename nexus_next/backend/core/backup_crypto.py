@@ -4,6 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 MAGIC = b"NEXUSENC1"
 SALT_SIZE, NONCE_SIZE, TAG_SIZE = 16, 12, 16
@@ -64,3 +65,56 @@ def decrypt_backup(source: str | Path, destination: str | Path, passphrase: str)
     except Exception as exc:
         if temp: temp.unlink(missing_ok=True)
         raise BackupCryptoError("فشل فك التشفير: كلمة المرور غير صحيحة أو الملف تم التلاعب به.") from exc
+
+
+KEY_RECOVERY_MAGIC = b"NEXUSKEY1"
+
+
+def encrypt_recovery_key(key: bytes, destination: str | Path, passphrase: str) -> Path:
+    """Encrypt the random machine backup key for offline USB recovery."""
+    dst = Path(destination)
+    if len(key) != 32:
+        raise BackupCryptoError("مفتاح النسخ الاحتياطي يجب أن يكون 256 بت.")
+    if dst.exists():
+        raise BackupCryptoError("ملف استرداد المفتاح موجود بالفعل؛ لن يتم استبداله.")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    salt, nonce = os.urandom(SALT_SIZE), os.urandom(NONCE_SIZE)
+    aad = KEY_RECOVERY_MAGIC + salt
+    encrypted = AESGCM(_derive_key(passphrase, salt)).encrypt(nonce, key, aad)
+    payload = aad + nonce + encrypted
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=dst.parent, prefix=".nexus-key-recovery-", delete=False) as out:
+            temp = Path(out.name)
+            out.write(payload)
+            out.flush()
+            os.fsync(out.fileno())
+        if dst.exists():
+            raise BackupCryptoError("ملف استرداد المفتاح موجود بالفعل؛ لن يتم استبداله.")
+        os.replace(temp, dst)
+        return dst
+    except Exception:
+        if temp:
+            temp.unlink(missing_ok=True)
+        raise
+
+
+def decrypt_recovery_key(source: str | Path, passphrase: str) -> bytes:
+    """Recover the 256-bit backup key from its encrypted offline recovery file."""
+    src = Path(source)
+    if not src.is_file():
+        raise BackupCryptoError("ملف استرداد المفتاح غير موجود.")
+    payload = src.read_bytes()
+    header_size = len(KEY_RECOVERY_MAGIC) + SALT_SIZE + NONCE_SIZE
+    if len(payload) != header_size + 32 + TAG_SIZE or not payload.startswith(KEY_RECOVERY_MAGIC):
+        raise BackupCryptoError("صيغة ملف استرداد المفتاح غير معروفة أو الملف تالف.")
+    salt_start = len(KEY_RECOVERY_MAGIC)
+    salt = payload[salt_start:salt_start + SALT_SIZE]
+    nonce = payload[salt_start + SALT_SIZE:header_size]
+    encrypted = payload[header_size:]
+    try:
+        return AESGCM(_derive_key(passphrase, salt)).decrypt(
+            nonce, encrypted, KEY_RECOVERY_MAGIC + salt
+        )
+    except Exception as exc:
+        raise BackupCryptoError("تعذر استرداد المفتاح: عبارة المرور غير صحيحة أو الملف تم التلاعب به.") from exc
