@@ -594,13 +594,18 @@ class CompanySetupApiTests(APITestCase):
         ).exists())
         self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
 
-    def test_platform_owner_profile_does_not_grant_company_ledger_membership(self):
-        from .access import accessible_companies
+    def test_platform_owner_profile_never_grants_tenant_access_even_if_superuser(self):
+        from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
+        Branch.objects.create(company=self.company, code="OWNER-ISOLATED", name_ar="فرع معزول")
         owner = get_user_model().objects.create_user(
-            username="platform-owner-no-ledger", password="test-password"
+            username="platform-owner-no-ledger", password="test-password",
+            is_staff=True, is_superuser=True,
         )
         PlatformOwner.objects.create(user=owner)
         self.assertFalse(accessible_companies(owner).exists())
+        self.assertFalse(accessible_branches(owner).exists())
+        self.assertFalse(can_access_company(owner, self.company.pk))
+        self.assertFalse(has_company_role(owner, self.company.pk, ("admin",)))
 
 
     def test_company_admin_cannot_deactivate_company(self):
