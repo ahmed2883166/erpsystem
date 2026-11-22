@@ -295,14 +295,22 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             PurchaseInvoiceLine.objects.create(
                 invoice=invoice,
                 receipt_line=line["receipt_line"],
-                unit_price=line["unit_price"],
+                unit_price=line.get("unit_price", Decimal("0")),
+                transaction_unit_price=line.get("transaction_unit_price"),
                 tax_rate=line["tax_rate"],
                 tax_code=line.get("tax_code"),
             )
         invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
         invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
         invoice.grand_total = invoice.net_total + invoice.tax_total
-        invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
+        if invoice.transaction_currency_id:
+            invoice.transaction_net_total = sum((line.transaction_net_amount or Decimal("0") for line in invoice.lines.all()), Decimal("0"))
+            invoice.transaction_tax_total = sum((line.transaction_tax_amount or Decimal("0") for line in invoice.lines.all()), Decimal("0"))
+            invoice.transaction_grand_total = invoice.transaction_net_total + invoice.transaction_tax_total
+            expected_base = (invoice.transaction_grand_total * invoice.exchange_rate).quantize(Decimal("0.0001"))
+            if expected_base != invoice.grand_total:
+                raise serializers.ValidationError("إجمالي الفاتورة الأساسي لا يطابق الإجمالي الأجنبي مضروبًا في سعر الصرف.")
+        invoice.save(update_fields=("net_total", "tax_total", "grand_total", "transaction_net_total", "transaction_tax_total", "transaction_grand_total"))
         refresh_financial_approval(
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
             invoice, self.context["request"].user,
@@ -327,7 +335,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 line = existing.get(receipt_line.pk)
                 if line is None:
                     raise serializers.ValidationError({"lines": "تعذر مطابقة سطر الفاتورة مع سطر الاستلام."})
-                line.unit_price = data["unit_price"]
+                line.unit_price = data.get("unit_price", line.unit_price)
+                line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
                 line.tax_rate = data.get("tax_rate", line.tax_rate)
                 line.tax_code = data.get("tax_code", line.tax_code)
                 line.save()
