@@ -1150,7 +1150,7 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(reversal.reversal_of_id, original.pk)
         self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
         invoice_after = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
-        self.assertEqual(invoice_after["paid_total"], "0.0000")
+        self.assertEqual(invoice_after["paid_total"], "0")
         self.assertEqual(invoice_after["balance_due"], "228.0000")
         repeated = self.client.post(
             f"/api/sales-documents/receipts/{receipt_id}/reverse/",
