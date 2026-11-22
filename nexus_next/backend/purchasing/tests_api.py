@@ -880,3 +880,19 @@ class PurchasingWorkflowTests(APITestCase):
             "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(denied_create.status_code, 403, denied_create.data)
+
+    def test_purchase_invoice_accepts_exempt_zero_rate_code_even_when_input_is_not_recoverable(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="INPUT-EXEMPT", name_ar="مشتريات معفاة",
+            category=TaxCode.Category.EXEMPT, rate=Decimal("0"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-TAX-EXEMPT-1", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["invoice_lines"][0]["tax_code"], code.pk)
+        self.assertEqual(response.data["tax_total"], "0.0000")
