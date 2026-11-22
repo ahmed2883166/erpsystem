@@ -246,6 +246,15 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual(setup.status_code, 200, setup.data)
         self.assertIn(inactive.pk, [row["id"] for row in setup.data])
 
+        viewer = get_user_model().objects.create_user(username="branch-viewer", password="test-password")
+        CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(viewer)
+        viewer_setup = self.client.get(
+            f"/api/setup/branches/?company={self.company.pk}&include_inactive=true"
+        )
+        self.assertEqual(viewer_setup.status_code, 200, viewer_setup.data)
+        self.assertNotIn(inactive.pk, [row["id"] for row in viewer_setup.data])
+
     def test_company_admin_cannot_change_existing_branch_code(self):
         CompanyMembership.objects.create(
             user=self.user, company=self.company, role="admin", all_branches=True
