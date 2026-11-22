@@ -1026,6 +1026,23 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(later.data["previous_carrying_amount"], "10000.0000")
         self.assertEqual(later.data["new_carrying_amount"], "10200.0000")
 
+        # The reversed event remains in the audit history but must not affect
+        # the carrying amount used by the next revaluation.
+        history_after = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/revaluations/")
+        self.assertEqual(history_after.status_code, 200, history_after.data)
+        self.assertEqual(len(history_after.data), 2)
+        self.assertEqual(history_after.data[0]["status"], "posted")
+        self.assertEqual(history_after.data[1]["status"], "reversed")
+        self.assertEqual(history_after.data[1]["previous_carrying_amount"], "10000.0000")
+        self.assertEqual(history_after.data[1]["new_carrying_amount"], "10600.0000")
+
+        # A reversal entry is not itself eligible for another reversal.
+        reverse_again = self.client.post(
+            f"/api/accounting/journal-entries/{reversed_entry.data['id']}/reverse/",
+            {"entry_date": "2026-04-03"}, format="json",
+        )
+        self.assertEqual(reverse_again.status_code, 400, reverse_again.data)
+
     def test_customer_fx_revaluation_is_released_to_realized_fx_on_partial_and_final_receipts(self):
         delivery_id, line_id = self._create_delivery("DEL-FX-REVAL")
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
