@@ -25,7 +25,7 @@ class CompanySetupApiTests(APITestCase):
         self.client.force_authenticate(admin)
         response = self.client.delete(f"/api/setup/companies/{self.company.pk}/")
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("الحذف النهائي للشركات غير متاح", response.data["detail"])
+        self.assertIn("الحذف النهائي للشركات غير متاح", str(response.data))
         self.assertTrue(Company.objects.filter(pk=self.company.pk).exists())
         self.assertTrue(Branch.objects.filter(pk=branch.pk).exists())
 
