@@ -221,6 +221,10 @@ class TreasuryFxSnapshotTests(TestCase):
 
     def test_revaluation_rejects_date_before_latest_posted_treasury_movement(self):
         self.setUp_fx_roles()
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
         self.make_postable_transaction(
             kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-LATE",
             amount=Decimal("3200"), rate=Decimal("32"),
