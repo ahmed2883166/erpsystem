@@ -253,6 +253,49 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual(str(year.start_date), "2027-01-01")
         self.assertEqual(str(year.end_date), "2027-12-31")
 
+    def test_duplicate_branch_code_and_head_office_return_validation_errors(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        Branch.objects.create(
+            company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True
+        )
+        self.client.force_authenticate(self.user)
+
+        duplicate_code = self.client.post("/api/setup/branches/", {
+            "company": self.company.pk, "code": "MAIN", "name_ar": "كود مكرر",
+        }, format="json")
+        self.assertEqual(duplicate_code.status_code, 400, duplicate_code.data)
+        self.assertIn("code", duplicate_code.data)
+
+        duplicate_head = self.client.post("/api/setup/branches/", {
+            "company": self.company.pk, "code": "SECOND", "name_ar": "رئيسي إضافي",
+            "is_head_office": True,
+        }, format="json")
+        self.assertEqual(duplicate_head.status_code, 400, duplicate_head.data)
+        self.assertIn("is_head_office", duplicate_head.data)
+        self.assertEqual(Branch.objects.filter(company=self.company, is_head_office=True).count(), 1)
+
+    def test_duplicate_fiscal_year_name_returns_validation_error(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        from .models import FiscalYear
+        FiscalYear.objects.create(
+            company=self.company, name="2027",
+            start_date="2027-01-01", end_date="2027-12-31",
+        )
+        self.client.force_authenticate(self.user)
+
+        response = self.client.post("/api/setup/fiscal-years/", {
+            "company": self.company.pk, "name": "2027",
+            "start_date": "2028-01-01", "end_date": "2028-12-31",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("name", response.data)
+        self.assertEqual(FiscalYear.objects.filter(company=self.company, name="2027").count(), 1)
+
     def test_company_admin_can_update_branch_contact_details_and_deactivate(self):
         CompanyMembership.objects.create(
             user=self.user, company=self.company, role="admin", all_branches=True
