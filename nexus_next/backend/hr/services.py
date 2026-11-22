@@ -571,8 +571,8 @@ def complete_payroll_payment(cycle_id, actor=None):
                 if line.amount > remaining:
                     raise ValidationError("قيمة قسط السلفة المرحّل تتجاوز الرصيد المستحق.")
                 installment.paid_amount = money(installment.paid_amount + line.amount)
-                installment.paid_date = cycle.payment_date
                 installment.status = LoanInstallment.Status.PAID if installment.paid_amount >= installment.amount else LoanInstallment.Status.PARTIAL
+                installment.paid_date = cycle.payment_date if installment.status == LoanInstallment.Status.PAID else None
                 installment.payroll_cycle = cycle
                 installment.save(update_fields=("paid_amount", "paid_date", "status", "payroll_cycle"))
                 loan = installment.loan
