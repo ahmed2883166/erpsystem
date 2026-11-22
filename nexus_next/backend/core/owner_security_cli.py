@@ -43,10 +43,13 @@ def main():
             usb=Path(args.usb_dir); target=Path(args.target_dir); target.mkdir(parents=True,exist_ok=True)
             public=usb/"owner-public.pem"; license_file=Path(args.license)
             verify_signed_license(license_file.read_text(encoding="ascii"),public,args.installation_id,windows_machine_fingerprint())
-            for source,name in ((public,"owner-public.pem"),(license_file,"nexus.license")):
-                destination=target/name
-                if destination.exists(): raise ValueError(f"الملف موجود بالفعل ولن يتم استبداله: {destination}")
-                shutil.copy2(source,destination)
+            destinations=[target/"owner-public.pem",target/"nexus.license"]
+            if any(item.exists() for item in destinations): raise ValueError("ملفات الترخيص موجودة بالفعل؛ لن يتم استبدالها.")
+            shutil.copy2(public,destinations[0])
+            try: shutil.copy2(license_file,destinations[1])
+            except Exception:
+                destinations[0].unlink(missing_ok=True)
+                raise
             print(f"تم تثبيت ملف الترخيص ومفتاح التحقق في: {target}")
         elif args.command in ("encrypt-backup","decrypt-backup"):
             pw=password(); result=encrypt_backup(args.input,args.output,pw) if args.command=="encrypt-backup" else decrypt_backup(args.input,args.output,pw); print(f"اكتملت العملية: {result}")
