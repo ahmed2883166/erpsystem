@@ -296,6 +296,8 @@ export const api = {
   searchCompanyUsers: (companyId: number, search: string) => request<CompanyUserLookup[]>(`/api/setup/memberships/users/?company=${companyId}&search=${encodeURIComponent(search)}`),
   // إنشاء عضوية مستخدم جديدة بالشركة.
   createMembership: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>("/api/setup/memberships/", {method:"POST",body:JSON.stringify(payload)}); },
+  // إنشاء حساب مدير شركة عادي وربطه بالشركة في عملية واحدة من لوحة مالك المنصة.
+  createCompanyAdmin: async (payload: {company:number;username:string;display_name:string;email:string;password:string}) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>("/api/setup/memberships/create-company-admin/", {method:"POST",body:JSON.stringify(payload)}); },
   // تعديل دور العضوية ونطاق الفروع المسموح بها.
   updateMembership: async (id: number, payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CompanyMembership>(`/api/setup/memberships/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
   // جلب أسعار الصرف التاريخية للشركة.
