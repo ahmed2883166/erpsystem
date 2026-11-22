@@ -636,6 +636,55 @@ class CompanySetupApiTests(APITestCase):
         self.company.refresh_from_db()
         self.assertEqual(self.company.base_currency_id, self.currency.pk)
 
+    def test_platform_owner_cannot_disable_the_last_active_company_admin(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-last-admin", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        admin_user = get_user_model().objects.create_user(
+            username="only-company-admin", password="test-password"
+        )
+        membership = CompanyMembership.objects.create(
+            user=admin_user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/memberships/{membership.pk}/",
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        membership.refresh_from_db()
+        self.assertTrue(membership.is_active)
+        self.assertEqual(membership.role, "admin")
+
+    def test_platform_owner_can_downgrade_admin_when_another_active_admin_remains(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-two-admins", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        first_user = get_user_model().objects.create_user(
+            username="first-company-admin", password="test-password"
+        )
+        second_user = get_user_model().objects.create_user(
+            username="second-company-admin", password="test-password"
+        )
+        first = CompanyMembership.objects.create(
+            user=first_user, company=self.company, role="admin", all_branches=True
+        )
+        CompanyMembership.objects.create(
+            user=second_user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/memberships/{first.pk}/",
+            {"role": "accountant"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        first.refresh_from_db()
+        self.assertEqual(first.role, "accountant")
+
     def test_platform_owner_can_create_regular_company_admin_account(self):
         owner = get_user_model().objects.create_user(
             username="platform-owner-create-admin", password="test-password"
