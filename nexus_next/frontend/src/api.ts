@@ -208,6 +208,14 @@ export const treasuryApi = {
   },
 };
 
+export type ExpenseAnalysisReport = {
+  company:number; date_from:string; date_to:string; currency:string;
+  total:string; direct_total:string; operating_total:string;
+  rows:{account_id:number;code:string;name_ar:string;branch_id:number;branch_code:string;branch_name:string;cost_center_id:number|null;cost_center_code:string;cost_center_name:string;debit:string;credit:string;amount:string;category:"direct_cost"|"operating_expense"}[];
+  monthly_rows:{month:string;amount:string}[];
+  note:string;
+};
+export type CostCenter = {id:number;code:string;name_ar:string;is_active:boolean};
 export type BalanceSheetReport = {
   company: number; as_of: string; assets: {account_id:number|null;code:string;name_ar:string;balance:string}[];
   liabilities: {account_id:number|null;code:string;name_ar:string;balance:string}[];
@@ -356,6 +364,14 @@ export const api = {
     if (branch) q.set("branch", String(branch));
     return request<VATReturnReport>(`/api/accounting/journal-entries/vat-return/?${q.toString()}`);
   },
+  // جلب تحليل المصروفات حسب الحساب والفرع ومركز التكلفة والشهر.
+  expenseAnalysis: (companyId:number, dateFrom:string, dateTo:string, branch?:number, costCenter?:number) => {
+    const q = new URLSearchParams({company:String(companyId), date_from:dateFrom, date_to:dateTo});
+    if (branch) q.set("branch", String(branch));
+    if (costCenter) q.set("cost_center", String(costCenter));
+    return request<ExpenseAnalysisReport>(`/api/accounting/journal-entries/expense-analysis/?${q.toString()}`);
+  },
+  costCenters: (companyId:number) => request<CostCenter[]>(`/api/accounting/cost-centers/?company=${companyId}&is_active=true`),
   // جلب ميزان المراجعة مع خيارات الفترة واستبعاد قيود الإقفال.
   trialBalance: (companyId: number, dateFrom?: string, dateTo?: string, excludeClosing = false) => {
     const q = new URLSearchParams({company:String(companyId)});
