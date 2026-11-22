@@ -51,7 +51,7 @@ try {
 setlocal
 set "ROOT=%~dp0"
 set "DJANGO_SETTINGS_MODULE=config.settings"
-if not defined DJANGO_SECRET_KEY (
+if not exist "%ROOT%backend\.env" (
   echo Configure the database connection and secret key before first use.
   echo Copy backend\.env.example to backend\.env and configure it securely.
   pause
