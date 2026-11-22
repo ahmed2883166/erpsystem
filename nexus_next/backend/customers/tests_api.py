@@ -85,5 +85,5 @@ class CustomerApiTests(APITestCase):
         customer.refresh_from_db()
         self.assertFalse(customer.is_active)
         deleted = self.client.delete(f"/api/sales/customers/{customer.pk}/")
-        self.assertEqual(deleted.status_code, 400, getattr(deleted, "data", None))
+        self.assertEqual(deleted.status_code, 403, getattr(deleted, "data", None))
         self.assertTrue(Customer.objects.filter(pk=customer.pk).exists())
