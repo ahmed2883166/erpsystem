@@ -3,6 +3,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
+from companies.models import PlatformOwner
 
 class HealthEndpointTests(TestCase):
     def test_health_reports_database_connection(self):
@@ -99,3 +100,28 @@ class UserThemePreferenceTests(TestCase):
         response = self.client.get("/api/auth/session/")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user"]["theme_preference"], "system")
+
+
+class PlatformOwnerSessionTests(TestCase):
+    def test_session_identifies_platform_owner_without_granting_company_membership(self):
+        user = get_user_model().objects.create_user(
+            username="platform-owner-session", password="strong-owner-password",
+        )
+        PlatformOwner.objects.create(user=user)
+        self.client.force_login(user)
+        response = self.client.get("/api/auth/session/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["user"]["is_platform_owner"])
+        self.assertFalse(response.json()["user"]["is_superuser"])
+
+    def test_inactive_platform_owner_is_not_identified_as_owner(self):
+        user = get_user_model().objects.create_user(
+            username="inactive-platform-owner", password="strong-owner-password",
+        )
+        PlatformOwner.objects.create(user=user)
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        self.client.force_login(user)
+        response = self.client.get("/api/auth/session/")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["user"]["is_platform_owner"])
