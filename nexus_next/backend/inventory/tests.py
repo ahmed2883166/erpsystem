@@ -95,6 +95,7 @@ class StockPostingServiceTests(TestCase):
             source=self.warehouse, quantity="3",
         )
         post_stock_movement(issue.pk, self.user)
+        issue.refresh_from_db()
 
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(balance.quantity, Decimal("7"))
