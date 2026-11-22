@@ -366,6 +366,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
         Company.objects.select_for_update().get(pk=current_company_id)
+        FiscalYear.objects.select_for_update().get(pk=serializer.instance.pk)
         if serializer.instance.journal_entries.exists():
             raise ValidationError("لا يمكن تعديل اسم أو تواريخ سنة مالية لها قيود؛ حافظًا على ارتباط القيود بالفترة الأصلية.")
         serializer.save()
