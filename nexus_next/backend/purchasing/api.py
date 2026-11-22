@@ -485,7 +485,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
     @transaction.atomic
     def reverse(self, request, pk=None):
         """عكس آخر سند صرف مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
-        payment = SupplierPayment.objects.select_for_update().select_related(
+        payment = SupplierPayment.objects.select_for_update(of=("self",)).select_related(
             "invoice", "invoice__receipt__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(payment.company_id)
