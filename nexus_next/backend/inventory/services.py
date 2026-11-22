@@ -69,7 +69,7 @@ def post_stock_movement(movement_id, user):
                     quantity_remaining=quantity, unit_cost=unit_cost,
                 )
 
-        def issue(balance, quantity):
+        def issue(balance, quantity, product=product):
             """تنفيذ مسؤولية الدالة issue ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             if balance.quantity < quantity:
                 raise ValidationError(
