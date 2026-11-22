@@ -324,6 +324,25 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(response.data["previous_salary"], Decimal("10000"))
         self.assertEqual(self.employee.basic_salary, Decimal("11000"))
 
+    def test_salary_history_records_cannot_be_edited_or_deleted(self):
+        response = self.client.post("/api/hr/salary-history/", {
+            "employee": self.employee.pk,
+            "effective_date": "2026-04-01",
+            "new_salary": "11500",
+            "change_type": "adjustment",
+            "reason": "تعديل موثق",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        history = EmployeeSalaryHistory.objects.get(pk=response.data["id"])
+        history.reason = "تغيير غير موثق"
+        with self.assertRaises(ValidationError):
+            history.save()
+        with self.assertRaises(ValidationError):
+            history.delete()
+        history.refresh_from_db()
+        self.assertEqual(history.reason, "تعديل موثق")
+        self.assertEqual(EmployeeSalaryHistory.objects.filter(employee=self.employee).count(), 1)
+
     def test_salary_history_rejects_negative_salary_and_duplicate_effective_date(self):
         negative = self.client.post("/api/hr/salary-history/", {
             "employee": self.employee.pk, "effective_date": "2026-02-01",
