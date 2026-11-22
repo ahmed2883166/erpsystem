@@ -219,6 +219,9 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         supplier = attrs.get("supplier", instance.supplier if instance else None)
         receipt = attrs.get("receipt", instance.receipt if instance else None)
         invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
+        transaction_currency = attrs.get("transaction_currency", instance.transaction_currency if instance else None)
+        exchange_rate = attrs.get("exchange_rate", instance.exchange_rate if instance else None)
+        exchange_rate_date = attrs.get("exchange_rate_date", instance.exchange_rate_date if instance else None)
 
         if instance:
             if instance.status != PurchaseInvoice.Status.DRAFT:
@@ -239,6 +242,18 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             if instance.payments.filter(status=SupplierPayment.Status.POSTED).exists():
                 raise serializers.ValidationError("لا يمكن تعديل فاتورة لها مدفوعات مرحلة.")
 
+        if transaction_currency:
+            if exchange_rate is None or exchange_rate_date is None:
+                raise serializers.ValidationError({"exchange_rate": "حدد سعر الصرف وتاريخه للفاتورة الأجنبية."})
+            if not transaction_currency.is_active or transaction_currency.code == company.base_currency.code:
+                raise serializers.ValidationError({"transaction_currency": "اختر عملة أجنبية نشطة ومختلفة عن العملة الأساسية."})
+            if exchange_rate <= 0 or exchange_rate_date > invoice_date:
+                raise serializers.ValidationError({"exchange_rate_date": "سعر الصرف يجب أن يكون موجبًا وتاريخه لا يتجاوز تاريخ الفاتورة."})
+            if not ExchangeRate.objects.filter(company=company, currency=transaction_currency, rate_date=exchange_rate_date, rate=exchange_rate).exists():
+                raise serializers.ValidationError({"exchange_rate": "سعر الصرف لا يطابق سعرًا معتمدًا للشركة والتاريخ."})
+        elif exchange_rate is not None or exchange_rate_date is not None:
+            raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
+
         if not receipt or receipt.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"receipt": "يجب ترحيل إذن استلام البضاعة أولاً."})
         if company and receipt.company_id != company.pk:
@@ -258,6 +273,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         if not lines or set(supplied) != expected or len(supplied) != len(expected):
             raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن الاستلام مرة واحدة دون حذف أو تكرار."})
         for line in lines:
+            if transaction_currency and line.get("transaction_unit_price") is None:
+                raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
+            if not transaction_currency and line.get("unit_price") is None:
+                raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأساسية مطلوب لكل بند."})
             code = line.get("tax_code")
             if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
                          or not code.input_tax_recoverable or code.category == TaxCode.Category.REVERSE_CHARGE
