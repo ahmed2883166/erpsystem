@@ -8,7 +8,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import (
     AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
@@ -28,7 +28,7 @@ class CompanyScopedViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
@@ -64,7 +64,7 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(
                 employee__company__in=accessible_companies(self.request.user),
                 employee__branch__in=accessible_branches(self.request.user),
@@ -126,7 +126,7 @@ class EmployeeViewSet(CompanyScopedViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = super().get_queryset()
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
         return qs
 
@@ -311,7 +311,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = super().get_queryset()
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             from companies.models import CompanyMembership
             company_ids = CompanyMembership.objects.filter(
                 user=self.request.user, is_active=True, all_branches=True,
@@ -323,7 +323,7 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
     def check_company_write(self, company_id, roles=("admin", "accountant")):
         """التحقق من دور المستخدم قبل تعديل بيانات الشركة أو المرتبات."""
         super().check_company_write(company_id, roles=roles)
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             from companies.models import CompanyMembership
             allowed = CompanyMembership.objects.filter(
                 user=self.request.user, company_id=company_id, is_active=True,
@@ -546,7 +546,7 @@ class LoanInstallmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(
                 loan__employee__company__in=accessible_companies(self.request.user),
                 loan__employee__branch__in=accessible_branches(self.request.user),
