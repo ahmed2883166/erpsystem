@@ -29,7 +29,7 @@ export type AccountTemplateApplyResult = {
 export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string };
 export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; debit_total: string; credit_total: string; net_balance: string }[] };
 export type ThemePreference = "light" | "dark" | "system";
-export type SessionUser = { id: number; username: string; display_name: string; is_staff: boolean; is_superuser: boolean; theme_preference: ThemePreference };
+export type SessionUser = { id: number; username: string; display_name: string; is_staff: boolean; is_superuser: boolean; is_platform_owner: boolean; theme_preference: ThemePreference };
 export type SessionResponse = { authenticated: boolean; user?: SessionUser };
 
 export const authApi = {
