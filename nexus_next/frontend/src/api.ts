@@ -55,7 +55,7 @@ export const authApi = {
 export type Journal = {
   id: number; company: number; branch: number; branch_code: string; fiscal_year: number;
   fiscal_year_name: string; entry_number: string; entry_date: string; description: string;
-  source_type: string; status: string; lines: JournalLine[];
+  source_type: string; status: string; reversal_of: number | null; lines: JournalLine[];
 };
 export type Customer = {
   id: number; company: number; code: string; customer_type: "company" | "individual";
