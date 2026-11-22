@@ -186,6 +186,25 @@ class TreasuryFxSnapshotTests(TestCase):
             Decimal("50.0000"),
         )
 
+    def test_foreign_payment_reduces_position_when_realized_fx_difference_is_zero(self):
+        receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-ZERO",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(receipt.pk)
+        payment = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.PAYMENT, number="FX-P-ZERO",
+            amount=Decimal("1500"), rate=Decimal("30"),
+            foreign_amount=Decimal("50"),
+        )
+        post_treasury_transaction(payment.pk)
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        self.assertEqual(position.foreign_amount, Decimal("50.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("1500.0000"))
+        self.assertEqual(payment.journal_entry.lines.filter(account=self.bank.account).get().credit,
+                         Decimal("1500.0000"))
+
     def test_foreign_payment_cannot_overdraw_nominal_currency_position(self):
         self.setUp_fx_roles()
         payment = self.make_postable_transaction(
