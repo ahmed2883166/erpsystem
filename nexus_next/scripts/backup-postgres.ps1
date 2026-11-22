@@ -113,4 +113,8 @@ try {
     Write-Output "Encrypted backup verified: $EncryptedFile"
 } finally {
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+    # Never leave a newly generated plaintext PostgreSQL dump behind, including on failure.
+    if (Test-Path -LiteralPath $DailyFile -PathType Leaf) {
+        Remove-Item -LiteralPath $DailyFile -Force -ErrorAction Stop
+    }
 }
