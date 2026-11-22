@@ -2,6 +2,8 @@ from datetime import date
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from django.contrib.auth import get_user_model
+from .access import accessible_branches, accessible_companies
 from .models import Branch, Company, Currency, FiscalYear
 
 class CompanyFoundationTests(TestCase):
@@ -36,6 +38,23 @@ class CompanyFoundationTests(TestCase):
         )
         with self.assertRaises(ValidationError):
             year.full_clean()
+
+    def test_superuser_has_global_active_company_and_branch_visibility(self):
+        other = Company.objects.create(
+            code="NEX-SA", name_ar="شركة ثانية", country=Company.Country.SAUDI_ARABIA,
+            activity=Company.Activity.SERVICE, base_currency=self.egp,
+        )
+        active_branch = Branch.objects.create(company=other, code="ACTIVE", name_ar="فرع نشط")
+        Branch.objects.create(company=other, code="INACTIVE", name_ar="فرع موقوف", is_active=False)
+        root = get_user_model().objects.create_superuser(
+            username="global-operator", email="global@example.test", password="long-test-password"
+        )
+        self.assertSetEqual(
+            set(accessible_companies(root).values_list("pk", flat=True)),
+            set(Company.objects.filter(is_active=True).values_list("pk", flat=True)),
+        )
+        self.assertIn(active_branch.pk, set(accessible_branches(root).values_list("pk", flat=True)))
+        self.assertFalse(accessible_branches(root).filter(is_active=False).exists())
 
 
 from django.contrib.auth import get_user_model
