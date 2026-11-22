@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, transaction
 from django.http import HttpResponse
 from openpyxl import Workbook
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
@@ -101,6 +101,48 @@ class AccountingViewSet(viewsets.ModelViewSet):
         roles = ("admin",) if delete else ("admin", "accountant")
         if not has_company_role(self.request.user, company_id, roles):
             raise PermissionDenied("تحتاج إلى دور مدير الشركة أو المحاسب لتنفيذ هذا الإجراء.")
+
+    @decorators.action(detail=False, methods=("post",), url_path="initialize-country-presets")
+    def initialize_country_presets(self, request):
+        """إضافة أكواد ضريبة قيمة مضافة ابتدائية مناسبة لبلد الشركة دون تعديل الأكواد الحالية."""
+        company_id = request.data.get("company")
+        if not str(company_id or "").isdigit():
+            raise ValidationError({"company": "حدد الشركة."})
+        if not can_access_company(request.user, int(company_id)):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة.")
+        company = Company.objects.get(pk=int(company_id))
+        self._require_write_role(company.pk)
+        if company.country == Company.Country.EGYPT:
+            standard_rate, effective_from = Decimal("14"), parse_date("2017-07-01")
+            country_label = "مصر"
+        elif company.country == Company.Country.SAUDI_ARABIA:
+            standard_rate, effective_from = Decimal("15"), parse_date("2020-07-01")
+            country_label = "السعودية"
+        else:
+            raise ValidationError({"company": "الإعدادات الضريبية متاحة لمصر والسعودية فقط."})
+        presets = (
+            ("VAT-STD", "ضريبة قيمة مضافة قياسية", TaxCode.Category.STANDARD, standard_rate, True),
+            ("VAT-ZERO", "ضريبة قيمة مضافة بنسبة صفر", TaxCode.Category.ZERO_RATED, Decimal("0"), True),
+            ("VAT-EXEMPT", "توريدات معفاة من الضريبة", TaxCode.Category.EXEMPT, Decimal("0"), False),
+            ("VAT-OOS", "توريدات خارج نطاق الضريبة", TaxCode.Category.OUT_OF_SCOPE, Decimal("0"), False),
+        )
+        created_codes, existing_codes = [], []
+        for code, name, category, rate, recoverable in presets:
+            item, created = TaxCode.objects.get_or_create(
+                company=company, code=code, effective_from=effective_from,
+                defaults={
+                    "country": company.country, "name_ar": name, "category": category,
+                    "rate": rate, "input_tax_recoverable": recoverable, "is_active": True,
+                },
+            )
+            (created_codes if created else existing_codes).append(
+                {"id": item.pk, "code": item.code, "rate": str(item.rate), "is_active": item.is_active}
+            )
+        return response.Response({
+            "country": company.country, "country_label": country_label,
+            "created": created_codes, "existing": existing_codes,
+            "note": "هذه أكواد بداية قابلة للمراجعة وليست تصنيفًا قانونيًا تلقائيًا للأصناف أو الخدمات. راجع المعاملة الضريبية لكل نشاط وبند قبل الاستخدام.",
+        }, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
@@ -1247,7 +1289,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "tax_code__category",
         ).annotate(
             taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
-            gross_amount=Sum("total_amount"),
+            gross_amount=Sum("total_amount"), line_count=Count("id"),
         ).order_by("tax_code__code", "tax_rate"))
 
         purchase_rows = list(PurchaseInvoiceLine.objects.filter(
@@ -1262,7 +1304,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "tax_code__category", "tax_code__input_tax_recoverable",
         ).annotate(
             taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
-            gross_amount=Sum("total_amount"),
+            gross_amount=Sum("total_amount"), line_count=Count("id"),
         ).order_by("tax_code__code", "tax_rate"))
 
         def summarize(rows, purchases=False):
@@ -1280,8 +1322,10 @@ class JournalEntryViewSet(AccountingViewSet):
                 gross = row["gross_amount"] or Decimal("0")
                 category = row.get("tax_code__category") or "legacy_unclassified"
                 code = row.get("tax_code__code")
-                recoverable = (not purchases or row.get("tax_code_id") is None
-                               or row.get("tax_code__input_tax_recoverable", True))
+                recoverable = (not purchases or (
+                    row.get("tax_code_id") is not None
+                    and row.get("tax_code__input_tax_recoverable", False)
+                ))
                 normalized.append({
                     "tax_code_id": row.get("tax_code_id"),
                     "tax_code": code,
@@ -1292,6 +1336,7 @@ class JournalEntryViewSet(AccountingViewSet):
                     "tax_amount": str(tax),
                     "recoverable_tax_amount": str(tax if recoverable else Decimal("0")),
                     "gross_amount": str(gross),
+                    "line_count": row.get("line_count", 0),
                 })
                 taxable_base += base
                 tax_amount += tax
@@ -1335,6 +1380,36 @@ class JournalEntryViewSet(AccountingViewSet):
         purchases = summarize(purchase_rows, purchases=True)
         output_tax = Decimal(sales["tax_amount"])
         input_tax = Decimal(purchases["recoverable_tax_amount"])
+
+        tax_roles = {
+            item.role: item.account_id
+            for item in AccountRole.objects.filter(
+                company_id=company.pk,
+                role__in=(AccountRole.Role.VAT_OUTPUT, AccountRole.Role.VAT_INPUT),
+            )
+        }
+        ledger_lines = JournalLine.objects.filter(
+            entry__company_id=company.pk,
+            entry__status=JournalEntry.Status.POSTED,
+            entry__entry_date__gte=date_from,
+            entry__entry_date__lte=date_to,
+            entry__branch_id__in=branch_ids,
+            account_id__in=list(tax_roles.values()),
+        ).values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
+        ledger_by_account = {row["account_id"]: row for row in ledger_lines}
+        output_account_id = tax_roles.get(AccountRole.Role.VAT_OUTPUT)
+        input_account_id = tax_roles.get(AccountRole.Role.VAT_INPUT)
+        output_ledger = Decimal("0")
+        input_ledger = Decimal("0")
+        if output_account_id:
+            row = ledger_by_account.get(output_account_id, {})
+            output_ledger = (row.get("credit") or Decimal("0")) - (row.get("debit") or Decimal("0"))
+        if input_account_id:
+            row = ledger_by_account.get(input_account_id, {})
+            input_ledger = (row.get("debit") or Decimal("0")) - (row.get("credit") or Decimal("0"))
+
+        unclassified_sales = [row for row in sales["by_code"] if row["category"] == "legacy_unclassified" and Decimal(row["tax_amount"]) != 0]
+        unclassified_purchases = [row for row in purchases["by_code"] if row["category"] == "legacy_unclassified" and Decimal(row["tax_amount"]) != 0]
         return response.Response({
             "company": company.pk,
             "country": company.country,
@@ -1348,8 +1423,28 @@ class JournalEntryViewSet(AccountingViewSet):
             "output_tax": str(output_tax),
             "input_tax": str(input_tax),
             "net_tax_payable": str(output_tax - input_tax),
+            "ledger_reconciliation": {
+                "output_tax_from_invoices": str(output_tax),
+                "output_tax_gl_net_credit": str(output_ledger),
+                "output_tax_difference": str(output_tax - output_ledger),
+                "recoverable_input_tax_from_invoices": str(input_tax),
+                "input_tax_gl_net_debit": str(input_ledger),
+                "input_tax_difference": str(input_tax - input_ledger),
+                "invoice_net_tax_payable": str(output_tax - input_tax),
+                "ledger_net_tax_payable": str(output_ledger - input_ledger),
+                "net_tax_difference": str((output_tax - input_tax) - (output_ledger - input_ledger)),
+                "output_account_configured": bool(output_account_id),
+                "input_account_configured": bool(input_account_id),
+            },
+            "unclassified_tax": {
+                "sales_amount": str(sum((Decimal(row["tax_amount"]) for row in unclassified_sales), Decimal("0"))),
+                "sales_groups": len(unclassified_sales),
+                "purchase_amount": str(sum((Decimal(row["tax_amount"]) for row in unclassified_purchases), Decimal("0"))),
+                "purchase_groups": len(unclassified_purchases),
+                "purchase_recoverable_amount": "0",
+            },
             "report_kind": "internal_vat_reconciliation",
-            "note": "تقرير داخلي للمراجعة والتجهيز؛ لا يمثل إقرارًا رسميًا ولا يرسل بيانات إلى مصلحة الضرائب المصرية أو هيئة الزكاة والضريبة والجمارك.",
+            "note": "تقرير داخلي للمراجعة والتجهيز؛ ضريبة المدخلات التي لا تحمل كودًا ضريبيًا مصنفًا لا تُعتبر قابلة للخصم تلقائيًا. راجع فروق دفتر الأستاذ والأكواد غير المصنفة قبل تجهيز الإقرار. لا يرسل التقرير بيانات إلى مصلحة الضرائب المصرية أو هيئة الزكاة والضريبة والجمارك.",
         })
 
     @decorators.action(detail=True, methods=("get",))
