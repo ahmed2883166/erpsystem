@@ -8,7 +8,7 @@ from django.utils import timezone
 from companies.models import Company
 
 
-class DiscountApprovalPolicy(models.Model):
+class DiscountApprovalPolicy    """تحدد حدود الخصم وقيمة الفاتورة التي تتطلب اعتمادًا إداريًا."""
     company = models.OneToOneField(Company, on_delete=models.PROTECT, related_name="discount_approval_policy")
     max_discount_percent = models.DecimalField(
         max_digits=7, decimal_places=4, null=True, blank=True,
@@ -61,7 +61,7 @@ class DiscountApprovalPolicy(models.Model):
             raise ValidationError("يجب تحديد حد مالي واحد على الأقل.")
 
 
-class SalesInvoiceApproval(models.Model):
+class SalesInvoiceApproval    """يحفظ طلب اعتماد خصم أو فاتورة بيع مع لقطة بياناتها وقت الطلب."""
     class Status(models.TextChoices):
         PENDING = "pending", "بانتظار الموافقة"
         APPROVED = "approved", "تمت الموافقة"
@@ -126,7 +126,7 @@ class SalesInvoiceApproval(models.Model):
         raise ValidationError("لا يمكن حذف سجل طلب الموافقة.")
 
 
-class FinancialApprovalRequest(models.Model):
+class FinancialApprovalRequest    """يمثل طلب اعتماد مالي مرتبطًا بمستند حساس قبل ترحيله."""
     class DocumentType(models.TextChoices):
         PURCHASE_INVOICE = "purchase_invoice", "فاتورة مشتريات"
         SUPPLIER_PAYMENT = "supplier_payment", "سند صرف مورد"
