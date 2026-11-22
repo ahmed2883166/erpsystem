@@ -219,3 +219,37 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(asset.status, FixedAsset.Status.ACTIVE)
         self.assertEqual(JournalEntry.objects.count(), before)
         self.assertFalse(asset.depreciations.exists())
+
+    def test_bulk_depreciation_run_posts_each_active_asset_once(self):
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        url = f"/api/assets/fixed-assets/depreciation-run/?company={self.company.pk}"
+        payload = {"period_date": "2026-02-28", "fiscal_year": self.year.pk}
+        first = self.client.post(url, payload, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["processed_count"], 1)
+        self.assertEqual(first.data["processed_total"], "5000.0000")
+        second = self.client.post(url, payload, format="json")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(second.data["processed_count"], 0)
+        self.assertEqual(second.data["skipped_count"], 1)
+        self.assertEqual(JournalEntry.objects.count(), 2)
+
+    def test_asset_account_reconciliation_matches_asset_register_and_general_ledger(self):
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        depreciation = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(depreciation.status_code, 201, depreciation.data)
+        response = self.client.get(
+            f"/api/assets/fixed-assets/account-reconciliation/?company={self.company.pk}"
+            "&as_of=2026-02-28&date_from=2026-01-01&date_to=2026-02-28"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["is_reconciled"], response.data)
+        self.assertEqual(response.data["difference_count"], 0)
+        self.assertEqual(response.data["cost_accounts"][0]["expected"], "120000.0000")
+        self.assertEqual(response.data["accumulated_depreciation_accounts"][0]["expected"], "5000.0000")
+        self.assertEqual(response.data["depreciation_expense_accounts"][0]["expected"], "5000.0000")
