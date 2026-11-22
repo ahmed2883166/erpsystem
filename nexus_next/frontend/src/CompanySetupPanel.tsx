@@ -176,8 +176,8 @@ const createYear = async (event: FormEvent) => {
 
   return <section className="work-panel company-setup-panel">
     <div className="work-panel-head">
-      <div><h2>تأسيس بيانات الشركة</h2><p>إعداد أول شركة على قاعدة PostgreSQL الجديدة، دون استيراد بيانات من النظام القديم.</p></div>
-      <span className="coming-soon">{companies.length ? "إعداد أولي" : "بدء الاستخدام"}</span>
+      <div><h2>{selectedCompany ? "بيانات الشركة وإعداداتها" : "تأسيس بيانات الشركة"}</h2><p>{selectedCompany ? "هذه الشاشة لتعريف الشركة وإدارة فروعها وسنواتها المالية؛ أما القيود والفواتير والتقارير فتوجد في شاشة العمل اليومية المستقلة." : "إعداد أول شركة على قاعدة PostgreSQL الجديدة، دون استيراد بيانات من النظام القديم."}</p></div>
+      <span className="coming-soon">{companies.length ? "إعداد الشركة" : "بدء الاستخدام"}</span>
     </div>
     {error && <div className="error-banner">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
