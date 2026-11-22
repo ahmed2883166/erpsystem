@@ -86,7 +86,7 @@ class FiscalYearSerializer(serializers.ModelSerializer):
     class Meta:
         model = FiscalYear
         fields = ("id", "company", "company_code", "name", "start_date", "end_date", "status", "created_at")
-        read_only_fields = ("created_at",)
+        read_only_fields = ("created_at", "status")
 
     def validate(self, attrs):
         """حماية ارتباط السنة المالية والتحقق من ترتيب حدودها حتى في طلبات PATCH."""
