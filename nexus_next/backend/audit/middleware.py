@@ -1,3 +1,5 @@
+"""وسيط تسجيل الطلبات والأحداث الأمنية المهمة دون تخزين بيانات اعتماد حساسة."""
+
 import ipaddress
 import json
 import logging
