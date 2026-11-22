@@ -427,7 +427,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
     queryset = SupplierPayment.objects.select_related(
-        "company", "supplier", "invoice", "journal_entry"
+        "company", "supplier", "invoice", "journal_entry", "journal_entry__reversal_entry"
     ).all()
     filterset_fields = ("company", "supplier", "invoice", "status", "payment_date", "method")
     search_fields = ("payment_number", "reference", "supplier__name_ar", "invoice__invoice_number")
