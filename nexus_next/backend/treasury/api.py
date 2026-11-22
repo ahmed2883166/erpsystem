@@ -489,7 +489,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
             if recon.bank_account.branch_id:
                 branch_ids = [recon.bank_account.branch_id]
-            bank_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
+            bank_lines = recon.bank_account.account.journal_lines.filter(entry__status__in=("posted", "reversed"), entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
             totals = bank_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             opening_base = Decimal("0") if recon.bank_account.opening_journal_entry_id else recon.bank_account.opening_balance
             book_balance = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
