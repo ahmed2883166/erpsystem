@@ -60,6 +60,8 @@ class JobPosition(CompanyScopedModel):
 
 class Employee(CompanyScopedModel):
     """يحفظ الملف الوظيفي والبيانات الأساسية للموظف."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="hr_employee_profiles")
+
     class Status(models.TextChoices):
         ACTIVE = "active", "نشط"
         LEAVE = "leave", "إجازة"
@@ -104,7 +106,10 @@ class Employee(CompanyScopedModel):
 
     class Meta:
         ordering = ("code",)
-        constraints = [models.UniqueConstraint(fields=("company", "code"), name="uq_hr_employee_code")]
+        constraints = [
+            models.UniqueConstraint(fields=("company", "code"), name="uq_hr_employee_code"),
+            models.UniqueConstraint(fields=("company", "user"), condition=Q(user__isnull=False), name="uq_hr_employee_company_user"),
+        ]
         indexes = [
             models.Index(fields=("company", "status", "branch"), name="hr_employee_scope_idx"),
             models.Index(fields=("company", "department", "status"), name="hr_employee_dept_idx"),
