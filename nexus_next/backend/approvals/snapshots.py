@@ -1,5 +1,3 @@
-from decimal import Decimal
-
 
 def invoice_discount_snapshot(invoice):
     """Return a deterministic, JSON-safe snapshot of every invoiced line."""
