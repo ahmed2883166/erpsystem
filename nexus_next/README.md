@@ -16,12 +16,12 @@ This directory contains the new, independent Admrail ERP v2 ERP implementation.
 - Keep LAN deployment private; do not expose the service publicly by default.
 
 ## Start locally on Windows
-Install Docker Desktop, Python 3.12, and Node.js 22, then run this from the `nexus_next` directory:
+Install PostgreSQL 16 for Windows, Python 3.12, and Node.js 22. Start the PostgreSQL Windows service, configure `backend/.env`, then run this from the `nexus_next` directory:
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\start-local.ps1
 ```
-If no administrator exists, the startup helper opens a separate PowerShell window to create one. The database port and both application servers are bound to localhost only.
+If no administrator exists, the startup helper opens a separate PowerShell window to create one. The application connects to the existing PostgreSQL Windows service; it does not install Docker, create or reset a database, or open LAN access. Both application servers are bound to localhost only.
 
 For the Windows trial ZIP, prerequisites, first company setup, and data-safety instructions, see [TRIAL-QUICKSTART.md](TRIAL-QUICKSTART.md). To build a clean ZIP locally, run `.scripts\package-trial.ps1`.
 
