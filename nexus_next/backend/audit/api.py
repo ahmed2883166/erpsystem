@@ -70,13 +70,18 @@ class AuditEventListView(APIView):
                 raise ValidationError({"date_to": "استخدم YYYY-MM-DD."})
             qs = qs.filter(created_at__date__lte=parsed)
 
-        limit_raw = request.query_params.get("limit", "100")
+        limit_raw = request.query_params.get("limit", "50")
+        offset_raw = request.query_params.get("offset", "0")
         if not limit_raw.isdigit():
             raise ValidationError({"limit": "الحد يجب أن يكون رقمًا."})
+        if not offset_raw.isdigit():
+            raise ValidationError({"offset": "بداية الصفحة يجب أن تكون رقمًا غير سالب."})
         limit = min(max(int(limit_raw), 1), 200)
-        events = qs[:limit]
+        offset = int(offset_raw)
+        total_count = qs.count()
+        events = qs[offset:offset + limit]
         return Response({
-            "count": len(events),
+            "count": total_count,
             "results": [{
                 "id": event.pk,
                 "request_id": str(event.request_id),
