@@ -30,6 +30,8 @@ if ($parts.Count -ne 3 -or $parts[0] -ne "True" -or -not $parts[2]) { throw "Con
 $drive = [System.IO.Path]::GetPathRoot($parts[2])
 if (-not $drive -or $drive.TrimEnd("\").ToUpperInvariant() -eq "C:") { throw "Backup destination must be outside C:." }
 if (-not (Test-Path -LiteralPath $parts[2] -PathType Container)) { throw "Backup destination folder is unavailable." }
+& icacls.exe $parts[2] /grant "SYSTEM:(OI)(CI)(M)" /T /C | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not grant the Windows backup service access to the destination folder." }
 
 $TaskName = "NEXUS PostgreSQL Backup"
 $PowerShell = (Get-Command powershell.exe).Source
@@ -42,6 +44,6 @@ switch ($parts[1]) {
 }
 $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "NEXUS PostgreSQL backup to the system-administrator-selected external drive." -Force | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "NEXUS encrypted PostgreSQL backup to the configured local drive; runs as SYSTEM." -Force | Out-Null
 Write-Host "Scheduled '$TaskName' ($($parts[1])) at 10:00 PM." -ForegroundColor Green
-Write-Host "The configured destination is: $($parts[2])"
+Write-Host "The configured destination is: $($parts[2])"\nWrite-Host "The task runs as SYSTEM and can run while no user is logged in."
