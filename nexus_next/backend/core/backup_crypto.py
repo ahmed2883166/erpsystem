@@ -15,6 +15,17 @@ def _derive_key(passphrase: str, salt: bytes) -> bytes:
     if len(passphrase) < 12:
         raise BackupCryptoError("عبارة التشفير يجب ألا تقل عن 12 حرفًا.")
     return Scrypt(salt=salt, length=32, n=2**15, r=8, p=1).derive(passphrase.encode("utf-8"))
+def _publish_no_replace(temp: Path, destination: Path) -> None:
+    """Atomically publish a same-directory temporary file without clobbering a target."""
+    if os.name == "nt":
+        # Windows rename fails if the destination already exists.
+        os.rename(temp, destination)
+    else:
+        # A same-filesystem hard link is atomic and fails if destination exists.
+        os.link(temp, destination)
+        temp.unlink()
+
+
 def encrypt_backup(source: str | Path, destination: str | Path, passphrase: str) -> Path:
     src, dst = Path(source), Path(destination)
     if not src.is_file(): raise BackupCryptoError("ملف النسخة الاحتياطية غير موجود.")
@@ -30,7 +41,7 @@ def encrypt_backup(source: str | Path, destination: str | Path, passphrase: str)
             with src.open("rb") as inp:
                 while chunk := inp.read(CHUNK_SIZE): out.write(encryptor.update(chunk))
             out.write(encryptor.finalize()); out.write(encryptor.tag); out.flush(); os.fsync(out.fileno())
-        os.replace(temp, dst)
+        _publish_no_replace(temp, dst)
         return dst
     except Exception:
         if temp: temp.unlink(missing_ok=True)
@@ -58,7 +69,7 @@ def decrypt_backup(source: str | Path, destination: str | Path, passphrase: str)
                     if not chunk: raise BackupCryptoError("ملف النسخة المشفرة غير مكتمل.")
                     remaining -= len(chunk); out.write(decryptor.update(chunk))
                 out.write(decryptor.finalize()); out.flush(); os.fsync(out.fileno())
-        os.replace(temp, dst); return dst
+        _publish_no_replace(temp, dst); return dst
     except BackupCryptoError:
         if temp: temp.unlink(missing_ok=True)
         raise
@@ -91,7 +102,7 @@ def encrypt_recovery_key(key: bytes, destination: str | Path, passphrase: str) -
             os.fsync(out.fileno())
         if dst.exists():
             raise BackupCryptoError("ملف استرداد المفتاح موجود بالفعل؛ لن يتم استبداله.")
-        os.replace(temp, dst)
+        _publish_no_replace(temp, dst)
         return dst
     except Exception:
         if temp:
