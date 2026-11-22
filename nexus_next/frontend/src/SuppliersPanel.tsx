@@ -90,7 +90,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
       {!companyId && <div className="table-empty">اختر شركة لعرض سجل الموردين.</div>}
       {showForm && companyId && <form className="customer-form" onSubmit={(event) => void submit(event)}>
         <div className="customer-form-wide"><strong>{editingId ? "تعديل بيانات المورد" : "إضافة مورد جديد"}</strong></div>
-        <label>كود المورد<input required maxLength={40} value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="SUP-001" /></label>
+        <label>كود المورد<input required maxLength={40} disabled={saving || Boolean(editingId)} value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="SUP-001" /></label>
         <label>نوع المورد<select value={form.supplier_type} onChange={(event) => setForm({ ...form, supplier_type: event.target.value as "company" | "individual" })}><option value="company">شركة</option><option value="individual">فرد</option></select></label>
         <label>اسم المورد<input required value={form.name_ar} onChange={(event) => setForm({ ...form, name_ar: event.target.value })} /></label>
         <label>الرقم الضريبي<input value={form.tax_number} onChange={(event) => setForm({ ...form, tax_number: event.target.value })} /></label>
