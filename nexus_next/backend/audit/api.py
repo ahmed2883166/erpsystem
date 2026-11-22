@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from companies.access import accessible_branches
+from companies.access import accessible_branches, is_platform_owner
 from companies.models import CompanyMembership
 from .models import AuditEvent
 
@@ -17,7 +17,7 @@ class AuditEventListView(APIView):
 
     def get(self, request):
         qs = AuditEvent.objects.select_related("actor", "company", "branch")
-        if not request.user.is_superuser:
+        if not request.user.is_superuser or is_platform_owner(request.user):
             memberships = CompanyMembership.objects.filter(
                 user=request.user, is_active=True,
                 role__in=(CompanyMembership.Role.ADMIN, CompanyMembership.Role.ACCOUNTANT),
@@ -33,7 +33,7 @@ class AuditEventListView(APIView):
             if not company_raw.isdigit():
                 raise ValidationError({"company": "معرّف الشركة غير صحيح."})
             company_id = int(company_raw)
-            if not request.user.is_superuser and not CompanyMembership.objects.filter(
+            if (not request.user.is_superuser or is_platform_owner(request.user)) and not CompanyMembership.objects.filter(
                 user=request.user, company_id=company_id, is_active=True,
                 role__in=(CompanyMembership.Role.ADMIN, CompanyMembership.Role.ACCOUNTANT),
             ).exists():
@@ -45,7 +45,7 @@ class AuditEventListView(APIView):
             if not branch_raw.isdigit():
                 raise ValidationError({"branch": "معرّف الفرع غير صحيح."})
             branch_id = int(branch_raw)
-            if not request.user.is_superuser and not accessible_branches(
+            if (not request.user.is_superuser or is_platform_owner(request.user)) and not accessible_branches(
                 request.user
             ).filter(pk=branch_id).exists():
                 raise PermissionDenied("لا تملك صلاحية مراجعة سجل هذا الفرع.")
