@@ -2,8 +2,9 @@
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from decimal import Decimal
 
-from companies.models import Company, Branch
+from companies.models import Company, Branch, Currency, ExchangeRate
 from accounting.models import ChartOfAccount, JournalEntry
 
 
@@ -88,7 +89,16 @@ class TreasuryTransaction(models.Model):
     status = models.CharField(max_length=8, choices=Status.choices, default=Status.DRAFT)
     document_number = models.CharField(max_length=40)
     transaction_date = models.DateField()
+    # amount remains the company-base-currency carrying amount for legacy posting.
+    # FX drafts additionally retain the original nominal amount and approved rate.
     amount = models.DecimalField(max_digits=20, decimal_places=4)
+    transaction_currency = models.ForeignKey(
+        Currency, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="treasury_transactions",
+    )
+    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
     description = models.CharField(max_length=500)
     reference = models.CharField(max_length=120, blank=True)
     cash_flow_category = models.CharField(max_length=12, choices=CashFlowCategory.choices, default=CashFlowCategory.OPERATING)
@@ -120,6 +130,32 @@ class TreasuryTransaction(models.Model):
             raise ValidationError({"counter_account": "الحساب المقابل لا يتبع الشركة."})
         if self.amount <= 0:
             raise ValidationError({"amount": "يجب أن تكون القيمة أكبر من صفر."})
+        fx_values = (
+            self.transaction_currency_id, self.transaction_amount,
+            self.exchange_rate, self.exchange_rate_date,
+        )
+        if any(value is not None for value in fx_values):
+            if any(value is None for value in fx_values):
+                raise ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
+            if not self.transaction_currency.is_active:
+                raise ValidationError({"transaction_currency": "العملة المختارة موقوفة."})
+            if self.transaction_currency.code == self.company.base_currency.code:
+                raise ValidationError({"transaction_currency": "استخدم العملة الأساسية دون بيانات تحويل أجنبي."})
+            if self.source_account_id and self.source_account.currency_code != self.transaction_currency.code:
+                raise ValidationError({"transaction_currency": "عملة المعاملة لا تطابق عملة حساب الخزينة."})
+            if self.transaction_amount <= 0 or self.exchange_rate <= 0:
+                raise ValidationError("المبلغ الأجنبي وسعر الصرف يجب أن يكونا أكبر من صفر.")
+            if self.exchange_rate_date > self.transaction_date:
+                raise ValidationError({"exchange_rate_date": "تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ الحركة."})
+            approved = ExchangeRate.objects.filter(
+                company=self.company, currency=self.transaction_currency,
+                rate_date=self.exchange_rate_date, rate=self.exchange_rate,
+            ).exists()
+            if not approved:
+                raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا مسجلًا للشركة والتاريخ.")
+            expected_base = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"))
+            if self.amount != expected_base:
+                raise ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         if self.kind == self.Kind.TRANSFER:
             if not self.destination_account_id or self.counter_account_id:
                 raise ValidationError("التحويل يتطلب خزينة مستقبلة ولا يقبل حسابًا مقابلًا.")
