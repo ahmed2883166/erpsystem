@@ -259,6 +259,41 @@ class ChartOfAccountViewSet(AccountingViewSet):
     search_fields = ("code", "name_ar", "name_en")
     ordering_fields = ("code", "name_ar")
 
+    def _validate_parent_chain(self, company, parent, current_id=None):
+        """منع إنشاء حلقة في شجرة الحسابات حتى عند تعديل حساب أب قائم."""
+        seen = set()
+        node = parent
+        while node is not None:
+            if node.company_id != company.pk:
+                raise ValidationError({"parent": "الحساب الأب يجب أن يتبع نفس الشركة."})
+            if current_id and node.pk == current_id:
+                raise ValidationError({"parent": "لا يمكن ربط الحساب بأحد أبنائه؛ سيؤدي ذلك إلى دورة في شجرة الحسابات."})
+            if node.pk in seen:
+                raise ValidationError({"parent": "سلسلة الحسابات الحالية تحتوي على دورة؛ صحح الشجرة قبل تعديلها."})
+            seen.add(node.pk)
+            if not node.is_group:
+                raise ValidationError({"parent": "يجب أن يكون كل حساب أب حسابًا تجميعيًا."})
+            node = node.parent
+
+    def perform_create(self, serializer):
+        self._validate_scope(serializer.validated_data)
+        company = serializer.validated_data["company"]
+        self._require_write_role(company.pk)
+        self._validate_parent_chain(company, serializer.validated_data.get("parent"))
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._validate_scope(serializer.validated_data)
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        if company.pk != serializer.instance.company_id:
+            raise ValidationError("لا يمكن نقل حساب إلى شركة أخرى بعد إنشائه.")
+        self._require_write_role(company.pk)
+        self._validate_parent_chain(
+            company, serializer.validated_data.get("parent", serializer.instance.parent),
+            current_id=serializer.instance.pk,
+        )
+        serializer.save()
+
 
 class AccountRoleViewSet(AccountingViewSet):
     serializer_class = AccountRoleSerializer
