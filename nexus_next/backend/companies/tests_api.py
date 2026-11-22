@@ -212,6 +212,47 @@ class CompanySetupApiTests(APITestCase):
         }, format="json")
         self.assertEqual(year.status_code, 201, year.data)
 
+    def test_fiscal_year_cannot_be_moved_to_another_company(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        from .models import FiscalYear
+        year = FiscalYear.objects.create(
+            company=self.company, name="2027",
+            start_date="2027-01-01", end_date="2027-12-31",
+        )
+        self.client.force_authenticate(self.user)
+
+        response = self.client.patch(
+            f"/api/setup/fiscal-years/{year.pk}/",
+            {"company": self.other_company.pk}, format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        year.refresh_from_db()
+        self.assertEqual(year.company_id, self.company.pk)
+
+    def test_fiscal_year_rejects_reversed_date_range_on_partial_update(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        from .models import FiscalYear
+        year = FiscalYear.objects.create(
+            company=self.company, name="2027",
+            start_date="2027-01-01", end_date="2027-12-31",
+        )
+        self.client.force_authenticate(self.user)
+
+        response = self.client.patch(
+            f"/api/setup/fiscal-years/{year.pk}/",
+            {"start_date": "2028-01-01"}, format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        year.refresh_from_db()
+        self.assertEqual(str(year.start_date), "2027-01-01")
+        self.assertEqual(str(year.end_date), "2027-12-31")
+
     def test_company_admin_can_update_branch_contact_details_and_deactivate(self):
         CompanyMembership.objects.create(
             user=self.user, company=self.company, role="admin", all_branches=True
