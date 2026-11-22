@@ -103,8 +103,8 @@ export default function PartyStatementsPanel({ companyId, currency }: Props) {
     URL.revokeObjectURL(url);
   };
 
-  return <section className="work-panel party-statements-panel">
-    <div className="work-panel-head"><div><h2>كشوف حساب العملاء والموردين</h2><p>الرصيد الافتتاحي والحركات المرحلة والرصيد المتحرك خلال الفترة</p></div><span className="coming-soon">{busy ? "جارٍ التحميل…" : statement ? "كشف محدث" : "كشف تفصيلي"}</span></div>
+  return <section className="work-panel party-statements-panel print-active">
+    <div className="work-panel-head"><div><h2>كشوف حساب العملاء والموردين</h2><p>الرصيد الافتتاحي والحركات المرحلة والرصيد المتحرك خلال الفترة</p></div><div className="report-actions"><span className="coming-soon">{busy ? "جارٍ التحميل…" : statement ? "كشف محدث" : "كشف تفصيلي"}</span>{statement && <><button type="button" className="subtle-button" onClick={downloadCsv}>تصدير CSV</button><button type="button" className="subtle-button" onClick={() => window.print()}>طباعة / PDF</button></>}</div></div>
     <div className="asset-report-filters">
       <label>نوع الحساب<select value={partyType} onChange={(event) => setPartyType(event.target.value as "customer" | "supplier")}><option value="customer">عميل</option><option value="supplier">مورد</option></select></label>
       <label>{partyType === "customer" ? "العميل" : "المورد"}<select value={partyId} onChange={(event) => { setPartyId(event.target.value); setStatement(null); }}><option value="">اختر {partyType === "customer" ? "العميل" : "المورد"}</option>{parties.map((party) => <option key={party.id} value={party.id}>{party.code} — {party.name_ar}</option>)}</select></label>
@@ -119,7 +119,7 @@ export default function PartyStatementsPanel({ companyId, currency }: Props) {
         <article className="metric-card"><div className="metric-top">رصيد أول المدة</div><strong className="metric-value">{money(statement.opening_balance, currency)}</strong></article>
         <article className="metric-card"><div className="metric-top">رصيد آخر المدة</div><strong className="metric-value">{money(statement.closing_balance, currency)}</strong></article>
       </div>
-      <div className="work-panel-head"><div><h3>حركة الحساب</h3><p>{statement.date_from || dateFrom} إلى {statement.date_to || dateTo}</p></div><button type="button" className="subtle-button" onClick={downloadCsv}>تصدير CSV</button></div>
+      <div className="work-panel-head"><div><h3>حركة الحساب</h3><p>{statement.date_from || dateFrom} إلى {statement.date_to || dateTo}</p></div></div>
       <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد المتحرك</th></tr></thead><tbody>
         {rows.map((row, index) => <tr key={`${row.document_type}-${row.document_number}-${index}`}><td>{row.date}</td><td>{documentLabel(row.document_type)}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit, currency)}</td><td>{money(row.credit, currency)}</td><td>{money(row.balance, currency)}</td></tr>)}
       </tbody></table>{!rows.length && <div className="table-empty">لا توجد حركات للطرف خلال الفترة المحددة.</div>}</div>
