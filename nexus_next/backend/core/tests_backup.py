@@ -31,6 +31,17 @@ class BackupConfigurationApiTests(TestCase):
             with self.assertRaises(CommandError):
                 call_command("record_backup_run", file=str(plaintext), verbosity=0)
 
+    def test_platform_owner_cannot_view_tenant_backup_configuration_or_history(self):
+        from companies.models import PlatformOwner
+        owner = get_user_model().objects.create_superuser(
+            username="platform-owner-backup", email="owner-backup@example.test",
+            password="safe-password-123",
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
     def test_regular_user_can_read_but_cannot_change_destination(self):
         self.client.force_authenticate(self.user)
         response = self.client.get(self.url)
