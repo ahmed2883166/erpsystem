@@ -146,7 +146,7 @@ export type TreasuryAccount = {
   id: number; company: number; branch: number | null; branch_name: string; account: number;
   account_code: string; account_name: string; kind: "cash" | "bank"; code: string; name_ar: string;
   bank_name: string; account_number: string; iban: string; currency_code: string;
-  opening_balance: string; is_active: boolean;
+  opening_balance: string; fx_position_foreign_amount: string; fx_position_carrying_base_amount: string; is_active: boolean;
 };
 export type TreasuryFxRevaluation = {
   id:number; account:number; currency:string; revaluation_date:string; rate_date:string; rate:string;
@@ -186,6 +186,8 @@ export const treasuryApi = {
   createAccount: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryAccount>("/api/treasury/accounts/", {method:"POST", body:JSON.stringify(payload)}); },
   // إنشاء حركة قبض أو صرف أو تحويل.
   createTransaction: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>("/api/treasury/transactions/", {method:"POST", body:JSON.stringify(payload)}); },
+  // جلب سجل إعادة تقييم العملة الأجنبية للحساب المحدد.
+  fxRevaluations: (id:number) => request<TreasuryFxRevaluation[]>(`/api/treasury/accounts/${id}/revaluations/`),
   // إعادة تقييم مركز عملة أجنبية وإنشاء قيد الفروق غير المحققة.
   revalueAccount: async (id:number, payload:{fiscal_year:number;revaluation_date:string;rate_date:string}) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryFxRevaluation>(`/api/treasury/accounts/${id}/revalue/`, {method:"POST", body:JSON.stringify(payload)}); },
   // ترحيل حركة الخزينة المحددة.
