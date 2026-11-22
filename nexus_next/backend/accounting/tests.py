@@ -379,7 +379,7 @@ class CompanyIsolationApiTests(TestCase):
 
 
     def test_user_cannot_read_an_unassigned_company_trial_balance(self):
-        other = Company.objects.create(
+        Company.objects.create(
             code="OTHER", name_ar="شركة غير مسموحة", country="SA",
             activity="service", base_currency=self.currency,
         )
@@ -460,7 +460,7 @@ class IndirectCashFlowApiTests(TestCase):
         company = Company.objects.create(code="CF", name_ar="شركة التدفقات", country="EG",
             activity="commercial", base_currency=currency)
         branch = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
-        second_branch = Branch.objects.create(company=company, code="SEC", name_ar="الفرع الثاني")
+        Branch.objects.create(company=company, code="SEC", name_ar="الفرع الثاني")
         year = FiscalYear.objects.create(company=company, name="2026",
             start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
         cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
