@@ -20,7 +20,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from companies.models import Company, FiscalYear
 from purchasing.models import PurchaseInvoiceLine
 from sales.models import SalesInvoiceLine
-from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
+from .models import AccountRole, ChartOfAccount, CostCenter, FxSubledgerRevaluation, JournalEntry, JournalLine, TaxCode
 from .permissions import CompanyRolePermission
 from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCenterSerializer, JournalEntrySerializer, TaxCodeSerializer
 from .services import post_journal
@@ -316,7 +316,36 @@ class JournalEntryViewSet(AccountingViewSet):
         self._require_write_role(original.company_id)
         if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
             raise ValidationError("يمكن عكس قيد مرحّل أصلي فقط؛ لا يمكن عكس مسودة أو قيد عكسي.")
-        if original.source_type != JournalEntry.Source.MANUAL:
+        fx_revaluation = None
+        if original.source_type == JournalEntry.Source.FX_REVALUATION:
+            fx_revaluation = FxSubledgerRevaluation.objects.select_for_update().filter(journal_entry=original).first()
+            if not fx_revaluation:
+                raise ValidationError("قيد إعادة تقييم العملة غير مرتبط بسجل إعادة تقييم؛ لا يمكن عكسه من المسار العام.")
+            if fx_revaluation.sales_invoice_id:
+                from sales.models import CustomerReceipt
+                later_settlements = CustomerReceipt.objects.filter(
+                    invoice_id=fx_revaluation.sales_invoice_id,
+                    status=CustomerReceipt.Status.POSTED,
+                    receipt_date__gte=fx_revaluation.revaluation_date,
+                ).exists()
+                later_revaluations = FxSubledgerRevaluation.objects.filter(
+                    sales_invoice_id=fx_revaluation.sales_invoice_id,
+                    revaluation_date__gt=fx_revaluation.revaluation_date,
+                ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
+            else:
+                from purchasing.models import SupplierPayment
+                later_settlements = SupplierPayment.objects.filter(
+                    invoice_id=fx_revaluation.purchase_invoice_id,
+                    status=SupplierPayment.Status.POSTED,
+                    payment_date__gte=fx_revaluation.revaluation_date,
+                ).exists()
+                later_revaluations = FxSubledgerRevaluation.objects.filter(
+                    purchase_invoice_id=fx_revaluation.purchase_invoice_id,
+                    revaluation_date__gt=fx_revaluation.revaluation_date,
+                ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
+            if later_settlements or later_revaluations:
+                raise ValidationError("لا يمكن عكس إعادة تقييم لها تسوية لاحقة أو إعادة تقييم أحدث؛ صحح التسلسل من آخر حدث إلى أوله.")
+        elif original.source_type != JournalEntry.Source.MANUAL:
             raise ValidationError("عكس القيود التشغيلية أو الافتتاحية أو الإقفالية غير متاح من زر العكس العام؛ استخدم إجراء الإلغاء أو التصحيح داخل الوحدة المصدر.")
         if JournalEntry.objects.filter(reversal_of=original).exists():
             raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
@@ -324,6 +353,8 @@ class JournalEntryViewSet(AccountingViewSet):
         entry_date = parse_date(entry_date_raw) if entry_date_raw else timezone.localdate()
         if not entry_date:
             raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        if entry_date < original.entry_date:
+            raise ValidationError({"entry_date": "تاريخ القيد العكسي لا يجوز أن يسبق تاريخ القيد الأصلي."})
         fiscal_year = FiscalYear.objects.filter(
             company=original.company, status=FiscalYear.Status.OPEN,
             start_date__lte=entry_date, end_date__gte=entry_date,
