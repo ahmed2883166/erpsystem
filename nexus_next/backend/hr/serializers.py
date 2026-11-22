@@ -156,6 +156,22 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("entered_by",)
 
+    def validate(self, attrs):
+        """امنع بقاء ساعات عمل أو إضافي عند تحويل سجل الحضور إلى غياب أو إجازة."""
+        status = attrs.get("status", getattr(self.instance, "status", AttendanceRecord.Status.PRESENT))
+        worked_hours = attrs.get("worked_hours", getattr(self.instance, "worked_hours", Decimal("0")))
+        overtime_hours = attrs.get("overtime_hours", getattr(self.instance, "overtime_hours", Decimal("0")))
+        if worked_hours < 0 or overtime_hours < 0:
+            raise serializers.ValidationError("ساعات العمل والإضافي لا يمكن أن تكون سالبة.")
+        if status != AttendanceRecord.Status.PRESENT:
+            attrs.update({
+                "worked_hours": Decimal("0"),
+                "overtime_hours": Decimal("0"),
+                "friday_worked": False,
+                "late_minutes": 0,
+            })
+        return attrs
+
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source="employee.full_name_ar", read_only=True)
