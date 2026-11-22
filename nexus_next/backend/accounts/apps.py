@@ -1,3 +1,5 @@
+"""إعداد تطبيق المستخدمين والمصادقة الخاص بالنظام."""
+
 from django.apps import AppConfig
 
 class AccountsConfig(AppConfig):
