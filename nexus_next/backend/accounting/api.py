@@ -352,6 +352,97 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError(detail) from exc
         return response.Response(self.get_serializer(reversal).data, status=status.HTTP_201_CREATED)
 
+    @decorators.action(detail=False, methods=("get",), url_path="expense-analysis")
+    def expense_analysis(self, request):
+        """تحليل المصروفات المرحلة حسب الحساب والفرع ومركز التكلفة والشهر."""
+        company_id = request.query_params.get("company")
+        if not company_id or not company_id.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض تحليل المصروفات."})
+        company_id = int(company_id)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        date_from = parse_date(request.query_params.get("date_from", ""))
+        date_to = parse_date(request.query_params.get("date_to", ""))
+        if not date_from or not date_to or date_from > date_to:
+            raise ValidationError({"date_from": "حدد فترة صحيحة من تاريخ وإلى تاريخ."})
+
+        lines = JournalLine.objects.filter(
+            entry__company_id=company_id,
+            entry__status=JournalEntry.Status.POSTED,
+            entry__entry_date__gte=date_from,
+            entry__entry_date__lte=date_to,
+            account__nature=ChartOfAccount.Nature.EXPENSE,
+            account__is_group=False,
+            account__is_active=True,
+        ).filter(entry__branch__in=accessible_branches(request.user))
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            if not branch_id.isdigit() or not can_access_branch(request.user, int(branch_id), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            lines = lines.filter(entry__branch_id=int(branch_id))
+        cost_center_id = request.query_params.get("cost_center")
+        if cost_center_id:
+            if not cost_center_id.isdigit():
+                raise ValidationError({"cost_center": "مركز التكلفة غير صحيح."})
+            if not CostCenter.objects.filter(pk=int(cost_center_id), company_id=company_id, is_active=True).exists():
+                raise ValidationError({"cost_center": "مركز التكلفة غير موجود أو غير نشط في الشركة."})
+            lines = lines.filter(cost_center_id=int(cost_center_id))
+
+        closing_ids = JournalEntry.objects.filter(
+            company_id=company_id, source_type=JournalEntry.Source.CLOSING,
+        ).values("pk")
+        if request.query_params.get("exclude_closing", "true").lower() not in ("0", "false", "no"):
+            lines = lines.exclude(entry_id__in=closing_ids)
+
+        cogs_ids = AccountRole.objects.filter(
+            company_id=company_id, role=AccountRole.Role.COGS,
+        ).values("account_id")
+        detail = list(lines.values(
+            "account_id", "account__code", "account__name_ar",
+            "entry__branch_id", "entry__branch__code", "entry__branch__name_ar",
+            "cost_center_id", "cost_center__code", "cost_center__name_ar",
+        ).annotate(
+            debit=Sum("debit"), credit=Sum("credit"),
+        ).order_by("account__code", "entry__branch__code", "cost_center__code"))
+        monthly = list(lines.values("entry__entry_date__year", "entry__entry_date__month").annotate(
+            debit=Sum("debit"), credit=Sum("credit"),
+        ).order_by("entry__entry_date__year", "entry__entry_date__month"))
+
+        rows = []
+        total = Decimal("0")
+        direct_total = Decimal("0")
+        operating_total = Decimal("0")
+        for row in detail:
+            debit = row["debit"] or Decimal("0")
+            credit = row["credit"] or Decimal("0")
+            amount = debit - credit
+            direct = row["account_id"] in set(cogs_ids)
+            total += amount
+            if direct:
+                direct_total += amount
+            else:
+                operating_total += amount
+            rows.append({
+                "account_id": row["account_id"], "code": row["account__code"],
+                "name_ar": row["account__name_ar"], "branch_id": row["entry__branch_id"],
+                "branch_code": row["entry__branch__code"], "branch_name": row["entry__branch__name_ar"],
+                "cost_center_id": row["cost_center_id"], "cost_center_code": row["cost_center__code"] or "",
+                "cost_center_name": row["cost_center__name_ar"] or "غير محدد",
+                "debit": debit, "credit": credit, "amount": amount,
+                "category": "direct_cost" if direct else "operating_expense",
+            })
+        monthly_rows = [{
+            "month": f"{row['entry__entry_date__year']:04d}-{row['entry__entry_date__month']:02d}",
+            "amount": (row["debit"] or Decimal("0")) - (row["credit"] or Decimal("0")),
+        } for row in monthly]
+        return response.Response({
+            "company": company_id, "date_from": date_from, "date_to": date_to,
+            "currency": Company.objects.get(pk=company_id).base_currency.code,
+            "total": total, "direct_total": direct_total, "operating_total": operating_total,
+            "rows": rows, "monthly_rows": monthly_rows,
+            "note": "يعرض التقرير المصروفات من القيود المرحلة فقط، مع استبعاد قيود الإقفال افتراضيًا. التصنيف المباشر يعتمد على ربط دور تكلفة المبيعات.",
+        })
+
     @decorators.action(detail=False, methods=("get",), url_path="trial-balance")
     def trial_balance(self, request):
         """إعداد ميزان المراجعة للفترة والفروع المحددة وفق حالة القيود."""
