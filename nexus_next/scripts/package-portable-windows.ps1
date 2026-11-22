@@ -42,7 +42,7 @@ try {
   $BackendTarget = Join-Path $Stage "backend"
   New-Item -ItemType Directory -Force -Path $BackendTarget | Out-Null
   Get-ChildItem -LiteralPath $Backend -Force | ForEach-Object {
-    if ($_.Name -in @(".venv", "__pycache__", ".pytest_cache", "data", "backups", "staticfiles") -or
+    if ($_.Name -in @(".venv", "__pycache__", ".pytest_cache", ".secrets", ".cache", "data", "backups", "media", "logs", "staticfiles") -or
         $_.Name -eq ".env" -or
         ($_.Name -like ".env.*" -and $_.Name -ne ".env.example") -or
         $_.Extension -in @(".sqlite", ".sqlite3", ".db", ".dump", ".pyc", ".pyo")) { return }
