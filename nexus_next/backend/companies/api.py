@@ -169,9 +169,9 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         membership = CompanyMembership.objects.filter(
             user=request.user, company_id=company_id, is_active=True,
         ).first()
-        if not membership and not request.user.is_superuser:
+        if not membership and (not request.user.is_superuser or is_platform_owner(request.user)):
             raise NotFound("لا توجد عضوية نشطة للمستخدم في الشركة.")
-        if request.user.is_superuser:
+        if request.user.is_superuser and not is_platform_owner(request.user):
             return Response({"role": "admin", "all_branches": True, "branches": []})
         return Response(self.get_serializer(membership).data)
 
@@ -230,7 +230,7 @@ class BranchViewSet(viewsets.ModelViewSet):
         if self.request.query_params.get("include_inactive") != "true":
             return accessible_branches(self.request.user).select_related("company")
         company_id = self.request.query_params.get("company")
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             queryset = Branch.objects.filter(company__in=accessible_companies(self.request.user))
         else:
             admin_company_ids = CompanyMembership.objects.filter(
