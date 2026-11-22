@@ -77,8 +77,10 @@ jobs:
         working-directory: nexus_next/frontend
         shell: pwsh
         run: |
-          npm ci
+          npm install
+          if ($LASTEXITCODE -ne 0) { throw "npm install failed." }
           npm run build
+          if ($LASTEXITCODE -ne 0) { throw "React production build failed." }
       - name: Parse Windows operational scripts
         shell: pwsh
         run: |
