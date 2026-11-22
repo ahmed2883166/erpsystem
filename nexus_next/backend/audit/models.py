@@ -7,7 +7,8 @@ from django.db import models
 from django.utils import timezone
 
 
-class ImmutableAuditQuerySet    """يوفر مجموعة استعلامات تمنع تعديل أو حذف أحداث التدقيق."""
+class ImmutableAuditQuerySet(models.QuerySet):
+    """يوفر مجموعة استعلامات تمنع تعديل أو حذف أحداث التدقيق."""
     def update(self, **kwargs):
         raise TypeError("Audit events are immutable.")
 
@@ -15,7 +16,8 @@ class ImmutableAuditQuerySet    """يوفر مجموعة استعلامات تم
         raise TypeError("Audit events are immutable.")
 
 
-class AuditEvent    """يحفظ أثر العملية وهوية المستخدم والهدف والتوقيت والبيانات المسجلة."""
+class AuditEvent(models.Model):
+    """يحفظ أثر العملية وهوية المستخدم والهدف والتوقيت والبيانات المسجلة."""
     class Action(models.TextChoices):
         CREATE = "create", "إنشاء"
         UPDATE = "update", "تعديل"
