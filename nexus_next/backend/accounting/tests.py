@@ -1102,3 +1102,43 @@ class AccountRoleRuntimeValidationTests(TestCase):
             self.get_account_for_role(self.company, AccountRole.Role.CASH).pk,
             self.cash.pk,
         )
+
+    def test_expense_analysis_groups_posted_expenses_by_account_branch_and_month(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(code="EXP-AN", name_ar="شركة تحليل المصروفات",
+            country="EG", activity="commercial", base_currency=currency)
+        branch = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        year = FiscalYear.objects.create(company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
+        direct = ChartOfAccount.objects.create(company=company, code="5000", name_ar="تكلفة المبيعات", nature="expense")
+        operating = ChartOfAccount.objects.create(company=company, code="6100", name_ar="مصروفات إدارية", nature="expense")
+        AccountRole.objects.create(company=company, role=AccountRole.Role.COGS, account=direct)
+        center = CostCenter.objects.create(company=company, code="ADM", name_ar="الإدارة")
+        entry = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="EXP-AN-1", entry_date=date(2026, 2, 10), description="مصروفات فبراير")
+        JournalLine.objects.create(entry=entry, account=direct, debit=Decimal("300"), credit=0)
+        JournalLine.objects.create(entry=entry, account=operating, cost_center=center, debit=Decimal("120"), credit=0)
+        JournalLine.objects.create(entry=entry, account=cash, debit=0, credit=Decimal("420"))
+        post_journal(entry.pk)
+        user = User.objects.create_user(username="expense_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+        result = client.get(
+            f"/api/accounting/journal-entries/expense-analysis/?company={company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["total"], Decimal("420.0000"))
+        self.assertEqual(result.data["direct_total"], Decimal("300.0000"))
+        self.assertEqual(result.data["operating_total"], Decimal("120.0000"))
+        self.assertEqual(result.data["monthly_rows"][0]["month"], "2026-02")
+        self.assertEqual(len(result.data["rows"]), 2)
+        filtered = client.get(
+            f"/api/accounting/journal-entries/expense-analysis/?company={company.pk}"
+            f"&date_from=2026-02-01&date_to=2026-02-28&cost_center={center.pk}"
+        )
+        self.assertEqual(filtered.status_code, 200, filtered.data)
+        self.assertEqual(filtered.data["total"], Decimal("120.0000"))
