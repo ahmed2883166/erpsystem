@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch
+from companies.access import accessible_branches, accessible_companies, can_access_branch, is_platform_owner
 from .api import SalesBaseViewSet, _sales_warehouse_accessible
 from .models import SalesReturn
 from .return_serializers import SalesReturnSerializer
@@ -23,7 +23,7 @@ class SalesReturnViewSet(SalesBaseViewSet):
 
     def get_queryset(self):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
         default_company_ids = []
