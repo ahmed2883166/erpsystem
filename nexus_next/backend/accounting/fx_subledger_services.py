@@ -73,7 +73,7 @@ def _branch_and_year(invoice, direction, entry_date):
 def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, rate, user):
     """Revalue the outstanding AR/AP amount and post unrealized FX gain/loss."""
     if direction == "receivable":
-        invoice = SalesInvoice.objects.select_for_update().select_related(
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related(
             "company", "transaction_currency", "delivery__warehouse",
         ).get(pk=invoice_id)
         invoice_model = SalesInvoice
