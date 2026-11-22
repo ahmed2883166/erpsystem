@@ -24,12 +24,16 @@ export default function AuditPanel({ companyId }: { companyId: number | null }) 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  // إعادة الصفحة الأولى عند الانتقال إلى شركة أخرى.
+  useEffect(() => { setPage(1); }, [companyId]);
+
   // إعادة تحميل سجل التدقيق عند تغير الشركة أو فلاتر الفترة ونوع الإجراء.
 useEffect(() => {
     let cancelled = false;
     if (!companyId || from > to) {
       setItems([]);
       setCount(0);
+      setBusy(false);
       return;
     }
     setBusy(true);
