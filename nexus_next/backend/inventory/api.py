@@ -10,7 +10,7 @@ from rest_framework.response import Response
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 
 from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
@@ -35,7 +35,7 @@ def _can_access_warehouse(user, warehouse):
 
 def _default_branch_company_ids(user, companies):
     """تنفيذ وظيفة _default_branch_company_ids ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
-    if user.is_superuser:
+    if user.is_superuser and not is_platform_owner(user):
         return list(companies.values_list("id", flat=True))
     allowed = []
     for company_id in companies.values_list("id", flat=True):
@@ -144,7 +144,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return self.queryset.filter(company__in=companies)
         branches = accessible_branches(self.request.user)
         default_company_ids = _default_branch_company_ids(self.request.user, companies)
@@ -194,7 +194,7 @@ class WarehouseProductSettingViewSet(viewsets.ModelViewSet):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         queryset = self.queryset.filter(warehouse__company__in=companies)
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return queryset
         branches = accessible_branches(self.request.user)
         default_company_ids = _default_branch_company_ids(self.request.user, companies)
@@ -245,7 +245,7 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return self.queryset.filter(warehouse__company__in=companies)
         branches = accessible_branches(self.request.user)
         default_company_ids = _default_branch_company_ids(self.request.user, companies)
@@ -305,7 +305,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         queryset = self.queryset.filter(company__in=companies)
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return queryset
         branches = accessible_branches(self.request.user)
         default_company_ids = _default_branch_company_ids(self.request.user, companies)
@@ -386,7 +386,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         if product is None:
             raise NotFound("الصنف غير موجود أو غير متاح.")
         warehouse_query = Warehouse.objects.filter(pk=warehouse_id, company_id=product.company_id, is_active=True)
-        if not request.user.is_superuser:
+        if not request.user.is_superuser or is_platform_owner(request.user):
             branches = accessible_branches(request.user)
             default_company_ids = _default_branch_company_ids(request.user, companies)
             warehouse_query = warehouse_query.filter(
@@ -498,7 +498,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         companies = accessible_companies(self.request.user)
         queryset = self.queryset.filter(warehouse__company__in=companies)
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return queryset
         branches = accessible_branches(self.request.user)
         default_company_ids = _default_branch_company_ids(self.request.user, companies)
@@ -520,7 +520,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         if not can_access_company(request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
 
-        has_all_branch_access = request.user.is_superuser or CompanyMembership.objects.filter(
+        has_all_branch_access = (request.user.is_superuser and not is_platform_owner(request.user)) or CompanyMembership.objects.filter(
             user=request.user, company_id=company_id, is_active=True, all_branches=True
         ).exists()
         if has_all_branch_access:
@@ -674,7 +674,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"detail": "حساب المخزون المرتبط يجب أن يكون حساب أصول تفصيليًا ونشطًا وقابلًا للترحيل."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Never expose company-wide totals to a user who can access only selected branches.
-        has_all_branch_access = request.user.is_superuser or CompanyMembership.objects.filter(
+        has_all_branch_access = (request.user.is_superuser and not is_platform_owner(request.user)) or CompanyMembership.objects.filter(
             user=request.user, company_id=company_id, is_active=True, all_branches=True
         ).exists()
         if has_all_branch_access:
