@@ -4,6 +4,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
+from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
 from customers.models import Customer
@@ -137,7 +138,8 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
 
 class SalesInvoiceLineInputSerializer(serializers.Serializer):
     delivery_line = serializers.PrimaryKeyRelatedField(queryset=StockMovementLine.objects.select_related("movement", "product"))
-    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
+    transaction_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"),
                                         max_value=Decimal("100"), required=False, default=Decimal("0"))
     tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
@@ -152,7 +154,7 @@ class SalesInvoiceLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesInvoiceLine
         fields = ("id", "delivery_line", "product_code", "product_name", "quantity",
-                  "unit_price", "tax_rate", "tax_code", "discount_percent", "discount_amount", "net_amount", "tax_amount", "total_amount")
+                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_amount", "net_amount", "tax_amount", "total_amount")
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
@@ -168,10 +170,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesInvoice
         fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number",
-                  "invoice_number", "invoice_date", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
+                  "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "created_at", "posted_at")
-        read_only_fields = ("status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
+        read_only_fields = ("status", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
                             "created_at", "posted_at")
 
@@ -349,9 +351,9 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerReceipt
         fields = ("id", "company", "customer", "customer_name", "invoice", "invoice_number",
-                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "reference", "status",
+                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
                   "journal_entry", "journal_number", "created_at", "posted_at")
-        read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
+        read_only_fields = ("status", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
