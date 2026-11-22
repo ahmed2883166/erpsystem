@@ -1,3 +1,5 @@
+"""نماذج الأصول الثابتة وأقساط الإهلاك المرتبطة بها."""
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -7,6 +9,7 @@ from accounting.models import ChartOfAccount, JournalEntry
 
 
 class FixedAsset(models.Model):
+    """يحفظ بيانات الأصل وتكلفته وعمره وحالته المحاسبية."""
     class Status(models.TextChoices):
         ACTIVE = "active", "نشط"
         DISPOSED = "disposed", "مستبعد"
@@ -79,6 +82,7 @@ class FixedAsset(models.Model):
 
 
 class AssetDepreciation(models.Model):
+    """يمثل قسط إهلاك الأصل وتاريخ استحقاقه وقيده."""
     asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="depreciations")
     period_date = models.DateField()
     amount = models.DecimalField(max_digits=20, decimal_places=4)
