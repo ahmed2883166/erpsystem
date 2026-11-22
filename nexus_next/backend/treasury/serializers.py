@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db import models
-from companies.models import Currency
+from companies.models import Currency, ExchangeRate
 from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
@@ -69,7 +69,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
         model = TreasuryTransaction
         fields = ("id", "company", "branch", "fiscal_year", "source_account", "source_name",
                   "destination_account", "destination_name", "counter_account", "counter_account_code",
-                  "kind", "status", "document_number", "transaction_date", "amount", "description",
+                  "kind", "status", "document_number", "transaction_date", "amount",\n                  "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "description",
                   "reference", "cash_flow_category", "journal_entry", "journal_number", "created_at", "posted_at")
         read_only_fields = ("status", "journal_entry", "created_at", "posted_at")
 
@@ -86,8 +86,39 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة."})
         if fiscal_year and company and fiscal_year.company_id != company.id:
             raise serializers.ValidationError({"fiscal_year": "السنة المالية لا تتبع الشركة."})
-        if attrs.get("amount", getattr(self.instance, "amount", 0)) <= 0:
+        amount = attrs.get("amount", getattr(self.instance, "amount", 0))
+        if amount <= 0:
             raise serializers.ValidationError({"amount": "القيمة يجب أن تكون أكبر من صفر."})
+        fx_names = ("transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date")
+        fx = {
+            name: attrs.get(name, getattr(self.instance, name, None))
+            for name in fx_names
+        }
+        if any(value is not None for value in fx.values()):
+            if any(value is None for value in fx.values()):
+                raise serializers.ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
+            currency = fx["transaction_currency"]
+            if not currency.is_active:
+                raise serializers.ValidationError({"transaction_currency": "العملة المختارة موقوفة."})
+            if currency.code == company.base_currency.code:
+                raise serializers.ValidationError({"transaction_currency": "استخدم العملة الأساسية دون بيانات تحويل أجنبي."})
+            source_account = attrs.get("source_account", getattr(self.instance, "source_account", None))
+            if source_account and source_account.currency_code != currency.code:
+                raise serializers.ValidationError({"transaction_currency": "عملة المعاملة لا تطابق عملة حساب الخزينة."})
+            if fx["transaction_amount"] <= 0 or fx["exchange_rate"] <= 0:
+                raise serializers.ValidationError("المبلغ الأجنبي وسعر الصرف يجب أن يكونا أكبر من صفر.")
+            transaction_date = attrs.get("transaction_date", getattr(self.instance, "transaction_date", None))
+            if fx["exchange_rate_date"] > transaction_date:
+                raise serializers.ValidationError({"exchange_rate_date": "تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ الحركة."})
+            if not ExchangeRate.objects.filter(
+                company=company, currency=currency,
+                rate_date=fx["exchange_rate_date"], rate=fx["exchange_rate"],
+            ).exists():
+                raise serializers.ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا مسجلًا للشركة والتاريخ.")
+            from decimal import Decimal
+            expected_base = (fx["transaction_amount"] * fx["exchange_rate"]).quantize(Decimal("0.0001"))
+            if amount != expected_base:
+                raise serializers.ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         kind = attrs.get("kind", getattr(self.instance, "kind", None))
         dest = attrs.get("destination_account", getattr(self.instance, "destination_account", None))
         counter = attrs.get("counter_account", getattr(self.instance, "counter_account", None))
