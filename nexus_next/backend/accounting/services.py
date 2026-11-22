@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from companies.models import FiscalYear
 from audit.models import AuditEvent
-from .models import JournalEntry, JournalLine
+from .models import JournalEntry
 
 ACCOUNT_ROLE_NATURES = {
     "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
