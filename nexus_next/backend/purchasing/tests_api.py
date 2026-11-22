@@ -764,3 +764,38 @@ class PurchasingWorkflowTests(APITestCase):
             entry_id=final_posted.data["journal_entry"], account__code="6160",
             credit=Decimal("9.0000"),
         ).exists())
+
+    def test_purchase_order_can_be_cancelled_before_receipt(self):
+        created = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk,
+            "order_number": "PO-CANCEL-001",
+            "order_date": "2026-04-01",
+            "expected_date": "2026-04-15",
+            "lines": [{
+                "product": self.product.pk,
+                "quantity": "5",
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        order_id = created.data["id"]
+
+        confirmed = self.client.post(
+            f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json"
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data["status"], "confirmed")
+
+        cancelled = self.client.post(
+            f"/api/purchasing/orders/{order_id}/cancel/", {}, format="json"
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.data)
+        self.assertEqual(cancelled.data["status"], "cancelled")
+
+        repeated = self.client.post(
+            f"/api/purchasing/orders/{order_id}/cancel/", {}, format="json"
+        )
+        self.assertEqual(repeated.status_code, 400, repeated.data)
