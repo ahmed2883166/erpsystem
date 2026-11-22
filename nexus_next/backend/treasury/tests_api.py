@@ -131,7 +131,7 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(again.status_code, 400)
         self.assertEqual(JournalEntry.objects.filter(pk=entry.pk).count(), 1)
 
-    def test_foreign_currency_treasury_posting_is_blocked_without_exchange_rate(self):
+    def test_foreign_currency_treasury_draft_requires_exchange_rate_snapshot(self):
         foreign_gl = ChartOfAccount.objects.create(
             company=self.company, code="1120", name_ar="بنك بالدولار",
             nature=ChartOfAccount.Nature.ASSET,
@@ -145,16 +145,11 @@ class TreasuryWorkflowTests(APITestCase):
             source_account=foreign_bank.pk,
             document_number="TR-USD-001",
         )
-        self.assertEqual(response.status_code, 201, response.data)
 
-        before = JournalEntry.objects.count()
-        posted = self.client.post(
-            f"/api/treasury/transactions/{response.data['id']}/post/", {}, format="json"
-        )
-
-        self.assertEqual(posted.status_code, 400, posted.data)
-        self.assertIn("سعر الصرف", str(posted.data))
-        self.assertEqual(JournalEntry.objects.count(), before)
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("سعر الصرف", str(response.data))
+        self.assertFalse(TreasuryTransaction.objects.filter(document_number="TR-USD-001").exists())
+        self.assertEqual(JournalEntry.objects.count(), 0)
         foreign_bank.refresh_from_db()
         self.assertTrue(foreign_bank.is_active)
 
