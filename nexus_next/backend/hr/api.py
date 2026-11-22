@@ -8,6 +8,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from accounting.permissions import CompanyRolePermission
+from audit.models import AuditEvent
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import (
     AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
@@ -87,7 +88,7 @@ class EmployeeScopedViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         self.check_employee_write(serializer.validated_data["employee"])
-        serializer.save()
+        serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
@@ -195,24 +196,36 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
     filterset_fields = ("employee", "employee__company", "kind", "status")
 
     @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
     def approve(self, request, pk=None):
-        """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
-        leave = self.get_object()
+        """اعتماد طلب الإجازة مع منع الاعتماد الذاتي وتوثيق الاستثناء الأعلى."""
+        leave = LeaveRequest.objects.select_for_update().select_related("employee", "employee__company").get(pk=self.get_object().pk)
         self.check_employee_write(leave.employee, admin_only=True)
         if leave.status != LeaveRequest.Status.PENDING:
             raise ValidationError("لا يمكن اعتماد أو رفض طلب تمت معالجته.")
+        if leave.created_by_id == request.user.pk:
+            reason = str(request.data.get("self_approval_override_reason", "")).strip()
+            if not request.user.is_superuser or len(reason) < 10:
+                raise PermissionDenied("لا يجوز اعتماد طلب الإجازة الذي أنشأته. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
+            AuditEvent.objects.create(actor=request.user, company=leave.employee.company, branch=leave.employee.branch, action=AuditEvent.Action.ACTION, resource="hr.leave.self_approval_override", object_id=str(leave.pk), http_method="POST", status_code=200, succeeded=True, metadata={"reason": reason, "employee_id": leave.employee_id, "decision": "approved"})
         leave.status = LeaveRequest.Status.APPROVED
         leave.approved_by = request.user
         leave.save(update_fields=("status", "approved_by"))
         return response.Response(self.get_serializer(leave).data)
 
     @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
     def reject(self, request, pk=None):
-        """رفض الطلب وتسجيل قرار الرفض وسببه."""
-        leave = self.get_object()
+        """رفض طلب الإجازة مع منع تعارض المصالح وتوثيق الاستثناء الأعلى."""
+        leave = LeaveRequest.objects.select_for_update().select_related("employee", "employee__company").get(pk=self.get_object().pk)
         self.check_employee_write(leave.employee, admin_only=True)
         if leave.status != LeaveRequest.Status.PENDING:
             raise ValidationError("لا يمكن رفض طلب تمت معالجته.")
+        if leave.created_by_id == request.user.pk:
+            reason = str(request.data.get("self_approval_override_reason", "")).strip()
+            if not request.user.is_superuser or len(reason) < 10:
+                raise PermissionDenied("لا يجوز اتخاذ قرار في طلب الإجازة الذي أنشأته. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
+            AuditEvent.objects.create(actor=request.user, company=leave.employee.company, branch=leave.employee.branch, action=AuditEvent.Action.ACTION, resource="hr.leave.self_approval_override", object_id=str(leave.pk), http_method="POST", status_code=200, succeeded=True, metadata={"reason": reason, "employee_id": leave.employee_id, "decision": "rejected"})
         leave.status = LeaveRequest.Status.REJECTED
         leave.approved_by = request.user
         leave.save(update_fields=("status", "approved_by"))
@@ -367,8 +380,14 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id, roles=("admin",))
+        cycle = PayrollCycle.objects.select_for_update().get(pk=cycle.pk)
         if cycle.status != PayrollCycle.Status.REVIEW:
             raise ValidationError("الدورة يجب أن تكون تحت المراجعة قبل الاعتماد.")
+        if cycle.created_by_id == request.user.pk:
+            reason = str(request.data.get("self_approval_override_reason", "")).strip()
+            if not request.user.is_superuser or len(reason) < 10:
+                raise PermissionDenied("لا يجوز اعتماد دورة المرتبات التي أنشأتها. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
+            AuditEvent.objects.create(actor=request.user, company=cycle.company, action=AuditEvent.Action.ACTION, resource="hr.payroll.self_approval_override", object_id=str(cycle.pk), http_method="POST", status_code=200, succeeded=True, metadata={"reason": reason, "decision": "approved"})
         cycle.status = PayrollCycle.Status.APPROVED
         cycle.approved_by = request.user
         cycle.approved_at = timezone.now()
