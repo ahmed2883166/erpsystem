@@ -22,6 +22,9 @@ $SitePackages = Join-Path $Runtime "Lib\site-packages"
 $ZipPath = Join-Path $OutputDirectory "$PackageName.zip"
 $EmbedUrl = "https://www.python.org/ftp/python/$PythonVersion/python-$PythonVersion-embed-amd64.zip"
 $EmbedZip = Join-Path ([System.IO.Path]::GetTempPath()) "python-$PythonVersion-embed-amd64.zip"
+$EnvKeys = @("DJANGO_SECRET_KEY", "DJANGO_DEBUG", "POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST", "POSTGRES_PORT")
+$PreviousEnv = @{}
+foreach ($Key in $EnvKeys) { $PreviousEnv[$Key] = [Environment]::GetEnvironmentVariable($Key, "Process") }
 
 try {
   New-Item -ItemType Directory -Force -Path $Stage, $OutputDirectory | Out-Null
@@ -39,7 +42,10 @@ try {
   $BackendTarget = Join-Path $Stage "backend"
   New-Item -ItemType Directory -Force -Path $BackendTarget | Out-Null
   Get-ChildItem -LiteralPath $Backend -Force | ForEach-Object {
-    if ($_.Name -in @(".venv", "__pycache__", ".pytest_cache", "data", "backups", "staticfiles") -or $_.Name -eq ".env") { return }
+    if ($_.Name -in @(".venv", "__pycache__", ".pytest_cache", "data", "backups", "staticfiles") -or
+        $_.Name -eq ".env" -or
+        ($_.Name -like ".env.*" -and $_.Name -ne ".env.example") -or
+        $_.Extension -in @(".sqlite", ".sqlite3", ".db", ".dump", ".pyc", ".pyo")) { return }
     Copy-Item -LiteralPath $_.FullName -Destination $BackendTarget -Recurse -Force
   }
   $FrontendTarget = Join-Path $Stage "frontend"
@@ -109,7 +115,10 @@ Do not use this package against the legacy Flask/SQLite database.
   Write-Host "SHA256: $Hash"
 }
 finally {
-  Remove-Item Env:\DJANGO_SECRET_KEY, Env:\DJANGO_DEBUG, Env:\POSTGRES_DB, Env:\POSTGRES_USER, Env:\POSTGRES_PASSWORD, Env:\POSTGRES_HOST, Env:\POSTGRES_PORT -ErrorAction SilentlyContinue
+  foreach ($Key in $EnvKeys) {
+    if ($null -eq $PreviousEnv[$Key]) { Remove-Item "Env:\$Key" -ErrorAction SilentlyContinue }
+    else { Set-Item "Env:\$Key" -Value $PreviousEnv[$Key] }
+  }
   if (Test-Path -LiteralPath $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
   if (Test-Path -LiteralPath $EmbedZip) { Remove-Item -LiteralPath $EmbedZip -Force }
 }
