@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse, getpass, json, sys, uuid
 from datetime import datetime, timezone
 from pathlib import Path
+import shutil
 from core.backup_crypto import decrypt_backup, encrypt_backup
 from core.offline_license import LicenseError, create_signed_license, generate_owner_keypair, windows_machine_fingerprint
 def password(confirm=False):
@@ -14,6 +15,7 @@ def main():
     a=sub.add_parser("owner-init"); a.add_argument("--usb-dir",required=True)
     a=sub.add_parser("request"); a.add_argument("--installation-id",required=True); a.add_argument("--output",required=True)
     a=sub.add_parser("issue"); a.add_argument("--usb-dir",required=True); a.add_argument("--request",required=True); a.add_argument("--output",required=True)
+    a=sub.add_parser("install-license"); a.add_argument("--usb-dir",required=True); a.add_argument("--license",required=True); a.add_argument("--installation-id",required=True); a.add_argument("--target-dir",required=True)
     a=sub.add_parser("encrypt-backup"); a.add_argument("--input",required=True); a.add_argument("--output",required=True)
     a=sub.add_parser("decrypt-backup"); a.add_argument("--input",required=True); a.add_argument("--output",required=True)
     args=p.parse_args()
@@ -36,6 +38,16 @@ def main():
             out=Path(args.output)
             if out.exists(): raise ValueError("ملف الترخيص موجود بالفعل؛ لن يتم استبداله.")
             out.parent.mkdir(parents=True,exist_ok=True); out.write_text(token,encoding="ascii"); print(f"تم إصدار الترخيص: {out}")
+        elif args.command=="install-license":
+            from core.offline_license import verify_signed_license
+            usb=Path(args.usb_dir); target=Path(args.target_dir); target.mkdir(parents=True,exist_ok=True)
+            public=usb/"owner-public.pem"; license_file=Path(args.license)
+            verify_signed_license(license_file.read_text(encoding="ascii"),public,args.installation_id,windows_machine_fingerprint())
+            for source,name in ((public,"owner-public.pem"),(license_file,"nexus.license")):
+                destination=target/name
+                if destination.exists(): raise ValueError(f"الملف موجود بالفعل ولن يتم استبداله: {destination}")
+                shutil.copy2(source,destination)
+            print(f"تم تثبيت ملف الترخيص ومفتاح التحقق في: {target}")
         elif args.command in ("encrypt-backup","decrypt-backup"):
             pw=password(); result=encrypt_backup(args.input,args.output,pw) if args.command=="encrypt-backup" else decrypt_backup(args.input,args.output,pw); print(f"اكتملت العملية: {result}")
         return 0
