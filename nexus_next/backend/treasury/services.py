@@ -76,6 +76,14 @@ def post_treasury_transaction(transaction_id, user=None):
     doc.source_account = source
     if not source.is_active:
         raise ValidationError("حساب الخزينة المصدر موقوف.")
+    # لا توجد بعد آلية سعر صرف/إعادة تقييم للعملات الأجنبية؛ ترحيل القيمة الاسمية
+    # مباشرة إلى دفتر العملة الأساسية سيُنتج قيدًا محاسبيًا مضللًا.
+    base_currency = doc.company.base_currency.code
+    if source.currency_code != base_currency:
+        raise ValidationError(
+            f"لا يمكن ترحيل حركة على حساب بعملة {source.currency_code} قبل تفعيل سعر الصرف وفروق العملة؛ "
+            f"العملة الأساسية للشركة هي {base_currency}."
+        )
     if source.account.nature != source.account.Nature.ASSET:
         raise ValidationError("يجب ربط الخزينة بحساب من طبيعة الأصول.")
     if source.branch_id and source.branch_id != doc.branch_id:
@@ -98,6 +106,10 @@ def post_treasury_transaction(transaction_id, user=None):
         destination = doc.destination_account
         if not destination.is_active:
             raise ValidationError("حساب الخزينة المستقبلة موقوف.")
+        if destination.currency_code != base_currency:
+            raise ValidationError(
+                f"لا يمكن ترحيل تحويل إلى حساب بعملة {destination.currency_code} قبل تفعيل سعر الصرف وفروق العملة."
+            )
         if destination.account.nature != destination.account.Nature.ASSET:
             raise ValidationError("يجب ربط الخزينة المستقبلة بحساب من طبيعة الأصول.")
         if destination.branch_id and destination.branch_id != doc.branch_id:
