@@ -35,7 +35,7 @@ const refresh = async () => {
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل الموردين."); }
     finally { setLoading(false); }
   };
-  useEffect(() => { void refresh(); }, [companyId]);
+  useEffect(() => { void refresh(); resetForm(); setShowForm(false); }, [companyId]);
 
   const filtered = useMemo(() => rows.filter((supplier) =>
     [supplier.code, supplier.name_ar, supplier.name_en, supplier.tax_number, supplier.phone, supplier.mobile]
