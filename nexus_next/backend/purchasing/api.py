@@ -17,6 +17,34 @@ from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from inventory.models import StockMovement
+
+from companies.models import Branch
+
+
+def _purchase_warehouse_accessible(user, warehouse):
+    """Apply the default-branch rule to shared warehouses."""
+    if user.is_superuser and not is_platform_owner(user):
+        return True
+    branch = warehouse.branch
+    if branch is None:
+        branch = Branch.objects.filter(
+            company_id=warehouse.company_id, is_active=True
+        ).order_by("-is_head_office", "code").first()
+    return bool(branch and can_access_branch(user, branch.pk, warehouse.company_id))
+
+
+def _default_branch_company_ids(user, companies):
+    """Return company IDs where the user's default branch is accessible."""
+    if user.is_superuser and not is_platform_owner(user):
+        return list(companies.values_list("id", flat=True))
+    company_ids = []
+    for company_id in companies.values_list("id", flat=True):
+        branch = Branch.objects.filter(
+            company_id=company_id, is_active=True
+        ).order_by("-is_head_office", "code").first()
+        if branch and can_access_branch(user, branch.pk, company_id):
+            company_ids.append(company_id)
+    return company_ids
 from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment
@@ -46,10 +74,11 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
-        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
-            return qs
-        return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=accessible_branches(self.request.user)))
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
 
     def create(self, request, *args, **kwargs):
         """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
@@ -64,7 +93,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        if data["warehouse"].branch_id and not can_access_branch(self.request.user, data["warehouse"].branch_id, data["company"].pk):
+        if not _purchase_warehouse_accessible(self.request.user, data["warehouse"]):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
@@ -73,9 +102,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         order = serializer.instance
         self._check_write(order.company_id)
         warehouse = serializer.validated_data.get("warehouse", order.warehouse)
-        if warehouse.branch_id and not can_access_branch(
-            self.request.user, warehouse.branch_id, order.company_id
-        ):
+        if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
@@ -123,11 +150,11 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
-        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
-            return qs
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
         branches = accessible_branches(self.request.user)
-        return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches))
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
 
     def create(self, request, *args, **kwargs):
         """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
@@ -143,7 +170,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         warehouse = data["warehouse"]
-        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, data["company"].pk):
+        if not _purchase_warehouse_accessible(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
@@ -160,7 +187,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
-        if receipt.warehouse.branch_id and not can_access_branch(request.user, receipt.warehouse.branch_id, receipt.company_id):
+        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         receipt = post_purchase_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
@@ -175,11 +202,11 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
-        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
-            return qs
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
         branches = accessible_branches(self.request.user)
-        return qs.filter(Q(receipt__warehouse__branch__isnull=True) | Q(receipt__warehouse__branch__in=branches))
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(Q(receipt__warehouse__branch__in=branches) | Q(receipt__warehouse__branch__isnull=True, company_id__in=defaults))
 
     def create(self, request, *args, **kwargs):
         """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
@@ -195,7 +222,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         receipt = data["receipt"]
-        if receipt.warehouse.branch_id and not can_access_branch(self.request.user, receipt.warehouse.branch_id, data["company"].pk):
+        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
 
@@ -206,9 +233,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if invoice.status != PurchaseInvoice.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل فاتورة مورد مرحلة.")
         receipt = invoice.receipt
-        if receipt.warehouse.branch_id and not can_access_branch(
-            self.request.user, receipt.warehouse.branch_id, invoice.company_id
-        ):
+        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
 
@@ -216,9 +241,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     def revalue(self, request, pk=None):
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if invoice.receipt.warehouse.branch_id and not can_access_branch(
-            request.user, invoice.receipt.warehouse.branch_id, invoice.company_id
-        ):
+        if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         revaluation_date = parse_date(request.data.get("revaluation_date", ""))
         rate_date = parse_date(request.data.get("rate_date", ""))
@@ -418,7 +441,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if invoice.receipt.warehouse.branch_id and not can_access_branch(request.user, invoice.receipt.warehouse.branch_id, invoice.company_id):
+        if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         invoice = post_purchase_invoice(invoice.pk, request.user)
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
@@ -436,13 +459,13 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
-        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
-            return qs
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
         branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(
-            Q(invoice__receipt__warehouse__branch__isnull=True)
-            | Q(invoice__receipt__warehouse__branch__in=branches)
+            Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
         )
 
     def create(self, request, *args, **kwargs):
@@ -459,9 +482,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         invoice = data["invoice"]
-        if invoice.receipt.warehouse.branch_id and not can_access_branch(
-            self.request.user, invoice.receipt.warehouse.branch_id, data["company"].pk
-        ):
+        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
@@ -475,9 +496,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         payment = self.get_object()
         self._check_write(payment.company_id)
-        if payment.invoice.receipt.warehouse.branch_id and not can_access_branch(
-            request.user, payment.invoice.receipt.warehouse.branch_id, payment.company_id
-        ):
+        if not _purchase_warehouse_accessible(request.user, payment.invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         payment = post_supplier_payment(payment.pk, request.user)
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
@@ -492,7 +511,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         self._check_write(payment.company_id)
         invoice = PurchaseInvoice.objects.select_for_update().select_related("receipt__warehouse").get(pk=payment.invoice_id)
         warehouse = invoice.receipt.warehouse
-        if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, payment.company_id):
+        if not _purchase_warehouse_accessible(request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if payment.status != SupplierPayment.Status.POSTED or not payment.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند صرف غير مرحّل.")
