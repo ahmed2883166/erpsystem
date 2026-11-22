@@ -59,8 +59,25 @@ export default function OperationalReconciliationPanel({ companyId, currency, br
   }, [selectedId]);
 
   const accountName = (id: number) => bankAccounts.find((item) => item.id === id)?.name_ar || "حساب بنكي";
-  return <section className="work-panel">
-    <div className="work-panel-head"><div><h2>مطابقات المخزون والبنوك</h2><p>مراجعة الفروق والحركات المعلقة — دون ترحيل أو تعديل</p></div><span className="coming-soon">{busy ? "جارٍ التحديث…" : "قراءة فقط"}</span></div>
+  const exportCsv = () => {
+    const rows: (string | number)[][] = [["التقرير", "البند", "القيمة"]];
+    if (inventory) {
+      rows.push(["مطابقة المخزون", "قيمة المخزون", inventory.stock_value], ["مطابقة المخزون", "رصيد دفتر الأستاذ", inventory.gl_balance], ["مطابقة المخزون", "الفرق", inventory.difference]);
+    }
+    integrity?.fifo_mismatches.forEach((item) => rows.push(["اختلاف FIFO", item.product_code + " - " + item.product_name, item.value_difference]));
+    integrity?.pending_movements.forEach((item) => rows.push(["حركة غير مرحلة", item.movement_number, item.movement_date]));
+    if (summary) {
+      rows.push(["تسوية بنكية", "رقم الكشف", summary.reconciliation.statement_number], ["تسوية بنكية", "فرق غير مفسر", summary.unexplained_difference]);
+      summary.lines.filter((line) => !line.matched_transaction).forEach((line) => rows.push(["سطر بنك غير مطابق", line.description || line.reference, line.amount]));
+    }
+    const csv = "\\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\\r\\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url; link.download = "operational-reconciliations.csv"; link.click(); URL.revokeObjectURL(url);
+  };
+
+  return <section className="work-panel print-active">
+    <div className="work-panel-head"><div><h2>مطابقات المخزون والبنوك</h2><p>مراجعة الفروق والحركات المعلقة — دون ترحيل أو تعديل</p></div><div className="report-actions"><button type="button" className="subtle-button" onClick={exportCsv} disabled={!inventory && !integrity && !summary}>تصدير CSV</button><button type="button" className="subtle-button" onClick={() => window.print()}>طباعة / PDF</button><span className="coming-soon">{busy ? "جارٍ التحديث…" : "قراءة فقط"}</span></div></div>
     <div className="asset-report-filters"><label>الفرع<select value={branchId} onChange={(event) => setBranchId(event.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map((item) => <option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label><span>{selectedBranch ? selectedBranch.name_ar : "النطاق المجمع حسب صلاحيات المستخدم"}</span></div>
     {error && <div className="error-banner">{error}</div>}
     <div className="activity-panel">
