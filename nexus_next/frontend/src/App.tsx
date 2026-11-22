@@ -89,7 +89,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
   const [name, setName] = useState("");
   const [category, setCategory] = useState<TaxCode["category"]>("standard");
   const [rate, setRate] = useState("");
-  const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [effectiveFrom, setEffectiveFrom] = useState(localISODate());
   const [effectiveTo, setEffectiveTo] = useState("");
   const [recoverable, setRecoverable] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -155,7 +155,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
 
 // شاشة الإقرار الضريبي: تجميع بيانات الفترة والفرع وعرض ملخص ضريبة القيمة المضافة.
 function VATReturnPanel({ companyId }: { companyId: number | null }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localISODate();
   const [from, setFrom] = useState(new Date().getFullYear() + "-01-01");
   const [to, setTo] = useState(today);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -517,7 +517,7 @@ export default function App() {
   const [reversingId, setReversingId] = useState<number | null>(null);
   const [selectedJournal, setSelectedJournal] = useState<Journal | null>(null);
   const [journalError, setJournalError] = useState("");
-  const [draft, setDraft] = useState({ branch: "", fiscal_year: "", entry_number: "", entry_date: new Date().toISOString().slice(0, 10), description: "" });
+  const [draft, setDraft] = useState({ branch: "", fiscal_year: "", entry_number: "", entry_date: localISODate(), description: "" });
   const [journalLines, setJournalLines] = useState<DraftLine[]>([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]);
   const current = useMemo(() => navigation.find((item) => item.id === active), [active]);
 
