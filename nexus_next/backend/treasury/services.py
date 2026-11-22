@@ -121,6 +121,13 @@ def post_treasury_transaction(transaction_id, user=None):
     base_currency = doc.company.base_currency.code
     foreign = source.currency_code != base_currency
     if foreign:
+        # لا نقبل حركة مؤرخة في أو قبل آخر إعادة تقييم؛ وإلا سيتغير المركز
+        # التاريخي بعد إقفال التقييم وتصبح القيمة الدفترية اللاحقة غير موثوقة.
+        last_revaluation = TreasuryFxRevaluation.objects.filter(
+            account=source, revaluation_date__gte=doc.transaction_date,
+        ).order_by("-revaluation_date").first()
+        if last_revaluation:
+            raise ValidationError("تاريخ الحركة يسبق أو يساوي آخر إعادة تقييم؛ استخدم تاريخًا لاحقًا أو اعكس التقييم بإجراء معتمد.")
         if not all((doc.transaction_currency_id, doc.transaction_amount, doc.exchange_rate, doc.exchange_rate_date)):
             raise ValidationError("الحركة الأجنبية تتطلب لقطة مبلغ وسعر صرف وتاريخ معتمد مكتملة.")
         if doc.transaction_currency.code != source.currency_code:
@@ -285,6 +292,15 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
         raise ValidationError("السنة المالية مغلقة.")
     if not (year.start_date <= revaluation_date <= year.end_date):
         raise ValidationError("تاريخ إعادة التقييم خارج السنة المالية.")
+    # لا يجوز تقييم رصيد حالي بتاريخ أقدم من حركة خزينة مرحّلة؛ المركز الحالي
+    # يتضمن هذه الحركة وسيؤدي ذلك إلى إعادة تقييم تاريخية غير صحيحة.
+    later_movements = TreasuryTransaction.objects.filter(
+        Q(source_account=account) | Q(destination_account=account),
+        status=TreasuryTransaction.Status.POSTED,
+        transaction_date__gt=revaluation_date,
+    )
+    if later_movements.exists():
+        raise ValidationError("يوجد حركة خزينة مرحّلة بتاريخ لاحق؛ أعد التقييم بعد آخر حركة أو عالج التسلسل الزمني أولًا.")
     if rate_date > revaluation_date:
         raise ValidationError("تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ إعادة التقييم.")
     if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date=revaluation_date).exists():
