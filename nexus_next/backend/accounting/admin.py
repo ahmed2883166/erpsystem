@@ -1,3 +1,7 @@
+"""تهيئة واجهة Django الإدارية لمراجعة الحسابات والأدوار والقيود والضرائب.
+هذه الواجهة إدارية داخلية ولا تستبدل صلاحيات واجهات API الخاصة بالمستخدمين.
+"""
+
 from django.contrib import admin
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 
