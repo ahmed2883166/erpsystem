@@ -4,13 +4,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import TestCase
 
 from core.backup_crypto import BackupCryptoError, decrypt_recovery_key, encrypt_recovery_key
 from core import backup_key
 
 
-class BackupKeyTests(SimpleTestCase):
+class BackupKeyTests(TestCase):
     def test_recovery_key_round_trip(self):
         with tempfile.TemporaryDirectory() as folder:
             recovery = Path(folder) / "owner-usb.nexuskey"
