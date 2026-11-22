@@ -1,3 +1,5 @@
+"""نماذج دورة المبيعات والتسليم والفوترة وتحصيلات العملاء."""
+
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -11,6 +13,7 @@ from inventory.models import StockMovement, StockMovementLine, Warehouse
 
 
 class SalesDelivery(models.Model):
+    """يمثل إذن تسليم مرتبطًا بحركة صرف مخزنية."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_deliveries")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_deliveries")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_deliveries")
@@ -50,6 +53,7 @@ class SalesDelivery(models.Model):
 
 
 class SalesInvoice(models.Model):
+    """يمثل فاتورة العميل وإجماليات البيع والضريبة والاعتماد."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّلة"
@@ -102,6 +106,7 @@ class SalesInvoice(models.Model):
 
 
 class SalesInvoiceLine(models.Model):
+    """يمثل بند البيع المرتبط بصنف تم تسليمه."""
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="lines")
     delivery_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_invoice_line")
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
@@ -145,6 +150,7 @@ class SalesInvoiceLine(models.Model):
 
 
 class CustomerReceipt(models.Model):
+    """يمثل تحصيلًا من العميل ووسيلة إيداعه وحالة ترحيله."""
     class Method(models.TextChoices):
         CASH = "cash", "نقدي"
         BANK = "bank", "تحويل بنكي"
