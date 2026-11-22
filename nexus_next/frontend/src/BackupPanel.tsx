@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 type ResetPreview = { counts: Record<string,number>; total_records:number; backup_ready:boolean; last_backup_at:string|null; preserved:string[]; removed:string[] };
 type BackupConfig = {
+  encryption_ready: boolean;
   backup_path: string;
   schedule: "daily" | "weekly" | "monthly";
   enabled: boolean;
@@ -143,14 +144,16 @@ const save = async (event: FormEvent) => {
       <div className="review-meta">
         <div><span>حالة النسخ التلقائي</span><strong>{config.enabled ? "مفعّل" : "متوقف"}</strong></div>
         <div><span>مسار النسخ المعتمد</span><strong dir="ltr">{config.backup_path || "لم يتم تحديده"}</strong></div>
-        <div><span>تشفير النسخ</span><strong>{config.encryption_ready ? "مهيأ ومتاح" : "لم يُهيأ بعد"}</strong></div>\n        <div><span>صلاحية التعديل</span><strong>{config.can_manage ? "مدير النظام فقط" : "عرض فقط"}</strong></div>
+        <div><span>تشفير النسخ</span><strong>{config.encryption_ready ? "مهيأ ومتاح" : "لم يُهيأ بعد"}</strong></div>
+        <div><span>صلاحية التعديل</span><strong>{config.can_manage ? "مدير النظام فقط" : "عرض فقط"}</strong></div>
       </div>
       {config.can_manage && <div className="form-actions"><button type="button" className="primary-button" disabled={running || !config.enabled || !config.path_configured || !config.encryption_ready} onClick={() => void runBackup()}>{running ? "جارٍ إنشاء النسخة والتحقق منها…" : "إنشاء نسخة احتياطية الآن"}</button></div>}
       {config.can_manage ? <form className="journal-form" onSubmit={save}>
         <label className="form-wide">مجلد النسخ الاحتياطي على قرص غير C
           <input required dir="ltr" value={path} onChange={e=>setPath(e.target.value)} placeholder="D:\\NEXUS_Backups" />
         </label>
-        <p className="asset-report-note form-wide">أنشئ المجلد مسبقًا على جهاز تشغيل النظام، وتأكد من أن حساب تشغيل NEXUS يستطيع الكتابة فيه. لا يُقبل مسار على C:.</p>\n        <p className="asset-report-note form-wide">النسخ الجديدة تُشفّر قبل حفظها. لتهيئة التشفير مرة واحدة شغّل scripts/initialize-backup-encryption.ps1 مع ملف استرداد على USB، ثم شغّل scripts/install-backup-task.ps1 لتثبيت الجدولة. لن يبدأ النسخ قبل تهيئة المفتاح.</p>
+        <p className="asset-report-note form-wide">أنشئ المجلد مسبقًا على جهاز تشغيل النظام، وتأكد من أن حساب تشغيل NEXUS يستطيع الكتابة فيه. لا يُقبل مسار على C:.</p>
+        <p className="asset-report-note form-wide">النسخ الجديدة تُشفّر قبل حفظها. لتهيئة التشفير مرة واحدة شغّل scripts/initialize-backup-encryption.ps1 مع ملف استرداد على USB، ثم شغّل scripts/install-backup-task.ps1 لتثبيت الجدولة. لن يبدأ النسخ قبل تهيئة المفتاح.</p>
         <label>الجدولة<select value={schedule} onChange={e=>setSchedule(e.target.value as BackupConfig["schedule"])}><option value="daily">يومي</option><option value="weekly">أسبوعي</option><option value="monthly">شهري</option></select></label>
         <label>الاحتفاظ بالنسخ اليومية (أيام)<input type="number" min="1" max="3650" value={daily} onChange={e=>setDaily(Number(e.target.value))}/></label>
         <label>الاحتفاظ بالنسخ الشهرية (شهور)<input type="number" min="1" max="120" value={monthly} onChange={e=>setMonthly(Number(e.target.value))}/></label>
