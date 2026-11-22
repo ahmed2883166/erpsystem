@@ -163,8 +163,8 @@ class AuditTrailMiddleware:
                 ip_address=ip_address,
                 user_agent=request.META.get("HTTP_USER_AGENT", "")[:300],
                 metadata=(
-                    {"status_code": response.status_code, "access_scope": "all_active_companies_and_branches",
-                     "superuser_global_access": True}
+                    {"status_code": response.status_code, "superuser_api_read": True,
+                     "global_company_branch_visibility_applies": True}
                     if is_global_superuser_read else {"status_code": response.status_code}
                 ),
             )
