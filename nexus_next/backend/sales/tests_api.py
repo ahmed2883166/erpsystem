@@ -986,3 +986,66 @@ class SalesWorkflowTests(APITestCase):
         refreshed = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         self.assertEqual(refreshed["paid_total"], "10000.0000")
         self.assertEqual(refreshed["balance_due"], "0.0000")
+
+    def test_customer_fx_revaluation_is_released_to_realized_fx_on_partial_and_final_receipts(self):
+        delivery_id, line_id = self._create_delivery("DEL-FX-REVAL")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        for rate_date, rate in (
+            (date(2026, 3, 10), "50"), (date(2026, 3, 31), "53"),
+            (date(2026, 4, 1), "52"), (date(2026, 4, 2), "50"),
+        ):
+            ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate))
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-FX-REVAL", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_id = created.data["id"]
+        posted = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        revalued = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/revalue/", {
+            "revaluation_date": "2026-03-31", "rate_date": "2026-03-31", "rate": "53",
+        }, format="json")
+        self.assertEqual(revalued.status_code, 201, revalued.data)
+        self.assertEqual(revalued.data["previous_carrying_amount"], "10000.0000")
+        self.assertEqual(revalued.data["new_carrying_amount"], "10600.0000")
+        self.assertEqual(revalued.data["difference"], "600.0000")
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=revalued.data["journal_entry"], account__code="7210",
+            credit=Decimal("600.0000"),
+        ).exists())
+
+        first = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": "RC-FX-REVAL-1", "receipt_date": "2026-04-01", "method": "cash",
+            "amount": "2080.0000", "transaction_currency": usd.pk, "transaction_amount": "40",
+            "exchange_rate": "52", "exchange_rate_date": "2026-04-01",
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        first_posted = self.client.post(f"/api/sales-documents/receipts/{first.data['id']}/post/", {}, format="json")
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertEqual(first_posted.data["carrying_base_amount"], "2120.0000")
+        self.assertEqual(first_posted.data["historical_carrying_base_amount"], "2000.0000")
+        self.assertEqual(first_posted.data["realized_fx_gain"], "80.0000")
+        self.assertEqual(first_posted.data["realized_fx_loss"], "0.0000")
+
+        final = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": "RC-FX-REVAL-2", "receipt_date": "2026-04-02", "method": "cash",
+            "amount": "8000.0000", "transaction_currency": usd.pk, "transaction_amount": "160",
+            "exchange_rate": "50", "exchange_rate_date": "2026-04-02",
+        }, format="json")
+        self.assertEqual(final.status_code, 201, final.data)
+        final_posted = self.client.post(f"/api/sales-documents/receipts/{final.data['id']}/post/", {}, format="json")
+        self.assertEqual(final_posted.status_code, 200, final_posted.data)
+        self.assertEqual(final_posted.data["carrying_base_amount"], "8480.0000")
+        self.assertEqual(final_posted.data["historical_carrying_base_amount"], "8000.0000")
+        self.assertEqual(final_posted.data["realized_fx_gain"], "0.0000")
+        self.assertEqual(final_posted.data["realized_fx_loss"], "0.0000")
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=final_posted.data["journal_entry"], account__code="7210",
+            debit=Decimal("480.0000"),
+        ).exists())
