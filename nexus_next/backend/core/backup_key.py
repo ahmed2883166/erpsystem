@@ -132,12 +132,16 @@ def restore_backup_key(
     return target
 
 
-def machine_backup_passphrase(key_file: str | Path | None = None) -> str:
-    """Return a high-entropy passphrase derived from the DPAPI-unwrapped key."""
+def machine_backup_key(key_file: str | Path | None = None) -> bytes:
+    """Read the random backup key after Windows DPAPI machine unprotection."""
     path = Path(key_file) if key_file else default_backup_key_path()
     if not path.is_file():
         raise BackupCryptoError(
             "مفتاح التشفير التلقائي غير مهيأ. شغّل init_backup_encryption أولًا."
         )
-    key = unprotect_machine_key(path.read_bytes())
-    return base64.urlsafe_b64encode(key).decode("ascii")
+    return unprotect_machine_key(path.read_bytes())
+
+
+def machine_backup_passphrase(key_file: str | Path | None = None) -> str:
+    """Return a high-entropy passphrase derived from the DPAPI-unwrapped key."""
+    return base64.urlsafe_b64encode(machine_backup_key(key_file)).decode("ascii")
