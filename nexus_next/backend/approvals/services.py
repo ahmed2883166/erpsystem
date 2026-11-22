@@ -1,3 +1,5 @@
+"""قواعد إنشاء الاعتمادات والتحقق منها وتنفيذها مع حفظ سلامة الأثر المالي."""
+
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
