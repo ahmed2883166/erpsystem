@@ -1,3 +1,7 @@
+"""واجهات API للمحاسبة: دليل الحسابات والقيود والتقارير والتصدير.
+تُطبق صلاحيات الشركة والفرع وتُمرر عمليات الترحيل إلى خدمات المحاسبة.
+"""
+
 from io import BytesIO
 
 from django.core.exceptions import ValidationError as DjangoValidationError
