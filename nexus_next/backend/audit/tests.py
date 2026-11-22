@@ -73,6 +73,21 @@ class AuditTrailMiddlewareTests(TestCase):
         middleware(request)
         self.assertEqual(AuditEvent.objects.count(), 0)
 
+    def test_superuser_api_read_is_audited_with_global_visibility_metadata(self):
+        root = get_user_model().objects.create_superuser(
+            username="audit-global-root", email="audit-root@example.test", password="test-password",
+        )
+        middleware = AuditTrailMiddleware(lambda _request: JsonResponse({"count": 0}))
+        request = self.factory.get("/api/sales-documents/invoices/")
+        request.user = root
+        middleware(request)
+        event = AuditEvent.objects.get(actor=root)
+        self.assertEqual(event.action, AuditEvent.Action.ACTION)
+        self.assertEqual(event.resource, "sales-documents/invoices")
+        self.assertTrue(event.succeeded)
+        self.assertTrue(event.metadata["superuser_api_read"])
+        self.assertTrue(event.metadata["global_company_branch_visibility_applies"])
+
 
     def test_delete_keeps_company_scope_after_target_row_is_removed(self):
         branch = self.branch
