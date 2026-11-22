@@ -1,56 +1,59 @@
-# Admrail ERP v2 ERP — Windows Trial
+# Admrail ERP v2 — Windows Trial
 
-This is a local development/trial package, not a production installer. It starts the new Django + React application with a dedicated PostgreSQL 16 database. It does not read, import, or modify the legacy Flask/SQLite application or its data.
+هذه حزمة تجربة محلية لنسخة Django + React، وليست مثبتًا إنتاجيًا نهائيًا. تعمل على Windows مباشرة باستخدام خدمة PostgreSQL المثبتة على الجهاز، ولا تحتاج إلى Docker أو WSL.
 
-## Requirements
+## المتطلبات
 
-- Windows 10/11 64-bit
-- Docker Desktop (running, Linux containers)
-- Python 3.12 with the Windows Python Launcher (`py`)
-- Node.js 22 or newer (includes npm)
-- Internet access for the first dependency installation
+- Windows 10/11 بنظام 64-bit.
+- PostgreSQL 16 for Windows، وخدمته تعمل.
+- قاعدة بيانات ومستخدم PostgreSQL مخصصان للتطبيق، وفق بيانات الاتصال في `backend/.env`.
+- Python 3.12 مع Windows Python Launcher (`py`).
+- Node.js 22 أو أحدث (يتضمن npm).
+- اتصال إنترنت عند تثبيت الاعتماديات لأول مرة.
 
-## Start
+## إعداد قاعدة البيانات
 
-1. Extract the ZIP to a normal writable folder, for example `D:\Admrail ERP v2-Trial`.
-2. Open PowerShell in the extracted `nexus_next` folder.
-3. Run:
+1. انسخ `backend/.env.example` إلى `backend/.env` إذا لم يكن الملف موجودًا.
+2. اضبط بيانات PostgreSQL في `backend/.env` لتطابق قاعدة البيانات والمستخدم اللذين جهزتهما على جهاز Windows.
+3. لا تضع بيانات الدخول في ملفات المستودع أو تشارك ملف `.env`.
+
+المشغل لا ينشئ مستخدم PostgreSQL أو قاعدة بيانات، ولا يغيّر كلمة مرور PostgreSQL، ولا يحذف أي بيانات.
+
+## التشغيل
+
+1. فك ضغط الحزمة في مجلد عادي قابل للكتابة، مثل `D:\Admrail ERP v2-Trial`.
+2. افتح PowerShell داخل مجلد `nexus_next`.
+3. شغّل:
 
    ```powershell
    Set-ExecutionPolicy -Scope Process Bypass
    .\start-local.ps1
    ```
 
-4. If the system has no administrator user yet, a separate window asks you to create one.
-5. Open `http://127.0.0.1:5173`. The Django admin is at `http://127.0.0.1:8000/admin/`.
+4. إذا لم يوجد مستخدم إدارة للنظام، ستفتح نافذة منفصلة لإنشائه.
+5. افتح `http://127.0.0.1:5173`. لوحة إدارة Django على `http://127.0.0.1:8000/admin/`.
 
-The first start downloads PostgreSQL and installs Python/Node dependencies, so it may take several minutes. Keep Docker Desktop running while using the application.
+المشغل يتحقق من خدمة PostgreSQL، ويثبت اعتماديات التطبيق عند الحاجة، ثم يطبق migrations المعلقة ويجهز العملات المرجعية باستخدام `get_or_create` دون إعادة تهيئة قاعدة البيانات.
 
-## First company setup
+## إعداد أول شركة
 
-1. Sign in to Django admin with the superuser you created.
-2. Create a company and choose Egypt or Saudi Arabia, the base currency, and the activity.
-3. Create an active head-office branch and an open fiscal year.
-4. Create detailed, active, postable accounts and assign the required account roles.
-5. Sign in to the main application using the same browser session.
+1. سجّل الدخول بمستخدم الإدارة.
+2. أنشئ الشركة واختر مصر أو السعودية والعملة الأساسية والنشاط.
+3. أنشئ فرعًا رئيسيًا نشطًا وسنة مالية مفتوحة.
+4. أنشئ الحسابات التفصيلية القابلة للترحيل واربط أدوار الحسابات المطلوبة.
+5. استخدم نفس جلسة المتصفح للدخول إلى التطبيق الرئيسي.
 
-The trial starts with reference currencies only. It does not load fake accounting transactions or a sample company.
+الحزمة تبدأ بالعملات المرجعية فقط؛ لا تنشئ شركة تجريبية أو قيودًا محاسبية وهمية.
 
-## Database and safety
+## قاعدة البيانات وسلامة البيانات
 
-- PostgreSQL is dedicated to this new application and uses a named Docker volume.
-- The database port and both web servers bind to `127.0.0.1` only; the app is not exposed to the LAN or internet.
-- The first run creates local-only secrets in ignored `.env` files.
-- Do not delete the Docker volume if you want to preserve trial data.
-- Do not connect this trial to any legacy SQLite database.
-- Do not use trial data as production data. Complete security, backup/restore, and acceptance checks before any shared or production deployment.
+- التطبيق يتصل بخدمة PostgreSQL المحلية من خلال إعدادات `backend/.env`.
+- خوادم الويب مرتبطة بـ `127.0.0.1` فقط؛ لا يتم فتح التطبيق على الشبكة أو الإنترنت.
+- المشغل لا ينفذ reset أو flush أو حذفًا لقاعدة البيانات.
+- تطبيق migrations يغيّر مخطط قاعدة البيانات؛ خذ نسخة احتياطية قبل تشغيله على أي قاعدة تحتوي بيانات فعلية.
+- لا تربط هذه النسخة بقاعدة بيانات برنامج Flask/SQLite القديم.
+- هذه حزمة تجربة وليست نسخة إنتاجية معتمدة. يلزم استكمال اختبارات النسخ الاحتياطي والاستعادة والتثبيت والترقية قبل تسليمها للعملاء.
 
-## Stop
+## الإيقاف
 
-Close the two application server windows with Ctrl+C. To stop PostgreSQL while keeping trial data, run:
-
-```powershell
-docker compose -f compose.yaml stop db
-```
-
-To start the database again, rerun `.\start-local.ps1`.
+أوقف نافذتي خادم التطبيق بـ Ctrl+C. تظل خدمة PostgreSQL وبياناتها كما هي.
