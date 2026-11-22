@@ -110,6 +110,8 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
     def perform_destroy(self, instance):
         """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
+        if instance.opening_journal_entry_id:
+            raise ValidationError("لا يمكن حذف خزينة لها قيد افتتاحي؛ عطّل الحساب للحفاظ على أثر الرصيد الافتتاحي ومنع تكراره.")
         if TreasuryTransaction.objects.filter(source_account=instance).exists() or TreasuryTransaction.objects.filter(destination_account=instance).exists():
             raise ValidationError("لا يمكن حذف خزينة لها حركات؛ أوقفها بدلًا من حذفها.")
         instance.delete()
@@ -438,7 +440,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
         if recon.bank_account.branch_id:
             branch_ids = [recon.bank_account.branch_id]
-        book_lines = recon.bank_account.account.journal_lines.filter(entry__status="posted", entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
+        book_lines = recon.bank_account.account.journal_lines.filter(entry__status__in=("posted", "reversed"), entry__entry_date__lte=recon.statement_date, entry__branch_id__in=branch_ids)
         totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         opening_base = Decimal("0") if recon.bank_account.opening_journal_entry_id else recon.bank_account.opening_balance
         book_balance = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
