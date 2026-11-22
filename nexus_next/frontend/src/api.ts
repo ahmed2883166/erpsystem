@@ -282,7 +282,7 @@ export const api = {
   // جلب الفروع النشطة للاستخدام في شاشات التشغيل.
   branches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&is_active=true"),
   // جلب جميع الفروع بما فيها الموقوفة لإدارة بيانات الشركة.
-  allBranches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id),
+  allBranches: (id: number) => request<Branch[]>("/api/setup/branches/?company=" + id + "&include_inactive=true"),
   // إنشاء فرع جديد للشركة.
   createBranch: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Branch>("/api/setup/branches/", { method: "POST", body: JSON.stringify(payload) }); },
   // تحديث بيانات فرع قائم دون تغيير كوده أو الشركة التابعة له.
