@@ -1,10 +1,12 @@
 """نماذج دليل الحسابات والأدوار المحاسبية والأكواد الضريبية ومراكز التكلفة وقيود اليومية."""
 
+from decimal import Decimal, ROUND_HALF_UP
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
-from companies.models import Branch, Company, FiscalYear
+from companies.models import Branch, Company, Currency, FiscalYear
 
 
 class ChartOfAccount(models.Model):
@@ -249,6 +251,11 @@ class JournalLine(models.Model):
     description = models.CharField(max_length=300, blank=True)
     debit = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     credit = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    # Optional FX snapshot; debit/credit always remain in company base currency.
+    transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="journal_lines")
+    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
     cost_center = models.ForeignKey(CostCenter, null=True, blank=True, on_delete=models.PROTECT, related_name="journal_lines")
 
     class Meta:
@@ -268,9 +275,34 @@ class JournalLine(models.Model):
             raise ValidationError("لا يمكن حذف سطور قيد مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
 
+    def validate_currency_snapshot(self, entry_date=None, company=None):
+        """Validate FX evidence; GL debit/credit remain in company base currency."""
+        values = (self.transaction_currency_id, self.transaction_amount, self.exchange_rate, self.exchange_rate_date)
+        if not any(value is not None for value in values):
+            return
+        if any(value is None for value in values):
+            raise ValidationError("بيانات العملة الأجنبية غير مكتملة؛ العملة والمبلغ والسعر وتاريخ السعر مطلوبة معًا.")
+        if self.transaction_amount <= 0 or self.exchange_rate <= 0:
+            raise ValidationError("مبلغ العملة وسعر الصرف يجب أن يكونا أكبر من صفر.")
+        company = company or (self.entry.company if self.entry_id else None)
+        entry_date = entry_date or (self.entry.entry_date if self.entry_id else None)
+        if company is None or entry_date is None:
+            raise ValidationError("لا يمكن التحقق من بيانات العملة قبل ربط السطر بقيد.")
+        if not self.transaction_currency.is_active:
+            raise ValidationError("عملة السطر موقوفة.")
+        if self.exchange_rate_date > entry_date:
+            raise ValidationError("تاريخ سعر الصرف لا يجوز أن يكون بعد تاريخ القيد.")
+        if self.transaction_currency_id == company.base_currency_id and self.exchange_rate != Decimal("1"):
+            raise ValidationError("سعر العملة الأساسية يجب أن يساوي 1.")
+        base_amount = self.debit if self.debit > 0 else self.credit
+        expected = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        if expected != base_amount:
+            raise ValidationError(f"القيمة بالعملة الأساسية ({base_amount}) لا تطابق مبلغ العملة × سعر الصرف ({expected}).")
+
     def clean(self):
         super().clean()
         if self.entry_id and self.account_id and self.entry.company_id != self.account.company_id:
             raise ValidationError({"account": "الحساب يجب أن يتبع نفس شركة القيد."})
         if self.cost_center_id and self.entry_id and self.cost_center.company_id != self.entry.company_id:
             raise ValidationError({"cost_center": "مركز التكلفة يجب أن يتبع نفس الشركة."})
+        self.validate_currency_snapshot()
