@@ -93,8 +93,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
     finally { setBusy(false); }
   };
 
-  const assignAdmin = async (event: FormEvent) => {
-    event.preventDefault();
+  const assignAdmin = async () => {
     if (!selected || !userId) return;
     setBusy(true); setError(""); setNotice("");
     try {
@@ -156,7 +155,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
               <label className="form-wide">اسم المستخدم أو الاسم الظاهر<input minLength={2} value={query} onChange={event => setQuery(event.target.value)} placeholder="اكتب حرفين على الأقل" /></label>
               <div className="form-actions form-wide"><button type="submit" className="subtle-button" disabled={busy || selected.is_active === false || query.trim().length < 2}>بحث عن مستخدم</button></div>
               {matches.length > 0 && <label className="form-wide">المستخدم<select required value={userId} onChange={event => setUserId(event.target.value ? Number(event.target.value) : "")}><option value="">اختر المستخدم</option>{matches.map(row=><option key={row.id} value={row.id}>{row.display_name} · {row.username}</option>)}</select></label>}
-              {matches.length > 0 && <div className="form-actions form-wide"><button type="button" className="primary-button" disabled={busy || !userId} onClick={() => void assignAdmin(new Event("submit") as unknown as FormEvent)}>تعيين مدير الشركة</button></div>}
+              {matches.length > 0 && <div className="form-actions form-wide"><button type="button" className="primary-button" disabled={busy || !userId} onClick={() => void assignAdmin()}>تعيين مدير الشركة</button></div>}
             </form>
             <h3>المديرون والعضويات الحالية</h3>
             <div className="data-table-wrap"><table><thead><tr><th>المستخدم</th><th>الدور</th><th>النطاق</th><th>الحالة</th></tr></thead><tbody>
