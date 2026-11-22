@@ -70,7 +70,7 @@ export default function OperationalReconciliationPanel({ companyId, currency, br
       rows.push(["تسوية بنكية", "رقم الكشف", summary.reconciliation.statement_number], ["تسوية بنكية", "فرق غير مفسر", summary.unexplained_difference]);
       summary.lines.filter((line) => !line.matched_transaction).forEach((line) => rows.push(["سطر بنك غير مطابق", line.description || line.reference, line.amount]));
     }
-    const csv = "\\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\\r\\n");
+    const csv = "\uFEFF" + rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url; link.download = "operational-reconciliations.csv"; link.click(); URL.revokeObjectURL(url);
