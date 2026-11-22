@@ -291,7 +291,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
   body *{visibility:hidden!important}
   .print-active,.print-active *{visibility:visible!important}
   .print-active{position:absolute!important;inset:0 auto auto 0!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:#fff!important;color:#111!important;box-shadow:none!important}
-  .print-active .report-actions,.print-active button{display:none!important}
+  .print-active .report-actions,.print-active button,.print-active .asset-report-filters{display:none!important}
   .print-active .data-table-wrap{overflow:visible!important;max-width:none!important}
   .print-active table{width:100%!important;border-collapse:collapse!important;font-size:9pt!important}
   .print-active th,.print-active td{border:1px solid #bbb!important;color:#111!important;background:#fff!important;padding:5px!important}
