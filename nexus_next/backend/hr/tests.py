@@ -387,6 +387,82 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(salary_for_date(self.employee, date(2026, 11, 22)), Decimal("12000"))
 
 
+    def test_leave_request_creator_cannot_approve_or_reject_own_request(self):
+        from audit.models import AuditEvent
+        manager = User.objects.create_user(username="hr_leave_self_manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        leave = LeaveRequest.objects.create(
+            employee=self.employee, kind=LeaveRequest.Kind.ANNUAL,
+            start_date=date(2026, 5, 1), end_date=date(2026, 5, 2),
+            days=Decimal("2"), created_by=manager,
+        )
+        self.client.force_authenticate(manager)
+        approved = self.client.post(f"/api/hr/leave-requests/{leave.pk}/approve/", {}, format="json")
+        self.assertEqual(approved.status_code, 403)
+        leave.refresh_from_db()
+        self.assertEqual(leave.status, LeaveRequest.Status.PENDING)
+        rejected = self.client.post(f"/api/hr/leave-requests/{leave.pk}/reject/", {}, format="json")
+        self.assertEqual(rejected.status_code, 403)
+        leave.refresh_from_db()
+        self.assertEqual(leave.status, LeaveRequest.Status.PENDING)
+        self.assertFalse(AuditEvent.objects.filter(resource="hr.leave.self_approval_override", object_id=str(leave.pk)).exists())
+
+    def test_superuser_self_approval_override_requires_reason_and_is_audited_for_leave(self):
+        from audit.models import AuditEvent
+        root = User.objects.create_superuser(username="hr_leave_root", email="root@example.test", password="test-password")
+        leave = LeaveRequest.objects.create(
+            employee=self.employee, kind=LeaveRequest.Kind.ANNUAL,
+            start_date=date(2026, 6, 1), end_date=date(2026, 6, 2),
+            days=Decimal("2"), created_by=root,
+        )
+        self.client.force_authenticate(root)
+        missing_reason = self.client.post(f"/api/hr/leave-requests/{leave.pk}/approve/", {}, format="json")
+        self.assertEqual(missing_reason.status_code, 403)
+        allowed = self.client.post(
+            f"/api/hr/leave-requests/{leave.pk}/approve/",
+            {"self_approval_override_reason": "حالة طارئة موثقة من الإدارة العليا"},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.data)
+        event = AuditEvent.objects.get(resource="hr.leave.self_approval_override", object_id=str(leave.pk))
+        self.assertIn("حالة طارئة", event.metadata["reason"])
+
+    def test_payroll_cycle_creator_cannot_approve_own_cycle(self):
+        manager = User.objects.create_user(username="hr_payroll_self_manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        cycle = PayrollCycle.objects.create(
+            company=self.company, period_start=date(2026, 7, 1),
+            period_end=date(2026, 7, 31), payment_date=date(2026, 8, 1),
+            status=PayrollCycle.Status.REVIEW, created_by=manager,
+        )
+        self.client.force_authenticate(manager)
+        denied = self.client.post(f"/api/hr/payroll-cycles/{cycle.pk}/approve/", {}, format="json")
+        self.assertEqual(denied.status_code, 403)
+        cycle.refresh_from_db()
+        self.assertEqual(cycle.status, PayrollCycle.Status.REVIEW)
+        self.assertIsNone(cycle.approved_by_id)
+
+    def test_superuser_payroll_self_approval_override_is_audited(self):
+        from audit.models import AuditEvent
+        root = User.objects.create_superuser(username="hr_payroll_root", email="payroll-root@example.test", password="test-password")
+        cycle = PayrollCycle.objects.create(
+            company=self.company, period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 30), payment_date=date(2026, 10, 1),
+            status=PayrollCycle.Status.REVIEW, created_by=root,
+        )
+        self.client.force_authenticate(root)
+        denied = self.client.post(f"/api/hr/payroll-cycles/{cycle.pk}/approve/", {}, format="json")
+        self.assertEqual(denied.status_code, 403)
+        allowed = self.client.post(
+            f"/api/hr/payroll-cycles/{cycle.pk}/approve/",
+            {"self_approval_override_reason": "اعتماد استثنائي بسبب تعذر حضور المدير المالي"},
+            format="json",
+        )
+        self.assertEqual(allowed.status_code, 200, allowed.data)
+        event = AuditEvent.objects.get(resource="hr.payroll.self_approval_override", object_id=str(cycle.pk))
+        self.assertIn("تعذر حضور", event.metadata["reason"])
+
+
 class PayrollTaxPostingTests(TestCase):
     def test_progressive_tax_without_component_account_uses_company_tax_payable_role(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
