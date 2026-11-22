@@ -10,7 +10,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice
@@ -19,7 +19,7 @@ from .services import post_customer_receipt, post_sales_delivery, post_sales_inv
 
 def _sales_warehouse_accessible(user, warehouse):
     """تنفيذ وظيفة _sales_warehouse_accessible ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
-    if user.is_superuser:
+    if user.is_superuser and not is_platform_owner(user):
         return True
     branch = warehouse.branch
     if branch is None:
@@ -57,7 +57,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
         default_company_ids = []
@@ -127,7 +127,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
         default_company_ids = []
@@ -389,7 +389,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         return qs.filter(Q(invoice__delivery__warehouse__branch__isnull=True) | Q(invoice__delivery__warehouse__branch__in=accessible_branches(self.request.user)))
 
