@@ -215,6 +215,16 @@ def post_supplier_payment(payment_id, user):
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
 
+    if payment.method == SupplierPayment.Method.BANK:
+        from treasury.models import TreasuryTransaction
+        from treasury.services import record_posted_document_bank_movement
+        record_posted_document_bank_movement(
+            company=payment.company, branch=branch, fiscal_year=year, account=payment_account,
+            kind=TreasuryTransaction.Kind.PAYMENT, amount=payment.amount,
+            transaction_date=payment.payment_date, document_number=f"AUTO-PUR-PAY-{payment.pk}",
+            description=f"سداد فاتورة مشتريات {invoice.invoice_number} - سند {payment.payment_number}",
+            counter_account=payable, journal_entry=posted_entry, user=user, reference=payment.reference,
+        )
     payment.journal_entry = posted_entry
     payment.status = SupplierPayment.Status.POSTED
     payment.posted_at = timezone.now()
