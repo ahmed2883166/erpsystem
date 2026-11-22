@@ -1286,7 +1286,8 @@ class AccountRoleRuntimeValidationTests(TestCase):
         Branch.objects.create(company=self.company, code="VAT-ADMIN", name_ar="الرئيسي", is_head_office=True)
         user = User.objects.create_user(username="vat_preset_admin", password="test-password")
         CompanyMembership.objects.create(user=user, company=self.company, role="admin", all_branches=True)
-        self.client.force_authenticate(user=user)
+        client = APIClient()
+        client.force_authenticate(user=user)
         url = "/api/accounting/tax-codes/initialize-country-presets/"
         first = client.post(url, {"company": self.company.pk}, format="json")
         self.assertEqual(first.status_code, 200, first.data)
