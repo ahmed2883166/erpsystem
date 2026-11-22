@@ -410,6 +410,8 @@ class JournalEntryViewSet(AccountingViewSet):
         self._require_write_role(original.company_id)
         if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
             raise ValidationError("يمكن عكس قيد مرحّل أصلي فقط؛ لا يمكن عكس مسودة أو قيد عكسي.")
+        if original.source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING):
+            raise ValidationError("لا يمكن عكس قيد افتتاح أو إقفال من المسار العام؛ يلزم إجراء تصحيح مالي معتمد.")
         fx_revaluation = None
         if original.source_type == JournalEntry.Source.FX_REVALUATION:
             fx_revaluation = FxSubledgerRevaluation.objects.select_for_update().filter(journal_entry=original).first()
