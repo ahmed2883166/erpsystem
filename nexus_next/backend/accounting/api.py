@@ -3,6 +3,7 @@
 """
 
 from io import BytesIO
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
