@@ -220,20 +220,25 @@ class BranchViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("إنشاء الفروع متاح لمدير الشركة فقط.")
         serializer.save()
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        """حفظ التعديلات مع حماية هوية الفرع ومنع إيقاف آخر فرع نشط بالشركة."""
+        """حفظ تعديلات الفرع بقفل الشركة لمنع إيقاف آخر فرع عبر طلبات متزامنة."""
         from rest_framework.exceptions import PermissionDenied, ValidationError
-        branch = serializer.instance
-        current_company_id = branch.company_id
-        target_company = serializer.validated_data.get("company", branch.company)
+        branch_id = serializer.instance.pk
+        current_company_id = serializer.instance.company_id
+        # قفل صف الشركة يجعل فحص عدد الفروع النشطة وتحديث الحالة عملية متسلسلة.
+        Company.objects.select_for_update().get(pk=current_company_id)
+        branch = Branch.objects.select_for_update().get(pk=branch_id)
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل الفروع متاح لمدير الشركة فقط.")
+        target_company = serializer.validated_data.get("company", branch.company)
         if target_company.pk != current_company_id:
             raise ValidationError({"company": "لا يمكن نقل فرع قائم إلى شركة أخرى."})
         if branch.is_active and serializer.validated_data.get("is_active") is False:
             active_count = Branch.objects.filter(company_id=current_company_id, is_active=True).count()
             if active_count <= 1:
                 raise ValidationError({"is_active": "لا يمكن إيقاف آخر فرع نشط بالشركة؛ أضف فرعًا بديلًا أولًا."})
+        serializer.instance = branch
         serializer.save()
 
     def perform_destroy(self, instance):
