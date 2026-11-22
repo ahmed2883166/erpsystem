@@ -43,6 +43,18 @@ class PurchaseReceipt(models.Model):
 
     def clean(self):
         super().clean()
+        fx_values = (self.transaction_currency_id, self.exchange_rate, self.exchange_rate_date)
+        if any(value is not None for value in fx_values):
+            if any(value is None for value in fx_values):
+                raise ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
+            if not self.transaction_currency.is_active or self.transaction_currency.code == self.company.base_currency.code:
+                raise ValidationError({"transaction_currency": "اختر عملة أجنبية نشطة ومختلفة عن العملة الأساسية."})
+            if self.exchange_rate <= 0 or self.exchange_rate_date > self.invoice_date:
+                raise ValidationError("سعر الصرف يجب أن يكون موجبًا وتاريخه لا يتجاوز تاريخ الفاتورة.")
+            if not ExchangeRate.objects.filter(company=self.company, currency=self.transaction_currency, rate_date=self.exchange_rate_date, rate=self.exchange_rate).exists():
+                raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا للشركة والتاريخ.")
+        elif any(value is not None for value in (self.transaction_net_total, self.transaction_tax_total, self.transaction_grand_total)):
+            raise ValidationError("إجماليات العملة الأجنبية لا تقبل دون لقطة سعر صرف.")
         if self.supplier_id and self.supplier.company_id != self.company_id:
             raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
         if self.warehouse_id and self.warehouse.company_id != self.company_id:
