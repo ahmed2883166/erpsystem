@@ -240,7 +240,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "date": receipt.receipt_date, "kind": "receipt",
                 "number": receipt.receipt_number,
                 "description": f"سند قبض عن فاتورة {receipt.invoice.invoice_number}",
-                "debit": Decimal("0"), "credit": receipt.amount, "sort": 1,
+                "debit": Decimal("0"), "credit": receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount, "sort": 1,
             })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
@@ -324,7 +324,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         }
         for invoice in invoices:
             paid_as_of = sum(
-                (receipt.amount for receipt in invoice.receipts.all()
+                ((receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount) for receipt in invoice.receipts.all()
                  if receipt.status == CustomerReceipt.Status.POSTED
                  and receipt.receipt_date <= as_of),
                 Decimal("0"),
