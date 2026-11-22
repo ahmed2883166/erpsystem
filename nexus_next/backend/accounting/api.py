@@ -684,7 +684,7 @@ class JournalEntryViewSet(AccountingViewSet):
         )
         grouped_equity = JournalLine.objects.filter(
             account__company_id=company_id, account__nature=ChartOfAccount.Nature.EQUITY,
-            entry__status=JournalEntry.Status.POSTED, entry__company_id=company_id,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED), entry__company_id=company_id,
             entry__branch__in=visible_branches,
         ).values("account_id", "account__code", "account__name_ar").annotate(
             opening_debit=Sum("debit", filter=opening_filter),
