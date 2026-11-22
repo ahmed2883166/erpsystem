@@ -567,6 +567,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             product__company_id=company_id,
             product__costing_method=Product.CostingMethod.FIFO,
             warehouse__company_id=company_id,
+            source_line__movement__status=StockMovement.Status.POSTED,
         ).filter(warehouse_scope).values(
             "product_id", "warehouse_id", "location_id", "expiry_date",
             "product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar",
