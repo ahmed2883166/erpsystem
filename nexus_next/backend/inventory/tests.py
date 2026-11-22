@@ -65,7 +65,10 @@ class StockPostingServiceTests(TestCase):
             company=cls.company, code=code, name_ar=name, nature=nature,
         )
 
-    def _movement(self, number, kind, *, source=None, destination=None, quantity="1", unit_cost="0", direction=""):
+    def _movement(
+        self, number, kind, *, source=None, destination=None, quantity="1", unit_cost="0",
+        direction="", source_location=None, destination_location=None, expiry_date=None,
+    ):
         movement = StockMovement.objects.create(
             company=self.company, movement_number=number, movement_type=kind,
             movement_date=date(2026, 2, 1), source_warehouse=source,
@@ -74,6 +77,8 @@ class StockPostingServiceTests(TestCase):
         StockMovementLine.objects.create(
             movement=movement, product=self.product, quantity=Decimal(quantity),
             unit_cost=Decimal(unit_cost), adjustment_direction=direction,
+            source_location=source_location, destination_location=destination_location,
+            expiry_date=expiry_date,
         )
         return movement
 
@@ -258,6 +263,115 @@ class StockPostingServiceTests(TestCase):
             clearing_totals.append(Decimal(totals["debit"] or 0) - Decimal(totals["credit"] or 0))
         self.assertEqual(sum(clearing_totals), Decimal("0.0000"))
 
+
+    def test_fifo_transfer_preserves_location_expiry_and_cost_layers_across_branches(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.track_expiry = True
+        self.product.save(update_fields=("costing_method", "track_expiry"))
+
+        destination_branch = Branch.objects.create(
+            company=self.company, code="BR-LOT", name_ar="فرع التحويل",
+        )
+        destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=destination_branch,
+            code="WH-LOT", name_ar="مخزن التحويل",
+        )
+        source_location_a = StorageLocation.objects.create(
+            warehouse=self.warehouse, code="SRC-A", name_ar="موقع مصدر أ",
+        )
+        source_location_b = StorageLocation.objects.create(
+            warehouse=self.warehouse, code="SRC-B", name_ar="موقع مصدر ب",
+        )
+        destination_location = StorageLocation.objects.create(
+            warehouse=destination_warehouse, code="DST-A", name_ar="موقع وجهة أ",
+        )
+        expiry_a = date(2027, 1, 31)
+        expiry_b = date(2027, 2, 28)
+
+        for number, location, expiry, quantity, cost in (
+            ("LOT-R-A", source_location_a, expiry_a, "5", "10"),
+            ("LOT-R-B", source_location_b, expiry_b, "4", "20"),
+        ):
+            receipt = self._movement(
+                number, StockMovement.MovementType.RECEIPT,
+                destination=self.warehouse, quantity=quantity, unit_cost=cost,
+                destination_location=location, expiry_date=expiry,
+            )
+            post_stock_movement(receipt.pk, self.user)
+
+        clearing = self._account(
+            "2191", "تسوية تحويل مخزون", ChartOfAccount.Nature.LIABILITY,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.INTER_BRANCH_CLEARING,
+            account=clearing,
+        )
+        transfer = self._movement(
+            "LOT-TRANSFER-01", StockMovement.MovementType.TRANSFER,
+            source=self.warehouse, destination=destination_warehouse,
+            quantity="3", source_location=source_location_a,
+            destination_location=destination_location, expiry_date=expiry_a,
+        )
+        post_stock_movement(transfer.pk, self.user)
+
+        source_a = StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse,
+            location=source_location_a, expiry_date=expiry_a,
+        )
+        source_b = StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse,
+            location=source_location_b, expiry_date=expiry_b,
+        )
+        destination_a = StockBalance.objects.get(
+            product=self.product, warehouse=destination_warehouse,
+            location=destination_location, expiry_date=expiry_a,
+        )
+        self.assertEqual(
+            (source_a.quantity, source_a.inventory_value),
+            (Decimal("2"), Decimal("20.0000")),
+        )
+        self.assertEqual(
+            (source_b.quantity, source_b.inventory_value),
+            (Decimal("4"), Decimal("80.0000")),
+        )
+        self.assertEqual(
+            (destination_a.quantity, destination_a.inventory_value),
+            (Decimal("3"), Decimal("30.0000")),
+        )
+        self.assertEqual(transfer.lines.get().cost_amount, Decimal("30.0000"))
+        self.assertEqual(
+            list(self.product.cost_layers.filter(
+                warehouse=self.warehouse, location=source_location_a, expiry_date=expiry_a,
+            ).values_list("quantity_remaining", flat=True)),
+            [Decimal("2.0000")],
+        )
+        self.assertEqual(
+            list(self.product.cost_layers.filter(
+                warehouse=destination_warehouse, location=destination_location,
+                expiry_date=expiry_a,
+            ).values_list("quantity_remaining", flat=True)),
+            [Decimal("3.0000")],
+        )
+        transfer_entries = list(
+            transfer.journal_links.select_related("journal_entry").all()
+        )
+        self.assertEqual(len(transfer_entries), 2)
+        self.assertTrue(all(
+            link.journal_entry.status == JournalEntry.Status.POSTED
+            for link in transfer_entries
+        ))
+        self.assertEqual(
+            sum(
+                (link.journal_entry.lines.filter(account=clearing).aggregate(
+                    debit=Sum("debit"), credit=Sum("credit"),
+                )["debit"] or Decimal("0")) -
+                (link.journal_entry.lines.filter(account=clearing).aggregate(
+                    debit=Sum("debit"), credit=Sum("credit"),
+                )["credit"] or Decimal("0"))
+                for link in transfer_entries
+            ),
+            Decimal("0.0000"),
+        )
 
     def test_incomplete_fifo_layers_roll_back_partial_consumption(self):
         self.product.costing_method = Product.CostingMethod.FIFO
