@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-    dependencies = [("companies", "0001_initial")]
+    dependencies = [("companies", "0003_companymembership_branch_scope")]
 
     operations = [
         migrations.CreateModel(
