@@ -11,7 +11,7 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import post_treasury_transaction, revalue_treasury_fx_account
 from approvals.models import FinancialApprovalRequest
@@ -168,6 +168,29 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "journal_entry": result.journal_entry_id,
             "journal_number": result.journal_entry.entry_number if result.journal_entry_id else "",
         }, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=("get",), url_path="revaluations")
+    def revaluations(self, request, pk=None):
+        """عرض سجل إعادة التقييم وقيود فروق العملة للحساب."""
+        account = self.get_object()
+        self._scope(account.company_id)
+        if account.branch_id and not can_access_branch(request.user, account.branch_id, account.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع حساب الخزينة.")
+        rows = TreasuryFxRevaluation.objects.filter(account=account).select_related(
+            "journal_entry"
+        ).order_by("-revaluation_date", "-id")
+        return response.Response([{
+            "id": row.pk,
+            "revaluation_date": row.revaluation_date,
+            "rate_date": row.rate_date,
+            "rate": row.rate,
+            "foreign_amount": row.foreign_amount,
+            "previous_carrying_amount": row.previous_carrying_amount,
+            "new_carrying_amount": row.new_carrying_amount,
+            "difference": row.difference,
+            "journal_entry": row.journal_entry_id,
+            "journal_number": row.journal_entry.entry_number if row.journal_entry_id else "",
+        } for row in rows])
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
