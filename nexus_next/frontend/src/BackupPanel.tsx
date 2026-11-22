@@ -20,14 +20,28 @@ type BackupConfig = {
 
 // عميل طلبات مخصص لواجهات النسخ الاحتياطي مع إرسال CSRF وقراءة أخطاء الخادم.
 async function call<T>(method = "GET", body?: unknown, endpoint = "/api/backup/configuration/"): Promise<T> {
-  const csrf = document.cookie.split("; ").find(x => x.startsWith("csrftoken="))?.split("=").slice(1).join("=") || "";
+  const normalizedMethod = method.toUpperCase();
+  if (normalizedMethod !== "GET") {
+    const csrfResponse = await fetch("/api/csrf/", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    if (!csrfResponse.ok) throw new Error(`تعذر تهيئة حماية الطلب (HTTP ${csrfResponse.status}).`);
+  }
+  const csrf = document.cookie.split(";").map(x => x.trim()).find(x => x.startsWith("csrftoken="))?.split("=").slice(1).join("=") || "";
   const response = await fetch(endpoint, {
-    method, credentials: "same-origin",
-    headers: { Accept: "application/json", ...(body ? {"Content-Type":"application/json"} : {}), ...(method !== "GET" ? {"X-CSRFToken":decodeURIComponent(csrf)} : {}) },
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    method: normalizedMethod, credentials: "same-origin",
+    headers: { Accept: "application/json", ...(body !== undefined ? {"Content-Type":"application/json"} : {}), ...(normalizedMethod !== "GET" ? {"X-CSRFToken":decodeURIComponent(csrf)} : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || data.backup_path || "تعذر تنفيذ الطلب.");
+  let data: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = await response.json();
+    if (parsed && typeof parsed === "object") data = parsed as Record<string, unknown>;
+  } catch {
+    if (!response.ok) throw new Error(`تعذر تنفيذ الطلب (HTTP ${response.status}) ولم يُرجع الخادم رسالة JSON.`);
+  }
+  if (!response.ok) {
+    const detail = typeof data.detail === "string" ? data.detail : typeof data.backup_path === "string" ? data.backup_path : `تعذر تنفيذ الطلب (HTTP ${response.status}).`;
+    throw new Error(detail);
+  }
   return data as T;
 }
 
