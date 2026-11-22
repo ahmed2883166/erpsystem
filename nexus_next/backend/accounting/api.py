@@ -315,6 +315,8 @@ class JournalEntryViewSet(AccountingViewSet):
         self._require_write_role(original.company_id)
         if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
             raise ValidationError("يمكن عكس قيد مرحّل أصلي فقط؛ لا يمكن عكس مسودة أو قيد عكسي.")
+        if original.source_type != JournalEntry.Source.MANUAL:
+            raise ValidationError("عكس القيود التشغيلية أو الافتتاحية أو الإقفالية غير متاح من زر العكس العام؛ استخدم إجراء الإلغاء أو التصحيح داخل الوحدة المصدر.")
         if JournalEntry.objects.filter(reversal_of=original).exists():
             raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
         entry_date_raw = request.data.get("entry_date")
@@ -366,7 +368,7 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError({"date_to": "صيغة تاريخ النهاية يجب أن تكون YYYY-MM-DD."})
         if date_from and date_to and date_from > date_to:
             raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
-        date_filter = Q(journal_lines__entry__status=JournalEntry.Status.POSTED)
+        date_filter = Q(journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED))
         exclude_closing = request.query_params.get("exclude_closing", "").lower() in ("1", "true", "yes")
         if exclude_closing:
             date_filter &= ~Q(journal_lines__entry__source_type=JournalEntry.Source.CLOSING)
@@ -446,7 +448,7 @@ class JournalEntryViewSet(AccountingViewSet):
             entry_date__lte=as_of, branch__in=visible_branches,
         ).exists())
         posted_filter = Q(
-            journal_lines__entry__status=JournalEntry.Status.POSTED,
+            journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             journal_lines__entry__entry_date__lte=as_of,
             journal_lines__entry__branch__in=visible_branches,
         )
@@ -474,7 +476,7 @@ class JournalEntryViewSet(AccountingViewSet):
         current_profit = Decimal("0")
         if current_year and current_year.status == FiscalYear.Status.OPEN:
             current_year_entries = JournalEntry.objects.filter(
-                company_id=company_id, status=JournalEntry.Status.POSTED,
+                company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
                 entry_date__gte=current_year.start_date, entry_date__lte=as_of,
                 branch__in=visible_branches,
             ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
@@ -529,7 +531,7 @@ class JournalEntryViewSet(AccountingViewSet):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             visible_branches = visible_branches.filter(pk=int(branch_raw))
         entries = JournalEntry.objects.filter(
-            company_id=company_id, status=JournalEntry.Status.POSTED,
+            company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry_date__gte=date_from, entry_date__lte=date_to,
             branch__in=visible_branches,
         ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
@@ -597,7 +599,7 @@ class JournalEntryViewSet(AccountingViewSet):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             visible_branches = visible_branches.filter(pk=int(branch_raw))
         base = account.journal_lines.filter(
-            entry__status=JournalEntry.Status.POSTED,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry__company_id=company_id,
             entry__branch__in=visible_branches,
         )
@@ -706,7 +708,7 @@ class JournalEntryViewSet(AccountingViewSet):
             opening_total += opening_balance
             movement_total += period_movement
         period_entries = JournalEntry.objects.filter(
-            company_id=company_id, status=JournalEntry.Status.POSTED,
+            company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry_date__gte=date_from, entry_date__lte=date_to, branch__in=visible_branches,
         ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
         period_lines = JournalLine.objects.filter(entry__in=period_entries)
@@ -763,7 +765,7 @@ class JournalEntryViewSet(AccountingViewSet):
         if branch_id:
             visible_branches = visible_branches.filter(pk=branch_id)
         entries = JournalEntry.objects.filter(
-            company_id=company_id, status=JournalEntry.Status.POSTED,
+            company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry_date__gte=date_from, entry_date__lte=date_to,
             branch__in=visible_branches,
         )
@@ -826,7 +828,7 @@ class JournalEntryViewSet(AccountingViewSet):
             row["account_id"]: row
             for row in JournalLine.objects.filter(
                 account_id__in=role_account_ids,
-                entry__status=JournalEntry.Status.POSTED,
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
                 entry__company_id=company_id,
                 entry__branch__in=visible_branches,
             ).values("account_id").annotate(
@@ -912,7 +914,7 @@ class JournalEntryViewSet(AccountingViewSet):
         treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
         cash_lines = JournalLine.objects.filter(
-            account_id__in=cash_account_ids, entry__status=JournalEntry.Status.POSTED,
+            account_id__in=cash_account_ids, entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
         ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
         cash_lines = cash_lines.filter(entry__branch__in=visible_branches)
