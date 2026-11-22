@@ -226,8 +226,10 @@ const commitWorkbook = async () => {
   };
 
   // رسم عقدة الحساب وأبنائها مع مراعاة مستوى التداخل وحالة التوسيع.
-const renderNode = (item: Account, depth = 0): ReactNode => {
-    if (!visibleIds.has(item.id)) return null;
+const renderNode = (item: Account, depth = 0, ancestors: ReadonlySet<number> = new Set()): ReactNode => {
+    if (!visibleIds.has(item.id) || ancestors.has(item.id) || depth > accounts.length) return null;
+    const nextAncestors = new Set(ancestors);
+    nextAncestors.add(item.id);
     const children = (childrenByParent.get(item.id) || []).filter(child => visibleIds.has(child.id));
     const hasChildren = children.length > 0;
     const isExpanded = expanded.has(item.id);
@@ -245,7 +247,7 @@ const renderNode = (item: Account, depth = 0): ReactNode => {
         <span className={`account-tree-type ${item.is_group ? "group-type" : "detail-type"}`}>{item.is_group ? "مجموعة" : "تفصيلي"}</span>
         <span className={`account-tree-status ${item.is_active ? "active" : "inactive"}`}>{item.is_active ? "نشط" : "موقوف"}</span>
       </div>
-      {hasChildren && isExpanded && <ul className="account-tree-children">{children.map(child => renderNode(child, depth + 1))}</ul>}
+      {hasChildren && isExpanded && <ul className="account-tree-children">{children.map(child => renderNode(child, depth + 1, nextAncestors))}</ul>}
     </li>;
   };
 
