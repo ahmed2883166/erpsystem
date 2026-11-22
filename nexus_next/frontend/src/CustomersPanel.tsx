@@ -93,10 +93,10 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     ];
     const safe = (value: string) => {
       const text = String(value ?? "");
-      const protectedText = /^[=+@-]/.test(text) || text.startsWith("\\t") || text.startsWith("\\r") ? "'" + text : text;
+      const protectedText = /^[=+@-]/.test(text) || text.startsWith("\t") || text.startsWith("\r") ? "'" + text : text;
       return '"' + protectedText.replace(/"/g, '""') + '"';
     };
-    const csv = "\\uFEFF" + values.map(row => row.map(value => safe(String(value))).join(";")).join("\\r\\n");
+    const csv = "\uFEFF" + values.map(row => row.map(value => safe(String(value))).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
     link.href = url;
