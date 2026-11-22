@@ -33,6 +33,8 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
         if not Currency.objects.filter(code=currency_code, is_active=True).exists():
             raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة من قائمة العملات المعتمدة."})
         opening_balance = attrs.get("opening_balance", getattr(self.instance, "opening_balance", 0))
+        if company and currency_code != company.base_currency.code and opening_balance > 0:
+            raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي للحساب الأجنبي يحتاج إدخال المبلغ الأجنبي وسعره المعتمد؛ ابدأ بصفر حتى تُسجل حركة افتتاحية موثقة."})
         if opening_balance < 0:
             raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
         if self.instance and "opening_balance" in attrs:
