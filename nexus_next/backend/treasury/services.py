@@ -216,13 +216,34 @@ def post_treasury_transaction(transaction_id, user=None):
         source_type=JournalEntry.Source.ASSETS if asset_acquisition else JournalEntry.Source.MANUAL,
         created_by=user or doc.created_by,
     )
+    fx_snapshot = {
+        "transaction_currency": doc.transaction_currency,
+        "transaction_amount": doc.transaction_amount,
+        "exchange_rate": doc.exchange_rate,
+        "exchange_rate_date": doc.exchange_rate_date,
+    } if foreign else {}
     JournalLine.objects.bulk_create([
         *[
-            JournalLine(entry=entry, account=account, debit=amount, credit=0, description=description)
+            JournalLine(
+                entry=entry, account=account, debit=amount, credit=0,
+                description=description,
+                **(
+                    fx_snapshot
+                    if foreign and (
+                        doc.kind == TreasuryTransaction.Kind.RECEIPT
+                        or (doc.kind == TreasuryTransaction.Kind.PAYMENT and account.pk == doc.counter_account_id)
+                    )
+                    else {}
+                ),
+            )
             for account, amount in debit_lines if amount > 0
         ],
         *[
-            JournalLine(entry=entry, account=account, debit=0, credit=amount, description=description)
+            JournalLine(
+                entry=entry, account=account, debit=0, credit=amount,
+                description=description,
+                **(fx_snapshot if foreign and doc.kind == TreasuryTransaction.Kind.RECEIPT else {}),
+            )
             for account, amount in credit_lines if amount > 0
         ],
     ])
