@@ -1,3 +1,5 @@
+"""نماذج دورة المشتريات من أوامر الشراء والاستلام إلى فواتير الموردين والمدفوعات."""
+
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -11,6 +13,7 @@ from suppliers.models import Supplier
 
 
 class PurchaseReceipt(models.Model):
+    """يمثل مستند استلام مشتريات المرتبط بحركة المخزون."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_receipts")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_receipts")
     purchase_order = models.ForeignKey("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="receipts")
@@ -63,6 +66,7 @@ class PurchaseReceipt(models.Model):
 
 
 class PurchaseInvoice(models.Model):
+    """يمثل فاتورة المورد وإجمالياتها وحالة ترحيلها."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّلة"
@@ -121,6 +125,7 @@ class PurchaseInvoice(models.Model):
 
 
 class PurchaseInvoiceLine(models.Model):
+    """يمثل بندًا ماليًا وضريبيًا داخل فاتورة المشتريات."""
     invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="lines")
     receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_line")
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
@@ -173,6 +178,7 @@ class PurchaseInvoiceLine(models.Model):
 
 
 class SupplierPayment(models.Model):
+    """يمثل دفعة مسددة للمورد وارتباطها بالحسابات."""
     class Method(models.TextChoices):
         CASH = "cash", "نقدي"
         BANK = "bank", "تحويل بنكي"
@@ -228,6 +234,7 @@ class SupplierPayment(models.Model):
 
 
 class PurchaseOrder(models.Model):
+    """يمثل أمر شراء ومراحله قبل الاستلام والفوترة."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         CONFIRMED = "confirmed", "معتمد"
@@ -275,6 +282,7 @@ class PurchaseOrder(models.Model):
 
 
 class PurchaseOrderLine(models.Model):
+    """يمثل صنفًا وكمية وسعرًا داخل أمر الشراء."""
     order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="lines")
     product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_order_lines")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
@@ -303,6 +311,7 @@ class PurchaseOrderLine(models.Model):
 
 
 class PurchaseOrderReceiptLine(models.Model):
+    """يربط كميات الاستلام ببنود أمر الشراء لتتبع التنفيذ."""
     receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_order_link")
     order_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, related_name="receipt_links")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
