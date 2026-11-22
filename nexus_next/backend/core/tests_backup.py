@@ -77,9 +77,11 @@ class BackupConfigurationApiTests(TestCase):
 
     def test_regular_user_can_read_but_cannot_change_destination(self):
         self.client.force_authenticate(self.user)
-        response = self.client.get(self.url)
+        with patch("core.backup_api._backup_encryption_ready", return_value=False):
+            response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["can_manage"])
+        self.assertFalse(response.data["encryption_ready"])
         update = self.client.patch(self.url, {"backup_path": r"D:\NEXUS_Backups"}, format="json")
         self.assertEqual(update.status_code, 403)
 
