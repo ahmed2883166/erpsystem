@@ -58,6 +58,11 @@ const refresh = async () => {
   const filteredInvoices = invoices.filter(x => [x.invoice_number, x.customer_name, x.delivery_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredReceipts = receipts.filter(x => [x.receipt_number, x.customer_name, x.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
 
+  const findRate = (currencyId: string, onDate: string) => exchangeRates
+    .filter(rate => rate.currency === Number(currencyId) && rate.rate_date <= onDate)
+    .sort((a, b) => b.rate_date.localeCompare(a.rate_date))[0];
+
+
   // إنشاء مستند تسليم بالأصناف والكميات والمخزن وتفاصيل الصلاحية.
 const createDelivery = async (event: FormEvent) => {
     event.preventDefault();
@@ -89,7 +94,10 @@ const createInvoice = async (event: React.FormEvent) => {
       const payload = {
         company: companyId, customer, delivery: delivery.id, invoice_number: invoiceForm.invoice_number,
         invoice_date: invoiceForm.invoice_date,
-        lines: invoiceLines.map(line => ({ delivery_line: line.delivery_line, unit_price: line.unit_price, tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null, discount_percent: line.discount_percent })),
+        transaction_currency: invoiceForm.transaction_currency ? Number(invoiceForm.transaction_currency) : null,
+        exchange_rate: invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
+        exchange_rate_date: invoiceForm.transaction_currency ? invoiceForm.exchange_rate_date : null,
+        lines: invoiceLines.map(line => ({ delivery_line: line.delivery_line, ...(invoiceForm.transaction_currency ? { transaction_unit_price: line.unit_price } : { unit_price: line.unit_price }), tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null, discount_percent: line.discount_percent })),
       };
       if (editingInvoiceId) await salesApi.updateInvoice(editingInvoiceId, { lines: payload.lines });
       else await salesApi.createInvoice(payload);
@@ -101,10 +109,10 @@ const createInvoice = async (event: React.FormEvent) => {
   // تحميل بيانات الفاتورة المختارة داخل نموذج التعديل دون إرسال تغييرات للخادم.
 const beginEditInvoice = (invoice: SalesInvoice) => {
     setTab("invoices"); setShowForm(true); setError(""); setEditingInvoiceId(invoice.id);
-    setInvoiceForm({ delivery: String(invoice.delivery), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date });
+    setInvoiceForm({ delivery: String(invoice.delivery), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date, transaction_currency: invoice.transaction_currency ? String(invoice.transaction_currency) : "", exchange_rate: invoice.exchange_rate || "", exchange_rate_date: invoice.exchange_rate_date || invoice.invoice_date });
     setInvoiceLines(invoice.invoice_lines.map(line => ({
       delivery_line: line.delivery_line, product_name: line.product_name, quantity: line.quantity,
-      unit_price: line.unit_price, tax_rate: line.tax_rate,
+      unit_price: line.transaction_unit_price || line.unit_price, tax_rate: line.tax_rate,
       tax_code: line.tax_code ? String(line.tax_code) : "",
       discount_percent: line.discount_percent,
     })));
@@ -116,9 +124,15 @@ const beginEditInvoice = (invoice: SalesInvoice) => {
     if (!invoice) { setError("اختر فاتورة لها رصيد مستحق."); return; }
     setBusy(true); setError("");
     try {
+      const foreignAmount = invoice.transaction_currency ? Number(receiptForm.transaction_amount) : null;
+      const baseAmount = invoice.transaction_currency
+        ? (foreignAmount! * Number(receiptForm.exchange_rate)).toFixed(4)
+        : receiptForm.amount;
       await salesApi.createReceipt({ company: companyId, customer: invoice.customer, invoice: invoice.id,
         receipt_number: receiptForm.receipt_number, receipt_date: receiptForm.receipt_date,
-        method: receiptForm.method, payment_account: Number(receiptForm.payment_account), amount: receiptForm.amount, reference: receiptForm.reference });
+        method: receiptForm.method, payment_account: Number(receiptForm.payment_account), amount: baseAmount,
+        ...(invoice.transaction_currency ? { transaction_currency: invoice.transaction_currency, transaction_amount: receiptForm.transaction_amount, exchange_rate: receiptForm.exchange_rate, exchange_rate_date: receiptForm.exchange_rate_date } : {}),
+        reference: receiptForm.reference });
       setShowForm(false); setReceiptForm(old => ({ ...old, invoice: "", receipt_number: "", amount: "", reference: "" }));
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند القبض."); }
