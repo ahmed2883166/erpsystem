@@ -43,7 +43,7 @@ const refresh = async () => {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { void refresh(); }, [companyId]);
+  useEffect(() => { void refresh(); resetForm(); setShowForm(false); }, [companyId]);
 
   const filtered = useMemo(() => rows.filter((customer) =>
     [customer.code, customer.name_ar, customer.name_en, customer.tax_number, customer.phone, customer.mobile]
