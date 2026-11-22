@@ -137,6 +137,7 @@ class TreasuryFxSnapshotTests(TestCase):
         )
         receipt = TreasuryTransaction.objects.get(document_number="FX-R-1")
         post_treasury_transaction(receipt.pk)
+        receipt.refresh_from_db()
         receipt_bank_line = receipt.journal_entry.lines.get(account=self.bank.account)
         self.assertEqual(receipt_bank_line.transaction_amount, Decimal("100.0000"))
         self.assertEqual(receipt_bank_line.exchange_rate, Decimal("30.0000000000"))
@@ -170,6 +171,7 @@ class TreasuryFxSnapshotTests(TestCase):
             foreign_amount=Decimal("50"), rate_date=date(2026, 3, 3),
         )
         post_treasury_transaction(payment.pk)
+        payment.refresh_from_db()
         payment_counter_line = payment.journal_entry.lines.get(account=self.counter)
         self.assertEqual(payment_counter_line.transaction_amount, Decimal("50.0000"))
         payment_bank_line = payment.journal_entry.lines.get(account=self.bank.account)
