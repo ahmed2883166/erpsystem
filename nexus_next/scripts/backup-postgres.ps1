@@ -60,6 +60,21 @@ if (-not $PgDump -or -not $PgRestore) {
 $DailyRoot = Join-Path $BackupRoot "daily"
 $MonthlyRoot = Join-Path $BackupRoot "monthly"
 New-Item -ItemType Directory -Force -Path $DailyRoot, $MonthlyRoot | Out-Null
+
+# Upgrade old plaintext archives only after validating and encrypting each one.
+$LegacyArchives = @()
+$LegacyArchives += @(Get-ChildItem $DailyRoot -Filter "nexus-*.dump" -File -ErrorAction SilentlyContinue)
+$LegacyArchives += @(Get-ChildItem $MonthlyRoot -Filter "nexus-*.dump" -File -ErrorAction SilentlyContinue)
+foreach ($LegacyArchive in $LegacyArchives) {
+    & $PgRestorePath --list $LegacyArchive.FullName | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Legacy plaintext archive is invalid and was left untouched: $($LegacyArchive.FullName)" }
+    $LegacyEncrypted = "$($LegacyArchive.FullName).nexusenc"
+    Push-Location $Backend
+    try {
+        & $Python manage.py encrypt_backup_file --input $LegacyArchive.FullName --output $LegacyEncrypted --update-history --delete-source
+        if ($LASTEXITCODE -ne 0) { throw "Could not encrypt a legacy archive; its plaintext source was retained." }
+    } finally { Pop-Location }
+}
 $DailyFile = Join-Path $DailyRoot "nexus-$Tag.dump"
 $EncryptedFile = "$DailyFile.nexusenc"
 $env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
