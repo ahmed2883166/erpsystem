@@ -50,12 +50,15 @@ def post_journal(entry_id: int) -> JournalEntry:
     entry = JournalEntry.objects.select_for_update().select_related(
         "company", "company__base_currency", "branch", "fiscal_year"
     ).get(pk=entry_id)
+    # Serialize posting against year closure so a concurrent close cannot pass
+    # its checks while a journal is still being posted.
+    fiscal_year = FiscalYear.objects.select_for_update().get(pk=entry.fiscal_year_id)
 
     if entry.status != JournalEntry.Status.DRAFT:
         raise ValidationError("لا يمكن ترحيل إلا القيود المسجلة كمسودة.")
-    if entry.fiscal_year.status != FiscalYear.Status.OPEN:
+    if fiscal_year.status != FiscalYear.Status.OPEN:
         raise ValidationError("لا يمكن الترحيل داخل سنة مالية مغلقة.")
-    if not (entry.fiscal_year.start_date <= entry.entry_date <= entry.fiscal_year.end_date):
+    if not (fiscal_year.start_date <= entry.entry_date <= fiscal_year.end_date):
         raise ValidationError("تاريخ القيد خارج حدود السنة المالية المحددة.")
     if entry.branch.company_id != entry.company_id:
         raise ValidationError("الفرع لا يتبع شركة القيد.")
