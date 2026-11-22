@@ -77,6 +77,7 @@ class TreasuryTransaction(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
+        VOID = "void", "ملغي"
 
     class CashFlowCategory(models.TextChoices):
         OPERATING = "operating", "تشغيلي"
