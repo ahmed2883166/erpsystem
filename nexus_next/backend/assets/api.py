@@ -7,7 +7,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone, dateparse
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import FixedAsset, AssetDepreciation
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
 from .services import acquire_asset, depreciate_asset, dispose_asset
@@ -28,7 +28,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             if not company_id.isdigit() or not can_access_company(self.request.user, int(company_id)):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
             qs = qs.filter(company_id=int(company_id))
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
         return qs
 
