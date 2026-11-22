@@ -3,7 +3,7 @@
  * يرسل تغييرات الهيكل إلى الخادم ويبلغ التطبيق عند إنشاء شركة أو تحديث إعداداتها.
  */
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type Branch, type Company, type Currency, type FiscalYear } from "./api";
+import { api, type Branch, type Company, type Currency, type ExchangeRate, type FiscalYear } from "./api";
 
 type Props = {
   companies: Company[];
@@ -26,6 +26,13 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [years, setYears] = useState<FiscalYear[]>([]);
+  const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
+  const [fxCurrencyId, setFxCurrencyId] = useState("");
+  const [fxRateDate, setFxRateDate] = useState(new Date().toISOString().slice(0, 10));
+  const [fxRate, setFxRate] = useState("");
+  const [fxSource, setFxSource] = useState("");
+  const [fxNotes, setFxNotes] = useState("");
+  const [fxBusy, setFxBusy] = useState(false);
   const [companyCode, setCompanyCode] = useState("");
   const [profileName, setProfileName] = useState("");
   const [profileNameEn, setProfileNameEn] = useState("");
@@ -76,6 +83,11 @@ const refreshStructure = async (id: number) => {
     setYears(yearRows.filter(item => item.company === id));
   };
 
+  const refreshExchangeRates = async (id: number) => {
+    const rows = await api.exchangeRates(id);
+    setExchangeRates(rows.filter(item => item.company === id));
+  };
+
   useEffect(() => {
     api.currencies().then(items => {
       const active = items.filter(item => item.is_active);
@@ -86,9 +98,10 @@ const refreshStructure = async (id: number) => {
   }, []);
 
   useEffect(() => {
-    if (!companyId) { setBranches([]); setYears([]); return; }
+    if (!companyId) { setBranches([]); setYears([]); setExchangeRates([]); return; }
     setError("");
     refreshStructure(companyId).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع والسنوات المالية."));
+    refreshExchangeRates(companyId).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل أسعار الصرف."));
   }, [companyId]);
 
   useEffect(() => {
@@ -222,6 +235,24 @@ const createYear = async (event: FormEvent) => {
     finally { setBusy(false); }
   };
 
+
+  const createExchangeRate = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !fxCurrencyId || !fxRateDate || !fxRate.trim()) return;
+    setFxBusy(true); setError(""); setNotice("");
+    try {
+      await api.createExchangeRate({
+        company: companyId, currency: Number(fxCurrencyId), rate_date: fxRateDate,
+        rate: fxRate.trim(), source: fxSource.trim(), notes: fxNotes.trim(),
+      });
+      await refreshExchangeRates(companyId);
+      setFxRate(""); setFxSource(""); setFxNotes("");
+      setNotice("تم حفظ سعر الصرف كسجل تاريخي جديد. لا يمكن تعديل السجل السابق.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ سعر الصرف.");
+    } finally { setFxBusy(false); }
+  };
+
   return <section className="work-panel company-setup-panel">
     <div className="work-panel-head">
       <div><h2>{selectedCompany ? "بيانات الشركة وإعداداتها" : "تأسيس بيانات الشركة"}</h2><p>{selectedCompany ? "هذه الشاشة لتعريف الشركة وإدارة فروعها وسنواتها المالية؛ أما القيود والفواتير والتقارير فتوجد في شاشة العمل اليومية المستقلة." : "إعداد أول شركة على قاعدة PostgreSQL الجديدة، دون استيراد بيانات من النظام القديم."}</p></div>
@@ -310,6 +341,23 @@ const createYear = async (event: FormEvent) => {
         <label>تاريخ النهاية<input required type="date" min={yearStart} value={yearEnd} onChange={e => setYearEnd(e.target.value)} /></label>
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || yearStart > yearEnd}>{busy ? "جارٍ الحفظ…" : "إنشاء السنة المالية"}</button></div>
       </form>
+
+      <div className="setup-step-heading"><span>3</span><div><strong>أسعار صرف العملات</strong><small>سعر وحدة واحدة من العملة الأجنبية مقابل العملة الأساسية للشركة ({selectedCompany.base_currency_code}). يُستخدم التاريخ الأقرب السابق لتاريخ العملية.</small></div></div>
+      <form className="journal-form setup-subform" onSubmit={createExchangeRate}>
+        <label>العملة الأجنبية<select required value={fxCurrencyId} onChange={event => setFxCurrencyId(event.target.value)}>
+          <option value="">اختر العملة</option>
+          {currencies.filter(item => item.is_active && item.id !== selectedCompany.base_currency).map(item => <option key={item.id} value={item.id}>{item.code} · {item.name_ar}</option>)}
+        </select></label>
+        <label>تاريخ السريان<input required type="date" value={fxRateDate} onChange={event => setFxRateDate(event.target.value)} /></label>
+        <label>سعر الصرف<input required type="number" min="0.0000000001" step="0.0000000001" value={fxRate} onChange={event => setFxRate(event.target.value)} placeholder="مثال: 48.2500000000" /></label>
+        <label>مصدر السعر<input maxLength={120} value={fxSource} onChange={event => setFxSource(event.target.value)} placeholder="مثال: مستند البنك أو نشرة موثقة" /></label>
+        <label className="form-wide">ملاحظات<input maxLength={500} value={fxNotes} onChange={event => setFxNotes(event.target.value)} /></label>
+        <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={fxBusy || !fxCurrencyId || !fxRate.trim()}>{fxBusy ? "جارٍ حفظ السعر…" : "إضافة سعر صرف بتاريخ السريان"}</button></div>
+        <p className="asset-report-note form-wide">اتجاه السعر ثابت: قيمة العملة الأساسية مقابل وحدة واحدة من العملة الأجنبية. الأسعار لا تُجلب تلقائيًا من الإنترنت، ويجب توثيق مصدرها. إضافة الأسعار لا تفعّل بعد ترحيل الحركات الأجنبية؛ ما زال ربط القيود وفروق العملة قيد التنفيذ.</p>
+      </form>
+      {exchangeRates.length > 0 && <div className="data-table-wrap"><table><thead><tr><th>تاريخ السريان</th><th>العملة</th><th>سعر الوحدة</th><th>المصدر</th><th>ملاحظات</th></tr></thead><tbody>
+        {exchangeRates.map(item => <tr key={item.id}><td>{item.rate_date}</td><td>{item.currency_code}</td><td>{Number(item.rate).toLocaleString("en-US", { maximumFractionDigits: 10 })} {item.base_currency_code}</td><td>{item.source || "—"}</td><td>{item.notes || "—"}</td></tr>)}
+      </tbody></table></div>}
       {branches.length > 0 && years.some(item => item.status === "open") && <div className="success-banner setup-complete">تم حفظ بيانات الشركة والفرع والسنة المالية. قبل بدء القيود، يلزم إعداد دليل الحسابات المناسب للنشاط وربط أدوار الحسابات.</div>}
     </>}
   </section>;
