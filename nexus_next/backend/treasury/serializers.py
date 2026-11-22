@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db import models
 from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
@@ -32,6 +33,25 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
         if self.instance and "opening_balance" in attrs:
             raise serializers.ValidationError({"opening_balance": "الرصيد الافتتاحي لا يتغير بعد إنشاء الحساب؛ صحّح الرصيد بقيد افتتاحي أو تسوية معتمدة."})
+        if self.instance:
+            has_history = (
+                self.instance.opening_journal_entry_id
+                or TreasuryTransaction.objects.filter(
+                    models.Q(source_account=self.instance) | models.Q(destination_account=self.instance)
+                ).exists()
+            )
+            if has_history:
+                protected_fields = ("account", "kind", "code", "currency_code", "branch")
+                changed = [
+                    field for field in protected_fields
+                    if field in attrs and getattr(self.instance, field + "_id" if field in ("account", "branch") else field)
+                    != (attrs[field].pk if field in ("account", "branch") and attrs[field] else attrs[field])
+                ]
+                if changed:
+                    raise serializers.ValidationError({
+                        field: "لا يمكن تغيير بيانات الربط أو العملة أو الفرع لحساب خزينة له حركات؛ أنشئ حسابًا جديدًا للتغيير."
+                        for field in changed
+                    })
         return attrs
 
 
