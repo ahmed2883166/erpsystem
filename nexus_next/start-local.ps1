@@ -77,10 +77,11 @@ try {
 
 Push-Location $Frontend
 try {
-  if (-not (Test-Path -LiteralPath (Join-Path $Frontend "node_modules"))) {
-    & npm.cmd install
-    if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Frontend." }
+  if (-not (Test-Path -LiteralPath (Join-Path $Frontend "package-lock.json"))) {
+    throw "ملف package-lock.json غير موجود؛ لن يتم تثبيت تبعيات غير مثبتة."
   }
+  & npm.cmd ci
+  if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Frontend المثبتة." }
 } finally { Pop-Location }
 
 Start-Process -FilePath $Python -WorkingDirectory $Backend -ArgumentList @("manage.py", "runserver", "127.0.0.1:8000")
