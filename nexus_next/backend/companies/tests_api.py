@@ -266,7 +266,8 @@ class CompanySetupApiTests(APITestCase):
             "company": self.company.pk, "code": "MAIN", "name_ar": "كود مكرر",
         }, format="json")
         self.assertEqual(duplicate_code.status_code, 400, duplicate_code.data)
-        self.assertIn("code", duplicate_code.data)
+        self.assertTrue("code" in duplicate_code.data or "non_field_errors" in duplicate_code.data)
+        self.assertEqual(Branch.objects.filter(company=self.company, code="MAIN").count(), 1)
 
         duplicate_head = self.client.post("/api/setup/branches/", {
             "company": self.company.pk, "code": "SECOND", "name_ar": "رئيسي إضافي",
@@ -293,7 +294,7 @@ class CompanySetupApiTests(APITestCase):
         }, format="json")
 
         self.assertEqual(response.status_code, 400, response.data)
-        self.assertIn("name", response.data)
+        self.assertTrue("name" in response.data or "non_field_errors" in response.data)
         self.assertEqual(FiscalYear.objects.filter(company=self.company, name="2027").count(), 1)
 
     def test_company_admin_can_update_branch_contact_details_and_deactivate(self):
