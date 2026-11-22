@@ -100,7 +100,11 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         JournalLine.objects.create(
             entry=entry, account=offset, debit=0, credit=amount,
         )
-        post_journal(entry.pk)
+        if amount < Decimal("0.01"):
+            # Simulate historical pre-minor-unit ledger rows; new postings must round to cents.
+            JournalEntry.objects.filter(pk=entry.pk).update(status=JournalEntry.Status.POSTED)
+        else:
+            post_journal(entry.pk)
 
     def test_all_accessible_branches_reconcile_and_unassigned_warehouse_maps_to_head_office(self):
         self.client.force_authenticate(user=self.full_user)
