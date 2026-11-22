@@ -53,7 +53,7 @@ def post_stock_movement(movement_id, user):
         locked = StockBalance.objects.select_for_update().filter(pk__in=balance_ids).order_by("id")
         balances = {(b.warehouse_id, b.location_id, b.expiry_date): b for b in locked}
 
-        def receive(balance, quantity, unit_cost, source_line):
+        def receive(balance, quantity, unit_cost, source_line, product=product):
             """تنفيذ مسؤولية الدالة receive ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             amount = (quantity * unit_cost).quantize(Decimal("0.0001"))
             new_quantity = balance.quantity + quantity
