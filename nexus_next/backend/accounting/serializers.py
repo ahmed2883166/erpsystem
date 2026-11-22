@@ -84,6 +84,16 @@ class CostCenterSerializer(serializers.ModelSerializer):
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and company and parent.company_id != company.id:
             raise serializers.ValidationError({"parent": "مركز التكلفة الأب يجب أن يتبع نفس الشركة."})
+        if self.instance and parent:
+            visited = set()
+            node = parent
+            while node is not None:
+                if node.pk == self.instance.pk:
+                    raise serializers.ValidationError({"parent": "لا يمكن ربط مركز التكلفة بأحد أبنائه؛ سيؤدي ذلك إلى دورة في الهيكل."})
+                if node.pk in visited:
+                    raise serializers.ValidationError({"parent": "يوجد تسلسل أبوة دائري في مراكز التكلفة؛ راجع الهيكل قبل التعديل."})
+                visited.add(node.pk)
+                node = node.parent
         return attrs
 
 
