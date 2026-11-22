@@ -6,7 +6,7 @@ from django.db import models
 from companies.models import Company
 
 
-class Customer(models.Model):
+class Customer    """يحفظ بيانات العميل وشروط السداد والحد الائتماني وحالة التعامل."""
     class CustomerType(models.TextChoices):
         COMPANY = "company", "شركة"
         INDIVIDUAL = "individual", "فرد"
