@@ -1,3 +1,5 @@
+"""عرض ملف React المبني كنقطة دخول الواجهة الأمامية في تشغيل الإنتاج."""
+
 from pathlib import Path
 
 from django.conf import settings
