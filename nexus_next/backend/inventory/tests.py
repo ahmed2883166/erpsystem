@@ -11,7 +11,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, Currency, FiscalYear
 
 from .models import (
-    Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse,
+    Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse,
 )
 from .services import post_stock_movement
 
@@ -222,3 +222,32 @@ class StockPostingServiceTests(TestCase):
             )
             clearing_totals.append(Decimal(totals["debit"] or 0) - Decimal(totals["credit"] or 0))
         self.assertEqual(sum(clearing_totals), Decimal("0.0000"))
+
+
+    def test_incomplete_fifo_layers_roll_back_partial_consumption(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+        receipt = self._movement(
+            "FIFO-ROLLBACK-R", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="2", unit_cost="7",
+        )
+        post_stock_movement(receipt.pk, self.user)
+        layer = StockCostLayer.objects.get(product=self.product, warehouse=self.warehouse)
+        layer.quantity_remaining = Decimal("1")
+        layer.save(update_fields=("quantity_remaining",))
+
+        issue = self._movement(
+            "FIFO-ROLLBACK-I", StockMovement.MovementType.ISSUE,
+            source=self.warehouse, quantity="2",
+        )
+        with self.assertRaises(ValidationError):
+            post_stock_movement(issue.pk, self.user)
+
+        layer.refresh_from_db()
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        issue.refresh_from_db()
+        self.assertEqual(layer.quantity_remaining, Decimal("1.0000"))
+        self.assertEqual(balance.quantity, Decimal("2.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("14.0000"))
+        self.assertEqual(issue.status, StockMovement.Status.DRAFT)
+        self.assertFalse(issue.journal_links.exists())
