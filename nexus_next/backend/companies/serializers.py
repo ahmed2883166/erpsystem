@@ -18,6 +18,29 @@ class CompanySerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("created_at", "updated_at")
 
+    def validate(self, attrs):
+        """حماية مفاتيح تأسيس الشركة من التغيير بعد إنشائها حفاظًا على سلامة الحسابات والضرائب."""
+        if self.instance:
+            protected = ("code", "country", "activity", "base_currency")
+            changed = [
+                field for field in protected
+                if field in attrs and getattr(self.instance, field + ("_id" if field == "base_currency" else "")) != (
+                    attrs[field].pk if field == "base_currency" else attrs[field]
+                )
+            ]
+            if changed:
+                labels = {
+                    "code": "كود الشركة",
+                    "country": "الدولة",
+                    "activity": "النشاط",
+                    "base_currency": "العملة الأساسية",
+                }
+                raise serializers.ValidationError({
+                    field: f"لا يمكن تغيير {labels[field]} بعد إنشاء الشركة؛ يلزم إجراء تحويل تأسيسي مستقل ومراجع."
+                    for field in changed
+                })
+        return attrs
+
 class BranchSerializer(serializers.ModelSerializer):
     company_code = serializers.CharField(source="company.code", read_only=True)
 
