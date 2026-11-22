@@ -219,6 +219,9 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         customer = attrs.get("customer", instance.customer if instance else None)
         delivery = attrs.get("delivery", instance.delivery if instance else None)
         invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
+        transaction_currency = attrs.get("transaction_currency", instance.transaction_currency if instance else None)
+        exchange_rate = attrs.get("exchange_rate", instance.exchange_rate if instance else None)
+        exchange_rate_date = attrs.get("exchange_rate_date", instance.exchange_rate_date if instance else None)
 
         if instance:
             if instance.status != SalesInvoice.Status.DRAFT:
@@ -236,6 +239,12 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                     supplied = supplied.pk if hasattr(supplied, "pk") else supplied
                     if supplied != current:
                         raise serializers.ValidationError({field: "بيانات الفاتورة الأساسية لا تتغير بعد إنشائها."})
+            for field, current in (("transaction_currency", instance.transaction_currency_id), ("exchange_rate", instance.exchange_rate), ("exchange_rate_date", instance.exchange_rate_date)):
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "لا يمكن تغيير عملة أو سعر صرف الفاتورة بعد إنشائها."})
             if "lines" not in attrs:
                 return attrs
 
@@ -246,12 +255,28 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         if not customer.is_active:
             raise serializers.ValidationError({"customer": "العميل موقوف."})
 
+        if transaction_currency:
+            if exchange_rate is None or exchange_rate_date is None:
+                raise serializers.ValidationError({"exchange_rate": "حدد سعر الصرف وتاريخه للفاتورة الأجنبية."})
+            if not transaction_currency.is_active or transaction_currency.code == company.base_currency.code:
+                raise serializers.ValidationError({"transaction_currency": "اختر عملة أجنبية نشطة ومختلفة عن العملة الأساسية."})
+            if exchange_rate <= 0 or exchange_rate_date > invoice_date:
+                raise serializers.ValidationError({"exchange_rate_date": "سعر الصرف يجب أن يكون موجبًا وتاريخه لا يتجاوز تاريخ الفاتورة."})
+            if not ExchangeRate.objects.filter(company=company, currency=transaction_currency, rate_date=exchange_rate_date, rate=exchange_rate).exists():
+                raise serializers.ValidationError({"exchange_rate": "سعر الصرف لا يطابق سعرًا معتمدًا للشركة والتاريخ."})
+        elif exchange_rate is not None or exchange_rate_date is not None:
+            raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
+
         lines = attrs.get("lines", [])
         expected = set(delivery.stock_movement.lines.values_list("id", flat=True))
         supplied = [line["delivery_line"].pk for line in lines]
         if not supplied or set(supplied) != expected or len(supplied) != len(expected):
             raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن التسليم مرة واحدة دون حذف أو تكرار."})
         for line in lines:
+            if transaction_currency and line.get("transaction_unit_price") is None:
+                raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
+            if not transaction_currency and line.get("unit_price") is None:
+                raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأساسية مطلوب لكل بند."})
             code = line.get("tax_code")
             if code and (
                 code.company_id != company.pk or code.country != company.country or not code.is_active
@@ -271,6 +296,16 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         invoice.tax_total = sum((line.tax_amount for line in invoice_lines), Decimal("0"))
         invoice.grand_total = invoice.net_total + invoice.tax_total
         update_fields = ["net_total", "discount_total", "tax_total", "grand_total"]
+        if invoice.transaction_currency_id:
+            invoice.transaction_net_total = sum((line.transaction_net_amount or Decimal("0") for line in invoice_lines), Decimal("0"))
+            invoice.transaction_tax_total = sum((line.transaction_tax_amount or Decimal("0") for line in invoice_lines), Decimal("0"))
+            invoice.transaction_grand_total = invoice.transaction_net_total + invoice.transaction_tax_total
+            expected_base = (invoice.transaction_grand_total * invoice.exchange_rate).quantize(Decimal("0.0001"))
+            if expected_base != invoice.grand_total:
+                raise serializers.ValidationError("إجمالي الفاتورة الأساسي لا يطابق الإجمالي الأجنبي مضروبًا في سعر الصرف.")
+            update_fields += ["transaction_net_total", "transaction_tax_total", "transaction_grand_total"]
+        else:
+            invoice.transaction_net_total = invoice.transaction_tax_total = invoice.transaction_grand_total = None
         invoice.save(update_fields=update_fields)
 
         if lines_changed and (
@@ -331,6 +366,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 delivery_line = data.pop("delivery_line")
                 line = existing[delivery_line.pk]
                 line.unit_price = data.get("unit_price", line.unit_price)
+                line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
                 line.tax_rate = data.get("tax_rate", line.tax_rate)
                 line.tax_code = data.get("tax_code", line.tax_code)
                 line.discount_percent = data.get("discount_percent", line.discount_percent)
