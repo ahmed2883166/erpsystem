@@ -7,7 +7,7 @@ export type Company = { id: number; code: string; name_ar: string; name_en?: str
 export type Branch = { id: number; company: number; company_code?: string; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean; created_at?: string };
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
-export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
+export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };\nexport type ExchangeRate = { id: number; company: number; company_code: string; currency: number; currency_code: string; base_currency_code: string; rate_date: string; rate: string; source: string; notes: string; created_at: string };
 export type Account = {
   id: number; company: number; code: string; name_ar: string; parent: number | null;
   parent_code: string | null; nature: string; is_group: boolean; allow_posting: boolean; is_active: boolean;
