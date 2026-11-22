@@ -83,12 +83,12 @@ class AuditTrailMiddleware:
         method = request.method.upper()
         is_global_superuser_read = (
             method == "GET"
-            and request.path.startswith("/api/")
+            and request.path.startswith(("/api/", "/admin/"))
             and getattr(getattr(request, "user", None), "is_authenticated", False)
             and getattr(request.user, "is_superuser", False)
             and not is_platform_owner(request.user)
         )
-        should_audit = request.path.startswith("/api/") and (method in _ACTIONS or is_global_superuser_read)
+        should_audit = (request.path.startswith("/api/") and method in _ACTIONS) or is_global_superuser_read
         prior_object_id, prior_company_id, prior_branch_id = (
             _target_before_request(request) if should_audit else (None, None, None)
         )
