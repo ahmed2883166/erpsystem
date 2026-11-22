@@ -201,3 +201,93 @@ class CustomerReceipt(models.Model):
             self.invoice.company_id != self.company_id or self.invoice.customer_id != self.customer_id
         ):
             raise ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة المحددين."})
+
+
+class SalesReturn(models.Model):
+    """إشعار مردود مبيعات مرتبط بفاتورة أصلية وحركة استلام مخزني."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_returns")
+    invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="returns")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_returns")
+    stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_return")
+    return_number = models.CharField(max_length=40)
+    return_date = models.DateField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return")
+    cost_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_cost")
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_returns")
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-return_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "return_number"), name="uq_sales_return_company_no")]
+        indexes = [models.Index(fields=("company", "status", "return_date"), name="sales_return_co_status_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
+            raise ValidationError("مردود المبيعات المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.POSTED:
+            raise ValidationError("لا يمكن حذف مردود مبيعات مرحّل.")
+        return super().delete(*args, **kwargs)
+
+    def clean(self):
+        super().clean()
+        if self.invoice_id and (
+            self.invoice.company_id != self.company_id
+            or self.invoice.status != SalesInvoice.Status.POSTED
+        ):
+            raise ValidationError({"invoice": "يجب اختيار فاتورة مبيعات مرحلة تابعة للشركة."})
+        if self.warehouse_id and (
+            self.warehouse.company_id != self.company_id
+            or (self.invoice_id and self.invoice.delivery.warehouse_id != self.warehouse_id)
+        ):
+            raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+        if self.stock_movement_id and (
+            self.stock_movement.company_id != self.company_id
+            or self.stock_movement.destination_warehouse_id != self.warehouse_id
+            or self.stock_movement.movement_type != StockMovement.MovementType.RECEIPT
+        ):
+            raise ValidationError({"stock_movement": "حركة الاستلام لا تطابق مردود المبيعات."})
+        if self.invoice_id and self.return_date and self.return_date < self.invoice.invoice_date:
+            raise ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
+
+
+class SalesReturnLine(models.Model):
+    """بند مردود يحتفظ بلقطة السعر والضريبة والتكلفة من الفاتورة الأصلية."""
+    sales_return = models.ForeignKey(SalesReturn, on_delete=models.PROTECT, related_name="lines")
+    invoice_line = models.ForeignKey(SalesInvoiceLine, on_delete=models.PROTECT, related_name="return_lines")
+    movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_return_line")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    cost_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [models.UniqueConstraint(fields=("sales_return", "invoice_line"), name="uq_sales_return_invoice_line")]
+
+    def save(self, *args, **kwargs):
+        if self.sales_return_id and SalesReturn.objects.filter(pk=self.sales_return_id, status=SalesReturn.Status.POSTED).exists():
+            raise ValidationError("لا يمكن تعديل بنود مردود مبيعات مرحّل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.sales_return.status == SalesReturn.Status.POSTED:
+            raise ValidationError("لا يمكن حذف بنود مردود مبيعات مرحّل.")
+        return super().delete(*args, **kwargs)
