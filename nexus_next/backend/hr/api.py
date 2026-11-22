@@ -195,6 +195,11 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
     serializer_class = LeaveRequestSerializer
     filterset_fields = ("employee", "employee__company", "kind", "status")
 
+    def perform_create(self, serializer):
+        employee = serializer.validated_data["employee"]
+        self.check_employee_write(employee)
+        serializer.save(created_by=self.request.user)
+
     @decorators.action(detail=True, methods=("post",))
     @transaction.atomic
     def approve(self, request, pk=None):
