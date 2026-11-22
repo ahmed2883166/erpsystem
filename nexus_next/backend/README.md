@@ -7,15 +7,13 @@ From the `nexus_next` directory, run:
 ```powershell
 .\start-local.ps1
 ```
-The helper starts the PostgreSQL 16 container bound to `127.0.0.1`, installs backend/frontend dependencies, applies the committed migrations, seeds reference currencies, and starts both development servers. It never connects to the legacy SQLite database.
+The helper requires an already installed and running PostgreSQL 16 Windows service, installs backend/frontend dependencies, applies pending migrations, seeds reference currencies, and starts both development servers. It does not install or start Docker, create a PostgreSQL role/database, reset data, or connect to the legacy SQLite database.
+
+The connection is read from `backend/.env`. Keep that file private and never commit it. The application servers bind to `127.0.0.1` by default.
 
 If no administrator exists, the startup helper opens a separate PowerShell window and runs the administrator creation prompt.
 
-To stop the database container:
-```powershell
-docker compose -f compose.yaml down
-```
-To keep local database contents, do not pass `-v`. The named volume is dedicated to Admrail ERP v2 Next.
+To stop the application, close the two server windows or press Ctrl+C in each. The PostgreSQL Windows service and its data remain untouched.
 
 Run backend checks from this directory:
 ```powershell
@@ -38,7 +36,7 @@ The setup API is under `/api/setup/`:
 - `branches/`
 - `fiscal-years/`
 
-Authenticated users can read setup records. Only staff users can create, edit, or delete setup records. Accounting write actions use Django model permissions; assign permissions through groups rather than granting staff access to ordinary business users.
+Authenticated users can read setup records. Company administrators can manage their own company profile, branches, fiscal years, and memberships within their company scope; system-wide currency and company creation remain restricted to staff users. Accounting write actions use Django model permissions; assign permissions through groups rather than granting staff access to ordinary business users.
 
 ## First test company
 1. Open `http://127.0.0.1:5173/admin/` and sign in with the superuser created above.
