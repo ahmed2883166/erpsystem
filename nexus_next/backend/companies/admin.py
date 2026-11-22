@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 
 
 @admin.register(Currency)
@@ -45,3 +45,11 @@ class CompanyMembershipAdmin(admin.ModelAdmin):
 class FiscalYearAdmin(admin.ModelAdmin):
     list_display = ("company", "name", "start_date", "end_date", "status")
     list_filter = ("company", "status")
+
+
+@admin.register(ExchangeRate)
+class ExchangeRateAdmin(admin.ModelAdmin):
+    list_display = ("company", "currency", "rate_date", "rate", "source")
+    list_filter = ("company", "currency", "rate_date")
+    search_fields = ("company__code", "currency__code", "source")
+    readonly_fields = ("created_at",)
