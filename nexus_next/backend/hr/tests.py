@@ -10,7 +10,7 @@ from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
-from hr.services import post_payroll_cycle, complete_payroll_payment, cancel_payroll_payment_preparation
+from hr.services import post_payroll_cycle, complete_payroll_payment, cancel_payroll_payment_preparation, prepare_payroll_payment
 
 from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet, EmployeeComponent
 from hr.services import calculate_component, money, salary_for_date
@@ -640,3 +640,13 @@ class PayrollTaxPostingTests(TestCase):
         self.assertEqual(document.status, TreasuryTransaction.Status.VOID)
         self.assertIsNone(posting.payment_treasury_transaction_id)
         self.assertIsNone(posting.payment_journal_entry_id)
+
+        prepared_again = prepare_payroll_payment(cycle.pk, bank.pk, actor)
+        cycle.refresh_from_db()
+        posting.refresh_from_db()
+        self.assertEqual(prepared_again["status"], PayrollCycle.Status.PAYMENT_PENDING)
+        self.assertIsNotNone(posting.payment_treasury_transaction_id)
+        self.assertNotEqual(
+            posting.payment_treasury_transaction.document_number,
+            document.document_number,
+        )
