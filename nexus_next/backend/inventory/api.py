@@ -160,7 +160,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
             self.request.user, branch.pk, company.pk if company else None
         ):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
-        if company and branch is None and not self.request.user.is_superuser:
+        if company and branch is None and (not self.request.user.is_superuser or is_platform_owner(self.request.user)):
             default_branch = _default_branch(company.pk)
             if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
                 raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
@@ -175,7 +175,7 @@ class WarehouseViewSet(CompanyScopedViewSet):
         self._check_company_write(company.pk)
         if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
-        if branch is None and not self.request.user.is_superuser:
+        if branch is None and (not self.request.user.is_superuser or is_platform_owner(self.request.user)):
             default_branch = _default_branch(company.pk)
             if not default_branch or not can_access_branch(self.request.user, default_branch.pk, company.pk):
                 raise PermissionDenied("المخزن العام يتبع الفرع الرئيسي، ولا تملك صلاحية الوصول إليه.")
