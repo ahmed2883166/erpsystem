@@ -291,7 +291,7 @@ const exportEmployeePayReport = () => {
       ])
     ];
     if (payReport.totals) rows.push(["","الإجمالي","","","",...Array(reportColumns.length).fill(""),payReport.totals.earnings,payReport.totals.employee_deductions,payReport.totals.employer_share,payReport.totals.net_pay,payReport.totals.company_cost]);
-    const csvCell = (value: unknown) => { const text = String(value ?? ""); const safe = typeof value === "string" && /^[\\s]*[=+\\-@]/.test(text) ? "'" + text : text; return '"' + safe.replace(/"/g, '""') + '"' ; };
+    const csvCell = (value: unknown) => { const text = String(value ?? ""); const safe = typeof value === "string" && /^\s*[=+\-@]/.test(text) ? "'" + text : text; return '"' + safe.replace(/"/g, '""') + '"' ; };
     const csv = rows.map(row=>row.map(csvCell).join(",")).join("\\r\
 ");
     const blob = new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"});
