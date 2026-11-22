@@ -636,7 +636,7 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 [data-theme="dark"] .data-table-wrap th,[data-theme="dark"] .journal-lines-table th{background:#22334b;color:#bdcbe0}
 [data-theme="dark"] .data-table-wrap td,[data-theme="dark"] .journal-lines-table td{border-color:#2b3d56;color:#d2deed}
 [data-theme="dark"] .data-table-wrap tbody tr:hover,[data-theme="dark"] .journal-lines-table tbody tr:hover{background:#203149}
-[data-theme="dark"] input:not([type="checkbox"]),[data-theme="dark"] select:not(.workspace select),[data-theme="dark"] textarea{background:#111d30!important;border-color:#3a4d68!important;color:#e6edf7!important}
+[data-theme="dark"] input:not([type="checkbox"]),[data-theme="dark"] select,[data-theme="dark"] textarea{background:#111d30!important;border-color:#3a4d68!important;color:#e6edf7!important}
 [data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#8293ab}
 [data-theme="dark"] .theme-select{background:#111d30;color:#e6edf7;border-color:#3a4d68}
 [data-theme="dark"] .balance-preview,[data-theme="dark"] .balance-preview.form-wide,[data-theme="dark"] .review-meta>div,[data-theme="dark"] .review-totals>div,[data-theme="dark"] .table-head{background:#1d2d44;border-color:#34465f;color:#dce6f4}
