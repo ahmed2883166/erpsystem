@@ -5,6 +5,8 @@ from .models import Branch, Company, CompanyMembership
 
 def accessible_companies(user):
     """إرجاع الشركات التي يحق للمستخدم الوصول إليها وفق عضوياته وصلاحياته."""
+    if is_platform_owner(user):
+        return Company.objects.none()
     if user.is_superuser:
         return Company.objects.filter(is_active=True)
     return Company.objects.filter(
@@ -16,6 +18,8 @@ def accessible_companies(user):
 
 def accessible_branches(user, company_id=None):
     """إرجاع الفروع المتاحة للمستخدم مع إمكانية حصر النتائج في شركة محددة."""
+    if is_platform_owner(user):
+        return Branch.objects.none()
     if user.is_superuser:
         qs = Branch.objects.filter(is_active=True, company__is_active=True)
         return qs.filter(company_id=company_id) if company_id else qs
@@ -38,7 +42,7 @@ def accessible_branches(user, company_id=None):
 
 def can_access_company(user, company_id):
     """التحقق من امتلاك المستخدم حق الوصول إلى الشركة المحددة."""
-    return user.is_superuser or accessible_companies(user).filter(pk=company_id).exists()
+    return not is_platform_owner(user) and (user.is_superuser or accessible_companies(user).filter(pk=company_id).exists())
 
 
 def can_access_branch(user, branch_id, company_id=None):
@@ -48,6 +52,8 @@ def can_access_branch(user, branch_id, company_id=None):
 
 def has_company_role(user, company_id, roles):
     """التحقق من أن دور عضوية المستخدم ضمن الأدوار المسموح بها."""
+    if is_platform_owner(user):
+        return False
     if user.is_superuser:
         return True
     return CompanyMembership.objects.filter(
