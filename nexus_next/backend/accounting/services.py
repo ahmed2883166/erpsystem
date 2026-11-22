@@ -148,3 +148,56 @@ def post_journal(entry_id: int) -> JournalEntry:
         },
     )
     return entry
+
+
+@transaction.atomic
+def reverse_operational_journal(entry_id: int, user, entry_date, expected_source: str) -> JournalEntry:
+    """Create and post a full, linked reversal for an approved operational source document."""
+    original = JournalEntry.objects.select_for_update().select_related(
+        "company", "branch", "fiscal_year"
+    ).get(pk=entry_id)
+    if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
+        raise ValidationError("لا يمكن عكس إلا قيد تشغيلي أصلي مرحّل.")
+    if original.source_type != expected_source:
+        raise ValidationError("مصدر القيد لا يطابق نوع المستند المطلوب عكسه.")
+    if JournalEntry.objects.filter(reversal_of=original).exists():
+        raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
+    if entry_date < original.entry_date:
+        raise ValidationError("تاريخ القيد العكسي لا يجوز أن يسبق تاريخ القيد الأصلي.")
+
+    fiscal_year = FiscalYear.objects.filter(
+        company=original.company,
+        status=FiscalYear.Status.OPEN,
+        start_date__lte=entry_date,
+        end_date__gte=entry_date,
+    ).order_by("-start_date").first()
+    if not fiscal_year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تغطي تاريخ العكس.")
+
+    reversal = JournalEntry.objects.create(
+        company=original.company,
+        branch=original.branch,
+        fiscal_year=fiscal_year,
+        entry_number=f"REV-{original.pk}",
+        entry_date=entry_date,
+        description=f"عكس المستند المرتبط بالقيد {original.entry_number}: {original.description}"[:500],
+        source_type=original.source_type,
+        reversal_of=original,
+        created_by=user,
+    )
+    original_lines = list(original.lines.all())
+    if len(original_lines) < 2:
+        raise ValidationError("القيد الأصلي لا يحتوي على سطور كافية للعكس.")
+    from .models import JournalLine
+    JournalLine.objects.bulk_create([
+        JournalLine(
+            entry=reversal,
+            account=line.account,
+            cost_center=line.cost_center,
+            debit=line.credit,
+            credit=line.debit,
+            description=f"عكس: {line.description}"[:300],
+        )
+        for line in original_lines
+    ])
+    return post_journal(reversal.pk)
