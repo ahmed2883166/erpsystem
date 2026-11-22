@@ -324,6 +324,14 @@ class EmployeeSalaryHistory(models.Model):
         ordering = ("-effective_date", "-id")
         constraints = [models.CheckConstraint(condition=Q(new_salary__gte=0) & Q(previous_salary__gte=0), name="ck_hr_salary_nonnegative")]
 
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError("سجل تاريخ الراتب غير قابل للتعديل؛ سجّل تصحيحًا جديدًا بتاريخ سريان مناسب.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف سجل تاريخ الراتب للحفاظ على الأثر التاريخي.")
+
 
 class LoanInstallment(models.Model):
     """يمثل قسطًا مستحقًا من سلفة الموظف وحالة سداده."""
