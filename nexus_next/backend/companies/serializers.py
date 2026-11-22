@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 
 class CurrencySerializer(serializers.ModelSerializer):
     class Meta:
