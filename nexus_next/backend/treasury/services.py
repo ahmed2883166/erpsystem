@@ -242,7 +242,7 @@ def post_treasury_transaction(transaction_id, user=None):
 def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
                                 rate_date, branch, user=None):
     """إعادة تقييم رصيد خزينة أجنبي بسعر معتمد وإنشاء قيد فرق غير محقق."""
-    account = TreasuryAccount.objects.select_for_update().select_related(
+    account = TreasuryAccount.objects.select_for_update(of=("self",)).select_related(
         "company__base_currency", "account", "branch",
     ).get(pk=account_id)
     if not account.is_active:
