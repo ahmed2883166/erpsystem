@@ -18,6 +18,12 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $BackupRoot) { throw "Backup destination is not configured or backups are disabled." }
 } finally { Pop-Location }
 
+Push-Location $Backend
+try {
+    & $Python manage.py check_backup_encryption_key
+    if ($LASTEXITCODE -ne 0) { throw "Initialize the offline backup encryption key before running backups." }
+} finally { Pop-Location }
+
 $Drive = [System.IO.Path]::GetPathRoot($BackupRoot)
 if (-not $Drive -or $Drive.TrimEnd("\").ToUpperInvariant() -eq "C:") { throw "Backup destination must be on a drive other than C:." }
 if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) { throw "Configured backup folder is unavailable: $BackupRoot" }
