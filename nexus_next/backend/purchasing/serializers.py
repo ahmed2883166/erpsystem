@@ -251,6 +251,12 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                     supplied = supplied.pk if hasattr(supplied, "pk") else supplied
                     if supplied != current:
                         raise serializers.ValidationError({field: "بيانات الفاتورة الأساسية لا تتغير بعد إنشائها."})
+            for field, current in (("transaction_currency", instance.transaction_currency_id), ("exchange_rate", instance.exchange_rate), ("exchange_rate_date", instance.exchange_rate_date)):
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "لا يمكن تغيير عملة أو سعر صرف الفاتورة بعد إنشائها."})
             if instance.payments.filter(status=SupplierPayment.Status.POSTED).exists():
                 raise serializers.ValidationError("لا يمكن تعديل فاتورة لها مدفوعات مرحلة.")
 
