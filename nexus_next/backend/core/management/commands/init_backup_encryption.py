@@ -1,7 +1,6 @@
 from getpass import getpass
 from pathlib import Path
 
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from core.backup_key import default_backup_key_path, initialize_backup_key
