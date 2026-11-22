@@ -66,6 +66,23 @@ const refresh = async () => {
     finally { setBusy(false); }
   };
   useEffect(() => { void refresh(); }, [companyId]);
+  // تصدير بطاقة حركة الصنف إلى CSV متوافق مع Excel مع حماية الصيغ.
+  const exportStockCard = () => {
+    if (!stockCard) return;
+    const headers = ["التاريخ", "رقم الحركة", "نوع الحركة", "وارد كمية", "منصرف كمية", "تكلفة الوحدة", "وارد قيمة", "منصرف قيمة", "الرصيد الكمي", "قيمة الرصيد"];
+    const rows = stockCard.rows.map((row) => [row.date, row.movement_number, row.movement_type, row.quantity_in, row.quantity_out, row.unit_cost, row.value_in, row.value_out, row.balance_quantity, row.balance_value]);
+    const safe = (value: string | number) => {
+      const text = String(value ?? "");
+      const protectedText = /^[=+@-]/.test(text) || text.startsWith("\\t") || text.startsWith("\\r") ? "'" + text : text;
+      return '"' + protectedText.replace(/"/g, '""') + '"';
+    };
+    const csv = "\\uFEFF" + [headers, ...rows].map((row) => row.map(safe).join(";")).join("\\r\\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `stock-card-${stockCard.product_code}-${stockCard.warehouse}.csv`;
+    document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+  };
   // تحميل كارت الصنف وحركاته التفصيلية للفلاتر المحددة.
 const loadStockCard = async () => {
     if (!stockCardForm.product || !stockCardForm.warehouse) { setStockCardError("اختر الصنف والمخزن أولاً."); return; }
@@ -267,7 +284,7 @@ const submit = async (event: React.FormEvent) => {
       {tab === "balances" && <table><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>موقع التخزين</th><th>الصلاحية</th><th>الرصيد</th><th>متوسط التكلفة</th><th>قيمة المخزون</th></tr></thead><tbody>{balances.filter((b) => `${b.product_code} ${b.product_name} ${b.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((b) => <tr key={b.id}><td className="code-cell">{b.product_code}</td><td>{b.product_name}</td><td>{b.warehouse_name}</td><td>{b.location_name || "عام"}</td><td>{b.expiry_date || "—"}</td><td>{Number(b.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.average_cost).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(b.inventory_value).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td></tr>)}</tbody></table>}
       {tab === "stock-card" && <div className="inventory-reports">
         <section className="activity-panel inventory-report-section">
-          <div className="activity-title"><div><h3>بطاقة حركة الصنف</h3><p>حركة الوارد والمنصرف والرصيد المتدرج حسب المخزن والفترة</p></div></div>
+          <div className="activity-title"><div><h3>بطاقة حركة الصنف</h3><p>حركة الوارد والمنصرف والرصيد المتدرج حسب المخزن والفترة</p></div>{stockCard && <button type="button" className="subtle-button" onClick={exportStockCard}>تصدير Excel (CSV)</button>}</div>
           <div className="stock-card-filters">
             <label>الصنف<select value={stockCardForm.product} onChange={(e) => setStockCardForm({ ...stockCardForm, product: e.target.value })}><option value="">اختر الصنف</option>{products.filter((item) => item.product_type === "goods" && item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
             <label>المخزن<select value={stockCardForm.warehouse} onChange={(e) => setStockCardForm({ ...stockCardForm, warehouse: e.target.value })}><option value="">اختر المخزن</option>{warehouses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
