@@ -292,8 +292,20 @@ class JournalLine(models.Model):
             raise ValidationError("عملة السطر موقوفة.")
         if self.exchange_rate_date > entry_date:
             raise ValidationError("تاريخ سعر الصرف لا يجوز أن يكون بعد تاريخ القيد.")
-        if self.transaction_currency_id == company.base_currency_id and self.exchange_rate != Decimal("1"):
-            raise ValidationError("سعر العملة الأساسية يجب أن يساوي 1.")
+        if self.transaction_currency_id == company.base_currency_id:
+            if self.exchange_rate != Decimal("1"):
+                raise ValidationError("سعر العملة الأساسية يجب أن يساوي 1.")
+        else:
+            from companies.models import ExchangeRate
+            approved_rate = ExchangeRate.objects.filter(
+                company=company,
+                currency_id=self.transaction_currency_id,
+                rate_date=self.exchange_rate_date,
+            ).first()
+            if approved_rate is None:
+                raise ValidationError("تاريخ سعر الصرف لا يشير إلى سجل سعر معتمد للشركة والعملة.")
+            if approved_rate.rate != self.exchange_rate:
+                raise ValidationError("سعر الصرف المثبّت لا يطابق سجل السعر المعتمد في نفس التاريخ.")
         base_amount = self.debit if self.debit > 0 else self.credit
         expected = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
         if expected != base_amount:
