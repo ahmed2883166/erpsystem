@@ -56,6 +56,9 @@ class SalesReturnSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "اختر فاتورة مبيعات مرحلة."})
         if invoice.company_id != company.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
+        return_date = attrs.get("return_date", self.instance.return_date if self.instance else None)
+        if return_date and return_date < invoice.invoice_date:
+            raise serializers.ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
         if not invoice.delivery.warehouse.is_active:
             raise serializers.ValidationError({"invoice": "مخزن الفاتورة الأصلية موقوف."})
         lines = attrs.get("lines", [])
@@ -117,8 +120,8 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         lines_data = validated_data.pop("lines", None)
         movement = StockMovement.objects.select_for_update().get(pk=sales_return.stock_movement_id)
         if lines_data is not None:
-            movement.lines.all().delete()
             sales_return.lines.all().delete()
+            movement.lines.all().delete()
             for row in lines_data:
                 source = row["invoice_line"].delivery_line
                 quantity = row["quantity"]
