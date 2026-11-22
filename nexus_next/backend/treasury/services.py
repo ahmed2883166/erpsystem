@@ -11,6 +11,34 @@ from companies.models import FiscalYear
 from .models import TreasuryAccount, TreasuryTransaction
 
 
+def record_posted_document_bank_movement(*, company, branch, fiscal_year, account, kind, amount,
+                                         transaction_date, document_number, description,
+                                         counter_account, journal_entry, user=None, reference=""):
+    """تسجيل مرآة لحركة بنك مستند مرحّل وربطها بالقيد الأصلي دون إنشاء قيد مكرر."""
+    expected_kind = TreasuryAccount.Kind.BANK if kind in (TreasuryTransaction.Kind.RECEIPT, TreasuryTransaction.Kind.PAYMENT) else None
+    if expected_kind is None:
+        raise ValidationError("نوع حركة البنك المرتبطة بالمستند غير مدعوم.")
+    treasury_account = TreasuryAccount.objects.select_for_update().filter(
+        company=company, account=account, kind=expected_kind, is_active=True,
+    ).first()
+    if not treasury_account:
+        raise ValidationError("يجب ربط حساب البنك المختار بحساب خزينة بنكي نشط حتى يظهر التحصيل أو السداد في المطابقة البنكية.")
+    if treasury_account.branch_id and treasury_account.branch_id != branch.pk:
+        raise ValidationError("حساب البنك المختار لا يتبع فرع المستند.")
+    if treasury_account.currency_code != company.base_currency.code:
+        raise ValidationError("عملة حساب البنك لا تطابق العملة الأساسية للشركة.")
+    if not journal_entry or journal_entry.status != JournalEntry.Status.POSTED:
+        raise ValidationError("لا يمكن ربط حركة البنك قبل ترحيل القيد الأصلي.")
+    return TreasuryTransaction.objects.create(
+        company=company, branch=branch, fiscal_year=fiscal_year,
+        source_account=treasury_account, counter_account=counter_account,
+        kind=kind, status=TreasuryTransaction.Status.POSTED,
+        document_number=document_number, transaction_date=transaction_date,
+        amount=amount, description=description[:500], reference=reference,
+        journal_entry=journal_entry, created_by=user, posted_at=timezone.now(),
+    )
+
+
 @transaction.atomic
 def post_treasury_transaction(transaction_id, user=None):
     """ترحيل حركة الخزينة إلى القيد المحاسبي وربطها بالحساب والفرع."""
