@@ -531,16 +531,23 @@ export default function App() {
       }
       setThemePreference(session.user?.theme_preference || "system");
       setAuthStatus("signed-in");
-      const items = await api.companies();
-      if (cancelled) return;
-      setCompanies(items);
-      if (items.length) setCompanyId(items[0].id);
-      else setActive("setup");
-    }).catch((reason: Error & { status?: number }) => {
+      try {
+        const items = await api.companies();
+        if (cancelled) return;
+        setCompanies(items);
+        if (items.length) setCompanyId(items[0].id);
+        else setActive("setup");
+      } catch (reason) {
+        if (cancelled) return;
+        const failure = reason as Error & { status?: number };
+        setError(failure.message);
+        // رفض الصلاحية لا ينهي الجلسة؛ أما 401 فيعني أن الجلسة غير صالحة.
+        setAuthStatus(failure.status === 401 ? "signed-out" : "signed-in");
+      }
+    }).catch((reason: Error) => {
       if (cancelled) return;
       setError(reason.message);
-      // فشل تحميل الشركات بسبب الصلاحيات لا يعني أن جلسة المستخدم انتهت.
-      setAuthStatus(reason.status === 401 ? "signed-out" : "signed-in");
+      setAuthStatus("signed-out");
     });
     return () => { cancelled = true; };
   }, [authRefresh]);
