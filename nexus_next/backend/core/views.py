@@ -32,6 +32,7 @@ def session_status(request):
     user = request.user
     if not user.is_authenticated:
         return JsonResponse({"authenticated": False})
+    from companies.access import is_platform_owner
     return JsonResponse({
         "authenticated": True,
         "user": {
@@ -40,6 +41,7 @@ def session_status(request):
             "display_name": getattr(user, "display_name", "") or user.get_username(),
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
+            "is_platform_owner": is_platform_owner(user),
             "theme_preference": user.theme_preference,
         },
     })
@@ -60,6 +62,7 @@ def session_login(request):
     if not user or not user.is_active:
         return JsonResponse({"detail": "اسم المستخدم أو كلمة المرور غير صحيحة."}, status=401)
     login(request, user)
+    from companies.access import is_platform_owner
     return JsonResponse({
         "authenticated": True,
         "user": {
@@ -68,6 +71,7 @@ def session_login(request):
             "display_name": getattr(user, "display_name", "") or user.get_username(),
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
+            "is_platform_owner": is_platform_owner(user),
             "theme_preference": user.theme_preference,
         },
     })
