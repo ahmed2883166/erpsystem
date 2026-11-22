@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
-from companies.models import Branch, FiscalYear
+from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 
@@ -117,6 +117,34 @@ def post_purchase_invoice(invoice_id, user):
         )
     if tax_amount < 0:
         raise ValidationError("قيمة الضريبة غير صحيحة.")
+    if invoice.transaction_currency_id:
+        from accounting.fx_arap import validate_snapshot
+        approved = ExchangeRate.objects.filter(
+            company=invoice.company, currency=invoice.transaction_currency,
+            rate_date=invoice.exchange_rate_date,
+        ).first()
+        if not approved:
+            raise ValidationError("لا يوجد سعر صرف معتمد بتاريخ فاتورة المورد.")
+        foreign_net = sum((line.transaction_net_amount or Decimal("0") for line in lines), Decimal("0"))
+        foreign_tax = sum((line.transaction_tax_amount or Decimal("0") for line in lines), Decimal("0"))
+        foreign_total = foreign_net + foreign_tax
+        try:
+            expected_base = validate_snapshot(
+                base_currency_code=invoice.company.base_currency.code,
+                currency_code=invoice.transaction_currency.code,
+                foreign_amount=foreign_total, rate=invoice.exchange_rate,
+                rate_date=invoice.exchange_rate_date, document_date=invoice.invoice_date,
+                approved_rate=approved.rate,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        if expected_base != net_amount + tax_amount:
+            raise ValidationError("قيمة فاتورة المورد بالعملة الأساسية لا تطابق إجماليها الأجنبي وسعر الصرف.")
+        invoice.transaction_net_total = foreign_net
+        invoice.transaction_tax_total = foreign_tax
+        invoice.transaction_grand_total = foreign_total
+    elif any(line.transaction_unit_price is not None for line in lines):
+        raise ValidationError("توجد أسعار أجنبية دون تحديد عملة فاتورة المورد.")
 
     payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
@@ -156,7 +184,8 @@ def post_purchase_invoice(invoice_id, user):
 
 @transaction.atomic
 def post_supplier_payment(payment_id, user):
-    """ترحيل دفعة المورد والتحقق من الفرع والحساب النقدي وتوزيع السداد."""
+    """ترحيل سداد المورد مع تخصيص القيمة الدفترية وفروق العملة المحققة."""
+    from accounting.fx_arap import settle_foreign_balance, validate_snapshot
     from .models import SupplierPayment
 
     payment = SupplierPayment.objects.select_for_update().get(pk=payment_id)
@@ -174,16 +203,62 @@ def post_supplier_payment(payment_id, user):
     if payment.company_id != invoice.company_id or payment.supplier_id != invoice.supplier_id:
         raise ValidationError("بيانات السند لا تطابق فاتورة المورد.")
 
-    paid_before = SupplierPayment.objects.filter(
-        invoice=invoice, status=SupplierPayment.Status.POSTED
-    ).exclude(pk=payment.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-    if paid_before + payment.amount > invoice.grand_total:
-        remaining = max(Decimal("0"), invoice.grand_total - paid_before)
-        raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
+    if invoice.transaction_currency_id:
+        if payment.transaction_currency_id != invoice.transaction_currency_id:
+            raise ValidationError("عملة السداد يجب أن تطابق عملة فاتورة المورد.")
+        approved = ExchangeRate.objects.filter(
+            company=payment.company, currency=payment.transaction_currency,
+            rate_date=payment.exchange_rate_date,
+        ).first()
+        if not approved:
+            raise ValidationError("لا يوجد سعر صرف معتمد بتاريخ السداد.")
+        try:
+            expected_amount = validate_snapshot(
+                base_currency_code=payment.company.base_currency.code,
+                currency_code=payment.transaction_currency.code,
+                foreign_amount=payment.transaction_amount, rate=payment.exchange_rate,
+                rate_date=payment.exchange_rate_date, document_date=payment.payment_date,
+                approved_rate=approved.rate,
+            )
+        except (ValueError, TypeError) as exc:
+            raise ValidationError(str(exc)) from exc
+        if expected_amount != payment.amount:
+            raise ValidationError("مبلغ السداد الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
+        posted_payments = SupplierPayment.objects.filter(
+            invoice=invoice, status=SupplierPayment.Status.POSTED
+        ).exclude(pk=payment.pk)
+        paid_foreign = posted_payments.aggregate(total=Sum("transaction_amount"))["total"] or Decimal("0")
+        carrying_used = posted_payments.aggregate(total=Sum("carrying_base_amount"))["total"] or Decimal("0")
+        remaining_foreign = invoice.transaction_grand_total - paid_foreign
+        remaining_base = invoice.grand_total - carrying_used
+        try:
+            settlement = settle_foreign_balance(
+                direction="payable", remaining_foreign_amount=remaining_foreign,
+                remaining_carrying_base_amount=remaining_base,
+                settled_foreign_amount=payment.transaction_amount,
+                settlement_rate=payment.exchange_rate,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        carrying_amount = settlement.carrying_base_amount
+        realized_gain, realized_loss = settlement.realized_gain, settlement.realized_loss
+    else:
+        if any(value is not None for value in (
+            payment.transaction_currency_id, payment.transaction_amount,
+            payment.exchange_rate, payment.exchange_rate_date,
+        )):
+            raise ValidationError("لا يمكن استخدام بيانات عملة أجنبية مع فاتورة بالعملة الأساسية.")
+        paid_before = SupplierPayment.objects.filter(
+            invoice=invoice, status=SupplierPayment.Status.POSTED
+        ).exclude(pk=payment.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        if paid_before + payment.amount > invoice.grand_total:
+            remaining = max(Decimal("0"), invoice.grand_total - paid_before)
+            raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
+        carrying_amount = payment.amount
+        realized_gain = realized_loss = Decimal("0")
 
     receipt = invoice.receipt
     branch, year = _branch_and_year(receipt, payment.payment_date)
-
     payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
     payment_account = payment.payment_account or _account(payment.company, cash_role)
@@ -195,9 +270,24 @@ def post_supplier_payment(payment_id, user):
         treasury_account = TreasuryAccount.objects.filter(company=payment.company, account=payment_account, kind=expected_kind, is_active=True).first()
         if (not treasury_account or (treasury_account.branch_id and treasury_account.branch_id != branch.pk)
                 or treasury_account.currency_code != payment.company.base_currency.code):
-            raise ValidationError("حساب الخزينة المختار غير نشط أو لا يطابق فرع الفاتورة أو عملة الشركة أو طريقة الصرف.")
+            raise ValidationError("حساب الخزينة المختار يجب أن يكون بعملة الشركة الأساسية ومطابقًا للفرع والطريقة.")
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
+
+    journal_lines = [
+        JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
+        JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
+    ]
+    if realized_gain:
+        gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN)
+        if gain.pk in {payable.pk, payment_account.pk}:
+            raise ValidationError("حساب أرباح فروق العملة يجب أن يكون مستقلًا عن الموردين والنقدية.")
+        journal_lines.append(JournalLine(account=gain, description="أرباح فروق عملة محققة", debit=0, credit=realized_gain))
+    if realized_loss:
+        loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS)
+        if loss.pk in {payable.pk, payment_account.pk}:
+            raise ValidationError("حساب خسائر فروق العملة يجب أن يكون مستقلًا عن الموردين والنقدية.")
+        journal_lines.append(JournalLine(account=loss, description="خسائر فروق عملة محققة", debit=realized_loss, credit=0))
 
     entry = JournalEntry.objects.create(
         company=payment.company, branch=branch, fiscal_year=year,
@@ -205,10 +295,9 @@ def post_supplier_payment(payment_id, user):
         description=f"سداد فاتورة المورد {invoice.invoice_number} - سند {payment.payment_number}"[:500],
         source_type=JournalEntry.Source.PURCHASES, created_by=user,
     )
-    JournalLine.objects.bulk_create([
-        JournalLine(entry=entry, account=payable, description="تخفيض مستحقات المورد", debit=payment.amount, credit=0),
-        JournalLine(entry=entry, account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
-    ])
+    for line in journal_lines:
+        line.entry = entry
+    JournalLine.objects.bulk_create(journal_lines)
     try:
         posted_entry = post_journal(entry.pk)
     except DjangoValidationError as exc:
@@ -225,8 +314,11 @@ def post_supplier_payment(payment_id, user):
             description=f"سداد فاتورة مشتريات {invoice.invoice_number} - سند {payment.payment_number}",
             counter_account=payable, journal_entry=posted_entry, user=user, reference=payment.reference,
         )
+    payment.carrying_base_amount = carrying_amount
+    payment.realized_fx_gain = realized_gain
+    payment.realized_fx_loss = realized_loss
     payment.journal_entry = posted_entry
     payment.status = SupplierPayment.Status.POSTED
     payment.posted_at = timezone.now()
-    payment.save(update_fields=("journal_entry", "status", "posted_at"))
+    payment.save(update_fields=("carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "status", "posted_at"))
     return payment
