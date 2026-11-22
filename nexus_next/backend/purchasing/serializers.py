@@ -320,7 +320,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             invoice.transaction_tax_total = sum((line.transaction_tax_amount or Decimal("0") for line in invoice.lines.all()), Decimal("0"))
             invoice.transaction_grand_total = invoice.transaction_net_total + invoice.transaction_tax_total
             expected_base = (invoice.transaction_grand_total * invoice.exchange_rate).quantize(Decimal("0.0001"))
-            if expected_base != invoice.grand_total:
+            if abs(expected_base - invoice.grand_total) > Decimal("0.0002") * max(len(invoice_lines), 1):
                 raise serializers.ValidationError("إجمالي الفاتورة الأساسي لا يطابق الإجمالي الأجنبي مضروبًا في سعر الصرف.")
         invoice.save(update_fields=("net_total", "tax_total", "grand_total", "transaction_net_total", "transaction_tax_total", "transaction_grand_total"))
         refresh_financial_approval(
