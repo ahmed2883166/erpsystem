@@ -291,7 +291,9 @@ const exportEmployeePayReport = () => {
       ])
     ];
     if (payReport.totals) rows.push(["","الإجمالي","","","",...Array(reportColumns.length).fill(""),payReport.totals.earnings,payReport.totals.employee_deductions,payReport.totals.employer_share,payReport.totals.net_pay,payReport.totals.company_cost]);
-    const csv = rows.map(row=>row.map(value=>`"${String(value??"").replace(/"/g,'""')}"`).join(",")).join("\r\n");
+    const csvCell = (value: unknown) => { const text = String(value ?? ""); const safe = typeof value === "string" && /^[\\s]*[=+\\-@]/.test(text) ? "'" + text : text; return '"' + safe.replace(/"/g, '""') + '"' ; };
+    const csv = rows.map(row=>row.map(csvCell).join(",")).join("\\r\
+");
     const blob = new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"});
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -362,9 +364,9 @@ const exportEmployeePayReport = () => {
       <div className="asset-report-note">جدول الحضور الشهري: الموظفون في الصفوف والأيام في الأعمدة. تغيير الحالة يحفظها مباشرة؛ الأيام الفارغة لا تُسجل تلقائيًا.</div>
       <div className="data-table-wrap" style={{overflowX:"auto"}}>
         <table style={{minWidth:`${attendanceDays.length*86+220}px`}}>
-          <thead><tr><th style={{position:"sticky",right:0,background:"var(--panel, #fff)",zIndex:2,minWidth:190}}>الموظف</th>{attendanceDays.map(day=><th key={day} style={{minWidth:82,textAlign:"center"}}>{Number(day.slice(-2))}</th>)}</tr></thead>
+          <thead><tr><th style={{position:"sticky",right:0,background:"var(--surface, #fff)",zIndex:2,minWidth:190}}>الموظف</th>{attendanceDays.map(day=><th key={day} style={{minWidth:82,textAlign:"center"}}>{Number(day.slice(-2))}</th>)}</tr></thead>
           <tbody>{employees.map(employee=><tr key={employee.id}>
-            <th style={{position:"sticky",right:0,background:"var(--panel, #fff)",zIndex:1,textAlign:"right"}}>{employee.code} — {employee.full_name_ar}</th>
+            <th style={{position:"sticky",right:0,background:"var(--surface, #fff)",zIndex:1,textAlign:"right"}}>{employee.code} — {employee.full_name_ar}</th>
             {attendanceDays.map(day=>{
               const record=attendance.find(item=>item.employee===employee.id&&item.work_date===day);
               return <td key={day} style={{padding:"4px"}}>
