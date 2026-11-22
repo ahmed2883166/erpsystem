@@ -790,3 +790,37 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
 [data-theme="dark"] .inventory-line-editor .data-table-wrap{background:#172337;border-color:#34465f}
 [data-theme="dark"] .inventory-line-editor th{background:#22334b;color:#bdcbe0}
 [data-theme="dark"] .inventory-line-editor td{border-color:#2b3d56;color:#d2deed}
+
+
+/* تحسين قابلية قراءة دليل الحسابات وشاشات التقارير على المقاسات المختلفة. */
+.accounts-premium-panel{background:#fff}
+.accounts-hero{border-radius:0}
+.account-tree-shell{overflow:auto}
+.account-tree-row{min-width:650px}
+.account-tree-columns{min-width:650px}
+.account-tree-name{font-size:11px;line-height:1.6}
+.account-tree-code{font-size:11px}
+.account-tree-type,.account-tree-status{font-size:9px}
+.account-tree-controls select,.account-tree-search{min-height:40px}
+.account-tree-search input{min-height:34px}
+.account-tree-toolbar-title p{line-height:1.7}
+.account-role-manager-row select{min-height:40px}
+.asset-reports .work-panel-head{align-items:flex-start;gap:14px;flex-wrap:wrap}
+.asset-reports .report-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.asset-report-filters{padding:12px;background:#f7f9fc;border:1px solid #e5ebf3;border-radius:11px}
+.asset-report-filters label{min-width:min(160px,100%)}
+.asset-cashflow-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:14px 0}
+.asset-cashflow-totals>span,.asset-cashflow-totals>b{display:flex;align-items:center;min-height:54px;padding:12px;border:1px solid #e5ebf3;border-radius:10px;background:#fff;color:#465a73;font-size:11px;line-height:1.7}
+.asset-cashflow-totals>b{background:#f0f6ff;border-color:#d7e6fb;color:#1e579b}
+@media(max-width:600px){
+ .accounts-hero{padding:20px 16px}
+ .account-tree-shell{margin-inline:10px}
+ .asset-reports .report-actions{width:100%}
+ .asset-reports .report-actions button{flex:1 1 120px}
+ .asset-report-filters{display:grid;grid-template-columns:1fr}
+ .asset-report-filters label{min-width:0}
+}
+[data-theme="dark"] .accounts-premium-panel{background:#111d30}
+[data-theme="dark"] .asset-report-filters{background:#172337;border-color:#34465f}
+[data-theme="dark"] .asset-cashflow-totals>span{background:#172337;border-color:#34465f;color:#d2deed}
+[data-theme="dark"] .asset-cashflow-totals>b{background:#19365a;border-color:#315783;color:#c7e0ff}
