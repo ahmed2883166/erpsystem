@@ -18,6 +18,11 @@ class DepartmentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
+        employee_user = attrs.get("user", getattr(self.instance, "user", None))
+        if employee_user and company and not CompanyMembership.objects.filter(
+            user=employee_user, company=company, is_active=True,
+        ).exists():
+            raise serializers.ValidationError({"user": "حساب الموظف يجب أن يمتلك عضوية نشطة في نفس الشركة."})
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if branch and company and branch.company_id != company.pk:
             raise serializers.ValidationError({"branch": "الفرع يجب أن يتبع نفس الشركة."})
@@ -47,7 +52,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         fields = (
-            "id", "company", "code", "full_name_ar", "full_name_en", "national_id",
+            "id", "company", "user", "code", "full_name_ar", "full_name_en", "national_id",
             "insurance_number", "email", "phone", "address", "branch", "branch_name",
             "department", "department_name", "position", "position_name", "manager",
             "contract_type", "hire_date", "contract_end_date", "termination_date",
