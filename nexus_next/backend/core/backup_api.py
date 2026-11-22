@@ -16,6 +16,7 @@ from datetime import timedelta
 from audit.models import AuditEvent
 from companies.access import is_platform_owner
 
+from .backup_crypto import BackupCryptoError
 from .models import BackupConfiguration, BackupRun
 from .reset_service import reset_preview, reset_operational_data
 
@@ -31,7 +32,7 @@ def _backup_encryption_ready():
         from .backup_key import machine_backup_passphrase
         machine_backup_passphrase()
         return True
-    except Exception:
+    except (BackupCryptoError, OSError, ImportError, RuntimeError, ValueError):
         return False
 
 
