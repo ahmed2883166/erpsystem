@@ -45,8 +45,9 @@ switch ($parts[1]) {
     "monthly" { $Trigger = New-ScheduledTaskTrigger -Monthly -DaysOfMonth 1 -At "10:00PM" }
     default { throw "Unsupported backup schedule: $($parts[1])" }
 }
-$Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+$Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Description "NEXUS encrypted PostgreSQL backup to the configured local drive; runs as SYSTEM." -Force | Out-Null
 Write-Host "Scheduled '$TaskName' ($($parts[1])) at 10:00 PM." -ForegroundColor Green
-Write-Host "The configured destination is: $($parts[2])"\nWrite-Host "The task runs as SYSTEM and can run while no user is logged in."
+Write-Host "The configured destination is: $($parts[2])"
+Write-Host "The task runs as SYSTEM and can run while no user is logged in."
