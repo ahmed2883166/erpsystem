@@ -179,6 +179,16 @@ def post_customer_receipt(receipt_id, user):
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
+    if receipt.method == CustomerReceipt.Method.BANK:
+        from treasury.models import TreasuryTransaction
+        from treasury.services import record_posted_document_bank_movement
+        record_posted_document_bank_movement(
+            company=receipt.company, branch=branch, fiscal_year=year, account=cash,
+            kind=TreasuryTransaction.Kind.RECEIPT, amount=receipt.amount,
+            transaction_date=receipt.receipt_date, document_number=f"AUTO-SALE-REC-{receipt.pk}",
+            description=f"تحصيل فاتورة مبيعات {invoice.invoice_number} - سند {receipt.receipt_number}",
+            counter_account=receivable, journal_entry=posted, user=user, reference=receipt.reference,
+        )
     receipt.journal_entry = posted
     receipt.status = CustomerReceipt.Status.POSTED
     receipt.posted_at = timezone.now()
