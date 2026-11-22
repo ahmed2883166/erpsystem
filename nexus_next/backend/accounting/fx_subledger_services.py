@@ -100,7 +100,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
     if direction == "receivable":
         later_settlements = CustomerReceipt.objects.filter(
             invoice=invoice, status=CustomerReceipt.Status.POSTED,
-            receipt_date__gt=revaluation_date,
+            receipt_date__gte=revaluation_date,
         ).exists()
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__gt=revaluation_date,
@@ -108,7 +108,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
     else:
         later_settlements = SupplierPayment.objects.filter(
             invoice=invoice, status=SupplierPayment.Status.POSTED,
-            payment_date__gt=revaluation_date,
+            payment_date__gte=revaluation_date,
         ).exists()
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__gt=revaluation_date,
