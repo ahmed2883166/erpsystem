@@ -612,10 +612,19 @@ export default function App() {
 const validateDraft = () => {
     setJournalError("");
     if (!companyId || !draft.branch || !draft.fiscal_year) { setJournalError("حدد الشركة والفرع والسنة المالية."); return; }
+    if (!draft.entry_number.trim() || !draft.description.trim()) { setJournalError("أدخل رقم القيد والبيان العام قبل المراجعة."); return; }
+    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(draft.entry_date) || Number.isNaN(Date.parse(draft.entry_date))) { setJournalError("أدخل تاريخاً صحيحاً للقيد."); return; }
     const selectedYear = fiscalYears.find((year) => year.id === Number(draft.fiscal_year));
     if (!selectedYear || selectedYear.status !== "open") { setJournalError("لا يمكن تسجيل القيد إلا في سنة مالية مفتوحة."); return; }
     if (draft.entry_date < selectedYear.start_date || draft.entry_date > selectedYear.end_date) { setJournalError("تاريخ القيد خارج حدود السنة المالية المحددة."); return; }
-    if (journalLines.length < 2 || journalLines.some((line) => !line.account || (Number(line.debit) > 0) === (Number(line.credit) > 0) || Number(line.debit) < 0 || Number(line.credit) < 0)) { setJournalError("راجع كل سطر: اختر الحساب وأدخل قيمة في خانة مدين أو دائن فقط."); return; }
+    if (journalLines.length < 2) { setJournalError("يجب أن يحتوي القيد على سطرين على الأقل."); return; }
+    const invalidLine = journalLines.some((line) => {
+      const debit = Number(line.debit || 0);
+      const credit = Number(line.credit || 0);
+      return !line.account || !Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 ||
+        (debit > 0 && credit > 0) || (debit === 0 && credit === 0);
+    });
+    if (invalidLine) { setJournalError("راجع السطور: اختر حساباً صالحاً وأدخل مبلغاً موجباً في المدين أو الدائن فقط."); return; }
     if (Math.abs(journalDifference) > 0.00005) { setJournalError("القيد غير متوازن. يجب أن يتساوى إجمالي المدين والدائن."); return; }
     return true;
   };
