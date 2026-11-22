@@ -133,11 +133,21 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تعطيل الكود."); }
     finally { setBusy(false); }
   };
+  const initializePresets = async () => {
+    if (!companyId) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api.initializeTaxPresets(companyId);
+      setNotice(`تم تجهيز ${result.created.length} كود جديد، ويوجد ${result.existing.length} كود محفوظ مسبقًا. ${result.note}`);
+      await load();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تجهيز أكواد الضرائب."); }
+    finally { setBusy(false); }
+  };
   const categoryNames: Record<TaxCode["category"], string> = {
     standard: "قياسية", zero_rated: "صفرية", exempt: "معفاة", out_of_scope: "خارج النطاق", reverse_charge: "احتساب عكسي",
   };
   return <section className="work-panel">
-    <div className="work-panel-head"><div><h2>أكواد وإعدادات الضرائب</h2><p>تعريف نسب الضريبة حسب بلد الشركة مع تاريخ بداية ونهاية السريان</p></div><span className="coming-soon">{country === "SA" ? "السعودية" : country === "EG" ? "مصر" : "اختر شركة"}</span></div>
+    <div className="work-panel-head"><div><h2>أكواد وإعدادات الضرائب</h2><p>تعريف نسب الضريبة حسب بلد الشركة مع تاريخ بداية ونهاية السريان</p></div><div className="report-actions"><span className="coming-soon">{country === "SA" ? "السعودية" : country === "EG" ? "مصر" : "اختر شركة"}</span><button type="button" className="subtle-button" disabled={!companyId || busy} onClick={() => void initializePresets()}>{busy ? "جارٍ التجهيز…" : "تهيئة أكواد البداية"}</button></div></div>
     {!companyId && <div className="empty-state">اختر الشركة أولًا لإدارة أكواد الضرائب.</div>}
     {companyId && <>
       <form className="journal-form" onSubmit={submit}>
@@ -212,6 +222,14 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
         <span>ضريبة المدخلات القابلة للخصم: {money(report.input_tax)} {report.currency}</span>
         <b>صافي الضريبة المستحقة: {money(report.net_tax_payable)} {report.currency}</b>
       </div>
+      <div className="asset-cashflow-totals">
+        <span>مطابقة المخرجات مع الأستاذ: {money(report.ledger_reconciliation.output_tax_difference)} {report.currency}</span>
+        <span>مطابقة المدخلات مع الأستاذ: {money(report.ledger_reconciliation.input_tax_difference)} {report.currency}</span>
+        <b>فرق صافي الضريبة: {money(report.ledger_reconciliation.net_tax_difference)} {report.currency}</b>
+      </div>
+      {(!report.ledger_reconciliation.output_account_configured || !report.ledger_reconciliation.input_account_configured) && <div className="error-banner">اربط حساب ضريبة المخرجات وحساب ضريبة المدخلات من شاشة أدوار الحسابات قبل اعتماد التسوية.</div>}
+      {(Number(report.ledger_reconciliation.output_tax_difference) !== 0 || Number(report.ledger_reconciliation.input_tax_difference) !== 0) && <div className="error-banner">يوجد اختلاف بين ضريبة الفواتير وحركة حسابات الضريبة في دفتر الأستاذ؛ راجع القيود قبل تجهيز الإقرار.</div>}
+      {(Number(report.unclassified_tax.sales_amount) !== 0 || Number(report.unclassified_tax.purchase_amount) !== 0) && <div className="error-banner">توجد ضريبة على فواتير قديمة بلا كود ضريبي مصنف. ضريبة المشتريات غير المصنفة مستبعدة من المدخلات القابلة للخصم تلقائيًا. مبيعات غير مصنفة: {money(report.unclassified_tax.sales_amount)}، مشتريات غير مصنفة: {money(report.unclassified_tax.purchase_amount)}.</div>}
       <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>الكود</th><th>التصنيف</th><th>النسبة</th><th>الوعاء</th><th>الضريبة</th><th>القابل للخصم</th><th>الإجمالي</th></tr></thead><tbody>
         {report.sales.by_code.map((row, index) => <tr key={`s-${row.tax_code_id ?? "legacy"}-${row.tax_rate}-${index}`}><td>مبيعات</td><td>{row.tax_code || "بدون كود"}</td><td>{categoryNames[row.category] || row.category}</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>—</td><td>{money(row.gross_amount)}</td></tr>)}
         {report.purchases.by_code.map((row, index) => <tr key={`p-${row.tax_code_id ?? "legacy"}-${row.tax_rate}-${index}`}><td>مشتريات</td><td>{row.tax_code || "بدون كود"}</td><td>{categoryNames[row.category] || row.category}</td><td>{row.tax_rate}%</td><td>{money(row.taxable_base)}</td><td>{money(row.tax_amount)}</td><td>{money(row.recoverable_tax_amount)}</td><td>{money(row.gross_amount)}</td></tr>)}
