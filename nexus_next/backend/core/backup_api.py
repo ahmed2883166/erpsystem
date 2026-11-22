@@ -25,9 +25,20 @@ def _config():
     return BackupConfiguration.objects.first() or BackupConfiguration.objects.create()
 
 
+def _backup_encryption_ready():
+    """تحقق من إمكانية فتح مفتاح النسخ المشفر على جهاز Windows الحالي."""
+    try:
+        from .backup_key import machine_backup_passphrase
+        machine_backup_passphrase()
+        return True
+    except Exception:
+        return False
+
+
 def _serialize(config, can_manage):
     """تحويل إعدادات النسخ الاحتياطي إلى بيانات آمنة للعرض في الواجهة."""
     return {
+        "encryption_ready": _backup_encryption_ready(),
         "backup_path": config.backup_path,
         "schedule": config.schedule,
         "enabled": config.enabled,
