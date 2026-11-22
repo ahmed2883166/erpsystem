@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import patch\nfrom types import SimpleNamespace
 from rest_framework.test import APIClient
 
 from core.models import BackupConfiguration, BackupRun
@@ -41,6 +41,38 @@ class BackupConfigurationApiTests(TestCase):
         self.client.force_authenticate(owner)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 403)
+
+    def test_manual_backup_reuses_scheduled_script_history_record(self):
+        self.client.force_authenticate(self.admin)
+        BackupConfiguration.objects.create(
+            backup_path=r"D:\\NEXUS_Backups", enabled=True,
+        )
+        with TemporaryDirectory() as folder:
+            archive = Path(folder) / "manual.dump.nexusenc"
+
+            def run_script(*args, **kwargs):
+                archive.write_bytes(b"encrypted verified archive" * 100)
+                BackupRun.objects.create(
+                    status=BackupRun.Status.SUCCESS,
+                    backup_file=str(archive.resolve()),
+                    size_bytes=archive.stat().st_size,
+                    details="scheduled script record",
+                )
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=f"Encrypted backup verified: {archive.resolve()}\\n",
+                    stderr="",
+                )
+
+            with patch("core.backup_api.sys.platform", "win32"), patch(
+                "core.backup_api.subprocess.run", side_effect=run_script,
+            ):
+                response = self.client.post(self.url, {}, format="json")
+            self.assertEqual(response.status_code, 201, response.data)
+            self.assertEqual(BackupRun.objects.count(), 1)
+            run = BackupRun.objects.get()
+            self.assertEqual(run.started_by, self.admin)
+            self.assertIn("manual.dump.nexusenc", run.backup_file)
 
     def test_regular_user_can_read_but_cannot_change_destination(self):
         self.client.force_authenticate(self.user)
