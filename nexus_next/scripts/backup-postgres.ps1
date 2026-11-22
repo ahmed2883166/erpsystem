@@ -60,7 +60,8 @@ if (-not $PgDump -or -not $PgRestore) {
 $DailyRoot = Join-Path $BackupRoot "daily"
 $MonthlyRoot = Join-Path $BackupRoot "monthly"
 New-Item -ItemType Directory -Force -Path $DailyRoot, $MonthlyRoot | Out-Null
-$DailyFile = Join-Path $DailyRoot "nexus-$Tag.dump"\n$EncryptedFile = "$DailyFile.nexusenc"
+$DailyFile = Join-Path $DailyRoot "nexus-$Tag.dump"
+$EncryptedFile = "$DailyFile.nexusenc"
 $env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
 try {
     & $PgDumpPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --dbname=$Values["POSTGRES_DB"] --format=custom --no-password --file=$DailyFile
