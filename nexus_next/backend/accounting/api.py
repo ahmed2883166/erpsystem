@@ -354,13 +354,19 @@ class TaxCodeViewSet(AccountingViewSet):
         )
         created_codes, existing_codes = [], []
         for code, name, category, rate, recoverable in presets:
-            item, created = TaxCode.objects.get_or_create(
-                company=company, code=code, effective_from=effective_from,
-                defaults={
-                    "country": company.country, "name_ar": name, "category": category,
-                    "rate": rate, "input_tax_recoverable": recoverable, "is_active": True,
-                },
+            overlapping = TaxCode.objects.filter(company=company, code=code).filter(
+                Q(effective_to__isnull=True) | Q(effective_to__gte=effective_from)
             )
+            item = overlapping.order_by("-effective_from").first()
+            created = False
+            if item is None:
+                item, created = TaxCode.objects.get_or_create(
+                    company=company, code=code, effective_from=effective_from,
+                    defaults={
+                        "country": company.country, "name_ar": name, "category": category,
+                        "rate": rate, "input_tax_recoverable": recoverable, "is_active": True,
+                    },
+                )
             (created_codes if created else existing_codes).append(
                 {"id": item.pk, "code": item.code, "rate": str(item.rate), "is_active": item.is_active}
             )
