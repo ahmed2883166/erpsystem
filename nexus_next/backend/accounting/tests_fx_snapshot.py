@@ -87,7 +87,7 @@ class JournalLineFxSnapshotTests(TestCase):
             company=self.company, code="4000", name_ar="أرباح فروق العملة",
             nature=ChartOfAccount.Nature.REVENUE,
         )
-        expense = ChartOfAccount.objects.create(
+        ChartOfAccount.objects.create(
             company=self.company, code="5000", name_ar="خسائر فروق العملة",
             nature=ChartOfAccount.Nature.EXPENSE,
         )
