@@ -1,3 +1,5 @@
+"""واجهات إدارة طلبات الاعتماد المالي واعتماد الفواتير وسياسات الخصم."""
+
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import status, viewsets
