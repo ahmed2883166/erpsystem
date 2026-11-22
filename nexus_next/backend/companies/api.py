@@ -78,11 +78,11 @@ class CompanyViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         from rest_framework.exceptions import PermissionDenied
-        if not (
-            is_platform_owner(self.request.user)
-            or has_company_role(self.request.user, self.get_object().pk, ("admin",))
-        ):
+        owner = is_platform_owner(self.request.user)
+        if not (owner or has_company_role(self.request.user, self.get_object().pk, ("admin",))):
             raise PermissionDenied("تعديل بيانات الشركة متاح لمالك المنصة أو مدير الشركة فقط.")
+        if not owner and "is_active" in serializer.validated_data:
+            raise PermissionDenied("إيقاف الشركة أو إعادة تفعيلها من اختصاص مالك المنصة فقط.")
         serializer.save()
 
     def perform_destroy(self, instance):
