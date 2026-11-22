@@ -73,10 +73,10 @@ const refresh = async () => {
     const rows = stockCard.rows.map((row) => [row.date, row.movement_number, row.movement_type, row.quantity_in, row.quantity_out, row.unit_cost, row.value_in, row.value_out, row.balance_quantity, row.balance_value]);
     const safe = (value: string | number) => {
       const text = String(value ?? "");
-      const protectedText = /^[=+@-]/.test(text) || text.startsWith("\\t") || text.startsWith("\\r") ? "'" + text : text;
+      const protectedText = /^[=+@-]/.test(text) || text.startsWith("\t") || text.startsWith("\r") ? "'" + text : text;
       return '"' + protectedText.replace(/"/g, '""') + '"';
     };
-    const csv = "\\uFEFF" + [headers, ...rows].map((row) => row.map(safe).join(";")).join("\\r\\n");
+    const csv = "\uFEFF" + [headers, ...rows].map((row) => row.map(safe).join(";")).join("\r\\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
     link.href = url;
