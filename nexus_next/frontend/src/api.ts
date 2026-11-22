@@ -695,6 +695,19 @@ export type AssetRegisterReport = {
 };
 export type AssetDepreciationReport = {company:number;date_from:string|null;date_to:string|null;total_depreciation:string;branch_totals:{branch_name:string;amount:string}[];rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;period_date:string;amount:string;is_partial_period:boolean;journal_entry:number}[]};
 export type AssetMovementReport = {company:number;date_from:string|null;date_to:string|null;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;date:string;event_type:string;event_label:string;amount:string;journal_entry:number|null;treasury_transaction:number|null}[]};
+export type AssetReconciliationRow = {account_id:number;code:string;name:string;expected:string;actual:string;difference:string};
+export type AssetAccountReconciliation = {
+  company:number;as_of:string;date_from:string;date_to:string;
+  cost_accounts:AssetReconciliationRow[];
+  accumulated_depreciation_accounts:AssetReconciliationRow[];
+  depreciation_expense_accounts:AssetReconciliationRow[];
+  is_reconciled:boolean;difference_count:number;note:string;
+};
+export type AssetDepreciationRunResult = {
+  period_date:string;fiscal_year:number;processed_count:number;processed_total:string;skipped_count:number;
+  processed:{asset_id:number;code:string;amount:string}[];
+  skipped:{asset_id:number;code:string;reason:string|string[]}[];note:string;
+};
 // واجهات الأصول الثابتة: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const fixedAssetsApi = {
   // جلب سجل الأصول الثابتة للشركة.
@@ -713,6 +726,17 @@ export const fixedAssetsApi = {
   movementReport: (companyId:number, dateFrom?:string, dateTo?:string, branch?:number) => {
     const q = new URLSearchParams({company:String(companyId)}); if(dateFrom) q.set("date_from",dateFrom); if(dateTo) q.set("date_to",dateTo); if(branch) q.set("branch",String(branch));
     return request<AssetMovementReport>(`/api/assets/fixed-assets/movement-report/?${q.toString()}`);
+  },
+  // مطابقة سجل الأصول ومجمع الإهلاك ومصروفه مع دفتر الأستاذ.
+  accountReconciliation: (companyId:number, asOf:string, dateFrom:string, dateTo:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId),as_of:asOf,date_from:dateFrom,date_to:dateTo}); if(branch) q.set("branch",String(branch));
+    return request<AssetAccountReconciliation>(`/api/assets/fixed-assets/account-reconciliation/?${q.toString()}`);
+  },
+  // تشغيل الإهلاك الدوري دفعة واحدة للأصول النشطة في الشركة أو الفرع المحدد.
+  runDepreciation: async (companyId:number, periodDate:string, fiscalYear:number, branch?:number) => {
+    await request<{detail:string}>("/api/csrf/");
+    const q = new URLSearchParams({company:String(companyId)}); if(branch) q.set("branch",String(branch));
+    return request<AssetDepreciationRunResult>(`/api/assets/fixed-assets/depreciation-run/?${q.toString()}`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})});
   },
   // إنشاء بطاقة أصل ثابت جديدة.
   create: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<FixedAsset>("/api/assets/fixed-assets/", {method:"POST",body:JSON.stringify(payload)}); },
