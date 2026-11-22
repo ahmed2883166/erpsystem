@@ -166,6 +166,8 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
             raise ValidationError({"company": "حدد الشركة أولًا."})
+        if is_platform_owner(request.user):
+            raise NotFound("مالك المنصة لا يمتلك عضوية تشغيلية داخل الشركات.")
         membership = CompanyMembership.objects.filter(
             user=request.user, company_id=company_id, is_active=True,
         ).first()
@@ -190,7 +192,9 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         User = get_user_model()
         users = User.objects.filter(is_active=True).filter(
             Q(username__icontains=term) | Q(display_name__icontains=term)
-        ).exclude(company_memberships__company_id=company_id).order_by("username")[:25]
+        ).exclude(company_memberships__company_id=company_id).exclude(
+            platform_owner_profile__isnull=False
+        ).order_by("username")[:25]
         return Response([
             {"id": user.pk, "username": user.username, "display_name": user.display_name}
             for user in users
@@ -198,8 +202,12 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
+        from rest_framework.exceptions import PermissionDenied
         company = serializer.validated_data["company"]
+        target_user = serializer.validated_data["user"]
         self._require_admin(company.pk)
+        if is_platform_owner(target_user):
+            raise PermissionDenied("حساب مالك المنصة منفصل ولا يمكن إضافته كعضو تشغيلي في شركة.")
         serializer.save()
 
     @transaction.atomic
