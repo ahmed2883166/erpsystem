@@ -25,9 +25,18 @@ class SalesReturnViewSet(SalesBaseViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if self.request.user.is_superuser:
             return qs
+        branches = accessible_branches(self.request.user)
+        default_company_ids = []
+        for company_id in accessible_companies(self.request.user).values_list("id", flat=True):
+            from companies.models import Branch
+            default_branch = Branch.objects.filter(
+                company_id=company_id, is_active=True
+            ).order_by("-is_head_office", "code").first()
+            if default_branch and can_access_branch(self.request.user, default_branch.pk, company_id):
+                default_company_ids.append(company_id)
         return qs.filter(
-            Q(warehouse__branch__isnull=True)
-            | Q(warehouse__branch__in=accessible_branches(self.request.user))
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
         )
 
     def create(self, request, *args, **kwargs):
