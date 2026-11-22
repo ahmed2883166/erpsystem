@@ -1,3 +1,5 @@
+"""خدمات ترحيل حركات المخزون وتحديث الأرصدة وطبقات التكلفة والقيود الناتجة."""
+
 from decimal import Decimal
 
 from django.db import transaction
