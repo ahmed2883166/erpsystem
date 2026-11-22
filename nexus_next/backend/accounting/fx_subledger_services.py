@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from rest_framework.exceptions import ValidationError
 
 from accounting.fx_arap import to_base_amount
@@ -29,7 +29,7 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
         )
         latest = FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__lte=as_of,
-        ).order_by("-revaluation_date", "-pk").first()
+        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).order_by("-revaluation_date", "-pk").first()
     else:
         settlements = SupplierPayment.objects.filter(
             invoice=invoice, status=SupplierPayment.Status.POSTED,
@@ -37,7 +37,7 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
         )
         latest = FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__lte=as_of,
-        ).order_by("-revaluation_date", "-pk").first()
+        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).order_by("-revaluation_date", "-pk").first()
 
     foreign_used = _sum(settlements, "transaction_amount")
     historical_used = _sum(settlements, "historical_carrying_base_amount")
@@ -104,7 +104,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         ).exists()
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__gt=revaluation_date,
-        ).exists()
+        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
     else:
         later_settlements = SupplierPayment.objects.filter(
             invoice=invoice, status=SupplierPayment.Status.POSTED,
@@ -112,7 +112,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         ).exists()
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__gt=revaluation_date,
-        ).exists()
+        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
     if later_settlements or later_revaluations:
         raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو إعادة تقييم مرحّلة.")
 
