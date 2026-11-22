@@ -1,3 +1,5 @@
+"""تحويل بيانات الأصول وجداول الإهلاك والتحقق من مدخلات API."""
+
 from rest_framework import serializers
 from .models import FixedAsset, AssetDepreciation
 
