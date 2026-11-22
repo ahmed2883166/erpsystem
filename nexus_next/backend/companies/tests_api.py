@@ -124,6 +124,47 @@ class CompanySetupApiTests(APITestCase):
 
 
 
+    def test_company_admin_can_update_company_profile_without_creating_new_company(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {
+                "name_ar": "اسم الشركة بعد التحديث",
+                "name_en": "Updated Company",
+                "tax_registration_number": "123456789",
+                "address": "عنوان الشركة",
+                "phone": "+201000000000",
+                "email": "office@example.test",
+                "is_active": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Company.objects.count(), 2)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.name_ar, "اسم الشركة بعد التحديث")
+        self.assertEqual(self.company.name_en, "Updated Company")
+        self.assertEqual(self.company.tax_registration_number, "123456789")
+
+    def test_company_admin_cannot_change_foundational_company_settings(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {"country": "EG", "activity": "commercial", "code": "CHANGED"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.company.refresh_from_db()
+        self.assertEqual(self.company.country, "SA")
+        self.assertEqual(self.company.activity, "service")
+        self.assertEqual(self.company.code, "OWN")
+
     def test_viewer_cannot_change_company_branch_or_fiscal_year_settings(self):
         branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي")
         CompanyMembership.objects.create(user=self.user, company=self.company, role="viewer", all_branches=True)
