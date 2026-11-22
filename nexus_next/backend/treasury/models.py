@@ -236,7 +236,7 @@ class TreasuryFxRevaluation(models.Model):
     new_carrying_amount = models.DecimalField(max_digits=20, decimal_places=4)
     difference = models.DecimalField(max_digits=20, decimal_places=4)
     journal_entry = models.OneToOneField(
-        JournalEntry, on_delete=models.PROTECT, related_name="treasury_fx_revaluation",
+        JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_fx_revaluation",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
