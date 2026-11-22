@@ -4,9 +4,10 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from accounting.models import ChartOfAccount
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, Currency, ExchangeRate, FiscalYear
-from .models import TreasuryAccount, TreasuryTransaction
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, TreasuryFxRevaluation
+from .services import post_treasury_transaction, revalue_treasury_fx_account
 
 
 class TreasuryFxSnapshotTests(TestCase):
@@ -85,3 +86,122 @@ class TreasuryFxSnapshotTests(TestCase):
         transaction.exchange_rate_date = date(2026, 3, 2)
         with self.assertRaises(ValidationError):
             transaction.full_clean()
+
+
+    def setUp_fx_roles(self):
+        gain = ChartOfAccount.objects.create(
+            company=self.company, code="4901", name_ar="أرباح فروق عملة",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        loss = ChartOfAccount.objects.create(
+            company=self.company, code="5901", name_ar="خسائر فروق عملة",
+            nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.REALIZED_FX_GAIN, account=gain,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.REALIZED_FX_LOSS, account=loss,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.UNREALIZED_FX_GAIN, account=gain,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.UNREALIZED_FX_LOSS, account=loss,
+        )
+        return gain, loss
+
+    def make_postable_transaction(self, *, kind, number, amount, rate, foreign_amount,
+                                   counter=None, destination=None, rate_date=date(2026, 3, 1)):
+        return TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=self.bank, counter_account=counter or self.counter,
+            destination_account=destination, kind=kind,
+            document_number=number, transaction_date=rate_date,
+            amount=amount, transaction_currency=self.usd,
+            transaction_amount=foreign_amount, exchange_rate=rate,
+            exchange_rate_date=rate_date, description=number,
+        )
+
+    def test_foreign_receipt_and_payment_use_average_carrying_value_and_realized_fx(self):
+        _, loss = self.setUp_fx_roles()
+        self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-1",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        receipt = TreasuryTransaction.objects.get(document_number="FX-R-1")
+        post_treasury_transaction(receipt.pk)
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        self.assertEqual(position.foreign_amount, Decimal("100"))
+        self.assertEqual(position.carrying_base_amount, Decimal("3000.0000"))
+
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
+        revaluation = revalue_treasury_fx_account(
+            account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+            revaluation_date=date(2026, 3, 2), rate_date=date(2026, 3, 2),
+            branch=self.branch,
+        )
+        self.assertEqual(revaluation.difference, Decimal("200.0000"))
+        self.assertIsNotNone(revaluation.journal_entry_id)
+        position.refresh_from_db()
+        self.assertEqual(position.carrying_base_amount, Decimal("3200.0000"))
+
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 3), rate=Decimal("31"),
+        )
+        payment = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.PAYMENT, number="FX-P-1",
+            amount=Decimal("1550"), rate=Decimal("31"),
+            foreign_amount=Decimal("50"), rate_date=date(2026, 3, 3),
+        )
+        post_treasury_transaction(payment.pk)
+        payment.refresh_from_db()
+        self.assertEqual(payment.carrying_amount, Decimal("1600.0000"))
+        position.refresh_from_db()
+        self.assertEqual(position.foreign_amount, Decimal("50.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("1600.0000"))
+        self.assertEqual(
+            payment.journal_entry.lines.get(account=loss).debit,
+            Decimal("50.0000"),
+        )
+
+    def test_foreign_payment_cannot_overdraw_nominal_currency_position(self):
+        self.setUp_fx_roles()
+        payment = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.PAYMENT, number="FX-P-OVER",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        with self.assertRaises(ValidationError):
+            post_treasury_transaction(payment.pk)
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, TreasuryTransaction.Status.DRAFT)
+        self.assertFalse(JournalEntry.objects.filter(entry_number=f"TR-{payment.pk}").exists())
+
+    def test_revaluation_cannot_be_repeated_for_same_account_and_date(self):
+        self.setUp_fx_roles()
+        self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-REVAL",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        receipt = TreasuryTransaction.objects.get(document_number="FX-R-REVAL")
+        post_treasury_transaction(receipt.pk)
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
+        kwargs = dict(
+            account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+            revaluation_date=date(2026, 3, 2), rate_date=date(2026, 3, 2),
+            branch=self.branch,
+        )
+        revalue_treasury_fx_account(**kwargs)
+        with self.assertRaises(ValidationError):
+            revalue_treasury_fx_account(**kwargs)
+        self.assertEqual(TreasuryFxRevaluation.objects.filter(account=self.bank).count(), 1)
