@@ -1,12 +1,14 @@
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Backend = Join-Path $Root "backend"
+$Python = Join-Path $Backend ".venv\Scripts\python.exe"
 $BackupScript = Join-Path $PSScriptRoot "backup-postgres.ps1"
 if (-not (Test-Path $BackupScript)) { throw "Backup script not found: $BackupScript" }
+if (-not (Test-Path $Python)) { throw "Backend virtual-environment Python is missing." }
 
 Push-Location $Backend
 try {
-    $config = python manage.py shell -c "from core.models import BackupConfiguration; c=BackupConfiguration.objects.first(); print(f'{c.enabled}|{c.schedule}|{c.backup_path}' if c else 'False|daily|')"
+    $config = & $Python manage.py shell -c "from core.models import BackupConfiguration; c=BackupConfiguration.objects.first(); print(f'{c.enabled}|{c.schedule}|{c.backup_path}' if c else 'False|daily|')"
     if ($LASTEXITCODE -ne 0) { throw "Could not read backup configuration." }
 } finally { Pop-Location }
 $parts = $config.Trim().Split("|")
