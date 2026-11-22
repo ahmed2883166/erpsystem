@@ -131,3 +131,92 @@ class StockPostingServiceTests(TestCase):
         lines = list(link.journal_entry.lines.order_by("id"))
         self.assertEqual(lines[0].account_id, self.inventory_account.pk)
         self.assertEqual(lines[1].account_id, self.gain_account.pk)
+
+
+    def test_fifo_issue_consumes_oldest_cost_layers_first(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+
+        first_receipt = self._movement(
+            "FIFO-R1", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="5", unit_cost="10",
+        )
+        second_receipt = self._movement(
+            "FIFO-R2", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="5", unit_cost="20",
+        )
+        post_stock_movement(first_receipt.pk, self.user)
+        post_stock_movement(second_receipt.pk, self.user)
+
+        issue = self._movement(
+            "FIFO-I1", StockMovement.MovementType.ISSUE,
+            source=self.warehouse, quantity="6",
+        )
+        post_stock_movement(issue.pk, self.user)
+
+        issue_line = issue.lines.get()
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        layers = list(
+            self.product.cost_layers.filter(warehouse=self.warehouse)
+            .order_by("unit_cost").values_list("quantity_remaining", "unit_cost")
+        )
+        self.assertEqual(issue_line.cost_amount, Decimal("70.0000"))
+        self.assertEqual(balance.quantity, Decimal("4"))
+        self.assertEqual(balance.inventory_value, Decimal("80.0000"))
+        self.assertEqual(layers, [(Decimal("0.0000"), Decimal("10.0000")),
+                                  (Decimal("4.0000"), Decimal("20.0000"))])
+
+    def test_cross_branch_transfer_preserves_fifo_cost_and_posts_balanced_interbranch_entries(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+        destination_branch = Branch.objects.create(
+            company=self.company, code="BR-02", name_ar="الفرع الثاني",
+        )
+        destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=destination_branch,
+            code="WH-02", name_ar="مخزن الفرع الثاني",
+        )
+        clearing = self._account(
+            "2190", "تسوية بين الفروع", ChartOfAccount.Nature.LIABILITY,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.INTER_BRANCH_CLEARING,
+            account=clearing,
+        )
+        receipt = self._movement(
+            "TR-R1", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="8", unit_cost="12",
+        )
+        post_stock_movement(receipt.pk, self.user)
+
+        transfer = self._movement(
+            "TR-X1", StockMovement.MovementType.TRANSFER,
+            source=self.warehouse, destination=destination_warehouse, quantity="5",
+        )
+        post_stock_movement(transfer.pk, self.user)
+
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination_warehouse)
+        self.assertEqual(source_balance.quantity, Decimal("3"))
+        self.assertEqual(destination_balance.quantity, Decimal("5"))
+        self.assertEqual(source_balance.inventory_value, Decimal("36.0000"))
+        self.assertEqual(destination_balance.inventory_value, Decimal("60.0000"))
+        self.assertEqual(transfer.lines.get().cost_amount, Decimal("60.0000"))
+
+        linked_entries = list(
+            transfer.journal_links.select_related("journal_entry__branch").order_by("journal_entry__entry_number")
+        )
+        self.assertEqual(len(linked_entries), 2)
+        self.assertEqual(
+            {link.journal_entry.branch_id for link in linked_entries},
+            {self.branch.pk, destination_branch.pk},
+        )
+        self.assertTrue(all(link.journal_entry.status == JournalEntry.Status.POSTED for link in linked_entries))
+        clearing_totals = []
+        for link in linked_entries:
+            totals = link.journal_entry.lines.filter(account=clearing).aggregate(
+                debit=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
+                credit=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"),
+            )
+            clearing_totals.append(Decimal(totals["debit"] or 0) - Decimal(totals["credit"] or 0))
+        self.assertEqual(sum(clearing_totals), Decimal("0.0000"))
