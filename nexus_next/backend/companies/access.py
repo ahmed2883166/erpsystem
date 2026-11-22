@@ -57,3 +57,11 @@ def has_company_role(user, company_id, roles):
         company__is_active=True,
         role__in=roles,
     ).exists()
+
+
+def is_platform_owner(user):
+    """التحقق من هوية مالك المنصة دون منح صلاحيات تشغيلية داخل الشركات."""
+    if not user or not user.is_authenticated:
+        return False
+    from .models import PlatformOwner
+    return PlatformOwner.objects.filter(user=user, is_active=True).exists()
