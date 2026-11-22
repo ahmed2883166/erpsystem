@@ -401,9 +401,9 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerReceipt
         fields = ("id", "company", "customer", "customer_name", "invoice", "invoice_number",
-                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
+                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
                   "journal_entry", "journal_number", "created_at", "posted_at")
-        read_only_fields = ("status", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
+        read_only_fields = ("status", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
