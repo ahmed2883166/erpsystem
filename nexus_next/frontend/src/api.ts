@@ -408,6 +408,10 @@ export const api = {
   createSupplier: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Supplier>("/api/purchases/suppliers/", { method: "POST", body: JSON.stringify(payload) }); },
   // إنشاء سجل عميل جديد.
   createCustomer: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Customer>("/api/sales/customers/", { method: "POST", body: JSON.stringify(payload) }); },
+  // تعديل بيانات العميل أو إيقافه مع الحفاظ على سجله التاريخي.
+  updateCustomer: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Customer>(`/api/sales/customers/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
+  // تعديل بيانات المورد أو إيقافه مع الحفاظ على سجله التاريخي.
+  updateSupplier: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Supplier>(`/api/purchases/suppliers/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
 };
 
 
