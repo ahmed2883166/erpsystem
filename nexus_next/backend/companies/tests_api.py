@@ -297,6 +297,25 @@ class CompanySetupApiTests(APITestCase):
         self.assertTrue("name" in response.data or "non_field_errors" in response.data)
         self.assertEqual(FiscalYear.objects.filter(company=self.company, name="2027").count(), 1)
 
+    def test_fiscal_year_rejects_overlapping_period_for_same_company(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        from .models import FiscalYear
+        FiscalYear.objects.create(
+            company=self.company, name="2027",
+            start_date="2027-01-01", end_date="2027-12-31",
+        )
+        self.client.force_authenticate(self.user)
+
+        response = self.client.post("/api/setup/fiscal-years/", {
+            "company": self.company.pk, "name": "FY-2027-SECOND",
+            "start_date": "2027-07-01", "end_date": "2028-06-30",
+        }, format="json")
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(FiscalYear.objects.filter(company=self.company).count(), 1)
+
     def test_company_admin_can_update_branch_contact_details_and_deactivate(self):
         CompanyMembership.objects.create(
             user=self.user, company=self.company, role="admin", all_branches=True
