@@ -6,8 +6,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
-from .models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, FiscalYearSerializer
+from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
+from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, ExchangeRateSerializer, FiscalYearSerializer
 
 
 class ReadOnlyOrAdmin(permissions.BasePermission):
@@ -28,6 +28,32 @@ class CurrencyViewSet(viewsets.ModelViewSet):
     queryset = Currency.objects.all()
     serializer_class = CurrencySerializer
     permission_classes = (ReadOnlyOrAdmin,)
+
+
+class ExchangeRateViewSet(viewsets.ModelViewSet):
+    """إدارة أسعار الصرف التاريخية ضمن نطاق الشركة."""
+    serializer_class = ExchangeRateSerializer
+    permission_classes = (CompanyAdminOrReadOnly,)
+    http_method_names = ("get", "post", "head", "options")
+
+    def get_queryset(self):
+        queryset = ExchangeRate.objects.filter(
+            company__in=accessible_companies(self.request.user)
+        ).select_related("company", "currency", "company__base_currency")
+        company_id = self.request.query_params.get("company")
+        currency_id = self.request.query_params.get("currency")
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+        if currency_id:
+            queryset = queryset.filter(currency_id=currency_id)
+        return queryset
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+        company = serializer.validated_data["company"]
+        if not has_company_role(self.request.user, company.pk, ("admin",)):
+            raise PermissionDenied("إضافة أسعار الصرف متاحة لمدير الشركة فقط.")
+        serializer.save()
 
 
 class CompanyViewSet(viewsets.ModelViewSet):
