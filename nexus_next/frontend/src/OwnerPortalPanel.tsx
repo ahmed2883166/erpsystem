@@ -149,6 +149,36 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
     finally { setBusy(false); }
   };
 
+  const setMembershipRole = async (member: CompanyMembership, role: CompanyMembership["role"]) => {
+    if (role === member.role || !selected) return;
+    if (role === "admin" && !window.confirm("منح المستخدم صلاحية مدير الشركة على جميع الفروع؟")) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.updateMembership(member.id, {
+        role,
+        ...(role === "admin" ? { all_branches: true, branches: [] } : {}),
+      });
+      await refreshMembers(selected.id);
+      setNotice("تم تحديث دور المستخدم. تم الاحتفاظ بسجل العضوية والتغيير في سجل التدقيق.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحديث دور المستخدم."); }
+    finally { setBusy(false); }
+  };
+
+  const toggleMembership = async (member: CompanyMembership) => {
+    if (!selected) return;
+    const nextActive = !member.is_active;
+    if (!window.confirm(nextActive
+      ? "إعادة تفعيل عضوية المستخدم في هذه الشركة؟"
+      : "إيقاف عضوية المستخدم؟ لن تُحذف بياناته أو سجلاته.")) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.updateMembership(member.id, { is_active: nextActive });
+      await refreshMembers(selected.id);
+      setNotice(nextActive ? "تمت إعادة تفعيل العضوية." : "تم إيقاف العضوية مع الاحتفاظ بسجلها.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تغيير حالة العضوية."); }
+    finally { setBusy(false); }
+  };
+
   const assignAdmin = async () => {
     if (!selected || !userId) return;
     setBusy(true); setError(""); setNotice("");
@@ -236,9 +266,17 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
               <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || !newAdminUsername.trim() || !newAdminPassword}>إنشاء الحساب وتعيينه مديرًا</button></div>
             </form>}
             <h3>المديرون والعضويات الحالية</h3>
-            <div className="data-table-wrap"><table><thead><tr><th>المستخدم</th><th>الدور</th><th>النطاق</th><th>الحالة</th></tr></thead><tbody>
-              {members.map(member=><tr key={member.id}><td>{member.username}</td><td>{member.role==="admin"?"مدير شركة":member.role==="accountant"?"محاسب":"مشاهد"}</td><td>{member.all_branches?"كل الفروع":`${member.branches.length} فرع`}</td><td>{member.is_active?"نشطة":"موقوفة"}</td></tr>)}
-              {!members.length && <tr><td colSpan={4}>لا توجد عضويات مسجلة لهذه الشركة.</td></tr>}
+            <div className="data-table-wrap"><table><thead><tr><th>المستخدم</th><th>الدور</th><th>النطاق</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
+              {members.map(member=><tr key={member.id}>
+                <td>{member.username}</td>
+                <td><select aria-label={`دور ${member.username}`} value={member.role} disabled={busy} onChange={event => void setMembershipRole(member, event.target.value as CompanyMembership["role"])}>
+                  <option value="admin">مدير شركة</option><option value="accountant">محاسب</option><option value="viewer">مشاهد</option>
+                </select></td>
+                <td>{member.all_branches?"كل الفروع":`${member.branches.length} فرع`}</td>
+                <td>{member.is_active?"نشطة":"موقوفة"}</td>
+                <td><button type="button" className="subtle-button" disabled={busy} onClick={() => void toggleMembership(member)}>{member.is_active?"إيقاف العضوية":"إعادة التفعيل"}</button></td>
+              </tr>)}
+              {!members.length && <tr><td colSpan={5}>لا توجد عضويات مسجلة لهذه الشركة.</td></tr>}
             </tbody></table></div>
           </>}
         </section>
