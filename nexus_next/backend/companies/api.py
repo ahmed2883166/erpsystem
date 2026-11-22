@@ -1,6 +1,9 @@
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Q
+from decimal import Decimal
+
+from django.db.models import Count, F, Q, Sum, Value, DecimalField
+from django.db.models.functions import Coalesce
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -357,18 +360,106 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_update(self, serializer):
-        """تحديث السنة مع تسلسل عمليات الشركة ومنع تداخل الفترات بالتزامن."""
-        from rest_framework.exceptions import PermissionDenied
+        """تحديث بيانات السنة قبل تسجيل أي قيود مالية مع منع تعديل حدود فترة مستخدمة."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
         current_company_id = serializer.instance.company_id
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
         Company.objects.select_for_update().get(pk=current_company_id)
-        # يمنع FiscalYearSerializer تغيير الشركة ويعيد خطأ تحقق واضحًا قبل الوصول للحفظ.
+        if serializer.instance.journal_entries.exists():
+            raise ValidationError("لا يمكن تعديل اسم أو تواريخ سنة مالية لها قيود؛ حافظًا على ارتباط القيود بالفترة الأصلية.")
         serializer.save()
 
     def perform_destroy(self, instance):
-        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
-        from rest_framework.exceptions import PermissionDenied
+        """منع حذف سنة مالية لها قيود أو مستندات مرتبطة."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف السنوات المالية متاح لمدير الشركة فقط.")
+        if instance.journal_entries.exists():
+            raise ValidationError("لا يمكن حذف سنة مالية لها قيود؛ استخدم إجراءات الإقفال المعتمدة.")
         instance.delete()
+
+    def _closing_review(self, fiscal_year):
+        """فحص محاسبي قبل الإقفال دون تعديل أي قيد أو رصيد."""
+        from accounting.models import JournalEntry
+        entries = JournalEntry.objects.filter(fiscal_year=fiscal_year)
+        drafts = entries.filter(status=JournalEntry.Status.DRAFT).count()
+        financial_entries = entries.filter(
+            status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED)
+        ).annotate(
+            line_count=Count("lines"),
+            debit_total=Coalesce(
+                Sum("lines__debit"), Value(Decimal("0")),
+                output_field=DecimalField(max_digits=24, decimal_places=4),
+            ),
+            credit_total=Coalesce(
+                Sum("lines__credit"), Value(Decimal("0")),
+                output_field=DecimalField(max_digits=24, decimal_places=4),
+            ),
+        )
+        invalid_entries = financial_entries.filter(
+            Q(line_count__lt=2) | ~Q(debit_total=F("credit_total"))
+        ).count()
+        closing_entry = entries.filter(
+            source_type=JournalEntry.Source.CLOSING,
+            status=JournalEntry.Status.POSTED,
+            entry_date__gte=fiscal_year.start_date,
+            entry_date__lte=fiscal_year.end_date,
+        ).exists()
+        next_year = FiscalYear.objects.filter(
+            company_id=fiscal_year.company_id,
+            start_date__gt=fiscal_year.end_date,
+        ).order_by("start_date").first()
+        opening_entry_required = bool(next_year)
+        opening_entry = False
+        if next_year:
+            opening_entry = JournalEntry.objects.filter(
+                fiscal_year=next_year,
+                source_type=JournalEntry.Source.OPENING,
+                status=JournalEntry.Status.POSTED,
+                entry_date=next_year.start_date,
+            ).exists()
+        checks = {
+            "no_drafts": drafts == 0,
+            "balanced_entries": invalid_entries == 0,
+            "closing_entry": closing_entry,
+            "next_year_opening": (not opening_entry_required) or opening_entry,
+        }
+        return {
+            "fiscal_year": fiscal_year.pk,
+            "status": fiscal_year.status,
+            "draft_entries": drafts,
+            "unbalanced_entries": invalid_entries,
+            "closing_entry_posted": closing_entry,
+            "next_fiscal_year": next_year.pk if next_year else None,
+            "opening_entry_required": opening_entry_required,
+            "opening_entry_posted": opening_entry,
+            "can_close": fiscal_year.status == FiscalYear.Status.OPEN and all(checks.values()),
+            "checks": checks,
+        }
+
+    @action(detail=True, methods=("get",))
+    def closing_review(self, request, pk=None):
+        """إرجاع قائمة مراجعة الإقفال دون تنفيذ أي تغييرات."""
+        fiscal_year = self.get_object()
+        return Response(self._closing_review(fiscal_year))
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def close(self, request, pk=None):
+        """إقفال السنة بعد اجتياز المراجعة ووجود قيد الإقفال والافتتاح المطلوبين."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        fiscal_year = self.get_object()
+        if not has_company_role(request.user, fiscal_year.company_id, ("admin",)):
+            raise PermissionDenied("إقفال السنة المالية متاح لمدير الشركة فقط.")
+        Company.objects.select_for_update().get(pk=fiscal_year.company_id)
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
+        review = self._closing_review(fiscal_year)
+        if not review["can_close"]:
+            raise ValidationError({
+                "detail": "لا يمكن إقفال السنة قبل استكمال جميع متطلبات المراجعة.",
+                "review": review,
+            })
+        fiscal_year.status = FiscalYear.Status.CLOSED
+        fiscal_year.save(update_fields=("status",))
+        return Response({"detail": "تم إقفال السنة المالية بعد اجتياز المراجعة.", "review": self._closing_review(fiscal_year)})
