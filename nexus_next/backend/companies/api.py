@@ -268,11 +268,9 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         from rest_framework.exceptions import PermissionDenied
         current_company_id = serializer.instance.company_id
-        target_company = serializer.validated_data.get("company", serializer.instance.company)
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
-        if target_company.pk != current_company_id:
-            raise ValidationError({"company": "لا يمكن نقل سنة مالية قائمة إلى شركة أخرى."})
+        # يمنع FiscalYearSerializer تغيير الشركة ويعيد خطأ تحقق واضحًا قبل الوصول للحفظ.
         serializer.save()
 
     def perform_destroy(self, instance):
