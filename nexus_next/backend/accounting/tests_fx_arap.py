@@ -6,7 +6,7 @@ from .fx_arap import settle_foreign_balance, to_base_amount, validate_snapshot
 
 class FxArApArithmeticTests(SimpleTestCase):
     def test_foreign_invoice_amount_converts_to_company_base_currency(self):
-        self.assertEqual(to_base_amount("100.25", "50.1234567890"), Decimal("5025.1235"))
+        self.assertEqual(to_base_amount("100.25", "50.1234567890"), Decimal("5024.8765"))
 
     def test_snapshot_requires_exact_approved_company_rate(self):
         self.assertEqual(
