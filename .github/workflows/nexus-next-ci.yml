@@ -116,7 +116,13 @@ jobs:
             throw "Portable first-run initializer must never flush or reset a database."
           }
           $envExample = Get-Content nexus_next/backend/.env.example -Raw
-          if ($envExample -notmatch '(?m)^DJANGO_DEBUG=False\s*
+          if (-not $envExample.Contains("DJANGO_DEBUG=False")) {
+            throw "The environment template must default Django DEBUG to False."
+          }
+          $portableBuilder = Get-Content nexus_next/scripts/package-portable-windows.ps1 -Raw
+          if (-not $portableBuilder.Contains("initialize-admrail.cmd")) {
+            throw "Portable ZIP builder must include the first-run initializer."
+          }
       - name: Guard temporary plaintext backup cleanup
         shell: pwsh
         run: |
