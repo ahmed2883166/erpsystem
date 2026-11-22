@@ -63,3 +63,27 @@ class BackupKeyTests(SimpleTestCase):
         protected = backup_key.protect_machine_key(key)
         self.assertNotEqual(protected, key)
         self.assertEqual(backup_key.unprotect_machine_key(protected), key)
+
+    def test_management_command_encrypts_verifies_and_removes_plaintext_source(self):
+        from django.core.management import call_command
+        from core.backup_crypto import decrypt_backup
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "database.dump"
+            encrypted = Path(folder) / "database.dump.nexusenc"
+            restored = Path(folder) / "restored.dump"
+            payload = (b"NEXUS postgres archive" * 5000)
+            source.write_bytes(payload)
+            phrase = base64.urlsafe_b64encode(bytes(range(32))).decode("ascii")
+            with patch(
+                "core.management.commands.encrypt_backup_file.machine_backup_passphrase",
+                return_value=phrase,
+            ):
+                call_command(
+                    "encrypt_backup_file", input=str(source), output=str(encrypted),
+                    delete_source=True, verbosity=0,
+                )
+            self.assertFalse(source.exists())
+            self.assertTrue(encrypted.is_file())
+            decrypt_backup(encrypted, restored, phrase)
+            self.assertEqual(restored.read_bytes(), payload)
