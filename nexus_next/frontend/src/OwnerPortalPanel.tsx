@@ -19,6 +19,10 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<CompanyUserLookup[]>([]);
   const [userId, setUserId] = useState<number | "">("");
+  const [newAdminUsername, setNewAdminUsername] = useState("");
+  const [newAdminName, setNewAdminName] = useState("");
+  const [newAdminEmail, setNewAdminEmail] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
@@ -93,6 +97,23 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
     finally { setBusy(false); }
   };
 
+  const createAdminAccount = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected || !newAdminUsername.trim() || !newAdminPassword) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.createCompanyAdmin({
+        company: selected.id, username: newAdminUsername.trim(),
+        display_name: newAdminName.trim(), email: newAdminEmail.trim(),
+        password: newAdminPassword,
+      });
+      await refreshMembers(selected.id);
+      setNewAdminUsername(""); setNewAdminName(""); setNewAdminEmail(""); setNewAdminPassword("");
+      setNotice("تم إنشاء حساب مدير الشركة وربطه بالشركة. الحساب ليس Superuser ولا يملك صلاحيات منصة.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء حساب مدير الشركة."); }
+    finally { setBusy(false); }
+  };
+
   const assignAdmin = async () => {
     if (!selected || !userId) return;
     setBusy(true); setError(""); setNotice("");
@@ -157,6 +178,16 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
               {matches.length > 0 && <label className="form-wide">المستخدم<select required value={userId} onChange={event => setUserId(event.target.value ? Number(event.target.value) : "")}><option value="">اختر المستخدم</option>{matches.map(row=><option key={row.id} value={row.id}>{row.display_name} · {row.username}</option>)}</select></label>}
               {matches.length > 0 && <div className="form-actions form-wide"><button type="button" className="primary-button" disabled={busy || !userId} onClick={() => void assignAdmin()}>تعيين مدير الشركة</button></div>}
             </form>
+            {selected.is_active !== false && <section className="setup-section-title">
+              <div><h3>إنشاء حساب مدير جديد</h3><p>إنشاء حساب عادي غير إداري للمنصة وربطه بهذه الشركة مباشرة.</p></div>
+            </section>}
+            {selected.is_active !== false && <form className="journal-form" onSubmit={createAdminAccount}>
+              <label>اسم المستخدم<input required maxLength={150} autoComplete="off" value={newAdminUsername} onChange={event => setNewAdminUsername(event.target.value)} /></label>
+              <label>الاسم الظاهر<input maxLength={160} value={newAdminName} onChange={event => setNewAdminName(event.target.value)} /></label>
+              <label>البريد الإلكتروني<input type="email" maxLength={254} value={newAdminEmail} onChange={event => setNewAdminEmail(event.target.value)} /></label>
+              <label>كلمة المرور<input required type="password" autoComplete="new-password" value={newAdminPassword} onChange={event => setNewAdminPassword(event.target.value)} /></label>
+              <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || !newAdminUsername.trim() || !newAdminPassword}>إنشاء الحساب وتعيينه مديرًا</button></div>
+            </form>}
             <h3>المديرون والعضويات الحالية</h3>
             <div className="data-table-wrap"><table><thead><tr><th>المستخدم</th><th>الدور</th><th>النطاق</th><th>الحالة</th></tr></thead><tbody>
               {members.map(member=><tr key={member.id}><td>{member.username}</td><td>{member.role==="admin"?"مدير شركة":member.role==="accountant"?"محاسب":"مشاهد"}</td><td>{member.all_branches?"كل الفروع":`${member.branches.length} فرع`}</td><td>{member.is_active?"نشطة":"موقوفة"}</td></tr>)}
