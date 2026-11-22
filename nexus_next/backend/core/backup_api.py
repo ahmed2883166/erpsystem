@@ -87,13 +87,25 @@ class BackupConfigurationView(APIView):
             file_path = Path(backup_file) if backup_file else None
             success = result.returncode == 0 and file_path is not None and file_path.is_file() and file_path.stat().st_size >= 1024
             details = output if success else (error or output or "تعذر التحقق من ملف النسخة الاحتياطية.")
-            run = BackupRun.objects.create(
-                status=BackupRun.Status.SUCCESS if success else BackupRun.Status.FAILURE,
-                backup_file=str(file_path) if success else "",
-                size_bytes=file_path.stat().st_size if success else 0,
-                details=details,
-                started_by=request.user,
-            )
+            run = None
+            if success:
+                run = BackupRun.objects.filter(
+                    status=BackupRun.Status.SUCCESS,
+                    backup_file__iexact=str(file_path),
+                ).first()
+            if run:
+                run.started_by = request.user
+                run.details = details
+                run.size_bytes = file_path.stat().st_size
+                run.save(update_fields=["started_by", "details", "size_bytes"])
+            else:
+                run = BackupRun.objects.create(
+                    status=BackupRun.Status.SUCCESS if success else BackupRun.Status.FAILURE,
+                    backup_file=str(file_path) if success else "",
+                    size_bytes=file_path.stat().st_size if success else 0,
+                    details=details,
+                    started_by=request.user,
+                )
             AuditEvent.objects.create(
                 actor=request.user, action=AuditEvent.Action.ACTION,
                 resource="core.BackupRun", object_id=str(run.pk),
