@@ -5,7 +5,8 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
@@ -196,6 +197,42 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(completed.status_code, 200, completed.data)
         self.assertEqual(completed.data["status"], "reconciled")
         self.assertEqual(JournalEntry.objects.count(), 1)
+
+    def test_bank_reconciliation_uses_reversed_journals_consistently(self):
+        original = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="MANUAL-BANK-REV-001", entry_date=date(2026, 3, 5),
+            description="قيد بنكي سيتم عكسه", source_type=JournalEntry.Source.MANUAL,
+            created_by=self.user,
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=original, account=self.bank_gl, description="إثبات البنك", debit=Decimal("75.0000"), credit=0),
+            JournalLine(entry=original, account=self.revenue_gl, description="إثبات الإيراد", debit=0, credit=Decimal("75.0000")),
+        ])
+        post_journal(original.pk)
+        reversed_response = self.client.post(
+            f"/api/accounting/journal-entries/{original.pk}/reverse/",
+            {"entry_date": "2026-03-06"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 201, reversed_response.data)
+        original.refresh_from_db()
+        self.assertEqual(original.status, JournalEntry.Status.REVERSED)
+
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "ST-REV-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "0.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        summary = self.client.get(f"/api/treasury/reconciliations/{recon.data['id']}/summary/")
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["book_balance"], "0.0000")
+        self.assertEqual(summary.data["unexplained_difference"], "0.0000")
+
+        completed = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/reconcile/", {}, format="json"
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertEqual(completed.data["status"], "reconciled")
 
     def test_bank_reconciliation_rejects_wrong_amount_and_unmatched_lines(self):
         payload = {
