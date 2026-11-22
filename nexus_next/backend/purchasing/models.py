@@ -222,6 +222,7 @@ class SupplierPayment(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_payments")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="payments")
