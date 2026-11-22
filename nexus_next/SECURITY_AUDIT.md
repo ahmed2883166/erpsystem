@@ -79,7 +79,7 @@ At baseline commit `f36bc6516da0ea7516db0f60c0f06e90c9ad445b`:
 
 ### Superuser global visibility
 - A Django superuser is intentionally a platform-wide operator: company and branch access helpers return all active companies and branches, except for a separately designated platform owner account which has no company operating access.
-- Every authenticated superuser API GET request is now recorded as an audit action with metadata identifying the superuser API read and the global company/branch visibility policy. This is intentionally broad and can increase audit volume.
+- Every authenticated superuser API or Django Admin GET request is now recorded as an audit action with metadata identifying the superuser API read and the global company/branch visibility policy. This is intentionally broad and can increase audit volume.
 - Keep superuser accounts to a very small named set (recommended maximum: two), protect them with unique strong credentials, and use ordinary company roles for daily work. Review the superuser audit stream regularly.
 
 ### Production HTTPS gate
