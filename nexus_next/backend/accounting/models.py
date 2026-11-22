@@ -322,3 +322,79 @@ class JournalLine(models.Model):
         if self.cost_center_id and self.entry_id and self.cost_center.company_id != self.entry.company_id:
             raise ValidationError({"cost_center": "مركز التكلفة يجب أن يتبع نفس الشركة."})
         self.validate_currency_snapshot()
+
+
+class FxSubledgerRevaluation(models.Model):
+    """Period-end revaluation of one open foreign-currency AR or AP invoice."""
+    company = models.ForeignKey("companies.Company", on_delete=models.PROTECT, related_name="fx_subledger_revaluations")
+    sales_invoice = models.ForeignKey(
+        "sales.SalesInvoice", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="fx_revaluations",
+    )
+    purchase_invoice = models.ForeignKey(
+        "purchasing.PurchaseInvoice", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="fx_revaluations",
+    )
+    revaluation_date = models.DateField()
+    rate_date = models.DateField()
+    rate = models.DecimalField(max_digits=20, decimal_places=10)
+    foreign_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    previous_carrying_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    new_carrying_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    difference = models.DecimalField(max_digits=20, decimal_places=4)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="fx_subledger_revaluation",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_fx_subledger_revaluations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-revaluation_date", "-id")
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(sales_invoice__isnull=False, purchase_invoice__isnull=True)
+                           | Q(sales_invoice__isnull=True, purchase_invoice__isnull=False)),
+                name="ck_fx_subledger_one_invoice",
+            ),
+            models.UniqueConstraint(
+                fields=("sales_invoice", "revaluation_date"),
+                condition=Q(sales_invoice__isnull=False),
+                name="uq_fx_ar_revaluation_date",
+            ),
+            models.UniqueConstraint(
+                fields=("purchase_invoice", "revaluation_date"),
+                condition=Q(purchase_invoice__isnull=False),
+                name="uq_fx_ap_revaluation_date",
+            ),
+            models.CheckConstraint(condition=Q(rate__gt=0), name="ck_fx_subledger_rate_positive"),
+            models.CheckConstraint(condition=Q(foreign_balance__gte=0), name="ck_fx_subledger_foreign_nonnegative"),
+            models.CheckConstraint(condition=Q(previous_carrying_amount__gte=0), name="ck_fx_subledger_previous_nonnegative"),
+            models.CheckConstraint(condition=Q(new_carrying_amount__gte=0), name="ck_fx_subledger_new_nonnegative"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "revaluation_date"), name="fx_subledger_co_date_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if bool(self.sales_invoice_id) == bool(self.purchase_invoice_id):
+            raise ValidationError("إعادة التقييم يجب أن ترتبط بفاتورة عميل أو مورد واحدة فقط.")
+        invoice = self.sales_invoice if self.sales_invoice_id else self.purchase_invoice
+        if invoice and invoice.company_id != self.company_id:
+            raise ValidationError({"company": "الفاتورة لا تتبع الشركة المحددة."})
+        if invoice and invoice.transaction_currency_id is None:
+            raise ValidationError("لا يمكن إعادة تقييم فاتورة بالعملة الأساسية.")
+        if invoice and self.revaluation_date < invoice.invoice_date:
+            raise ValidationError({"revaluation_date": "تاريخ إعادة التقييم لا يجوز أن يسبق تاريخ الفاتورة."})
+        if self.rate_date > self.revaluation_date:
+            raise ValidationError({"rate_date": "تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ إعادة التقييم."})
+        if self.rate <= 0:
+            raise ValidationError({"rate": "سعر الصرف يجب أن يكون أكبر من صفر."})
+
+    def __str__(self):
+        invoice_number = self.sales_invoice.invoice_number if self.sales_invoice_id else self.purchase_invoice.invoice_number
+        return f"{invoice_number} - {self.revaluation_date}"
