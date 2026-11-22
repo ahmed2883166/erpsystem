@@ -1,3 +1,5 @@
+"""نقطة دخول WSGI لتشغيل مشروع Django عبر خوادم التطبيقات المتوافقة."""
+
 import os
 from django.core.wsgi import get_wsgi_application
 
