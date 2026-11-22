@@ -232,12 +232,12 @@ class CustomerReceipt(models.Model):
         return self.company_id
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
+        if self.pk and type(self).objects.filter(pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)).exists():
             raise ValidationError("سند قبض العميل المرحّل غير قابل للتعديل.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.status == self.Status.POSTED:
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
             raise ValidationError("لا يمكن حذف سند قبض مرحّل.")
         return super().delete(*args, **kwargs)
 
