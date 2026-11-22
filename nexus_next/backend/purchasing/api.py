@@ -16,6 +16,7 @@ from accounting.models import FxSubledgerRevaluation, JournalEntry
 from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
+from inventory.models import StockMovement
 from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment
