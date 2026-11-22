@@ -5,7 +5,8 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from companies.models import Branch, Company, Currency, FiscalYear
-from accounting.models import ChartOfAccount, JournalEntry, JournalLine
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from accounting.serializers import AccountRoleSerializer
 
 
 class JournalLineFxSnapshotTests(TestCase):
@@ -80,3 +81,23 @@ class JournalLineFxSnapshotTests(TestCase):
         line = self.make_line(exchange_rate_date=date(2026, 2, 28))
         with self.assertRaises(ValidationError):
             line.full_clean()
+
+    def test_fx_gain_and_loss_roles_require_correct_account_nature(self):
+        revenue = ChartOfAccount.objects.create(
+            company=self.company, code="4000", name_ar="أرباح فروق العملة",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        expense = ChartOfAccount.objects.create(
+            company=self.company, code="5000", name_ar="خسائر فروق العملة",
+            nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        gain = AccountRoleSerializer(data={
+            "company": self.company.pk, "role": AccountRole.Role.REALIZED_FX_GAIN,
+            "account": revenue.pk,
+        })
+        self.assertTrue(gain.is_valid(), gain.errors)
+        invalid_loss = AccountRoleSerializer(data={
+            "company": self.company.pk, "role": AccountRole.Role.REALIZED_FX_LOSS,
+            "account": revenue.pk,
+        })
+        self.assertFalse(invalid_loss.is_valid())
