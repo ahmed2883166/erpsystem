@@ -8,12 +8,26 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
     account_code = serializers.CharField(source="account.code", read_only=True)
     account_name = serializers.CharField(source="account.name_ar", read_only=True)
     branch_name = serializers.CharField(source="branch.name_ar", read_only=True, default="")
+    fx_position_foreign_amount = serializers.SerializerMethodField()
+    fx_position_carrying_base_amount = serializers.SerializerMethodField()
+
+    def get_fx_position_foreign_amount(self, obj):
+        try:
+            return obj.fx_position.foreign_amount
+        except TreasuryFxPosition.DoesNotExist:
+            return Decimal("0.0000")
+
+    def get_fx_position_carrying_base_amount(self, obj):
+        try:
+            return obj.fx_position.carrying_base_amount
+        except TreasuryFxPosition.DoesNotExist:
+            return Decimal("0.0000")
 
     class Meta:
         model = TreasuryAccount
         fields = ("id", "company", "branch", "branch_name", "account", "account_code", "account_name",
                   "kind", "code", "name_ar", "bank_name", "account_number", "iban", "currency_code",
-                  "opening_balance", "opening_journal_entry", "is_active", "created_at")
+                  "opening_balance", "opening_journal_entry", "fx_position_foreign_amount", "fx_position_carrying_base_amount", "is_active", "created_at")
         read_only_fields = ("created_at", "opening_journal_entry")
 
     def validate(self, attrs):
