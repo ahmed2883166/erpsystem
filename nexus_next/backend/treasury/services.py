@@ -1,3 +1,5 @@
+"""خدمات ترحيل حركات الخزينة والتحقق من الأرصدة والموافقات وربطها بالقيود."""
+
 from django.core.exceptions import ValidationError, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Sum
