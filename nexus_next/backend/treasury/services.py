@@ -124,7 +124,7 @@ def post_treasury_transaction(transaction_id, user=None):
         # لا نقبل حركة مؤرخة في أو قبل آخر إعادة تقييم؛ وإلا سيتغير المركز
         # التاريخي بعد إقفال التقييم وتصبح القيمة الدفترية اللاحقة غير موثوقة.
         last_revaluation = TreasuryFxRevaluation.objects.filter(
-            account=source, revaluation_date__gte=doc.transaction_date,
+            account_id__in=account_ids, revaluation_date__gte=doc.transaction_date,
         ).order_by("-revaluation_date").first()
         if last_revaluation:
             raise ValidationError("تاريخ الحركة يسبق أو يساوي آخر إعادة تقييم؛ استخدم تاريخًا لاحقًا أو اعكس التقييم بإجراء معتمد.")
