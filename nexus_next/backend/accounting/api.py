@@ -395,9 +395,9 @@ class JournalEntryViewSet(AccountingViewSet):
         if request.query_params.get("exclude_closing", "true").lower() not in ("0", "false", "no"):
             lines = lines.exclude(entry_id__in=closing_ids)
 
-        cogs_ids = AccountRole.objects.filter(
+        cogs_ids = set(AccountRole.objects.filter(
             company_id=company_id, role=AccountRole.Role.COGS,
-        ).values("account_id")
+        ).values_list("account_id", flat=True))
         detail = list(lines.values(
             "account_id", "account__code", "account__name_ar",
             "entry__branch_id", "entry__branch__code", "entry__branch__name_ar",
@@ -417,7 +417,7 @@ class JournalEntryViewSet(AccountingViewSet):
             debit = row["debit"] or Decimal("0")
             credit = row["credit"] or Decimal("0")
             amount = debit - credit
-            direct = row["account_id"] in set(cogs_ids)
+            direct = row["account_id"] in cogs_ids
             total += amount
             if direct:
                 direct_total += amount
