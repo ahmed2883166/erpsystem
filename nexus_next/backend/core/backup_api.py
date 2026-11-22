@@ -14,6 +14,7 @@ from django.contrib.auth.hashers import check_password
 from django.utils import timezone
 from datetime import timedelta
 from audit.models import AuditEvent
+from companies.access import is_platform_owner
 
 from .models import BackupConfiguration, BackupRun
 from .reset_service import reset_preview, reset_operational_data
@@ -44,7 +45,7 @@ class BackupConfigurationView(APIView):
     def get(self, request):
         """عرض معاينة عملية إعادة الضبط والبيانات التي ستتأثر دون تنفيذها."""
         config = _config()
-        payload = _serialize(config, request.user.is_superuser)
+        payload = _serialize(config, (request.user.is_superuser and not is_platform_owner(request.user)))
         payload["history"] = [{
             "id": run.pk,
             "status": run.status,
@@ -57,7 +58,7 @@ class BackupConfigurationView(APIView):
 
     def post(self, request):
         """تنفيذ إعادة الضبط التشغيلية بعد التحقق من الصلاحية والتأكيد المطلوب."""
-        if not request.user.is_superuser:
+        if not request.user.is_superuser or is_platform_owner(request.user):
             raise PermissionDenied("تنفيذ النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
         config = _config()
         if not config.enabled or not config.backup_path:
@@ -112,7 +113,7 @@ class BackupConfigurationView(APIView):
     @transaction.atomic
     def patch(self, request):
         """تحديث إعدادات النسخ الاحتياطي مع الحفاظ على الحقول غير المرسلة."""
-        if not request.user.is_superuser:
+        if not request.user.is_superuser or is_platform_owner(request.user):
             raise PermissionDenied("تغيير إعدادات النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
         config = _config()
         allowed = {"backup_path", "schedule", "enabled", "daily_retention_days", "monthly_retention_months"}
@@ -179,7 +180,7 @@ class OperationalResetPreviewView(APIView):
 
     def get(self, request):
         """عرض معاينة عملية إعادة الضبط والبيانات التي ستتأثر دون تنفيذها."""
-        if not request.user.is_superuser:
+        if not request.user.is_superuser or is_platform_owner(request.user):
             raise PermissionDenied("معاينة التصفير متاحة لمدير النظام الأعلى فقط.")
         counts = reset_preview()
         latest = BackupRun.objects.filter(status=BackupRun.Status.SUCCESS).first()
@@ -217,7 +218,7 @@ class OperationalResetView(APIView):
     @transaction.atomic
     def post(self, request):
         """تنفيذ إعادة الضبط التشغيلية بعد التحقق من الصلاحية والتأكيد المطلوب."""
-        if not request.user.is_superuser:
+        if not request.user.is_superuser or is_platform_owner(request.user):
             raise PermissionDenied("تصفير الحركات متاح لمدير النظام الأعلى فقط.")
         if request.data.get("confirmation") != "تصفير الحركات":
             raise ValidationError({"confirmation": "اكتب عبارة تصفير الحركات كما هي للتأكيد."})
