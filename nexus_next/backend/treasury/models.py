@@ -134,6 +134,14 @@ class TreasuryTransaction(models.Model):
             self.transaction_currency_id, self.transaction_amount,
             self.exchange_rate, self.exchange_rate_date,
         )
+        foreign_account_currency = (
+            self.source_account.currency_code
+            if self.source_account_id else self.company.base_currency.code
+        )
+        if foreign_account_currency != self.company.base_currency.code and not all(
+            value is not None for value in fx_values
+        ):
+            raise ValidationError("حساب الخزينة بعملة أجنبية؛ يجب إدخال المبلغ الأجنبي وسعر الصرف المعتمد كاملًا.")
         if any(value is not None for value in fx_values):
             if any(value is None for value in fx_values):
                 raise ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
