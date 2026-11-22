@@ -381,8 +381,9 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         return response.Response(self.get_serializer(cycle).data)
 
     @decorators.action(detail=True, methods=("post",))
+    @transaction.atomic
     def approve(self, request, pk=None):
-        """اعتماد الطلب بعد التحقق من الدور وعدم تعارض المصالح."""
+        """اعتماد دورة المرتبات مع قفل السجل ومنع الاعتماد الذاتي."""
         cycle = self.get_object()
         self.check_company_write(cycle.company_id, roles=("admin",))
         cycle = PayrollCycle.objects.select_for_update().get(pk=cycle.pk)
