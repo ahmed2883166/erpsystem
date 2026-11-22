@@ -233,7 +233,7 @@ class StockPostingServiceTests(TestCase):
         line = adjustment.lines.get()
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(line.cost_amount, Decimal("110.0000"))
-        self.assertEqual(line.unit_cost, Decimal("18.33333333333333333333333333"))
+        self.assertEqual(line.unit_cost, Decimal("18.3333"))
         self.assertEqual((balance.quantity, balance.inventory_value), (
             Decimal("4.0000"), Decimal("40.0000"),
         ))
