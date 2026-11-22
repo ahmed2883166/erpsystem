@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal
 
+from django.db.models import Sum
+
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 
@@ -215,8 +217,8 @@ class StockPostingServiceTests(TestCase):
         clearing_totals = []
         for link in linked_entries:
             totals = link.journal_entry.lines.filter(account=clearing).aggregate(
-                debit=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
-                credit=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"),
+                debit=Sum("debit"),
+                credit=Sum("credit"),
             )
             clearing_totals.append(Decimal(totals["debit"] or 0) - Decimal(totals["credit"] or 0))
         self.assertEqual(sum(clearing_totals), Decimal("0.0000"))
