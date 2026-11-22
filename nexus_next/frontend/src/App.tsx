@@ -216,15 +216,15 @@ function VATReturnPanel({ companyId }: { companyId: number | null }) {
     {error && <div className="error-banner">{error}</div>}
     {report && <>
       <div className="asset-cashflow-totals">
-        <span>مبيعات خاضعة: {money(report.sales.taxable_base)} {report.currency}</span>
+        <span>وعاء المبيعات: {money(report.sales.taxable_base)} {report.currency}</span>
         <span>ضريبة المخرجات: {money(report.output_tax)} {report.currency}</span>
-        <span>مشتريات خاضعة: {money(report.purchases.taxable_base)} {report.currency}</span>
+        <span>وعاء المشتريات: {money(report.purchases.taxable_base)} {report.currency}</span>
         <span>ضريبة المدخلات القابلة للخصم: {money(report.input_tax)} {report.currency}</span>
         <b>صافي الضريبة المستحقة: {money(report.net_tax_payable)} {report.currency}</b>
       </div>
       <div className="asset-cashflow-totals">
-        <span>مطابقة المخرجات مع الأستاذ: {money(report.ledger_reconciliation.output_tax_difference)} {report.currency}</span>
-        <span>مطابقة المدخلات مع الأستاذ: {money(report.ledger_reconciliation.input_tax_difference)} {report.currency}</span>
+        <span>المخرجات — الفواتير: {money(report.ledger_reconciliation.output_tax_from_invoices)} / الأستاذ: {money(report.ledger_reconciliation.output_tax_gl_net_credit)} {report.currency}</span>
+        <span>المدخلات القابلة للخصم — الفواتير: {money(report.ledger_reconciliation.recoverable_input_tax_from_invoices)} / الأستاذ: {money(report.ledger_reconciliation.input_tax_gl_net_debit)} {report.currency}</span>
         <b>فرق صافي الضريبة: {money(report.ledger_reconciliation.net_tax_difference)} {report.currency}</b>
       </div>
       {(!report.ledger_reconciliation.output_account_configured || !report.ledger_reconciliation.input_account_configured) && <div className="error-banner">اربط حساب ضريبة المخرجات وحساب ضريبة المدخلات من شاشة أدوار الحسابات قبل اعتماد التسوية.</div>}
