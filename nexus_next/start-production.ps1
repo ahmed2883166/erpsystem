@@ -160,11 +160,10 @@ if ($EnableLan) {
   if (-not $HasLanHost) {
     throw "قبل تفعيل الشبكة، أضف عنوان IP أو اسم جهاز الشبكة إلى DJANGO_ALLOWED_HOSTS داخل backend/.env."
   }
-  $Bind = "0.0.0.0:8000"
-  Write-Warning "الخادم سيستمع على الشبكة المحلية. استخدم جدار حماية Windows واسمح فقط لأجهزة الشبكة الموثوقة."
+  Write-Warning "Waitress سيظل مربوطًا على 127.0.0.1 فقط. انشر الوصول من الشبكة عبر بوابة TLS عكسية موثوقة، ولا تعرض منفذ Waitress مباشرة."
 }
 
 if (-not (Test-Path $Waitress)) { throw "لم يتم تثبيت Waitress داخل بيئة Backend." }
-Write-Host "Admrail ERP v2 Production mode: http://$Bind" -ForegroundColor Green
+Write-Host "Admrail ERP v2 Production mode (internal Waitress): http://$Bind" -ForegroundColor Green
 & $Waitress "--listen=$Bind" "config.wsgi:application"
 if ($LASTEXITCODE -ne 0) { throw "توقف خادم Waitress بخطأ." }
