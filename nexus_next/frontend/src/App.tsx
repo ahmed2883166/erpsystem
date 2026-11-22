@@ -4,7 +4,7 @@
  */
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import LoginPanel from "./LoginPanel";
-import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode } from "./api";
+import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode, type ThemePreference } from "./api";
 const BackupPanel = lazy(() => import("./BackupPanel"));
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
 const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
@@ -479,6 +479,9 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
 export default function App() {
   const [authStatus, setAuthStatus] = useState<"checking" | "signed-out" | "signed-in">("checking");
   const [authRefresh, setAuthRefresh] = useState(0);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
+  const effectiveTheme = themePreference === "system" ? (systemPrefersDark ? "dark" : "light") : themePreference;
   const [active, setActive] = useState<Section>("overview");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -510,6 +513,14 @@ export default function App() {
   const current = useMemo(() => navigation.find((item) => item.id === active), [active]);
 
   useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setSystemPrefersDark(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     setAuthStatus("checking");
     authApi.current().then(async (session) => {
@@ -518,6 +529,7 @@ export default function App() {
         setAuthStatus("signed-out");
         return;
       }
+      setThemePreference(session.user?.theme_preference || "system");
       setAuthStatus("signed-in");
       const items = await api.companies();
       if (cancelled) return;
@@ -634,6 +646,17 @@ const postDraft = async (entry: Journal) => {
     return () => { cancelled = true; };
   }, [active, companyId, trialBalanceFrom, trialBalanceTo, excludeClosingEntries]);
 
+  const changeThemePreference = async (next: ThemePreference) => {
+    const previous = themePreference;
+    setThemePreference(next);
+    try {
+      await authApi.updateThemePreference(next);
+    } catch (reason) {
+      setThemePreference(previous);
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ تفضيل المظهر.");
+    }
+  };
+
   const logoutCurrentUser = async () => {
     try {
       await authApi.logout();
@@ -653,7 +676,7 @@ const postDraft = async (entry: Journal) => {
   }
 
   return (
-    <div className="app-shell" dir="rtl">
+    <div className="app-shell" dir="rtl" data-theme={effectiveTheme}>
       {sidebarOpen && <button className="mobile-scrim" aria-label="إغلاق القائمة" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand-lockup"><div className="brand-symbol">A</div><div><strong>ADMRAIL</strong><span>ENTERPRISE PLATFORM</span></div>
@@ -675,6 +698,7 @@ const postDraft = async (entry: Journal) => {
         <header className="topbar"><div className="topbar-start"><button className="menu-toggle" onClick={() => setSidebarOpen(true)} aria-label="فتح القائمة">☰</button>
           <div className="breadcrumb"><span>Admrail ERP v2</span><b>/</b>{current?.label}</div></div>
           <div className="topbar-actions"><div className="period-select"><span className="period-dot" /> {selectedCompany?.name_ar || "لا توجد شركة"} <span>⌄</span></div>
+            <label className="theme-preference" aria-label="مظهر الواجهة"><span>المظهر</span><select className="theme-select" value={themePreference} onChange={event => void changeThemePreference(event.target.value as ThemePreference)}><option value="light">فاتح</option><option value="dark">داكن</option><option value="system">حسب الجهاز</option></select></label>
             <button className="icon-button" aria-label="البحث" onClick={() => document.getElementById("global-search")?.focus()}>⌕</button>
             <a className="admin-shortcut" href="/admin/" target="_blank" rel="noreferrer">الإدارة</a>
             <button type="button" className="subtle-button" onClick={() => void logoutCurrentUser()}>تسجيل الخروج</button></div></header>
