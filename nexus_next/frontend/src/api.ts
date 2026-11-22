@@ -116,7 +116,7 @@ export const purchasingApi = {
   confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
 
   // جلب تقرير أعمار أرصدة الموردين في تاريخ القياس المحدد.
-  supplierAging: (companyId: number, asOf = "") => request<SupplierAging>(`/api/purchasing/invoices/supplier-aging/?company=${companyId}${asOf ? `&as_of=${asOf}` : ""}`),
+  supplierAging: (companyId: number, asOf = "", branchId?: number) => request<SupplierAging>(`/api/purchasing/invoices/supplier-aging/?company=${companyId}${asOf ? `&as_of=${asOf}` : ""}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب كشف حساب المورد مع رصيد أول وآخر المدة والحركات.
   supplierStatement: (companyId: number, supplierId: number, dateFrom = "", dateTo = "") => request<SupplierStatement>(`/api/purchasing/invoices/supplier-statement/?company=${companyId}&supplier=${supplierId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
 
