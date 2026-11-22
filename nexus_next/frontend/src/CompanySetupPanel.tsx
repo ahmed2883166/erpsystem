@@ -33,7 +33,6 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [profileAddress, setProfileAddress] = useState("");
   const [profilePhone, setProfilePhone] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
-  const [profileActive, setProfileActive] = useState(true);
   const [companyName, setCompanyName] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
@@ -62,7 +61,6 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
     setProfileAddress(selectedCompany.address || "");
     setProfilePhone(selectedCompany.phone || "");
     setProfileEmail(selectedCompany.email || "");
-    setProfileActive(selectedCompany.is_active !== false);
   }, [selectedCompany?.id, selectedCompany?.updated_at]);
 
   // تحديث فروع وسنوات الشركة المحددة بعد الإنشاء أو التعديل.
@@ -132,7 +130,6 @@ const createCompany = async (event: FormEvent) => {
         address: profileAddress.trim(),
         phone: profilePhone.trim(),
         email: profileEmail.trim(),
-        is_active: profileActive,
       });
       onCompanyUpdated(updated);
       setNotice("تم حفظ بيانات الشركة بنجاح.");
@@ -215,7 +212,7 @@ const createYear = async (event: FormEvent) => {
         <label>رقم الهاتف<input maxLength={40} value={profilePhone} onChange={e => setProfilePhone(e.target.value)} /></label>
         <label>البريد الإلكتروني<input type="email" maxLength={254} value={profileEmail} onChange={e => setProfileEmail(e.target.value)} /></label>
         <label className="form-wide">العنوان<textarea rows={2} value={profileAddress} onChange={e => setProfileAddress(e.target.value)} /></label>
-        <label className="form-wide"><span className="company-status-field"><input type="checkbox" checked={profileActive} onChange={e => setProfileActive(e.target.checked)} /> الشركة نشطة ويمكن استخدامها في العمليات</span></label>
+        <p className="asset-report-note form-wide">حالة الشركة: {selectedCompany.is_active === false ? "موقوفة" : "نشطة"}. تغيير الحالة له أثر على صلاحية الوصول للعمليات، لذلك لا يتم من نموذج تعديل البيانات العادية.</p>
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !profileName.trim()}>{busy ? "جارٍ حفظ البيانات…" : "حفظ بيانات الشركة"}</button></div>
         <p className="asset-report-note form-wide">الدولة والنشاط والعملة الأساسية معروضة أدناه كإعدادات تأسيسية؛ لا نغيّرها من تعديل الملف التعريفي حتى لا تتأثر المعالجة الضريبية أو الأرصدة المحاسبية القائمة.</p>
       </form>
