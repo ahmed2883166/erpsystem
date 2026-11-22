@@ -193,6 +193,12 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         fiscal_year = FiscalYear.objects.select_for_update().get(pk=validated_data["fiscal_year"].pk)
         if fiscal_year.status != FiscalYear.Status.OPEN:
             raise serializers.ValidationError({"fiscal_year": "لا يمكن إنشاء قيد داخل سنة مالية مغلقة."})
+        source_type = validated_data.get("source_type", JournalEntry.Source.MANUAL)
+        if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and JournalEntry.objects.filter(
+            company=validated_data["company"], branch=validated_data["branch"],
+            fiscal_year=fiscal_year, source_type=source_type,
+        ).exists():
+            raise serializers.ValidationError({"source_type": "يوجد بالفعل قيد افتتاح أو إقفال لهذا الفرع والسنة المالية."})
         request = self.context.get("request")
         if request and request.user.is_authenticated:
             validated_data["created_by"] = request.user
@@ -208,6 +214,14 @@ class JournalEntrySerializer(serializers.ModelSerializer):
         fiscal_year = FiscalYear.objects.select_for_update().get(pk=target_year.pk)
         if fiscal_year.status != FiscalYear.Status.OPEN:
             raise serializers.ValidationError({"fiscal_year": "لا يمكن حفظ قيد داخل سنة مالية مغلقة."})
+        target_source = validated_data.get("source_type", instance.source_type)
+        target_company = validated_data.get("company", instance.company)
+        target_branch = validated_data.get("branch", instance.branch)
+        if target_source in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and JournalEntry.objects.filter(
+            company=target_company, branch=target_branch,
+            fiscal_year=fiscal_year, source_type=target_source,
+        ).exclude(pk=instance.pk).exists():
+            raise serializers.ValidationError({"source_type": "يوجد بالفعل قيد افتتاح أو إقفال لهذا الفرع والسنة المالية."})
         for key, value in validated_data.items():
             setattr(instance, key, value)
         instance.save()
