@@ -155,3 +155,36 @@ class CompanyMembershipSerializer(serializers.ModelSerializer):
         if role == CompanyMembership.Role.ADMIN and not all_branches:
             raise serializers.ValidationError({"all_branches": "مدير الشركة يجب أن يمتلك نطاق الوصول إلى جميع الفروع."})
         return attrs
+
+
+
+class ExchangeRateSerializer(serializers.ModelSerializer):
+    company_code = serializers.CharField(source="company.code", read_only=True)
+    currency_code = serializers.CharField(source="currency.code", read_only=True)
+    base_currency_code = serializers.CharField(source="company.base_currency.code", read_only=True)
+
+    class Meta:
+        model = ExchangeRate
+        fields = ("id", "company", "company_code", "currency", "currency_code",
+                  "base_currency_code", "rate_date", "rate", "source", "notes", "created_at")
+        read_only_fields = ("created_at",)
+
+    def validate(self, attrs):
+        company = attrs.get("company", self.instance.company if self.instance else None)
+        currency = attrs.get("currency", self.instance.currency if self.instance else None)
+        rate_date = attrs.get("rate_date", self.instance.rate_date if self.instance else None)
+        rate = attrs.get("rate", self.instance.rate if self.instance else None)
+        if company and currency:
+            if currency.code == company.base_currency.code:
+                raise serializers.ValidationError({"currency": "لا يلزم تسجيل سعر صرف للعملة الأساسية للشركة."})
+            if not currency.is_active:
+                raise serializers.ValidationError({"currency": "لا يمكن استخدام عملة موقوفة."})
+        if rate is not None and rate <= 0:
+            raise serializers.ValidationError({"rate": "سعر الصرف يجب أن يكون أكبر من صفر."})
+        if company and currency and rate_date and ExchangeRate.objects.filter(
+            company=company, currency=currency, rate_date=rate_date
+        ).exists():
+            raise serializers.ValidationError({"rate_date": "يوجد سعر صرف مسجل لهذه العملة في هذا التاريخ؛ لا يمكن استبداله."})
+        if self.instance:
+            raise serializers.ValidationError("سجل سعر الصرف تاريخي؛ أضف سجلًا جديدًا بتاريخ مستقل بدل تعديل سجل سابق.")
+        return attrs
