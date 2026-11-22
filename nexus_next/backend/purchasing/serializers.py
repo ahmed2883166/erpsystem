@@ -493,6 +493,8 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         supplier = attrs.get("supplier", instance.supplier if instance else None)
+        if supplier and not supplier.is_active and not instance:
+            raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن إنشاء أمر شراء جديد له."})
         warehouse = attrs.get("warehouse", instance.warehouse if instance else None)
 
         if instance:
