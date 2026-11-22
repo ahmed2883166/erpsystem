@@ -42,8 +42,11 @@ try {
     if ($_.Name -in @(".venv", "__pycache__", ".pytest_cache", "data", "backups", "staticfiles") -or $_.Name -eq ".env") { return }
     Copy-Item -LiteralPath $_.FullName -Destination $BackendTarget -Recurse -Force
   }
-  Copy-Item -LiteralPath (Join-Path $Frontend "dist") -Destination (Join-Path $Stage "frontend\dist") -Recurse -Force
-  Copy-Item -LiteralPath $PSScriptRoot -Destination (Join-Path $Stage "scripts") -Recurse -Force
+  $FrontendTarget = Join-Path $Stage "frontend"
+  $ScriptsTarget = Join-Path $Stage "scripts"
+  New-Item -ItemType Directory -Force -Path $FrontendTarget, $ScriptsTarget | Out-Null
+  Copy-Item -LiteralPath (Join-Path $Frontend "dist") -Destination $FrontendTarget -Recurse -Force
+  Get-ChildItem -LiteralPath $PSScriptRoot -File -Force | Copy-Item -Destination $ScriptsTarget -Force
   Copy-Item -LiteralPath (Join-Path $Root "backend\.env.example") -Destination (Join-Path $BackendTarget ".env.example") -Force
 
   @'
