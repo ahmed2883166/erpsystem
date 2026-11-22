@@ -160,6 +160,15 @@ class JournalEntrySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"entry_date": "القيد الافتتاحي يجب أن يكون بتاريخ بداية السنة المالية."})
         if year and entry_date and source_type == JournalEntry.Source.CLOSING and entry_date != year.end_date:
             raise serializers.ValidationError({"entry_date": "قيد الإقفال يجب أن يكون بتاريخ نهاية السنة المالية."})
+        if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and company and branch and year:
+            duplicate_special_entry = JournalEntry.objects.filter(
+                company=company, branch=branch, fiscal_year=year, source_type=source_type,
+            )
+            if self.instance:
+                duplicate_special_entry = duplicate_special_entry.exclude(pk=self.instance.pk)
+            if duplicate_special_entry.exists():
+                label = "افتتاحي" if source_type == JournalEntry.Source.OPENING else "إقفال"
+                raise serializers.ValidationError({"source_type": f"يوجد بالفعل قيد {label} لهذا الفرع والسنة المالية."})
         if self.instance and self.instance.status != JournalEntry.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل قيد غير مسودة.")
         lines = attrs.get("lines")
