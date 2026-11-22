@@ -221,6 +221,31 @@ class AuditEventApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 1)
 
+    def test_audit_events_support_offset_pagination_with_total_count(self):
+        AuditEvent.objects.create(
+            actor=self.user, company=self.company, branch=self.branch,
+            action="update", resource="accounting/accounts/1",
+            http_method="PATCH", status_code=200, succeeded=True,
+        )
+        AuditEvent.objects.create(
+            actor=self.user, company=self.company, branch=self.branch,
+            action="action", resource="accounting/journal-entries/2/post",
+            http_method="POST", status_code=200, succeeded=True,
+        )
+        first = self.client.get("/api/audit/events/?limit=2&offset=0")
+        second = self.client.get("/api/audit/events/?limit=2&offset=2")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.data["count"], 3)
+        self.assertEqual(second.data["count"], 3)
+        self.assertEqual(len(first.data["results"]), 2)
+        self.assertEqual(len(second.data["results"]), 1)
+        self.assertNotEqual(first.data["results"][0]["id"], second.data["results"][0]["id"])
+
+    def test_audit_offset_must_be_non_negative_integer(self):
+        response = self.client.get("/api/audit/events/?offset=-1")
+        self.assertEqual(response.status_code, 400)
+
 
 class AuthenticationAndAdminAuditSignalTests(TestCase):
     def setUp(self):
