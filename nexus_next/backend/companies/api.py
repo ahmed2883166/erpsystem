@@ -81,7 +81,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
         owner = is_platform_owner(self.request.user)
         if not (owner or has_company_role(self.request.user, self.get_object().pk, ("admin",))):
             raise PermissionDenied("تعديل بيانات الشركة متاح لمالك المنصة أو مدير الشركة فقط.")
-        if not owner and "is_active" in serializer.validated_data:
+        requested_active = serializer.validated_data.get("is_active", self.get_object().is_active)
+        if not owner and requested_active != self.get_object().is_active:
             raise PermissionDenied("إيقاف الشركة أو إعادة تفعيلها من اختصاص مالك المنصة فقط.")
         serializer.save()
 
