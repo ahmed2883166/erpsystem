@@ -594,6 +594,24 @@ class CompanySetupApiTests(APITestCase):
         ).exists())
         self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
 
+    def test_platform_owner_cannot_be_added_to_company_as_operational_member(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-no-membership", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        search = self.client.get(
+            f"/api/setup/memberships/users/?company={self.company.pk}&search=platform-owner-no-membership"
+        )
+        self.assertEqual(search.status_code, 200, search.data)
+        self.assertEqual(search.data, [])
+        response = self.client.post("/api/setup/memberships/", {
+            "company": self.company.pk, "user": owner.pk, "role": "admin",
+            "all_branches": True, "is_active": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
+
     def test_platform_owner_profile_never_grants_tenant_access_even_if_superuser(self):
         from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
         Branch.objects.create(company=self.company, code="OWNER-ISOLATED", name_ar="فرع معزول")
