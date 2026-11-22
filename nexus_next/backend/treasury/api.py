@@ -10,7 +10,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import post_treasury_transaction
@@ -39,7 +39,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             from django.db.models import Q
             qs = qs.filter(Q(branch__isnull=True) | Q(branch__in=accessible_branches(self.request.user)))
         return qs
@@ -130,7 +130,7 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
         return qs
 
@@ -258,7 +258,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             from django.db.models import Q
             qs = qs.filter(Q(bank_account__branch__isnull=True) | Q(bank_account__branch__in=accessible_branches(self.request.user)))
         return qs
@@ -515,7 +515,7 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(reconciliation__company__in=accessible_companies(self.request.user))
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(models.Q(reconciliation__bank_account__branch__isnull=True) | models.Q(reconciliation__bank_account__branch__in=accessible_branches(self.request.user)))
         return qs
 
