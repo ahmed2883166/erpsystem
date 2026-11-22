@@ -78,9 +78,6 @@ function csrfToken(): string { const item = document.cookie.split("; ").find((pa
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
   const response = await fetch(path, { credentials: "same-origin", ...options, headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-CSRFToken": csrfToken() } : {}), ...options.headers } });
-  if (response.status === 403 || response.status === 401) {
-    throw new Error("يلزم تسجيل الدخول ومنحك الصلاحية المناسبة. افتح لوحة الإدارة ثم أعد المحاولة.");
-  }
   if (!response.ok) {
     let message = `تعذر تنفيذ الطلب (HTTP ${response.status}).`;
     try {
@@ -90,8 +87,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         const parts = Object.entries(body).map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join("، ") : typeof value === "string" ? value : JSON.stringify(value)}`);
         if (parts.length) message = parts.join(" | ");
       }
-    } catch { /* keep the HTTP fallback message */ }
-    throw new Error(message);
+    } catch { /* بعض أخطاء الحماية تعيد صفحة HTML بدل JSON */ }
+    if (response.status === 401 && !message) message = "انتهت جلسة الدخول. سجّل الدخول مرة أخرى.";
+    if (response.status === 403 && !message) message = "ليس لديك صلاحية لتنفيذ هذا الطلب.";
+    throw Object.assign(new Error(message), { status: response.status });
   }
   return response.json() as Promise<T>;
 }
