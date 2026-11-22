@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ("accounts", "0001_initial"),
         ("accounting", "0006_payroll_tax_payable_role"),
-        ("companies", "0001_initial"),
+        ("companies", "0003_companymembership_branch_scope"),
         ("inventory", "0007_warehouse_product_setting"),
         ("sales", "0005_customer_receipt_account"),
     ]
