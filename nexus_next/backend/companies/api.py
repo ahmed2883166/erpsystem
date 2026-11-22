@@ -62,7 +62,10 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
-        if is_platform_owner(self.request.user):\n            # Owner sees company registry metadata only; tenant ledgers remain membership-scoped.\n            return Company.objects.all().select_related("base_currency")\n        return accessible_companies(self.request.user).select_related("base_currency")
+        if is_platform_owner(self.request.user):
+            # Owner sees company registry metadata only; tenant ledgers remain membership-scoped.
+            return Company.objects.all().select_related("base_currency")
+        return accessible_companies(self.request.user).select_related("base_currency")
 
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
