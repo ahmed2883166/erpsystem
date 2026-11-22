@@ -461,11 +461,6 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند القبض غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
-    def perform_update(self, serializer):
-        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
-        self._check_write(serializer.instance.company_id)
-        raise ValidationError("تعديل سند القبض غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
-
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
