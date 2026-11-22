@@ -104,10 +104,11 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
-        qs = CompanyMembership.objects.filter(
+        qs = CompanyMembership.objects.all() if is_platform_owner(self.request.user) else CompanyMembership.objects.filter(
             company__in=accessible_companies(self.request.user)
-        ).select_related("company", "user").prefetch_related("branches")
-        if not self.request.user.is_superuser:
+        )
+        qs = qs.select_related("company", "user").prefetch_related("branches")
+        if not self.request.user.is_superuser and not is_platform_owner(self.request.user):
             qs = qs.filter(
                 Q(user=self.request.user)
                 | Q(
@@ -122,8 +123,8 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
     def _require_admin(self, company_id):
         """تنفيذ وظيفة _require_admin ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
         from rest_framework.exceptions import PermissionDenied
-        if not has_company_role(self.request.user, company_id, ("admin",)):
-            raise PermissionDenied("إدارة المستخدمين والصلاحيات متاحة لمدير الشركة فقط.")
+        if not (is_platform_owner(self.request.user) or has_company_role(self.request.user, company_id, ("admin",))):
+            raise PermissionDenied("إدارة المستخدمين والصلاحيات متاحة لمالك المنصة أو مدير الشركة فقط.")
 
     def get_object(self):
         """تنفيذ وظيفة get_object ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
