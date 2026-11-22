@@ -1,3 +1,5 @@
+"""تحقق وتحويل بيانات سياسات الاعتماد وطلبات الموافقة المتبادلة مع الواجهة."""
+
 from decimal import Decimal
 
 from rest_framework import serializers
