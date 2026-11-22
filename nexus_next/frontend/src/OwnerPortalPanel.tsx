@@ -31,6 +31,12 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [editNameAr, setEditNameAr] = useState("");
+  const [editNameEn, setEditNameEn] = useState("");
+  const [editTaxNumber, setEditTaxNumber] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
 
   const selected = companies.find(item => item.id === selectedId) || null;
   const refreshCompanies = async () => {
@@ -50,6 +56,16 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
       if (preferred) setCurrencyId(String(preferred.id));
     }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل العملات."));
   }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    setEditNameAr(selected.name_ar || "");
+    setEditNameEn(selected.name_en || "");
+    setEditTaxNumber(selected.tax_registration_number || "");
+    setEditAddress(selected.address || "");
+    setEditPhone(selected.phone || "");
+    setEditEmail(selected.email || "");
+  }, [selectedId, companies]);
 
   useEffect(() => {
     setMembers([]);
@@ -72,6 +88,25 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
       setCode(""); setName("");
       setNotice("تم إنشاء سجل الشركة. الخطوة التالية تعيين مدير شركة مستقل.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة."); }
+    finally { setBusy(false); }
+  };
+
+  const saveCompanyProfile = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected || !editNameAr.trim()) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.updateCompany(selected.id, {
+        name_ar: editNameAr.trim(),
+        name_en: editNameEn.trim(),
+        tax_registration_number: editTaxNumber.trim(),
+        address: editAddress.trim(),
+        phone: editPhone.trim(),
+        email: editEmail.trim(),
+      });
+      await refreshCompanies();
+      setNotice("تم تحديث البيانات التعريفية وبيانات التواصل. كود الشركة والدولة والنشاط والعملة الأساسية تظل ثابتة لحماية الدفاتر.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحديث بيانات الشركة."); }
     finally { setBusy(false); }
   };
 
@@ -171,6 +206,18 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
           <div className="work-panel-head"><div><h2>تعيين مدير الشركة</h2><p>اختر شركة ثم ابحث عن حساب مستخدم موجود لتعيينه مديرًا لكل فروعها.</p></div></div>
           <div className="asset-report-filters"><label>الشركة<select value={selectedId} onChange={event => setSelectedId(event.target.value ? Number(event.target.value) : "")}><option value="">اختر الشركة</option>{companies.map(row=><option key={row.id} value={row.id}>{row.name_ar} · {row.code}</option>)}</select></label></div>
           {selected && <>
+            <section className="setup-section-title">
+              <div><h3>البيانات التعريفية وبيانات التواصل</h3><p>يمكن تحديث الاسم وبيانات التواصل والرقم الضريبي دون تغيير هوية الشركة المحاسبية.</p></div>
+            </section>
+            <form className="journal-form" onSubmit={saveCompanyProfile}>
+              <label>اسم الشركة بالعربية<input required maxLength={180} value={editNameAr} onChange={event => setEditNameAr(event.target.value)} /></label>
+              <label>اسم الشركة بالإنجليزية<input maxLength={180} value={editNameEn} onChange={event => setEditNameEn(event.target.value)} /></label>
+              <label>رقم التسجيل الضريبي<input maxLength={80} value={editTaxNumber} onChange={event => setEditTaxNumber(event.target.value)} /></label>
+              <label>رقم الهاتف<input maxLength={40} value={editPhone} onChange={event => setEditPhone(event.target.value)} /></label>
+              <label>البريد الإلكتروني<input type="email" maxLength={254} value={editEmail} onChange={event => setEditEmail(event.target.value)} /></label>
+              <label>العنوان<input value={editAddress} onChange={event => setEditAddress(event.target.value)} /></label>
+              <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || !editNameAr.trim()}>{busy ? "جارٍ الحفظ…" : "حفظ بيانات الشركة"}</button></div>
+            </form>
             {selected.is_active === false && <div className="asset-report-note">الشركة موقوفة؛ أعد تفعيلها قبل تعيين مدير جديد.</div>}
             <form className="journal-form" onSubmit={event => {event.preventDefault();void searchUsers();}}>
               <label className="form-wide">اسم المستخدم أو الاسم الظاهر<input minLength={2} value={query} onChange={event => setQuery(event.target.value)} placeholder="اكتب حرفين على الأقل" /></label>
