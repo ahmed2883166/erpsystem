@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db import transaction
 from django.db.models import Q
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
@@ -87,6 +88,24 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         PurchaseOrder.objects.filter(pk=order.pk, status=PurchaseOrder.Status.DRAFT).update(
             status=PurchaseOrder.Status.CONFIRMED, confirmed_at=timezone.now()
         )
+        order.refresh_from_db()
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def cancel(self, request, pk=None):
+        """إلغاء أمر شراء قبل أي استلام فعلي مع الحفاظ على المستند وسجلّه."""
+        order = PurchaseOrder.objects.select_for_update().select_related("company").get(pk=self.get_object().pk)
+        self._check_write(order.company_id)
+        if order.status not in (PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.CONFIRMED):
+            raise ValidationError("لا يمكن إلغاء أمر شراء بدأ استلامه أو اكتمل استلامه.")
+        if order.receipts.exists() or order.lines.filter(received_quantity__gt=0).exists():
+            raise ValidationError("لا يمكن إلغاء أمر شراء له إذن استلام أو كمية مستلمة؛ استخدم مستند تسوية مستقلًا.")
+        updated = PurchaseOrder.objects.filter(
+            pk=order.pk, status__in=(PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.CONFIRMED)
+        ).update(status=PurchaseOrder.Status.CANCELLED)
+        if updated != 1:
+            raise ValidationError("تغيرت حالة أمر الشراء؛ حدّث الشاشة ثم أعد المحاولة.")
         order.refresh_from_db()
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
