@@ -8,7 +8,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role, is_platform_owner
 from sales.models import SalesInvoice
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval, FinancialApprovalRequest
 from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer, FinancialApprovalRequestSerializer
@@ -58,7 +58,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         qs = SalesInvoiceApproval.objects.filter(
             company__in=accessible_companies(self.request.user)
         ).select_related("company", "invoice", "invoice__customer", "requested_by", "decided_by", "invoice__delivery__warehouse")
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             scoped = qs
         else:
             scoped = qs.filter(
@@ -139,7 +139,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             "treasury_transaction", "treasury_transaction__source_account",
             "treasury_transaction__counter_account",
         )
-        if not self.request.user.is_superuser:
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             branches = accessible_branches(self.request.user)
             qs = qs.filter(
                 Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
