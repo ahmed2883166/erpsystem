@@ -4,7 +4,7 @@ from threading import Lock
 from time import perf_counter
 
 import psutil
-from django.db import connection
+from django.db import DatabaseError, connection
 
 
 _EVENTS = deque(maxlen=250)
@@ -61,7 +61,7 @@ def _postgres_resources():
             "database_size_mb": round(database_bytes / (1024 * 1024), 2),
             "connection_usage_percent": round(total * 100 / maximum, 2) if maximum else 0,
         }
-    except Exception:
+    except DatabaseError:
         # Monitoring must never make normal application requests fail.
         return {"available": False, "reason": "database_metrics_unavailable"}
 
