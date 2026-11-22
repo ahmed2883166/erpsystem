@@ -746,3 +746,47 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
   .period-select{display:none}
   .breadcrumb{font-size:9px}
 }
+
+
+/* توحيد النماذج التشغيلية والجداول في المبيعات والمشتريات والمخزون. */
+.inventory-form,.customer-form{gap:14px;padding:18px;border-radius:12px;background:#f8fafd;border-color:#e4eaf2}
+.inventory-form label,.customer-form label,.journal-form label{line-height:1.55}
+.inventory-form input,.inventory-form select,.inventory-form textarea,
+.customer-form input,.customer-form select,.customer-form textarea,
+.journal-form input,.journal-form select{min-height:42px;border-radius:9px;border-color:#d8e1ed;padding:9px 11px;font-size:12px;transition:border-color .15s ease,box-shadow .15s ease}
+.inventory-form input:focus,.inventory-form select:focus,.inventory-form textarea:focus,
+.customer-form input:focus,.customer-form select:focus,.customer-form textarea:focus,
+.journal-form input:focus,.journal-form select:focus{border-color:#6d9de4;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.inventory-form-row{background:#fff;border-color:#e2e9f2;border-radius:11px;padding:14px}
+.inventory-form-actions,.customer-form-actions{align-items:center;flex-wrap:wrap}
+.customer-toolbar{border-color:#e3eaf3;background:#f7f9fc;border-radius:11px}
+.customer-toolbar input{min-height:40px}
+.asset-report-filters input,.asset-report-filters select{min-height:40px;border-radius:9px;border-color:#d8e1ed}
+.data-table-wrap{overscroll-behavior-x:contain}
+.data-table-wrap td button,.data-table-wrap td .subtle-button{white-space:nowrap}
+@media(max-width:760px){
+  .inventory-form,.customer-form{padding:14px;gap:11px}
+  .inventory-form-row{gap:9px;padding:11px}
+  .inventory-form-actions,.customer-form-actions{width:100%}
+}
+@media(max-width:460px){
+  .inventory-form,.customer-form{grid-template-columns:minmax(0,1fr)}
+  .inventory-form .inventory-wide,.customer-form .customer-form-wide{grid-column:1}
+  .inventory-form-actions,.customer-form-actions{flex-direction:column;align-items:stretch}
+  .inventory-form-actions button,.customer-form-actions button{width:100%}
+}
+/* إكمال دعم الوضع الداكن لكل النماذج التشغيلية. */
+[data-theme="dark"] .inventory-form,[data-theme="dark"] .customer-form,
+[data-theme="dark"] .customer-toolbar,[data-theme="dark"] .inventory-form-row,
+[data-theme="dark"] .customer-statement,[data-theme="dark"] .asset-report-filters label{background:#172337;border-color:#34465f;color:#dce6f4}
+[data-theme="dark"] .inventory-form-row{background:#1d2d44}
+[data-theme="dark"] .inventory-form label,[data-theme="dark"] .customer-form label,
+[data-theme="dark"] .customer-statement-filters label,[data-theme="dark"] .asset-report-filters label{color:#aebdd1}
+[data-theme="dark"] .inventory-form input,[data-theme="dark"] .inventory-form select,
+[data-theme="dark"] .inventory-form textarea,[data-theme="dark"] .customer-form input,
+[data-theme="dark"] .customer-form select,[data-theme="dark"] .customer-form textarea,
+[data-theme="dark"] .customer-toolbar input,[data-theme="dark"] .asset-report-filters input,
+[data-theme="dark"] .asset-report-filters select{background:#111d30!important;border-color:#3a4d68!important;color:#e6edf7!important}
+[data-theme="dark"] .inventory-line-editor .data-table-wrap{background:#172337;border-color:#34465f}
+[data-theme="dark"] .inventory-line-editor th{background:#22334b;color:#bdcbe0}
+[data-theme="dark"] .inventory-line-editor td{border-color:#2b3d56;color:#d2deed}
