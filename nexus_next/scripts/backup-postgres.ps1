@@ -54,7 +54,7 @@ if (-not $PgDump -or -not $PgRestore) {
 $DailyRoot = Join-Path $BackupRoot "daily"
 $MonthlyRoot = Join-Path $BackupRoot "monthly"
 New-Item -ItemType Directory -Force -Path $DailyRoot, $MonthlyRoot | Out-Null
-$DailyFile = Join-Path $DailyRoot "nexus-$Tag.dump"
+$DailyFile = Join-Path $DailyRoot "nexus-$Tag.dump"\n$EncryptedFile = "$DailyFile.nexusenc"
 $env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
 try {
     & $PgDumpPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --dbname=$Values["POSTGRES_DB"] --format=custom --no-password --file=$DailyFile
@@ -72,9 +72,9 @@ try {
         $Settings = & $Python manage.py shell -c "from core.models import BackupConfiguration; c=BackupConfiguration.objects.first(); print(f'{c.daily_retention_days},{c.monthly_retention_months}' if c else '30,12')"
         if ($LASTEXITCODE -eq 0 -and $Settings -match "^(\d+),(\d+)$") { $DailyKeep=[int]$Matches[1]; $MonthlyKeep=[int]$Matches[2] }
     } finally { Pop-Location }
-    Get-ChildItem $DailyRoot -Filter "nexus-*.dump" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$DailyKeep) } | Remove-Item -Force
-    Get-ChildItem $MonthlyRoot -Filter "nexus-*.dump" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddMonths(-$MonthlyKeep) } | Remove-Item -Force
-    Write-Output "Backup verified: $DailyFile"
+    Get-ChildItem $DailyRoot -Filter "nexus-*.dump.nexusenc" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$DailyKeep) } | Remove-Item -Force
+    Get-ChildItem $MonthlyRoot -Filter "nexus-*.dump.nexusenc" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddMonths(-$MonthlyKeep) } | Remove-Item -Force
+    Write-Output "Encrypted backup verified: $EncryptedFile"
 } finally {
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 }
