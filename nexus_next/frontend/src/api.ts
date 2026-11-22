@@ -726,6 +726,8 @@ export const hrApi = {
   createEmployeeComponent: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeComponent>("/api/hr/employee-components/", {method:"POST",body:JSON.stringify(payload)}); },
   // اعتماد طلب إجازة الموظف.
   approveLeave: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrLeaveRequest>(`/api/hr/leave-requests/${id}/approve/`, {method:"POST"}); },
+  // رفض طلب إجازة معلق.
+  rejectLeave: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrLeaveRequest>(`/api/hr/leave-requests/${id}/reject/`, {method:"POST",body:"{}"}); },
   // جلب سجلات الحضور والانصراف للشركة.
   attendance: (companyId:number) => request<HrAttendance[]>(`/api/hr/attendance/?company=${companyId}&ordering=-work_date`),
   // إنشاء سجل حضور ليوم عمل.
