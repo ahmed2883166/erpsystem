@@ -236,6 +236,22 @@ class PayrollRuleSetSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"configuration": "قسم tax يجب أن يكون كائنًا."})
             if "annual_personal_exemption" in tax:
                 numeric(tax["annual_personal_exemption"], "tax.annual_personal_exemption", minimum=Decimal("0"))
+            if "annual_bracket_groups" in tax:
+                groups = tax["annual_bracket_groups"]
+                if not isinstance(groups, list) or not groups:
+                    raise serializers.ValidationError({"configuration": "مجموعات شرائح الضريبة يجب أن تكون قائمة غير فارغة."})
+                previous_income_max = Decimal("0")
+                for group_index, group in enumerate(groups):
+                    if not isinstance(group, dict) or "brackets" not in group or not isinstance(group["brackets"], list) or not group["brackets"]:
+                        raise serializers.ValidationError({"configuration": f"مجموعة الشرائح رقم {group_index + 1} غير مكتملة."})
+                    income_max = group.get("income_max")
+                    if income_max not in (None, ""):
+                        income_limit = numeric(income_max, f"tax.annual_bracket_groups[{group_index}].income_max", minimum=Decimal("0.0001"))
+                        if income_limit <= previous_income_max:
+                            raise serializers.ValidationError({"configuration": "حدود اختيار مجموعات شرائح الضريبة يجب أن تكون تصاعدية."})
+                        previous_income_max = income_limit
+                    elif group_index != len(groups) - 1:
+                        raise serializers.ValidationError({"configuration": "مجموعة الدخل المفتوحة يجب أن تكون الأخيرة."})
             if "annual_brackets" in tax:
                 brackets = tax["annual_brackets"]
                 if not isinstance(brackets, list) or not brackets:
