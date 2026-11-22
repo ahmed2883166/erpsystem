@@ -54,14 +54,12 @@ def calculate_realized_fx(direction, carrying_base_amount, settlement_base_amoun
     carrying = _positive(carrying_base_amount, "carrying_base_amount")
     settled = _positive(settlement_base_amount, "settlement_base_amount")
     difference = settled - carrying
-    gain = difference if (
-        (direction == "receivable" and difference > 0)
-        or (direction == "payable" and difference < 0)
-    ) else ZERO
-    loss = -difference if (
-        (direction == "receivable" and difference < 0)
-        or (direction == "payable" and difference > 0)
-    ) else ZERO
+    if direction == "receivable":
+        gain = difference if difference > 0 else ZERO
+        loss = -difference if difference < 0 else ZERO
+    else:
+        gain = -difference if difference < 0 else ZERO
+        loss = difference if difference > 0 else ZERO
     return (
         gain.quantize(FOUR_PLACES, rounding=ROUND_HALF_UP),
         loss.quantize(FOUR_PLACES, rounding=ROUND_HALF_UP),
