@@ -65,3 +65,37 @@ class SessionAuthenticationTests(TestCase):
         )
         self.assertEqual(logged_out.status_code, 200, logged_out.json())
         self.assertFalse(client.get("/api/auth/session/").json()["authenticated"])
+
+
+class UserThemePreferenceTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="theme-user", password="strong-theme-password",
+        )
+        self.client.force_login(self.user)
+
+    def test_theme_preference_is_saved_on_the_authenticated_user(self):
+        response = self.client.patch(
+            "/api/auth/preferences/",
+            data=json.dumps({"theme_preference": "dark"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.theme_preference, "dark")
+        self.assertEqual(response.json()["theme_preference"], "dark")
+
+    def test_invalid_theme_preference_is_rejected(self):
+        response = self.client.patch(
+            "/api/auth/preferences/",
+            data=json.dumps({"theme_preference": "company-wide-dark"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.theme_preference, "system")
+
+    def test_theme_preference_is_returned_in_the_current_session(self):
+        response = self.client.get("/api/auth/session/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["theme_preference"], "system")
