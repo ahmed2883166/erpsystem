@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("accounting", "0008_merge_fx_and_account_roles"),
+        ("accounting", "0008_account_role_fx_roles"),
         ("accounts", "0001_initial"),
         ("companies", "0003_companymembership_branch_scope"),
         ("purchasing", "0006_purchase_fx_snapshots"),
