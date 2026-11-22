@@ -347,6 +347,19 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(aging.data["totals"]["total_due"], "178.0000")
         self.assertEqual(aging.data["suppliers"][0]["invoices"][0]["overdue_days"], 15)
 
+        branch_aging = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-25", "branch": self.branch.pk},
+        )
+        self.assertEqual(branch_aging.status_code, 200, branch_aging.data)
+        self.assertEqual(branch_aging.data["totals"]["total_due"], "178.0000")
+
+        forbidden_branch = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-25", "branch": 999999},
+        )
+        self.assertEqual(forbidden_branch.status_code, 403)
+
     def test_purchase_order_supports_partial_receipts_and_blocks_over_receipt(self):
         order_response = self.client.post("/api/purchasing/orders/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
