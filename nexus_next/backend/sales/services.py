@@ -203,7 +203,7 @@ def post_customer_receipt(receipt_id, user):
             invoice=invoice, status=CustomerReceipt.Status.POSTED,
             receipt_date__gt=receipt.receipt_date,
         ).exists() or FxSubledgerRevaluation.objects.filter(
-            sales_invoice=invoice, revaluation_date__gt=receipt.receipt_date,
+            sales_invoice=invoice, revaluation_date__gte=receipt.receipt_date,
         ).exists():
             raise ValidationError("لا يمكن ترحيل تحصيل بتاريخ يسبق حركة تحصيل أو إعادة تقييم مرحّلة.")
         remaining_foreign, historical_remaining, current_remaining = open_fx_invoice_balances(
