@@ -811,25 +811,23 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__company_id=company_id,
             entry__branch__in=visible_branches,
         )
+        branch_ids = list(visible_branches.values_list("pk", flat=True))
         fiscal_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
         ).order_by("-start_date").first()
-        has_fiscal_year_opening = bool(fiscal_year and JournalEntry.objects.filter(
-            company_id=company_id, fiscal_year=fiscal_year,
-            status=JournalEntry.Status.POSTED,
-            source_type=JournalEntry.Source.OPENING,
-            entry_date__lte=date_from, branch__in=visible_branches,
-        ).exists())
-        opening_scope = Q(entry__entry_date__lt=date_from)
-        if has_fiscal_year_opening:
-            # The posted opening journal replaces the prior-year carry-forward
-            # for this fiscal year; include it once and only include this year's
-            # movements in the brought-forward balance.
-            opening_scope &= Q(entry__entry_date__gte=fiscal_year.start_date)
-        opening_lines = base.filter(
-            opening_scope
-            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        snapshot_branch_ids = set()
+        if fiscal_year:
+            snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_from, branch_id__in=branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        opening_scope = _branch_aware_opening_filter(
+            branch_ids, snapshot_branch_ids, date_from,
+            fiscal_year.start_date if fiscal_year else date_from,
         )
+        opening_lines = base.filter(opening_scope)
         opening_totals = opening_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         opening_balance = (opening_totals["debit"] or Decimal("0")) - (opening_totals["credit"] or Decimal("0"))
         period_lines = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
@@ -874,18 +872,19 @@ class JournalEntryViewSet(AccountingViewSet):
         equity_fiscal_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
         ).order_by("-start_date").first()
-        has_equity_opening = bool(equity_fiscal_year and JournalEntry.objects.filter(
-            company_id=company_id, fiscal_year=equity_fiscal_year,
-            status=JournalEntry.Status.POSTED,
-            source_type=JournalEntry.Source.OPENING,
-            entry_date__lte=date_from, branch__in=visible_branches,
-        ).exists())
-        opening_filter = (
-            Q(entry__entry_date__lt=date_from)
-            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        equity_branch_ids = list(visible_branches.values_list("pk", flat=True))
+        equity_snapshot_branch_ids = set()
+        if equity_fiscal_year:
+            equity_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=equity_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_from, branch_id__in=equity_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        opening_filter = _branch_aware_opening_filter(
+            equity_branch_ids, equity_snapshot_branch_ids, date_from,
+            equity_fiscal_year.start_date if equity_fiscal_year else date_from,
         )
-        if has_equity_opening:
-            opening_filter &= Q(entry__entry_date__gte=equity_fiscal_year.start_date)
         movement_filter = (
             Q(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to)
             & ~Q(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
@@ -1007,31 +1006,35 @@ class JournalEntryViewSet(AccountingViewSet):
         opening_fiscal_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
         ).order_by("-start_date").first()
-        has_opening_snapshot = bool(opening_fiscal_year and JournalEntry.objects.filter(
-            company_id=company_id, fiscal_year=opening_fiscal_year,
-            status=JournalEntry.Status.POSTED,
-            source_type=JournalEntry.Source.OPENING,
-            entry_date__lte=date_from, branch__in=visible_branches,
-        ).exists())
-        opening_balance_filter = (
-            Q(entry__entry_date__lt=date_from)
-            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        cash_flow_branch_ids = list(visible_branches.values_list("pk", flat=True))
+        opening_snapshot_branch_ids = set()
+        if opening_fiscal_year:
+            opening_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=opening_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_from, branch_id__in=cash_flow_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        opening_balance_filter = _branch_aware_opening_filter(
+            cash_flow_branch_ids, opening_snapshot_branch_ids, date_from,
+            opening_fiscal_year.start_date if opening_fiscal_year else date_from,
         )
-        if has_opening_snapshot:
-            opening_balance_filter &= Q(entry__entry_date__gte=opening_fiscal_year.start_date)
 
         closing_fiscal_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=date_to, end_date__gte=date_to
         ).order_by("-start_date").first()
-        has_closing_snapshot = bool(closing_fiscal_year and JournalEntry.objects.filter(
-            company_id=company_id, fiscal_year=closing_fiscal_year,
-            status=JournalEntry.Status.POSTED,
-            source_type=JournalEntry.Source.OPENING,
-            entry_date__lte=date_to, branch__in=visible_branches,
-        ).exists())
-        closing_balance_filter = Q(entry__entry_date__lte=date_to)
-        if has_closing_snapshot:
-            closing_balance_filter &= Q(entry__entry_date__gte=closing_fiscal_year.start_date)
+        closing_snapshot_branch_ids = set()
+        if closing_fiscal_year:
+            closing_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=closing_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_to, branch_id__in=cash_flow_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        closing_balance_filter = _branch_aware_balance_filter(
+            cash_flow_branch_ids, closing_snapshot_branch_ids, date_to,
+            closing_fiscal_year.start_date if closing_fiscal_year else date_to,
+        )
         role_balance_rows = {
             row["account_id"]: row
             for row in JournalLine.objects.filter(
