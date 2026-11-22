@@ -88,6 +88,7 @@ class StockPostingServiceTests(TestCase):
             destination=self.warehouse, quantity="10", unit_cost="5",
         )
         post_stock_movement(receipt.pk, self.user)
+        receipt.refresh_from_db()
 
         issue = self._movement(
             "ISS-001", StockMovement.MovementType.ISSUE,
