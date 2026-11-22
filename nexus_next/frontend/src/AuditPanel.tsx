@@ -18,6 +18,9 @@ export default function AuditPanel({ companyId }: { companyId: number | null }) 
   const [action, setAction] = useState<AuditAction>("");
   const [items, setItems] = useState<AuditEvent[]>([]);
   const [count, setCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 50;
+  const pageCount = Math.max(1, Math.ceil(count / pageSize));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -31,7 +34,7 @@ useEffect(() => {
     }
     setBusy(true);
     setError("");
-    api.auditEvents(companyId, from, to, action)
+    api.auditEvents(companyId, from, to, action, pageSize, (page - 1) * pageSize)
       .then(result => {
         if (!cancelled) {
           setItems(result.results);
@@ -47,7 +50,7 @@ useEffect(() => {
       })
       .finally(() => { if (!cancelled) setBusy(false); });
     return () => { cancelled = true; };
-  }, [companyId, from, to, action]);
+  }, [companyId, from, to, action, page]);
 
   // تنسيق وقت الحدث للعرض بالتنسيق المحلي العربي.
 const dateTime = (value: string) => new Date(value).toLocaleString("ar-EG", {
@@ -76,14 +79,14 @@ const resourceLabel = (resource: string) => {
     {!companyId && <div className="empty-state">اختر الشركة لعرض سجل عملياتها.</div>}
     {companyId && <>
       <div className="asset-report-filters audit-filters">
-        <label>من تاريخ<input type="date" value={from} max={to} onChange={event => setFrom(event.target.value)} /></label>
-        <label>إلى تاريخ<input type="date" value={to} min={from} onChange={event => setTo(event.target.value)} /></label>
-        <label>نوع العملية<select value={action} onChange={event => setAction(event.target.value as AuditAction)}>
+        <label>من تاريخ<input type="date" value={from} max={to} onChange={event => { setFrom(event.target.value); setPage(1); }} /></label>
+        <label>إلى تاريخ<input type="date" value={to} min={from} onChange={event => { setTo(event.target.value); setPage(1); }} /></label>
+        <label>نوع العملية<select value={action} onChange={event => { setAction(event.target.value as AuditAction); setPage(1); }}>
           <option value="">كل العمليات</option>
           <option value="create">إنشاء</option><option value="update">تعديل</option>
           <option value="delete">حذف</option><option value="action">إجراء / ترحيل / اعتماد</option>
         </select></label>
-        <div className="audit-count">{busy ? "جارٍ التحميل…" : count.toLocaleString("ar-EG") + " سجل"}</div>
+        <div className="audit-count">{busy ? "جارٍ التحميل…" : count.toLocaleString("ar-EG") + " سجل إجمالي"}</div>
       </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="data-table-wrap">
@@ -101,6 +104,14 @@ const resourceLabel = (resource: string) => {
             {!busy && !items.length && !error && <tr><td colSpan={8}>لا توجد عمليات مسجلة في الفترة المحددة أو لا تتوفر صلاحية عرض السجل.</td></tr>}
           </tbody>
         </table>
+      </div>
+      <div className="table-pagination" aria-label="التنقل بين صفحات سجل التدقيق">
+        <span>عرض {(count ? (page - 1) * pageSize + 1 : 0).toLocaleString("ar-EG")}–{Math.min(page * pageSize, count).toLocaleString("ar-EG")} من {count.toLocaleString("ar-EG")}</span>
+        <div className="table-pagination-actions">
+          <button type="button" className="secondary-button" disabled={busy || page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>السابق</button>
+          <span>صفحة {page.toLocaleString("ar-EG")} من {pageCount.toLocaleString("ar-EG")}</span>
+          <button type="button" className="secondary-button" disabled={busy || page >= pageCount} onClick={() => setPage(value => Math.min(pageCount, value + 1))}>التالي</button>
+        </div>
       </div>
       <p className="asset-report-note">لا يسجل النظام محتوى الطلبات أو كلمات المرور أو بيانات الفواتير داخل سجل التدقيق. السجلات للعرض فقط ولا يمكن تعديلها أو حذفها من واجهة النظام.</p>
     </>}
