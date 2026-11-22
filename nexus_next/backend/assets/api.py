@@ -276,13 +276,11 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         from collections import defaultdict
         from decimal import Decimal
 
-        assets = self._report_assets(request).filter(
-            acquisition_date__lte=request.query_params.get("as_of", timezone.localdate())
-        ).select_related(
-            "asset_account", "accumulated_depreciation_account", "depreciation_expense_account"
-        ).prefetch_related("depreciations")
         as_of_raw = request.query_params.get("as_of")
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
+        assets = self._report_assets(request).select_related(
+            "asset_account", "accumulated_depreciation_account", "depreciation_expense_account"
+        ).prefetch_related("depreciations")
         date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
         date_from = dateparse.parse_date(date_from_raw) if date_from_raw else as_of.replace(month=1, day=1)
         date_to = dateparse.parse_date(date_to_raw) if date_to_raw else as_of
