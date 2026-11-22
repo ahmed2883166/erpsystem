@@ -225,7 +225,6 @@ def post_customer_receipt(receipt_id, user):
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         carrying_amount = settlement.carrying_base_amount
-        current_gain, current_loss = settlement.realized_gain, settlement.realized_loss
         unrealized_adjustment = carrying_amount - historical_carrying
     else:
         if any(value is not None for value in (
@@ -241,7 +240,7 @@ def post_customer_receipt(receipt_id, user):
             raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
         carrying_amount = receipt.amount
         historical_carrying = receipt.amount
-        current_gain = current_loss = unrealized_adjustment = Decimal("0")
+        unrealized_adjustment = Decimal("0")
         realized_gain = realized_loss = Decimal("0")
 
     receivable = _account(receipt.company, AccountRole.Role.ACCOUNTS_RECEIVABLE)
