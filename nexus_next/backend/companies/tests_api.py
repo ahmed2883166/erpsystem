@@ -558,3 +558,34 @@ class CompanySetupApiTests(APITestCase):
         response = self.client.delete(f"/api/setup/companies/{self.company.pk}/")
         self.assertEqual(response.status_code, 400, response.data)
         self.assertTrue(Company.objects.filter(pk=self.company.pk).exists())
+
+
+    def test_platform_owner_can_assign_company_admin_without_becoming_company_member(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-assign", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        company_admin = get_user_model().objects.create_user(
+            username="new-company-admin", password="test-password"
+        )
+        self.client.force_authenticate(owner)
+        response = self.client.post("/api/setup/memberships/", {
+            "company": self.company.pk,
+            "user": company_admin.pk,
+            "role": "admin",
+            "all_branches": True,
+            "is_active": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(CompanyMembership.objects.filter(
+            user=company_admin, company=self.company, role="admin", is_active=True
+        ).exists())
+        self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
+
+    def test_platform_owner_profile_does_not_grant_company_ledger_membership(self):
+        from .access import accessible_companies
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-no-ledger", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.assertFalse(accessible_companies(owner).exists())
