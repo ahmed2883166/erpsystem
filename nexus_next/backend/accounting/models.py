@@ -312,7 +312,9 @@ class JournalLine(models.Model):
             if approved_rate.rate != self.exchange_rate:
                 raise ValidationError("سعر الصرف المثبّت لا يطابق سجل السعر المعتمد في نفس التاريخ.")
         base_amount = self.debit if self.debit > 0 else self.credit
-        expected = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        currency_places = company.base_currency.decimal_places
+        quantum = Decimal("1").scaleb(-currency_places)
+        expected = (self.transaction_amount * self.exchange_rate).quantize(quantum, rounding=ROUND_HALF_UP)
         if expected != base_amount:
             raise ValidationError(f"القيمة بالعملة الأساسية ({base_amount}) لا تطابق مبلغ العملة × سعر الصرف ({expected}).")
 
