@@ -112,9 +112,9 @@ const resourceLabel = (resource: string) => {
       <div className="table-pagination" aria-label="التنقل بين صفحات سجل التدقيق">
         <span>عرض {(count ? (page - 1) * pageSize + 1 : 0).toLocaleString("ar-EG")}–{Math.min(page * pageSize, count).toLocaleString("ar-EG")} من {count.toLocaleString("ar-EG")}</span>
         <div className="table-pagination-actions">
-          <button type="button" className="secondary-button" disabled={busy || page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>السابق</button>
+          <button type="button" className="subtle-button" disabled={busy || page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>السابق</button>
           <span>صفحة {page.toLocaleString("ar-EG")} من {pageCount.toLocaleString("ar-EG")}</span>
-          <button type="button" className="secondary-button" disabled={busy || page >= pageCount} onClick={() => setPage(value => Math.min(pageCount, value + 1))}>التالي</button>
+          <button type="button" className="subtle-button" disabled={busy || page >= pageCount} onClick={() => setPage(value => Math.min(pageCount, value + 1))}>التالي</button>
         </div>
       </div>
       <p className="asset-report-note">لا يسجل النظام محتوى الطلبات أو كلمات المرور أو بيانات الفواتير داخل سجل التدقيق. السجلات للعرض فقط ولا يمكن تعديلها أو حذفها من واجهة النظام.</p>
