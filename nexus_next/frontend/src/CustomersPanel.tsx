@@ -28,6 +28,10 @@ export default function CustomersPanel({ companyId }: Props) {
     name_ar: "", tax_number: "", phone: "", mobile: "", email: "",
     credit_limit: "0", payment_terms_days: "0", address: "",
   });
+  const resetForm = () => {
+    setEditingId(null);
+    setForm({ code: "", customer_type: "company", name_ar: "", tax_number: "", phone: "", mobile: "", email: "", credit_limit: "0", payment_terms_days: "0", address: "" });
+  };
 
   // تحميل قائمة العملاء للشركة الحالية وتحديث نتائج العرض.
 const refresh = async () => {
@@ -138,8 +142,8 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
       <div className="work-panel-head">
         <div><h2>سجل العملاء</h2><p>بيانات العملاء وحدود الائتمان وشروط السداد للشركة المحددة.</p></div>
         <button className="primary-button" type="button" disabled={!companyId} onClick={() => {
-          if (showForm) { setShowForm(false); setEditingId(null); }
-          else { setEditingId(null); setShowForm(true); }
+          if (showForm) { setShowForm(false); resetForm(); }
+          else { resetForm(); setShowForm(true); }
         }}>
           <span>＋</span>{showForm ? "إغلاق النموذج" : "إضافة عميل"}
         </button>
@@ -159,7 +163,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         <label>مدة السداد (يوم)<input type="number" min="0" max="32767" value={form.payment_terms_days} onChange={(event) => setForm({ ...form, payment_terms_days: event.target.value })} /></label>
         <label className="customer-form-wide">العنوان<textarea rows={2} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
         <div className="customer-form-actions customer-form-wide">
-          <button className="subtle-button" type="button" disabled={saving} onClick={() => { setShowForm(false); setEditingId(null); }}>إلغاء</button>
+          <button className="subtle-button" type="button" disabled={saving} onClick={() => { setShowForm(false); resetForm(); }}>إلغاء</button>
           <button className="primary-button" type="submit" disabled={saving}>{saving ? "جارٍ الحفظ…" : editingId ? "حفظ التعديلات" : "حفظ العميل"}</button>
         </div>
       </form>}
