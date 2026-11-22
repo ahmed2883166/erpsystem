@@ -151,6 +151,7 @@ class SalesWorkflowTests(APITestCase):
             entry_id=posted_receipt.data["journal_entry"], account=alternate_bank,
             debit=Decimal("100.0000"),
         ).exists())
+        invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         self.assertEqual(invoice["paid_total"], "100.0000")
         self.assertEqual(invoice["balance_due"], "128.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("3"))
@@ -241,7 +242,6 @@ class SalesWorkflowTests(APITestCase):
         return invoice_id
 
     def _post_customer_receipt(self, invoice_id, number, receipt_date, amount):
-        invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         response = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
             "receipt_number": number, "receipt_date": receipt_date, "method": "bank",
