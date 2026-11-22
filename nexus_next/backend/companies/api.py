@@ -194,8 +194,23 @@ class BranchViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyAdminOrReadOnly,)
 
     def get_queryset(self):
-        """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
-        return accessible_branches(self.request.user).select_related("company")
+        """تجهيز الفروع النشطة للتشغيل، والسماح لمدير الشركة بعرض الموقوفة في شاشة الإعداد فقط."""
+        if self.request.query_params.get("include_inactive") != "true":
+            return accessible_branches(self.request.user).select_related("company")
+        company_id = self.request.query_params.get("company")
+        if self.request.user.is_superuser:
+            queryset = Branch.objects.filter(company__in=accessible_companies(self.request.user))
+        else:
+            admin_company_ids = CompanyMembership.objects.filter(
+                user=self.request.user,
+                is_active=True,
+                role=CompanyMembership.Role.ADMIN,
+                company__is_active=True,
+            ).values_list("company_id", flat=True)
+            queryset = Branch.objects.filter(company_id__in=admin_company_ids, company__is_active=True)
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+        return queryset.select_related("company")
 
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
