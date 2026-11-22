@@ -1,3 +1,5 @@
+"""واجهات الأصول الثابتة للاقتناء والإهلاك والاستبعاد وربط الخزينة."""
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
