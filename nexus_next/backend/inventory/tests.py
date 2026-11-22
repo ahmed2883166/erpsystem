@@ -4,15 +4,17 @@ from decimal import Decimal
 from django.db.models import Sum
 
 from django.test import TestCase
+from rest_framework.test import APIRequestFactory, force_authenticate
 from rest_framework.exceptions import ValidationError
 
 from accounts.models import User
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry
-from companies.models import Branch, Company, Currency, FiscalYear
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 
 from .models import (
     Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse,
 )
+from .api import StockBalanceViewSet
 from .services import post_stock_movement
 
 
@@ -251,3 +253,82 @@ class StockPostingServiceTests(TestCase):
         self.assertEqual(balance.inventory_value, Decimal("14.0000"))
         self.assertEqual(issue.status, StockMovement.Status.DRAFT)
         self.assertFalse(issue.journal_links.exists())
+
+
+    def _create_inventory_journal(self, branch, number, debit, *, status=JournalEntry.Status.POSTED):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=branch, fiscal_year=self.year,
+            entry_number=number, entry_date=date(2026, 2, 1),
+            description="اختبار مطابقة المخزون", source_type=JournalEntry.Source.INVENTORY,
+            created_by=self.user,
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.inventory_account, debit=Decimal(debit), credit=Decimal("0"),
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.grni_account, debit=Decimal("0"), credit=Decimal(debit),
+        )
+        if status != JournalEntry.Status.DRAFT:
+            JournalEntry.objects.filter(pk=entry.pk).update(status=status)
+        return entry
+
+    def test_reconciliation_matches_stock_to_posted_gl_for_authorized_branch_only(self):
+        second_branch = Branch.objects.create(
+            company=self.company, code="BR-REC", name_ar="فرع المطابقة",
+        )
+        second_warehouse = Warehouse.objects.create(
+            company=self.company, branch=second_branch,
+            code="WH-REC", name_ar="مخزن المطابقة",
+        )
+        StockBalance.objects.create(
+            product=self.product, warehouse=self.warehouse,
+            quantity=Decimal("5"), inventory_value=Decimal("25"),
+            average_cost=Decimal("5"),
+        )
+        StockBalance.objects.create(
+            product=self.product, warehouse=second_warehouse,
+            quantity=Decimal("7"), inventory_value=Decimal("70"),
+            average_cost=Decimal("10"),
+        )
+        self._create_inventory_journal(self.branch, "REC-HQ", "25")
+        self._create_inventory_journal(second_branch, "REC-BR", "70")
+        # Draft entries must not affect the posted general-ledger balance.
+        self._create_inventory_journal(
+            self.branch, "REC-DRAFT", "100", status=JournalEntry.Status.DRAFT,
+        )
+        membership = CompanyMembership.objects.create(
+            user=self.user, company=self.company,
+            role=CompanyMembership.Role.VIEWER, all_branches=False,
+        )
+        membership.branches.add(second_branch)
+
+        request = APIRequestFactory().get(
+            "/api/inventory/balances/reconciliation/",
+            {"company": self.company.pk, "branch": second_branch.pk},
+        )
+        force_authenticate(request, user=self.user)
+        response = StockBalanceViewSet.as_view({"get": "reconciliation"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["stock_value"], "70")
+        self.assertEqual(response.data["gl_balance"], "70")
+        self.assertEqual(response.data["difference"], "0")
+        self.assertTrue(response.data["is_reconciled"])
+        self.assertEqual(response.data["scope_branch_ids"], [second_branch.pk])
+
+    def test_reconciliation_rejects_branch_outside_membership(self):
+        second_branch = Branch.objects.create(
+            company=self.company, code="BR-DENY", name_ar="فرع غير مصرح",
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company,
+            role=CompanyMembership.Role.VIEWER, all_branches=False,
+        )
+        request = APIRequestFactory().get(
+            "/api/inventory/balances/reconciliation/",
+            {"company": self.company.pk, "branch": second_branch.pk},
+        )
+        force_authenticate(request, user=self.user)
+        response = StockBalanceViewSet.as_view({"get": "reconciliation"})(request)
+
+        self.assertEqual(response.status_code, 403)
