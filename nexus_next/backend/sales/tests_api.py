@@ -1110,3 +1110,50 @@ class SalesWorkflowTests(APITestCase):
             {"entry_date": "2026-04-03"}, format="json",
         )
         self.assertEqual(blocked_reversal.status_code, 400, blocked_reversal.data)
+
+    def test_latest_customer_receipt_can_be_reversed_with_linked_journal(self):
+        delivery_id, line_id = self._create_delivery("DEL-REV-001")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-REV-001", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        from treasury.models import TreasuryAccount
+        bank = ChartOfAccount.objects.get(company=self.company, code="1100")
+        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-REV", name_ar="بنك العكس", currency_code="EGP")
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": "RC-REV-001", "receipt_date": "2026-03-11",
+            "method": "bank", "payment_account": bank.pk, "amount": "100",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        receipt_id = receipt.data["id"]
+        posted_receipt = self.client.post(f"/api/sales-documents/receipts/{receipt_id}/post/", {}, format="json")
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        original_entry_id = posted_receipt.data["journal_entry"]
+
+        reversed_response = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_id}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        self.assertEqual(reversed_response.data["status"], "reversed")
+        reversal_id = reversed_response.data["reversal_journal_entry"]
+        original = JournalEntry.objects.get(pk=original_entry_id)
+        reversal = JournalEntry.objects.get(pk=reversal_id)
+        self.assertEqual(original.status, JournalEntry.Status.REVERSED)
+        self.assertEqual(reversal.reversal_of_id, original.pk)
+        self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        invoice_after = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
+        self.assertEqual(invoice_after["paid_total"], "0.0000")
+        self.assertEqual(invoice_after["balance_due"], "228.0000")
+        repeated = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_id}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(repeated.status_code, 400, repeated.data)
