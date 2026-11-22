@@ -151,7 +151,6 @@ class SalesWorkflowTests(APITestCase):
             entry_id=posted_receipt.data["journal_entry"], account=alternate_bank,
             debit=Decimal("100.0000"),
         ).exists())
-        invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         self.assertEqual(invoice["paid_total"], "100.0000")
         self.assertEqual(invoice["balance_due"], "128.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("3"))
@@ -264,11 +263,11 @@ class SalesWorkflowTests(APITestCase):
         self.customer.payment_terms_days = 10
         self.customer.save(update_fields=("payment_terms_days",))
 
-        not_due = self._create_posted_invoice("AGE-0", "2026-06-25")
+        self._create_posted_invoice("AGE-0", "2026-06-25")
         one_to_thirty = self._create_posted_invoice("AGE-1", "2026-06-10")
-        thirty_one_to_sixty = self._create_posted_invoice("AGE-2", "2026-05-20")
-        sixty_one_to_ninety = self._create_posted_invoice("AGE-3", "2026-04-20")
-        over_ninety = self._create_posted_invoice("AGE-4", "2026-03-01")
+        self._create_posted_invoice("AGE-2", "2026-05-20")
+        self._create_posted_invoice("AGE-3", "2026-04-20")
+        self._create_posted_invoice("AGE-4", "2026-03-01")
         self._post_customer_receipt(one_to_thirty, "AGE-R1", "2026-06-20", "50")
         # A receipt after the report date must not reduce the historical balance.
         self._post_customer_receipt(one_to_thirty, "AGE-R2", "2026-07-02", "25")
