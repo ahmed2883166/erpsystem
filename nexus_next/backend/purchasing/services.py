@@ -293,8 +293,8 @@ def post_supplier_payment(payment_id, user):
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
     ]
-    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN) if current_gain or unrealized_adjustment < 0 else None
-    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS) if current_loss or unrealized_adjustment > 0 else None
+    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN) if realized_gain else None
+    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS) if realized_loss else None
     unrealized_gain = _account(payment.company, AccountRole.Role.UNREALIZED_FX_GAIN) if unrealized_adjustment < 0 else None
     unrealized_loss = _account(payment.company, AccountRole.Role.UNREALIZED_FX_LOSS) if unrealized_adjustment > 0 else None
     used_ids = {payable.pk, payment_account.pk}
@@ -303,17 +303,14 @@ def post_supplier_payment(payment_id, user):
             raise ValidationError("حسابات فروق العملة يجب أن تكون مستقلة عن الموردين والنقدية.")
         if account:
             used_ids.add(account.pk)
-    if current_gain:
-        journal_lines.append(JournalLine(account=gain, description="فرق سداد محقق منذ آخر تقييم", debit=0, credit=current_gain))
-    if current_loss:
-        journal_lines.append(JournalLine(account=loss, description="خسارة سداد محققة منذ آخر تقييم", debit=current_loss, credit=0))
+    if realized_gain:
+        journal_lines.append(JournalLine(account=gain, description="أرباح فروق عملة محققة على أساس التكلفة التاريخية", debit=0, credit=realized_gain))
+    if realized_loss:
+        journal_lines.append(JournalLine(account=loss, description="خسائر فروق عملة محققة على أساس التكلفة التاريخية", debit=realized_loss, credit=0))
     if unrealized_adjustment > 0:
-        journal_lines.append(JournalLine(account=loss, description="إعادة تصنيف خسارة العملة إلى محققة", debit=unrealized_adjustment, credit=0))
-        journal_lines.append(JournalLine(account=unrealized_loss, description="عكس خسارة إعادة تقييم غير محققة عند السداد", debit=0, credit=unrealized_adjustment))
+        journal_lines.append(JournalLine(account=unrealized_loss, description="عكس خسارة إعادة التقييم غير المحققة عند السداد", debit=0, credit=unrealized_adjustment))
     elif unrealized_adjustment < 0:
-        released_gain = -unrealized_adjustment
-        journal_lines.append(JournalLine(account=unrealized_gain, description="عكس ربح إعادة تقييم غير محقق عند السداد", debit=released_gain, credit=0))
-        journal_lines.append(JournalLine(account=gain, description="إعادة تصنيف ربح العملة إلى محقق", debit=0, credit=released_gain))
+        journal_lines.append(JournalLine(account=unrealized_gain, description="عكس ربح إعادة التقييم غير المحقق عند السداد", debit=-unrealized_adjustment, credit=0))
 
     entry = JournalEntry.objects.create(
         company=payment.company, branch=branch, fiscal_year=year,
