@@ -21,7 +21,7 @@ from .serializers import (
     LeaveRequestSerializer, EmployeeSalaryHistorySerializer, PayrollComponentSerializer, PayrollCycleSerializer,
     PayrollResultSerializer, PayrollRuleSetSerializer,
 )
-from .services import calculate_payroll_cycle, post_payroll_cycle, prepare_payroll_payment, complete_payroll_payment
+from .services import calculate_payroll_cycle, post_payroll_cycle, prepare_payroll_payment, complete_payroll_payment, cancel_payroll_payment_preparation
 
 
 class CompanyScopedViewSet(viewsets.ModelViewSet):
@@ -445,6 +445,21 @@ class PayrollCycleViewSet(CompanyScopedViewSet):
         self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
         try:
             result = complete_payroll_payment(cycle.pk, request.user)
+        except Exception as exc:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            if isinstance(exc, DjangoValidationError):
+                raise ValidationError(exc.messages) from exc
+            raise
+        return response.Response(result)
+
+
+    @decorators.action(detail=True, methods=("post",))
+    def cancel_payment_preparation(self, request, pk=None):
+        """إلغاء إعداد الصرف المسودة وإعادة الدورة إلى حالة مستحقات مرحلة."""
+        cycle = self.get_object()
+        self.check_company_write(cycle.company_id, roles=("admin", "accountant"))
+        try:
+            result = cancel_payroll_payment_preparation(cycle.pk, request.user)
         except Exception as exc:
             from django.core.exceptions import ValidationError as DjangoValidationError
             if isinstance(exc, DjangoValidationError):
