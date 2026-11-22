@@ -50,12 +50,33 @@ class BranchSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at",)
 
     def validate(self, attrs):
-        """منع تغيير هوية الفرع أو نقله بعد إنشائه مع السماح بتحديث بياناته التشغيلية."""
+        """منع تغيير هوية الفرع والتحقق من تفرد الكود والفرع الرئيسي قبل الحفظ."""
+        company = attrs.get("company", self.instance.company if self.instance else None)
+        code = attrs.get("code", self.instance.code if self.instance else None)
         if self.instance:
             if "company" in attrs and attrs["company"].pk != self.instance.company_id:
                 raise serializers.ValidationError({"company": "لا يمكن نقل فرع قائم إلى شركة أخرى."})
             if "code" in attrs and attrs["code"] != self.instance.code:
                 raise serializers.ValidationError({"code": "كود الفرع ثابت بعد إنشائه حفاظًا على المراجع والسجلات."})
+
+        if company and code:
+            duplicate_code = Branch.objects.filter(company=company, code=code)
+            if self.instance:
+                duplicate_code = duplicate_code.exclude(pk=self.instance.pk)
+            if duplicate_code.exists():
+                raise serializers.ValidationError({"code": "كود الفرع مستخدم بالفعل داخل هذه الشركة."})
+
+        is_head_office = attrs.get(
+            "is_head_office", self.instance.is_head_office if self.instance else False
+        )
+        if company and is_head_office:
+            another_head_office = Branch.objects.filter(company=company, is_head_office=True)
+            if self.instance:
+                another_head_office = another_head_office.exclude(pk=self.instance.pk)
+            if another_head_office.exists():
+                raise serializers.ValidationError({
+                    "is_head_office": "يوجد فرع رئيسي محدد بالفعل لهذه الشركة."
+                })
         return attrs
 
 
@@ -73,6 +94,15 @@ class FiscalYearSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "company": "لا يمكن نقل سنة مالية قائمة إلى شركة أخرى؛ أنشئ سنة مستقلة للشركة المطلوبة."
             })
+
+        company = attrs.get("company", self.instance.company if self.instance else None)
+        name = attrs.get("name", self.instance.name if self.instance else None)
+        if company and name:
+            duplicate_name = FiscalYear.objects.filter(company=company, name=name)
+            if self.instance:
+                duplicate_name = duplicate_name.exclude(pk=self.instance.pk)
+            if duplicate_name.exists():
+                raise serializers.ValidationError({"name": "اسم السنة المالية مستخدم بالفعل لهذه الشركة."})
 
         start_date = attrs.get("start_date", self.instance.start_date if self.instance else None)
         end_date = attrs.get("end_date", self.instance.end_date if self.instance else None)
