@@ -22,6 +22,10 @@ export default function SuppliersPanel({ companyId }: Props) {
     name_ar: "", tax_number: "", phone: "", mobile: "", email: "",
     credit_limit: "0", payment_terms_days: "0", address: "",
   });
+  const resetForm = () => {
+    setEditingId(null);
+    setForm({ code: "", supplier_type: "company", name_ar: "", tax_number: "", phone: "", mobile: "", email: "", credit_limit: "0", payment_terms_days: "0", address: "" });
+  };
 
   // تحميل قائمة الموردين للشركة الحالية وتحديث نتائج العرض.
 const refresh = async () => {
@@ -82,8 +86,8 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
       <div className="work-panel-head">
         <div><h2>سجل الموردين</h2><p>بيانات الموردين والرقم الضريبي وحدود الائتمان وشروط السداد.</p></div>
         <button className="primary-button" type="button" disabled={!companyId} onClick={() => {
-          if (showForm) { setShowForm(false); setEditingId(null); }
-          else { setEditingId(null); setShowForm(true); }
+          if (showForm) { setShowForm(false); resetForm(); }
+          else { resetForm(); setShowForm(true); }
         }}><span>＋</span>{showForm ? "إغلاق النموذج" : "إضافة مورد"}</button>
       </div>
       {error && <div className="error-banner">{error}</div>}
@@ -100,7 +104,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         <label>حد الائتمان<input type="number" min="0" step="0.01" value={form.credit_limit} onChange={(event) => setForm({ ...form, credit_limit: event.target.value })} /></label>
         <label>مدة السداد (يوم)<input type="number" min="0" max="32767" value={form.payment_terms_days} onChange={(event) => setForm({ ...form, payment_terms_days: event.target.value })} /></label>
         <label className="customer-form-wide">العنوان<textarea rows={2} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
-        <div className="customer-form-actions customer-form-wide"><button className="subtle-button" type="button" disabled={saving} onClick={() => { setShowForm(false); setEditingId(null); }}>إلغاء</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "جارٍ الحفظ…" : editingId ? "حفظ التعديلات" : "حفظ المورد"}</button></div>
+        <div className="customer-form-actions customer-form-wide"><button className="subtle-button" type="button" disabled={saving} onClick={() => { setShowForm(false); resetForm(); }}>إلغاء</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "جارٍ الحفظ…" : editingId ? "حفظ التعديلات" : "حفظ المورد"}</button></div>
       </form>}
       {companyId && <div className="customer-toolbar">
         <div className="customer-count">عدد الموردين <strong>{filtered.length.toLocaleString("ar-EG")}</strong></div>
