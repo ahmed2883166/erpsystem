@@ -1,3 +1,5 @@
+"""عرض سجل التدقيق للقراءة والمراجعة من لوحة Django الإدارية."""
+
 from django.contrib import admin
 from .models import AuditEvent
 
