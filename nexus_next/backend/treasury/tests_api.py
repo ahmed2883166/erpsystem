@@ -89,6 +89,33 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(again.status_code, 400)
         self.assertEqual(JournalEntry.objects.filter(pk=entry.pk).count(), 1)
 
+    def test_foreign_currency_treasury_posting_is_blocked_without_exchange_rate(self):
+        foreign_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك بالدولار",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        foreign_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=foreign_gl,
+            kind="bank", code="BANK-USD", name_ar="حساب دولار",
+            currency_code="USD",
+        )
+        response = self._create(
+            source_account=foreign_bank.pk,
+            document_number="TR-USD-001",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+
+        before = JournalEntry.objects.count()
+        posted = self.client.post(
+            f"/api/treasury/transactions/{response.data['id']}/post/", {}, format="json"
+        )
+
+        self.assertEqual(posted.status_code, 400, posted.data)
+        self.assertIn("سعر الصرف", str(posted.data))
+        self.assertEqual(JournalEntry.objects.count(), before)
+        foreign_bank.refresh_from_db()
+        self.assertTrue(foreign_bank.is_active)
+
     def test_transfer_posts_between_separate_cash_and_bank_ledgers(self):
         receipt = self._create(document_number="TR-SEED-001")
         self.assertEqual(receipt.status_code, 201, receipt.data)
