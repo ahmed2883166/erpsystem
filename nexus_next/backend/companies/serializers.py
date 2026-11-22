@@ -67,6 +67,21 @@ class FiscalYearSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "company_code", "name", "start_date", "end_date", "status", "created_at")
         read_only_fields = ("created_at",)
 
+    def validate(self, attrs):
+        """حماية ارتباط السنة المالية والتحقق من ترتيب حدودها حتى في طلبات PATCH."""
+        if self.instance and "company" in attrs and attrs["company"].pk != self.instance.company_id:
+            raise serializers.ValidationError({
+                "company": "لا يمكن نقل سنة مالية قائمة إلى شركة أخرى؛ أنشئ سنة مستقلة للشركة المطلوبة."
+            })
+
+        start_date = attrs.get("start_date", self.instance.start_date if self.instance else None)
+        end_date = attrs.get("end_date", self.instance.end_date if self.instance else None)
+        if start_date and end_date and end_date < start_date:
+            raise serializers.ValidationError({
+                "end_date": "تاريخ نهاية السنة المالية يجب أن يكون في أو بعد تاريخ البداية."
+            })
+        return attrs
+
 class CompanyMembershipSerializer(serializers.ModelSerializer):
     company_code = serializers.CharField(source="company.code", read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)
