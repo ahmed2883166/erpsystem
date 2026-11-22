@@ -9,6 +9,17 @@ $BackupScript = Join-Path $PSScriptRoot "backup-postgres.ps1"
 if (-not (Test-Path $BackupScript)) { throw "Backup script not found: $BackupScript" }
 if (-not (Test-Path $Python)) { throw "Backend virtual-environment Python is missing." }
 
+$KeyFile = Join-Path $Backend ".secrets\backup-key.dpapi"
+if (-not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) { throw "Initialize encrypted backups first using scripts/initialize-backup-encryption.ps1." }
+Push-Location $Backend
+try {
+    & $Python manage.py check_backup_encryption_key
+    if ($LASTEXITCODE -ne 0) { throw "The local DPAPI backup key could not be opened by this Windows account." }
+} finally { Pop-Location }
+$CurrentIdentity = "$env:USERDOMAIN\$env:USERNAME"
+& icacls.exe $KeyFile /inheritance:r /grant:r "${CurrentIdentity}:(F)" "SYSTEM:(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to the local backup encryption key." }
+
 Push-Location $Backend
 try {
     $config = & $Python manage.py shell -c "from core.models import BackupConfiguration; c=BackupConfiguration.objects.first(); print(f'{c.enabled}|{c.schedule}|{c.backup_path}' if c else 'False|daily|')"
