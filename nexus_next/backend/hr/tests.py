@@ -36,6 +36,33 @@ class PayrollCalculationTests(SimpleTestCase):
         amount = calculate_component(component, None, Decimal("8000"), Decimal("30"), Decimal("0"), Decimal("30"), Decimal("0"), config, Decimal("8000"), Decimal("8000"))
         self.assertEqual(amount, Decimal("600.00"))
 
+    def test_egypt_2026_tax_selects_the_high_income_statutory_column(self):
+        component = PayrollComponent(method=PayrollComponent.Method.PROGRESSIVE_TAX)
+        from hr.services import EGYPT_2026_TAX_BRACKET_GROUPS
+        config = {"tax": {
+            "annual_personal_exemption": "20000",
+            "annual_bracket_groups": EGYPT_2026_TAX_BRACKET_GROUPS,
+        }}
+        amount = calculate_component(
+            component, None, Decimal("2000000") / Decimal("12"), Decimal("30"),
+            Decimal("0"), Decimal("30"), Decimal("0"), config,
+            Decimal("2000000") / Decimal("12"), Decimal("2000000") / Decimal("12"),
+        )
+        self.assertEqual(amount, Decimal("42875.00"))
+
+    def test_egypt_2026_tax_uses_the_zero_and_lower_brackets_below_600k(self):
+        component = PayrollComponent(method=PayrollComponent.Method.PROGRESSIVE_TAX)
+        from hr.services import EGYPT_2026_TAX_BRACKET_GROUPS
+        config = {"tax": {
+            "annual_personal_exemption": "20000",
+            "annual_bracket_groups": EGYPT_2026_TAX_BRACKET_GROUPS,
+        }}
+        amount = calculate_component(
+            component, None, Decimal("50000"), Decimal("30"), Decimal("0"),
+            Decimal("30"), Decimal("0"), config, Decimal("50000"), Decimal("50000"),
+        )
+        self.assertEqual(amount, Decimal("9979.17"))
+
     def test_progressive_tax_uses_configured_annual_brackets(self):
         component = PayrollComponent(method=PayrollComponent.Method.PROGRESSIVE_TAX)
         config = {"tax": {"annual_personal_exemption": 0, "annual_brackets": [
