@@ -208,10 +208,10 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
         self.check_employee_write(leave.employee, admin_only=True)
         if leave.status != LeaveRequest.Status.PENDING:
             raise ValidationError("لا يمكن اعتماد أو رفض طلب تمت معالجته.")
-        if leave.created_by_id == request.user.pk:
+        if leave.created_by_id == request.user.pk or leave.employee.user_id == request.user.pk:
             reason = str(request.data.get("self_approval_override_reason", "")).strip()
             if not request.user.is_superuser or len(reason) < 10:
-                raise PermissionDenied("لا يجوز اعتماد طلب الإجازة الذي أنشأته. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
+                raise PermissionDenied("لا يجوز اعتماد طلب الإجازة الذي أنشأته أو الخاص بحسابك الوظيفي. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
             AuditEvent.objects.create(actor=request.user, company=leave.employee.company, branch=leave.employee.branch, action=AuditEvent.Action.ACTION, resource="hr.leave.self_approval_override", object_id=str(leave.pk), http_method="POST", status_code=200, succeeded=True, metadata={"reason": reason, "employee_id": leave.employee_id, "decision": "approved"})
         leave.status = LeaveRequest.Status.APPROVED
         leave.approved_by = request.user
@@ -229,7 +229,7 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
         if leave.created_by_id == request.user.pk:
             reason = str(request.data.get("self_approval_override_reason", "")).strip()
             if not request.user.is_superuser or len(reason) < 10:
-                raise PermissionDenied("لا يجوز اتخاذ قرار في طلب الإجازة الذي أنشأته. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
+                raise PermissionDenied("لا يجوز اتخاذ قرار في طلب الإجازة الذي أنشأته أو الخاص بحسابك الوظيفي. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
             AuditEvent.objects.create(actor=request.user, company=leave.employee.company, branch=leave.employee.branch, action=AuditEvent.Action.ACTION, resource="hr.leave.self_approval_override", object_id=str(leave.pk), http_method="POST", status_code=200, succeeded=True, metadata={"reason": reason, "employee_id": leave.employee_id, "decision": "rejected"})
         leave.status = LeaveRequest.Status.REJECTED
         leave.approved_by = request.user
