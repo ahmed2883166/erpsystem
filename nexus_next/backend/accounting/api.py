@@ -369,10 +369,25 @@ class JournalEntryViewSet(AccountingViewSet):
             return qs
         return qs.filter(branch__in=accessible_branches(self.request.user))
 
+    def perform_create(self, serializer):
+        """حصر إنشاء القيود الافتتاحية والختامية في مدير الشركة."""
+        company_id = serializer.validated_data["company"].pk
+        source_type = serializer.validated_data.get("source_type", JournalEntry.Source.MANUAL)
+        if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and not has_company_role(
+            self.request.user, company_id, ("admin",)
+        ):
+            raise PermissionDenied("إنشاء القيود الافتتاحية والختامية متاح لمدير الشركة فقط.")
+        super().perform_create(serializer)
+
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
+        source_type = serializer.validated_data.get("source_type", serializer.instance.source_type)
+        if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and not has_company_role(
+            self.request.user, serializer.instance.company_id, ("admin",)
+        ):
+            raise PermissionDenied("تعديل القيود الافتتاحية والختامية متاح لمدير الشركة فقط.")
         super().perform_update(serializer)
 
     @decorators.action(detail=True, methods=("post",))
