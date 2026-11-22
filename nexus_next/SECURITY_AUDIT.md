@@ -71,7 +71,7 @@ At baseline commit `f36bc6516da0ea7516db0f60c0f06e90c9ad445b`:
 ## Follow-up controls added — 2026-11-22
 
 ### HR segregation of duties
-- Leave requests now persist the creating user. The creator cannot approve or reject their own request.
+- Leave requests now persist the creating user. The creator cannot approve or reject their own request. Employee profiles also support an optional login-account link, unique per company and restricted to an active company member; that linked employee cannot approve or reject their own leave even when HR created the request. Existing employee profiles remain unlinked until an administrator assigns their login account.
 - A payroll-cycle creator cannot approve that cycle.
 - A narrowly scoped emergency override is available only to a Django superuser and requires a written reason of at least 10 characters. The override is written to the append-only audit stream with the target, decision, actor, and reason.
 - Both approval paths lock the target row during the decision to reduce concurrent double-decision races.
