@@ -3,7 +3,7 @@
  * تشمل إجراءات الاستبعاد أو البيع وربط الحسابات المحاسبية والخزينة.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport } from "./api";
+import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport, type AssetAccountReconciliation, type AssetDepreciationRunResult } from "./api";
 
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
@@ -31,7 +31,7 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [reportTab, setReportTab] = useState<"register"|"depreciation"|"movements"|"cashflow">("register");
+  const [reportTab, setReportTab] = useState<"register"|"depreciation"|"movements"|"cashflow"|"reconciliation">("register");
   const [reportBranch, setReportBranch] = useState("");
   const [reportFrom, setReportFrom] = useState(new Date().getFullYear()+"-01-01");
   const [reportTo, setReportTo] = useState(today);
@@ -42,6 +42,9 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [depreciationReport, setDepreciationReport] = useState<AssetDepreciationReport|null>(null);
   const [movementReport, setMovementReport] = useState<AssetMovementReport|null>(null);
   const [cashFlowReport, setCashFlowReport] = useState<CashFlowReport|null>(null);
+  const [assetReconciliation, setAssetReconciliation] = useState<AssetAccountReconciliation|null>(null);
+  const [runResult, setRunResult] = useState<AssetDepreciationRunResult|null>(null);
+  const [notice, setNotice] = useState("");
 
   // تحميل الأصول والحسابات والفروع والسنوات المالية وحسابات الخزينة.
 const refresh = async () => {
@@ -128,15 +131,34 @@ const loadReport = async () => {
       if (reportTab === "register") setRegisterReport(await fixedAssetsApi.register(companyId, reportAsOf, branch));
       else if (reportTab === "depreciation") setDepreciationReport(await fixedAssetsApi.depreciationReport(companyId, reportFrom, reportTo, branch));
       else if (reportTab === "movements") setMovementReport(await fixedAssetsApi.movementReport(companyId, reportFrom, reportTo, branch));
-      else setCashFlowReport(await treasuryApi.cashFlow(companyId, reportFrom, reportTo, branch));
+      else if (reportTab === "cashflow") setCashFlowReport(await treasuryApi.cashFlow(companyId, reportFrom, reportTo, branch));
+      else setAssetReconciliation(await fixedAssetsApi.accountReconciliation(companyId, reportAsOf, reportFrom, reportTo, branch));
     } catch (reason) { setReportError(reason instanceof Error ? reason.message : "تعذر تحميل التقرير."); }
     finally { setReportLoading(false); }
+  };
+
+  const runAllDepreciation = async () => {
+    if (!companyId || !form.fiscal_year) { setError("اختر سنة مالية مفتوحة قبل تشغيل الإهلاك."); return; }
+    if (!window.confirm(`سيتم احتساب وترحيل إهلاك جميع الأصول النشطة حتى ${periodDate} في الشركة/الفرع المحدد. هل تريد المتابعة؟`)) return;
+    setSaving(true); setError(""); setNotice(""); setRunResult(null);
+    try {
+      const result = await fixedAssetsApi.runDepreciation(
+        companyId, periodDate, Number(form.fiscal_year), reportBranch ? Number(reportBranch) : undefined
+      );
+      setRunResult(result);
+      setNotice(`تم ترحيل إهلاك ${result.processed_count} أصل بإجمالي ${Number(result.processed_total).toLocaleString("ar-EG",{maximumFractionDigits:4})}. الأصول المتعذرة أو المسجلة سابقًا: ${result.skipped_count}.`);
+      await refresh();
+      if (selected) setSchedule(await fixedAssetsApi.schedule(selected));
+      if (reportTab === "depreciation") setDepreciationReport(await fixedAssetsApi.depreciationReport(companyId, reportFrom, reportTo, reportBranch ? Number(reportBranch) : undefined));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تشغيل الإهلاك الدوري."); }
+    finally { setSaving(false); }
   };
 
   if (!companyId) return <section className="work-panel"><p>اختر شركة لعرض الأصول الثابتة.</p></section>;
   return <section className="work-panel assets-panel">
     <div className="work-panel-head"><div><h2>الأصول الثابتة</h2><p>تسجيل تكلفة الأصل، إثبات الاقتناء، وجدول الإهلاك وربطه بالقيود.</p></div><span className="coming-soon">{assets.length} أصل</span></div>
     {error && <div className="error-banner">{error}</div>}
+    {notice && <div className="success-banner">{notice}</div>}
     <form className="asset-form" onSubmit={create}>
       <div className="asset-form-heading"><strong>تسجيل أصل جديد</strong><small>يتم إنشاء قيد الاقتناء وترحيله تلقائيًا داخل معاملة واحدة.</small></div>
       <label>كود الأصل<input required value={form.code} onChange={e=>setForm({...form,code:e.target.value})}/></label>
@@ -163,21 +185,35 @@ const loadReport = async () => {
     </tbody></table>{!assets.length && !loading && <div className="table-empty">لا توجد أصول مسجلة حتى الآن.</div>}</div>
     <div className="asset-reports">
       <div className="table-toolbar"><strong>تقارير الأصول والتدفقات الاستثمارية</strong><span className="module-count">حسب الشركة والفرع والفترة</span></div>
+      <div className="asset-report-filters">
+        <label>تاريخ تشغيل الإهلاك الدوري<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label>
+        <label>سنة الإهلاك<select value={form.fiscal_year} onChange={e=>setForm(old=>({...old,fiscal_year:e.target.value}))}><option value="">اختر سنة مفتوحة</option>{years.map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label>
+        <button type="button" className="primary-button" disabled={saving || !form.fiscal_year} onClick={()=>void runAllDepreciation()}>{saving?"جارٍ ترحيل الإهلاك…":"تشغيل إهلاك جميع الأصول"}</button>
+      </div>
+      {runResult && runResult.skipped.length>0 && <div className="asset-report-note">الأصول التي لم تُرحّل: {runResult.skipped.slice(0,8).map(row=>row.code+" ("+String(row.reason)+")").join(" · ")}{runResult.skipped.length>8?" · وباقي السجلات في نتيجة التشغيل":""}</div>}
       <div className="asset-report-tabs">
         <button type="button" className={reportTab==="register"?"active":""} onClick={()=>setReportTab("register")}>سجل الأصول</button>
         <button type="button" className={reportTab==="depreciation"?"active":""} onClick={()=>setReportTab("depreciation")}>الإهلاك حسب الفرع</button>
         <button type="button" className={reportTab==="movements"?"active":""} onClick={()=>setReportTab("movements")}>حركة الأصل</button>
         <button type="button" className={reportTab==="cashflow"?"active":""} onClick={()=>setReportTab("cashflow")}>التدفقات النقدية</button>
+        <button type="button" className={reportTab==="reconciliation"?"active":""} onClick={()=>setReportTab("reconciliation")}>مطابقة الأستاذ</button>
       </div>
       <div className="asset-report-filters">
         <label>الفرع<select value={reportBranch} onChange={e=>setReportBranch(e.target.value)}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
-        {reportTab==="register" ? <label>كما في تاريخ<input type="date" value={reportAsOf} onChange={e=>setReportAsOf(e.target.value)}/></label> : <>
-          <label>من تاريخ<input type="date" value={reportFrom} onChange={e=>setReportFrom(e.target.value)}/></label>
-          <label>إلى تاريخ<input type="date" value={reportTo} onChange={e=>setReportTo(e.target.value)}/></label>
-        </>}
+        {reportTab==="register" || reportTab==="reconciliation" ? <label>كما في تاريخ<input type="date" value={reportAsOf} onChange={e=>setReportAsOf(e.target.value)}/></label> : null}
+        {reportTab!=="register" && <><label>من تاريخ<input type="date" value={reportFrom} onChange={e=>setReportFrom(e.target.value)}/></label><label>إلى تاريخ<input type="date" value={reportTo} onChange={e=>setReportTo(e.target.value)}/></label></>}
         <button type="button" className="primary-button" disabled={reportLoading} onClick={()=>void loadReport()}>{reportLoading?"جارٍ إعداد التقرير…":"عرض التقرير"}</button>
       </div>
       {reportError && <div className="error-banner">{reportError}</div>}
+      {reportTab==="reconciliation" && assetReconciliation && <>
+        <div className="asset-cashflow-totals"><b>{assetReconciliation.is_reconciled?"سجل الأصول مطابق للأستاذ":"توجد فروق تحتاج مراجعة: "+assetReconciliation.difference_count}</b><span>التكلفة ومجمع الإهلاك كما في {assetReconciliation.as_of}</span><span>مصروف الإهلاك خلال {assetReconciliation.date_from} إلى {assetReconciliation.date_to}</span></div>
+        {[
+          ["تكلفة الأصول",assetReconciliation.cost_accounts],
+          ["مجمع الإهلاك",assetReconciliation.accumulated_depreciation_accounts],
+          ["مصروف الإهلاك",assetReconciliation.depreciation_expense_accounts],
+        ].map(([title,rows])=><div className="data-table-wrap" key={String(title)}><h3>{title}</h3><table><thead><tr><th>الحساب</th><th>رصيد سجل الأصول</th><th>رصيد الأستاذ</th><th>الفرق</th></tr></thead><tbody>{(rows as AssetAccountReconciliation["cost_accounts"]).map(row=><tr key={row.account_id}><td>{row.code} · {row.name}</td><td>{Number(row.expected).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td><td>{Number(row.actual).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td><td>{Number(row.difference).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td></tr>)}{!(rows as AssetAccountReconciliation["cost_accounts"]).length&&<tr><td colSpan={4}>لا توجد حسابات مرتبطة بأصول ضمن النطاق.</td></tr>}</tbody></table></div>)}
+        <p className="asset-report-note">{assetReconciliation.note}</p>
+      </>}
       {reportTab==="register" && registerReport && <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الأصل</th><th>الفرع</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>القيمة الدفترية</th><th>الحالة</th></tr></thead><tbody>{registerReport.rows.map(row=><tr key={row.asset_id}><td>{row.code}</td><td>{row.name_ar}</td><td>{row.branch_name}</td><td>{Number(row.original_cost).toLocaleString("ar-EG")}</td><td>{Number(row.accumulated_depreciation).toLocaleString("ar-EG")}</td><td>{Number(row.net_book_value).toLocaleString("ar-EG")}</td><td>{row.status==="active"?"نشط":"مستبعد"}</td></tr>)}</tbody></table>{!registerReport.rows.length&&<div className="table-empty">لا توجد أصول في التاريخ المحدد.</div>}</div>}
       {reportTab==="depreciation" && depreciationReport && <div className="data-table-wrap"><div className="asset-cashflow-totals"><b>إجمالي الإهلاك: {Number(depreciationReport.total_depreciation).toLocaleString("ar-EG",{maximumFractionDigits:4})}</b>{depreciationReport.branch_totals.map(item=><span key={item.branch_name}>{item.branch_name}: {Number(item.amount).toLocaleString("ar-EG",{maximumFractionDigits:4})}</span>)}</div><table><thead><tr><th>التاريخ</th><th>الأصل</th><th>الفرع</th><th>نوع الإهلاك</th><th>القيمة</th><th>القيد</th></tr></thead><tbody>{depreciationReport.rows.map((row,i)=><tr key={row.asset_id+"-"+row.period_date+"-"+i}><td>{row.period_date}</td><td>{row.asset_code} · {row.asset_name}</td><td>{row.branch_name}</td><td>{row.is_partial_period?"جزئي":"دوري"}</td><td>{Number(row.amount).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td><td>{row.journal_entry}</td></tr>)}</tbody></table>{!depreciationReport.rows.length&&<div className="table-empty">لا توجد حركات إهلاك.</div>}</div>}
       {reportTab==="movements" && movementReport && <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>الأصل</th><th>الفرع</th><th>الحركة</th><th>القيمة</th><th>القيد</th><th>الخزينة</th></tr></thead><tbody>{movementReport.rows.map((row,i)=><tr key={row.asset_id+"-"+row.event_type+"-"+row.date+"-"+i}><td>{row.date}</td><td>{row.asset_code} · {row.asset_name}</td><td>{row.branch_name}</td><td>{row.event_label}</td><td>{Number(row.amount).toLocaleString("ar-EG",{maximumFractionDigits:4})}</td><td>{row.journal_entry||"—"}</td><td>{row.treasury_transaction||"—"}</td></tr>)}</tbody></table>{!movementReport.rows.length&&<div className="table-empty">لا توجد حركات للأصول.</div>}</div>}
