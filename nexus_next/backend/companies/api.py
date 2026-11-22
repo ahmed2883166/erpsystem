@@ -200,6 +200,50 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
             for user in users
         ])
 
+    @action(detail=False, methods=("post",), url_path="create-company-admin")
+    @transaction.atomic
+    def create_company_admin(self, request):
+        """إنشاء حساب مستخدم عادي وتعيينه مديرًا لشركة في معاملة واحدة."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.contrib.auth.password_validation import validate_password
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+
+        if not is_platform_owner(request.user):
+            raise PermissionDenied("إنشاء حساب مدير شركة متاح لمالك المنصة فقط.")
+        try:
+            company_id = int(request.data.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة أولًا."})
+        company = Company.objects.select_for_update().filter(pk=company_id).first()
+        if not company:
+            raise ValidationError({"company": "الشركة المحددة غير موجودة."})
+        if not company.is_active:
+            raise ValidationError({"company": "أعد تفعيل الشركة قبل تعيين مدير جديد."})
+
+        username = str(request.data.get("username", "")).strip()
+        display_name = str(request.data.get("display_name", "")).strip()
+        email = str(request.data.get("email", "")).strip()
+        password = request.data.get("password", "")
+        if not username or len(username) > 150:
+            raise ValidationError({"username": "أدخل اسم مستخدم صالحًا لا يتجاوز 150 حرفًا."})
+        if not isinstance(password, str) or not password:
+            raise ValidationError({"password": "أدخل كلمة مرور للحساب الجديد."})
+        User = get_user_model()
+        if User.objects.filter(username__iexact=username).exists():
+            raise ValidationError({"username": "اسم المستخدم مستخدم بالفعل."})
+        try:
+            validate_password(password)
+        except DjangoValidationError as exc:
+            raise ValidationError({"password": list(exc.messages)})
+        user = User.objects.create_user(
+            username=username, password=password, display_name=display_name, email=email,
+        )
+        membership = CompanyMembership.objects.create(
+            company=company, user=user, role=CompanyMembership.Role.ADMIN,
+            all_branches=True, is_active=True,
+        )
+        return Response(CompanyMembershipSerializer(membership).data, status=201)
+
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         from rest_framework.exceptions import PermissionDenied
