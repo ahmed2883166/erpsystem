@@ -39,6 +39,15 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({key: "حساب خسائر بيع الأصول يجب أن يكون من طبيعة المصروفات."})
             if account and key == "depreciation_expense_account" and account.nature != "expense":
                 raise serializers.ValidationError({key: "مصروف الإهلاك يجب أن يرتبط بحساب مصروفات."})
+            if account and key == "acquisition_counter_account" and account.nature not in ("asset", "liability"):
+                raise serializers.ValidationError({key: "مقابل اقتناء الأصل يجب أن يكون حساب أصل أو التزام مثل البنك أو المورد."})
+        asset_account = attrs.get("asset_account", getattr(self.instance, "asset_account", None))
+        accumulated_account = attrs.get("accumulated_depreciation_account", getattr(self.instance, "accumulated_depreciation_account", None))
+        counter_account = attrs.get("acquisition_counter_account", getattr(self.instance, "acquisition_counter_account", None))
+        if asset_account and accumulated_account and asset_account.pk == accumulated_account.pk:
+            raise serializers.ValidationError({"accumulated_depreciation_account": "يجب فصل حساب تكلفة الأصل عن حساب مجمع الإهلاك."})
+        if asset_account and counter_account and asset_account.pk == counter_account.pk:
+            raise serializers.ValidationError({"acquisition_counter_account": "لا يمكن استخدام حساب تكلفة الأصل كمقابل لاقتناء الأصل."})
         cost = attrs.get("original_cost", getattr(self.instance, "original_cost", 0))
         salvage = attrs.get("salvage_value", getattr(self.instance, "salvage_value", 0))
         life = attrs.get("useful_life_months", getattr(self.instance, "useful_life_months", 0))
