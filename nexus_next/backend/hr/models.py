@@ -1,3 +1,5 @@
+"""نماذج الموارد البشرية والحضور والإجازات والسلف والمرتبات ومخرجات احتسابها."""
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -7,6 +9,7 @@ from companies.models import Branch, Company
 
 
 class CompanyScopedModel(models.Model):
+    """يوفر أساسًا مشتركًا للنماذج المرتبطة بالشركة."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT)
 
     class Meta:
@@ -14,6 +17,7 @@ class CompanyScopedModel(models.Model):
 
 
 class Department(CompanyScopedModel):
+    """يمثل إدارة أو قسمًا تنظيميًا داخل الشركة."""
     code = models.CharField(max_length=30)
     name_ar = models.CharField(max_length=160)
     branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT)
@@ -30,6 +34,7 @@ class Department(CompanyScopedModel):
 
 
 class JobPosition(CompanyScopedModel):
+    """يمثل المسمى أو الوظيفة الوظيفية داخل الشركة."""
     code = models.CharField(max_length=30)
     name_ar = models.CharField(max_length=160)
     department = models.ForeignKey(Department, null=True, blank=True, on_delete=models.PROTECT)
@@ -46,6 +51,7 @@ class JobPosition(CompanyScopedModel):
 
 
 class Employee(CompanyScopedModel):
+    """يحفظ الملف الوظيفي والبيانات الأساسية للموظف."""
     class Status(models.TextChoices):
         ACTIVE = "active", "نشط"
         LEAVE = "leave", "إجازة"
@@ -111,6 +117,7 @@ class Employee(CompanyScopedModel):
 
 
 class PayrollComponent(CompanyScopedModel):
+    """يعرّف عنصر استحقاق أو استقطاع قابلًا للاستخدام في المرتبات."""
     class Kind(models.TextChoices):
         EARNING = "earning", "استحقاق"
         DEDUCTION = "deduction", "استقطاع موظف"
@@ -152,6 +159,7 @@ class PayrollComponent(CompanyScopedModel):
 
 
 class EmployeeComponent(models.Model):
+    """يربط عنصر المرتبات بموظف وقيمته أو طريقة احتسابه."""
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="compensation_items")
     component = models.ForeignKey(PayrollComponent, on_delete=models.PROTECT, related_name="employee_assignments")
     value = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True)
@@ -173,6 +181,7 @@ class EmployeeComponent(models.Model):
 
 
 class AttendanceRecord(models.Model):
+    """يسجل حالة حضور الموظف في يوم محدد."""
     class Status(models.TextChoices):
         PRESENT = "present", "حضور"
         ABSENT = "absent", "غياب"
@@ -202,6 +211,7 @@ class AttendanceRecord(models.Model):
 
 
 class LeaveRequest(models.Model):
+    """يمثل طلب إجازة الموظف وفترة الإجازة وحالتها."""
     class Kind(models.TextChoices):
         ANNUAL = "annual", "سنوية"
         SICK = "sick", "مرضية"
@@ -234,6 +244,7 @@ class LeaveRequest(models.Model):
 
 
 class EmployeeLoan(models.Model):
+    """يمثل سلفة أو قرض موظف وجدول استرداده."""
     class Status(models.TextChoices):
         ACTIVE = "active", "سارية"
         SETTLED = "settled", "مسددة"
@@ -262,6 +273,7 @@ class EmployeeLoan(models.Model):
 
 
 class EmployeeSalaryHistory(models.Model):
+    """يحفظ تاريخ تغييرات راتب الموظف وأسبابها."""
     class ChangeType(models.TextChoices):
         ANNUAL_RAISE = "annual_raise", "زيادة سنوية"
         PROMOTION = "promotion", "ترقية"
@@ -282,6 +294,7 @@ class EmployeeSalaryHistory(models.Model):
 
 
 class LoanInstallment(models.Model):
+    """يمثل قسطًا مستحقًا من سلفة الموظف وحالة سداده."""
     class Status(models.TextChoices):
         DUE = "due", "مستحق"
         PAID = "paid", "مسدد"
@@ -302,6 +315,7 @@ class LoanInstallment(models.Model):
 
 
 class PayrollRuleSet(CompanyScopedModel):
+    """يحفظ قواعد احتساب المرتبات والاشتراكات للفترة المعتمدة."""
     country = models.CharField(max_length=2, choices=(("EG", "مصر"), ("SA", "السعودية")))
     name = models.CharField(max_length=120)
     effective_from = models.DateField()
@@ -321,6 +335,7 @@ class PayrollRuleSet(CompanyScopedModel):
 
 
 class PayrollCycle(CompanyScopedModel):
+    """يمثل دورة المرتبات والفترة التي يجري احتسابها."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         CALCULATED = "calculated", "تم الاحتساب"
@@ -366,6 +381,7 @@ class PayrollCycle(CompanyScopedModel):
 
 
 class PayrollPosting(models.Model):
+    """يربط دورة المرتبات بقيود اليومية الناتجة عن ترحيلها."""
     cycle = models.ForeignKey(PayrollCycle, on_delete=models.PROTECT, related_name="postings")
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="payroll_postings")
     journal_entry = models.OneToOneField("accounting.JournalEntry", on_delete=models.PROTECT, related_name="payroll_posting")
@@ -379,6 +395,7 @@ class PayrollPosting(models.Model):
 
 
 class PayrollResult(models.Model):
+    """يحفظ نتيجة احتساب المرتبات لموظف ضمن دورة محددة."""
     cycle = models.ForeignKey(PayrollCycle, on_delete=models.PROTECT, related_name="results")
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT, related_name="payroll_results")
     basic_salary_snapshot = models.DecimalField(max_digits=18, decimal_places=4)
@@ -416,6 +433,7 @@ class PayrollResult(models.Model):
 
 
 class PayrollResultLine(models.Model):
+    """يمثل تفصيل استحقاق أو استقطاع ضمن نتيجة المرتبات."""
     result = models.ForeignKey(PayrollResult, on_delete=models.PROTECT, related_name="lines")
     component = models.ForeignKey(PayrollComponent, null=True, blank=True, on_delete=models.PROTECT)
     code_snapshot = models.CharField(max_length=32)
