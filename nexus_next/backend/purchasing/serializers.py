@@ -382,10 +382,10 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         model = SupplierPayment
         fields = (
             "id", "company", "supplier", "supplier_name", "invoice", "invoice_number",
-            "payment_number", "payment_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference",
+            "payment_number", "payment_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference",
             "status", "journal_entry", "journal_number", "created_at", "posted_at",
         )
-        read_only_fields = ("status", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
+        read_only_fields = ("status", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
