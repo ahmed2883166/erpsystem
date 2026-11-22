@@ -5,7 +5,7 @@ from django.core.validators import MinValueValidator
 from django.db import models
 
 
-class BackupConfiguration(models.Model):
+class BackupConfiguration    """يحفظ جدول النسخ الاحتياطي وسياسة الاحتفاظ بالنسخ."""
     class Schedule(models.TextChoices):
         DAILY = "daily", "يومي"
         WEEKLY = "weekly", "أسبوعي"
@@ -28,7 +28,7 @@ class BackupConfiguration(models.Model):
         super().save(*args, **kwargs)
 
 
-class BackupRun(models.Model):
+class BackupRun    """يسجل نتيجة محاولة النسخ الاحتياطي وملفها وحالتها."""
     class Status(models.TextChoices):
         SUCCESS = "success", "ناجح"
         FAILURE = "failure", "فشل"
