@@ -43,7 +43,9 @@ class BackupConfigurationView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
-        """عرض معاينة عملية إعادة الضبط والبيانات التي ستتأثر دون تنفيذها."""
+        """عرض إعدادات النسخ الاحتياطي وسجل التشغيل للمستخدمين المصرح لهم."""
+        if is_platform_owner(request.user):
+            raise PermissionDenied("مالك المنصة لا يطّلع على إعدادات أو سجلات نسخ قواعد الشركات.")
         config = _config()
         payload = _serialize(config, (request.user.is_superuser and not is_platform_owner(request.user)))
         payload["history"] = [{
