@@ -229,6 +229,21 @@ class CompanySetupApiTests(APITestCase):
         self.assertEqual(branch.phone, "01000000000")
         self.assertFalse(branch.is_active)
 
+    def test_company_admin_cannot_disable_the_last_active_branch(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        branch = Branch.objects.create(company=self.company, code="ONLY-BR", name_ar="الفرع الوحيد")
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/branches/{branch.pk}/?include_inactive=true",
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        branch.refresh_from_db()
+        self.assertTrue(branch.is_active)
+
     def test_only_company_admin_can_view_inactive_branches_in_setup(self):
         CompanyMembership.objects.create(
             user=self.user, company=self.company, role="admin", all_branches=True
