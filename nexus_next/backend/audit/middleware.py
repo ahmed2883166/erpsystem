@@ -7,6 +7,7 @@ import uuid
 
 from django.urls import Resolver404, resolve
 
+from companies.access import is_platform_owner
 from companies.models import Branch, Company
 from .models import AuditEvent
 
@@ -85,6 +86,7 @@ class AuditTrailMiddleware:
             and request.path.startswith("/api/")
             and getattr(getattr(request, "user", None), "is_authenticated", False)
             and getattr(request.user, "is_superuser", False)
+            and not is_platform_owner(request.user)
         )
         should_audit = request.path.startswith("/api/") and (method in _ACTIONS or is_global_superuser_read)
         prior_object_id, prior_company_id, prior_branch_id = (
