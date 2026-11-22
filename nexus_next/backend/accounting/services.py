@@ -1,7 +1,7 @@
 """خدمات التحقق من أدوار الحسابات وترحيل قيود اليومية مع حماية الفترة المالية والتوازن."""
 
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -48,7 +48,7 @@ def get_account_for_role(company, role):
 def post_journal(entry_id: int) -> JournalEntry:
     """ترحيل القيد اليومي بعد التحقق من توازنه وصلاحية حساباته."""
     entry = JournalEntry.objects.select_for_update().select_related(
-        "company", "branch", "fiscal_year"
+        "company", "company__base_currency", "branch", "fiscal_year"
     ).get(pk=entry_id)
 
     if entry.status != JournalEntry.Status.DRAFT:
@@ -66,7 +66,17 @@ def post_journal(entry_id: int) -> JournalEntry:
 
     debit_total = Decimal("0")
     credit_total = Decimal("0")
+    currency_places = entry.company.base_currency.decimal_places
+    base_quantum = Decimal("1").scaleb(-currency_places)
     for line in lines:
+        rounded_debit = line.debit.quantize(base_quantum, rounding=ROUND_HALF_UP)
+        rounded_credit = line.credit.quantize(base_quantum, rounding=ROUND_HALF_UP)
+        if rounded_debit == 0 and rounded_credit == 0:
+            raise ValidationError("قيمة أحد أسطر القيد أقل من أصغر وحدة نقدية للعملة الأساسية بعد التقريب.")
+        if rounded_debit != line.debit or rounded_credit != line.credit:
+            line.debit = rounded_debit
+            line.credit = rounded_credit
+            line.save(update_fields=("debit", "credit"))
         if line.account.company_id != entry.company_id:
             raise ValidationError("يوجد حساب لا يتبع شركة القيد.")
         if not line.account.is_active or line.account.is_group or not line.account.allow_posting:
