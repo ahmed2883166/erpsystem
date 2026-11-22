@@ -135,6 +135,9 @@ export const purchasingApi = {
   createInvoice: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseInvoice>("/api/purchasing/invoices/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل فاتورة البيع وتثبيت الإيراد والضريبة والذمم.
   postInvoice: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseInvoice>(`/api/purchasing/invoices/${id}/post/`, { method: "POST" }); },
+  // إعادة تقييم رصيد فاتورة المورد الأجنبية المفتوح.
+  revalueInvoice: async (id:number,payload:{revaluation_date:string;rate_date:string;rate:string}) => { await request<{detail:string}>("/api/csrf/"); return request<FxSubledgerRevaluation>(`/api/purchasing/invoices/${id}/revalue/`,{method:"POST",body:JSON.stringify(payload)}); },
+  fxRevaluations: (id:number) => request<FxSubledgerRevaluation[]>(`/api/purchasing/invoices/${id}/revaluations/`),
   // إنشاء دفعة مورد جديدة.
   createPayment: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierPayment>("/api/purchasing/payments/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل دفعة المورد وتسجيل أثرها المحاسبي.
@@ -147,6 +150,11 @@ export type TreasuryAccount = {
   account_code: string; account_name: string; kind: "cash" | "bank"; code: string; name_ar: string;
   bank_name: string; account_number: string; iban: string; currency_code: string;
   opening_balance: string; fx_position_foreign_amount: string; fx_position_carrying_base_amount: string; is_active: boolean;
+};
+export type FxSubledgerRevaluation = {
+  id:number; revaluation_date:string; rate_date:string; rate:string; foreign_balance:string;
+  previous_carrying_amount:string; new_carrying_amount:string; difference:string;
+  journal_entry:number|null; journal_number:string|null;
 };
 export type TreasuryFxRevaluation = {
   id:number; account:number; currency:string; revaluation_date:string; rate_date:string; rate:string;
@@ -574,6 +582,9 @@ export const salesApi = {
   updateInvoice: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SalesInvoice>(`/api/sales-documents/invoices/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
   // ترحيل فاتورة البيع وتثبيت الإيراد والضريبة والذمم.
   postInvoice: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SalesInvoice>(`/api/sales-documents/invoices/${id}/post/`, { method: "POST" }); },
+  // إعادة تقييم رصيد فاتورة العميل الأجنبية المفتوح.
+  revalueInvoice: async (id:number,payload:{revaluation_date:string;rate_date:string;rate:string}) => { await request<{detail:string}>("/api/csrf/"); return request<FxSubledgerRevaluation>(`/api/sales-documents/invoices/${id}/revalue/`,{method:"POST",body:JSON.stringify(payload)}); },
+  fxRevaluations: (id:number) => request<FxSubledgerRevaluation[]>(`/api/sales-documents/invoices/${id}/revaluations/`),
   // إنشاء سند قبض من عميل.
   createReceipt: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>("/api/sales-documents/receipts/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل سند القبض وتحديث رصيد العميل والخزينة.
