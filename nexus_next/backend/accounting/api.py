@@ -874,12 +874,12 @@ class JournalEntryViewSet(AccountingViewSet):
                 "line_id": line.pk, "date": line.entry.entry_date, "entry_id": line.entry_id,
                 "entry_number": line.entry.entry_number, "description": line.description or line.entry.description,
                 "source_type": line.entry.source_type, "branch": line.entry.branch.name_ar,
-                "debit": str(line.debit), "credit": str(line.credit), "running_balance": str(running),
+                "debit": line.debit, "credit": line.credit, "running_balance": running,
             })
         return response.Response({
             "company": company_id, "account": account_id, "account_code": account.code,
             "account_name": account.name_ar, "date_from": date_from, "date_to": date_to,
-            "opening_balance": str(opening_balance), "rows": rows, "closing_balance": str(running),
+            "opening_balance": opening_balance, "rows": rows, "closing_balance": running,
         })
 
     @decorators.action(detail=False, methods=("get",), url_path="changes-in-equity")
