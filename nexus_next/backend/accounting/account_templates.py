@@ -63,8 +63,12 @@ COMMON_ACCOUNTS = [
     ("6120", "مصروف المرتبات والأجور", "expense", "6100", False, AccountRole.Role.PAYROLL_EXPENSE),
     ("6130", "مصروف حصة الشركة في التأمينات", "expense", "6100", False, AccountRole.Role.EMPLOYER_INSURANCE_EXPENSE),
     ("6140", "خسائر تسوية المخزون", "expense", "6100", False, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS),
+    ("6150", "خسائر فروق عملة محققة", "expense", "6100", False, AccountRole.Role.REALIZED_FX_LOSS),
+    ("6160", "خسائر فروق عملة غير محققة", "expense", "6100", False, AccountRole.Role.UNREALIZED_FX_LOSS),
     ("7000", "إيرادات ومكاسب أخرى", "revenue", None, True, None),
     ("7100", "أرباح تسوية المخزون", "revenue", "7000", False, AccountRole.Role.INVENTORY_ADJUSTMENT_GAIN),
+    ("7200", "أرباح فروق عملة محققة", "revenue", "7000", False, AccountRole.Role.REALIZED_FX_GAIN),
+    ("7210", "أرباح فروق عملة غير محققة", "revenue", "7000", False, AccountRole.Role.UNREALIZED_FX_GAIN),
 ]
 
 
