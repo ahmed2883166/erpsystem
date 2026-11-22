@@ -58,6 +58,40 @@ class Company(models.Model):
         return f"{self.code} - {self.name_ar}"
 
 
+class ExchangeRate(models.Model):
+    """سعر وحدة واحدة من العملة الأجنبية بوحدات العملة الأساسية للشركة."""
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="exchange_rates")
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, related_name="exchange_rates")
+    rate_date = models.DateField()
+    rate = models.DecimalField(max_digits=20, decimal_places=10)
+    source = models.CharField(max_length=120, blank=True)
+    notes = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-rate_date", "currency__code")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "currency", "rate_date"), name="uq_exchange_rate_company_currency_date"),
+            models.CheckConstraint(condition=Q(rate__gt=0), name="ck_exchange_rate_positive"),
+        ]
+        indexes = [models.Index(fields=("company", "currency", "-rate_date"), name="fx_co_cur_date_idx")]
+        verbose_name = "سعر صرف"
+        verbose_name_plural = "أسعار الصرف"
+
+    def clean(self):
+        super().clean()
+        if self.rate is not None and self.rate <= 0:
+            raise ValidationError({"rate": "سعر الصرف يجب أن يكون أكبر من صفر."})
+        if self.company_id and self.currency_id:
+            if self.currency.code == self.company.base_currency.code:
+                raise ValidationError({"currency": "لا يلزم تسجيل سعر صرف للعملة الأساسية للشركة."})
+            if not self.currency.is_active:
+                raise ValidationError({"currency": "لا يمكن تسجيل سعر صرف لعملة موقوفة."})
+
+    def __str__(self):
+        return f"{self.currency.code} / {self.company.base_currency.code} - {self.rate_date}: {self.rate}"
+
+
 class Branch(models.Model):
     """يمثل فرعًا تابعًا للشركة ويحدد الفرع الرئيسي عند الحاجة."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="branches")
