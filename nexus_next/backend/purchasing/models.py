@@ -236,6 +236,7 @@ class SupplierPayment(models.Model):
     exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
     exchange_rate_date = models.DateField(null=True, blank=True)
     carrying_base_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    historical_carrying_base_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     realized_fx_gain = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     realized_fx_loss = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     reference = models.CharField(max_length=120, blank=True)
