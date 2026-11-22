@@ -114,6 +114,17 @@ Do not use this package against the legacy Flask/SQLite database.
     & (Join-Path $Runtime "python.exe") manage.py check
     if ($LASTEXITCODE -ne 0) { throw "Django system check failed inside the embedded runtime." }
   } finally { Pop-Location }
+
+  # Django's embedded-runtime check imports application modules and creates bytecode caches.
+  # Remove those generated caches from the distributable after validation, then enforce the scan below.
+  Get-ChildItem -LiteralPath $Stage -Directory -Recurse -Force |
+    Where-Object { $_.Name -in @("__pycache__", ".pytest_cache") } |
+    Sort-Object { $_.FullName.Length } -Descending |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
+  Get-ChildItem -LiteralPath $Stage -File -Recurse -Force |
+    Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
+    Remove-Item -Force
+
   foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "run-admrail.cmd", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
