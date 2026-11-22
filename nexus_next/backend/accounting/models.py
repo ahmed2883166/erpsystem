@@ -78,6 +78,10 @@ class AccountRole(models.Model):
         INVENTORY_ADJUSTMENT_GAIN = "inventory_adjustment_gain", "أرباح تسوية المخزون"
         INVENTORY_ADJUSTMENT_LOSS = "inventory_adjustment_loss", "خسائر تسوية المخزون"
         INTER_BRANCH_CLEARING = "inter_branch_clearing", "حساب تسوية بين الفروع"
+        REALIZED_FX_GAIN = "realized_fx_gain", "أرباح فروق عملة محققة"
+        REALIZED_FX_LOSS = "realized_fx_loss", "خسائر فروق عملة محققة"
+        UNREALIZED_FX_GAIN = "unrealized_fx_gain", "أرباح فروق عملة غير محققة"
+        UNREALIZED_FX_LOSS = "unrealized_fx_loss", "خسائر فروق عملة غير محققة"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="account_roles")
     role = models.CharField(max_length=32, choices=Role.choices)
