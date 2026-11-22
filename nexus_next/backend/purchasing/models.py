@@ -7,7 +7,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 from accounting.models import ChartOfAccount, TaxCode
-from companies.models import Company
+from companies.models import Company, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 from suppliers.models import Supplier
 
@@ -76,6 +76,12 @@ class PurchaseInvoice(models.Model):
     receipt = models.OneToOneField(PurchaseReceipt, on_delete=models.PROTECT, related_name="invoice")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
+    transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
+    transaction_net_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_grand_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
@@ -129,6 +135,10 @@ class PurchaseInvoiceLine(models.Model):
     invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="lines")
     receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_line")
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
+    transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
+    transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_total_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
     tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
@@ -150,9 +160,23 @@ class PurchaseInvoiceLine(models.Model):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح أو غير قابل للخصم لهذه الشركة أو تاريخ الفاتورة."})
             self.tax_rate = code.rate
         quantity = self.receipt_line.quantity
-        self.net_amount = (quantity * self.unit_price).quantize(Decimal("0.0001"))
-        self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
-        self.total_amount = self.net_amount + self.tax_amount
+        if self.invoice.transaction_currency_id:
+            if self.transaction_unit_price is None:
+                raise ValidationError({"transaction_unit_price": "سعر الوحدة بالعملة الأجنبية مطلوب."})
+            self.transaction_net_amount = (quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
+            self.transaction_tax_amount = (self.transaction_net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+            self.transaction_total_amount = self.transaction_net_amount + self.transaction_tax_amount
+            self.unit_price = (self.transaction_unit_price * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
+            self.net_amount = (self.transaction_net_amount * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
+            self.tax_amount = (self.transaction_tax_amount * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
+            self.total_amount = self.net_amount + self.tax_amount
+        else:
+            if self.transaction_unit_price is not None:
+                raise ValidationError({"transaction_unit_price": "لا تستخدم سعر وحدة أجنبيًا مع فاتورة بالعملة الأساسية."})
+            self.transaction_net_amount = self.transaction_tax_amount = self.transaction_total_amount = None
+            self.net_amount = (quantity * self.unit_price).quantize(Decimal("0.0001"))
+            self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+            self.total_amount = self.net_amount + self.tax_amount
 
     def clean(self):
         super().clean()
@@ -195,6 +219,13 @@ class SupplierPayment(models.Model):
     method = models.CharField(max_length=8, choices=Method.choices, default=Method.BANK)
     payment_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payments")
     amount = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payments")
+    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
+    carrying_base_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    realized_fx_gain = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    realized_fx_loss = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     reference = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payment")
