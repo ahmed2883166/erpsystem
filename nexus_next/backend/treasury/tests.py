@@ -5,9 +5,10 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency
-from accounting.models import ChartOfAccount
-from .models import BankReconciliation, TreasuryAccount
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from accounting.models import ChartOfAccount, JournalEntry, JournalLine
+from .models import BankReconciliation, TreasuryAccount, TreasuryTransaction
+from .services import record_posted_document_bank_movement
 
 
 class BankReconciliationOpeningBalanceTests(TestCase):
@@ -47,6 +48,43 @@ class BankReconciliationOpeningBalanceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["book_balance"], "1000.0000")
         self.assertEqual(response.data["expected_book_balance"], "1000.0000")
+        self.assertEqual(response.data["unexplained_difference"], "0.0000")
+
+    def test_sales_and_purchase_bank_mirrors_are_visible_as_outstanding_items(self):
+        year = FiscalYear.objects.create(
+            company=self.company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        counter = ChartOfAccount.objects.create(
+            company=self.company, code="2100", name_ar="الموردون", nature="liability",
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=year,
+            entry_number="BANK-PAY-001", entry_date=date(2026, 1, 20),
+            description="سداد مورد", source_type=JournalEntry.Source.PURCHASES,
+            status=JournalEntry.Status.POSTED,
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=entry, account=counter, debit=Decimal("100"), credit=0),
+            JournalLine(entry=entry, account=self.bank.account, debit=0, credit=Decimal("100")),
+        ])
+        record_posted_document_bank_movement(
+            company=self.company, branch=self.branch, fiscal_year=year, account=self.bank.account,
+            kind=TreasuryTransaction.Kind.PAYMENT, amount=Decimal("100"),
+            transaction_date=date(2026, 1, 20), document_number="AUTO-PUR-PAY-1",
+            description="سداد فاتورة مورد", counter_account=counter, journal_entry=entry,
+        )
+        user = User.objects.create_user(username="bank_mirror_viewer", password="test-password")
+        CompanyMembership.objects.create(
+            user=user, company=self.company, role="viewer", all_branches=True,
+        )
+        self.client.force_authenticate(user=user)
+        response = self.client.get(
+            f"/api/treasury/reconciliations/{self.reconciliation.pk}/summary/"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["outstanding_total"], "-100.0000")
+        self.assertEqual(response.data["book_balance"], "900.0000")
+        self.assertEqual(response.data["expected_book_balance"], "900.0000")
         self.assertEqual(response.data["unexplained_difference"], "0.0000")
 
     def test_reconciliation_can_be_approved_when_opening_balances_match(self):
