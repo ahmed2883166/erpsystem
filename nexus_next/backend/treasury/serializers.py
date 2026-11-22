@@ -1,3 +1,4 @@
+from decimal import Decimal
 from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
