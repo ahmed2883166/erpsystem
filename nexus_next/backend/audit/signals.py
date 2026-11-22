@@ -1,3 +1,5 @@
+"""مستمعات أحداث Django لتسجيل تغييرات الإدارة وتسجيل الدخول والخروج."""
+
 import logging
 
 from django.contrib.admin.models import ADDITION, CHANGE, DELETION, LogEntry
