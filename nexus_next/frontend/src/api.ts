@@ -154,7 +154,7 @@ export type TreasuryAccount = {
 export type FxSubledgerRevaluation = {
   id:number; revaluation_date:string; rate_date:string; rate:string; foreign_balance:string;
   previous_carrying_amount:string; new_carrying_amount:string; difference:string;
-  journal_entry:number|null; journal_number:string|null;
+  journal_entry:number|null; journal_number:string|null; status:"posted"|"reversed"|"no_difference";
 };
 export type TreasuryFxRevaluation = {
   id:number; account:number; currency:string; revaluation_date:string; rate_date:string; rate:string;
