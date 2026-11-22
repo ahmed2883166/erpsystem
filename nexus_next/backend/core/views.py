@@ -68,6 +68,7 @@ def session_login(request):
             "display_name": getattr(user, "display_name", "") or user.get_username(),
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
+            "theme_preference": user.theme_preference,
         },
     })
 
