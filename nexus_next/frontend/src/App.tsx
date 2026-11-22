@@ -23,6 +23,7 @@ const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
 const AccountsPanel = lazy(() => import("./AccountsPanel"));
 const CostCentersPanel = lazy(() => import("./CostCentersPanel"));
+const FiscalYearsPanel = lazy(() => import("./FiscalYearsPanel"));
 const ExpenseAnalysisPanel = lazy(() => import("./ExpenseAnalysisPanel"));
 const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
@@ -36,7 +37,7 @@ const localISODate = () => {
   return `${year}-${month}-${day}`;
 };
 
-type Section = "overview" | "journals" | "accounts" | "cost-centers" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
+type Section = "overview" | "journals" | "accounts" | "cost-centers" | "fiscal-years" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string; cost_center: string };
 
 // تجهيز ملف CSV للتنزيل مع تنسيق القيم وحماية النصوص من كسر الأعمدة.
@@ -60,6 +61,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "journals", label: "قيود اليومية", icon: "⇄", group: "المحاسبة" },
   { id: "accounts", label: "دليل الحسابات", icon: "☷", group: "المحاسبة" },
   { id: "cost-centers", label: "مراكز التكلفة", icon: "◎", group: "المحاسبة" },
+  { id: "fiscal-years", label: "السنوات المالية والإقفال", icon: "◷", group: "المحاسبة" },
   { id: "customers", label: "العملاء", icon: "♙", group: "المبيعات" },
   { id: "sales-workflow", label: "دورة المبيعات", icon: "↗", group: "المبيعات" },
   { id: "suppliers", label: "الموردون", icon: "♧", group: "المشتريات" },
@@ -785,6 +787,7 @@ const postDraft = async (entry: Journal) => {
           </>}
 
           {active === "cost-centers" && <Suspense fallback={panelFallback}><CostCentersPanel companyId={companyId} /></Suspense>}
+          {active === "fiscal-years" && <Suspense fallback={panelFallback}><FiscalYearsPanel companyId={companyId} onStructureChanged={async () => { if (!companyId) return; const rows = await api.fiscalYears(companyId); setFiscalYears(rows.filter(row => row.company === companyId)); setDraft(old => ({ ...old, fiscal_year: rows.find(row => row.status === "open")?.id ? String(rows.find(row => row.status === "open")!.id) : "" })); }} /></Suspense>}
           {active === "accounts" && <Suspense fallback={panelFallback}><AccountsPanel companyId={companyId} companyName={selectedCompany?.name_ar || "الشركة"} activity={selectedCompany?.activity} accounts={accounts} onRefresh={async () => { if (!companyId) return; const rows = await api.accounts(companyId); setAccounts(rows); }} /></Suspense>}
 
           {active === "journals" && <section className="work-panel journal-register-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "", cost_center: "" }, { account: "", debit: "", credit: "", description: "", cost_center: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
