@@ -489,7 +489,8 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
             "invoice", "invoice__receipt__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(payment.company_id)
-        warehouse = payment.invoice.receipt.warehouse
+        invoice = PurchaseInvoice.objects.select_for_update().select_related("receipt__warehouse").get(pk=payment.invoice_id)
+        warehouse = invoice.receipt.warehouse
         if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, payment.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if payment.status != SupplierPayment.Status.POSTED or not payment.journal_entry_id:
