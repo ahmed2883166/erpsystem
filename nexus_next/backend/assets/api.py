@@ -11,6 +11,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from .models import FixedAsset, AssetDepreciation
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
 from .services import acquire_asset, depreciate_asset, dispose_asset
+from accounting.models import JournalEntry, JournalLine
 
 
 class FixedAssetViewSet(viewsets.ModelViewSet):
@@ -226,6 +227,133 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         return response.Response({"company": int(request.query_params["company"]),
             "date_from": date_from, "date_to": date_to, "rows": events})
 
+
+    @decorators.action(detail=False, methods=("post",), url_path="depreciation-run")
+    def depreciation_run(self, request):
+        """تشغيل الإهلاك الدوري للأصول النشطة دفعة واحدة مع بيان ما تم وما تعذر."""
+        assets = self._report_assets(request).filter(
+            status=FixedAsset.Status.ACTIVE,
+            acquisition_journal__status=JournalEntry.Status.POSTED,
+        ).select_related("company")
+        self._write(int(request.query_params["company"]))
+        period_date = dateparse.parse_date(request.data.get("period_date", ""))
+        fiscal_year_id = request.data.get("fiscal_year")
+        if not period_date:
+            raise ValidationError({"period_date": "أدخل تاريخ فترة صحيحًا."})
+        try:
+            from companies.models import FiscalYear
+            year = FiscalYear.objects.get(
+                pk=fiscal_year_id, company_id=request.query_params["company"],
+                status=FiscalYear.Status.OPEN,
+            )
+        except (FiscalYear.DoesNotExist, TypeError, ValueError):
+            raise ValidationError({"fiscal_year": "حدد سنة مالية مفتوحة وصحيحة."})
+        if not (year.start_date <= period_date <= year.end_date):
+            raise ValidationError({"period_date": "تاريخ الإهلاك خارج السنة المالية المحددة."})
+        processed, skipped = [], []
+        for asset in assets.filter(depreciation_start_date__lte=period_date).order_by("code"):
+            if asset.depreciations.filter(
+                period_date__year=period_date.year, period_date__month=period_date.month
+            ).exists():
+                skipped.append({"asset_id": asset.pk, "code": asset.code, "reason": "الفترة مسجلة مسبقًا"})
+                continue
+            try:
+                amount = depreciate_asset(asset.pk, period_date, year.pk, request.user)
+                processed.append({"asset_id": asset.pk, "code": asset.code, "amount": str(amount)})
+            except DjangoValidationError as exc:
+                detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+                skipped.append({"asset_id": asset.pk, "code": asset.code, "reason": detail})
+        return response.Response({
+            "period_date": period_date, "fiscal_year": year.pk,
+            "processed_count": len(processed), "processed_total": str(sum((Decimal(row["amount"]) for row in processed), Decimal("0"))),
+            "skipped_count": len(skipped), "processed": processed, "skipped": skipped,
+            "note": "تم ترحيل القيود لكل أصل على حدة. راجع قائمة المتعذر قبل اعتماد إقفال الفترة.",
+        }, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=False, methods=("get",), url_path="account-reconciliation")
+    def account_reconciliation(self, request):
+        """مطابقة سجل الأصول ومجمع الإهلاك ومصروفه مع دفتر الأستاذ العام."""
+        from collections import defaultdict
+        from decimal import Decimal
+
+        assets = self._report_assets(request).filter(
+            acquisition_date__lte=request.query_params.get("as_of", timezone.localdate())
+        ).select_related(
+            "asset_account", "accumulated_depreciation_account", "depreciation_expense_account"
+        ).prefetch_related("depreciations")
+        as_of_raw = request.query_params.get("as_of")
+        as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
+        date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
+        date_from = dateparse.parse_date(date_from_raw) if date_from_raw else as_of.replace(month=1, day=1)
+        date_to = dateparse.parse_date(date_to_raw) if date_to_raw else as_of
+        if not as_of or not date_from or not date_to or date_from > date_to:
+            raise ValidationError("حدد تاريخ مطابقة وفترة إهلاك صحيحة.")
+        assets = assets.filter(acquisition_date__lte=as_of)
+        branch_ids = list(assets.values_list("branch_id", flat=True).distinct())
+        company_id = int(request.query_params["company"])
+        expected_cost = defaultdict(Decimal)
+        expected_accum = defaultdict(Decimal)
+        expected_expense = defaultdict(Decimal)
+        account_objects = {}
+        for asset in assets:
+            account_objects[asset.asset_account_id] = asset.asset_account
+            account_objects[asset.accumulated_depreciation_account_id] = asset.accumulated_depreciation_account
+            account_objects[asset.depreciation_expense_account_id] = asset.depreciation_expense_account
+            disposed_by_date = bool(asset.disposed_at and asset.disposed_at <= as_of)
+            if not disposed_by_date:
+                expected_cost[asset.asset_account_id] += asset.original_cost
+                expected_accum[asset.accumulated_depreciation_account_id] += sum(
+                    (dep.amount for dep in asset.depreciations.all()
+                     if dep.period_date <= as_of and dep.journal_entry.status == JournalEntry.Status.POSTED),
+                    Decimal("0"),
+                )
+            for dep in asset.depreciations.all():
+                if date_from <= dep.period_date <= date_to and dep.journal_entry.status == JournalEntry.Status.POSTED:
+                    expected_expense[asset.depreciation_expense_account_id] += dep.amount
+
+        account_ids = list(account_objects)
+        ledger = JournalLine.objects.filter(
+            entry__company_id=company_id,
+            entry__status=JournalEntry.Status.POSTED,
+            entry__entry_date__lte=as_of,
+            entry__branch_id__in=branch_ids,
+            account_id__in=account_ids,
+        ).values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
+        actual = {row["account_id"]: row for row in ledger}
+        cost_rows, accum_rows, expense_rows = [], [], []
+        for account_id, account in account_objects.items():
+            row = actual.get(account_id, {})
+            debit = row.get("debit") or Decimal("0")
+            credit = row.get("credit") or Decimal("0")
+            if any(asset.asset_account_id == account_id for asset in assets):
+                expected = expected_cost[account_id]
+                actual_value = debit - credit
+                cost_rows.append({"account_id": account_id, "code": account.code, "name": account.name_ar,
+                                  "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value)})
+            if any(asset.accumulated_depreciation_account_id == account_id for asset in assets):
+                expected = expected_accum[account_id]
+                actual_value = credit - debit
+                accum_rows.append({"account_id": account_id, "code": account.code, "name": account.name_ar,
+                                   "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value)})
+            if any(asset.depreciation_expense_account_id == account_id for asset in assets):
+                expense_lines = JournalLine.objects.filter(
+                    entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
+                    entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
+                    entry__branch_id__in=branch_ids, account_id=account_id,
+                ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+                expected = expected_expense[account_id]
+                actual_value = (expense_lines["debit"] or Decimal("0")) - (expense_lines["credit"] or Decimal("0"))
+                expense_rows.append({"account_id": account_id, "code": account.code, "name": account.name_ar,
+                                     "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value)})
+        all_rows = cost_rows + accum_rows + expense_rows
+        return response.Response({
+            "company": company_id, "as_of": as_of, "date_from": date_from, "date_to": date_to,
+            "cost_accounts": cost_rows, "accumulated_depreciation_accounts": accum_rows,
+            "depreciation_expense_accounts": expense_rows,
+            "is_reconciled": all(Decimal(row["difference"]) == 0 for row in all_rows),
+            "difference_count": sum(1 for row in all_rows if Decimal(row["difference"]) != 0),
+            "note": "المطابقة تقارن سجل الأصول بالقيود المرحلة فقط. أي فروق تحتاج مراجعة قبل تعديل القيود أو بيانات الأصول.",
+        })
 
     @decorators.action(detail=True, methods=("post",))
     def dispose(self, request, pk=None):
