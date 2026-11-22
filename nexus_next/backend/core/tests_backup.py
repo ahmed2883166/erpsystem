@@ -17,6 +17,20 @@ class BackupConfigurationApiTests(TestCase):
             username="system-admin", email="admin@example.test", password="safe-password-123"
         )
 
+    def test_scheduled_backup_command_records_only_encrypted_archives(self):
+        from django.core.management import call_command, CommandError
+        with TemporaryDirectory() as folder:
+            encrypted = Path(folder) / "nexus-daily.dump.nexusenc"
+            encrypted.write_bytes(b"encrypted archive" * 200)
+            call_command("record_backup_run", file=str(encrypted), verbosity=0)
+            run = BackupRun.objects.get(backup_file=str(encrypted.resolve()))
+            self.assertEqual(run.status, BackupRun.Status.SUCCESS)
+            self.assertIsNone(run.started_by)
+            plaintext = Path(folder) / "nexus-old.dump"
+            plaintext.write_bytes(b"plaintext archive" * 200)
+            with self.assertRaises(CommandError):
+                call_command("record_backup_run", file=str(plaintext), verbosity=0)
+
     def test_regular_user_can_read_but_cannot_change_destination(self):
         self.client.force_authenticate(self.user)
         response = self.client.get(self.url)
