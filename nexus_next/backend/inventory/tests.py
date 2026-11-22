@@ -263,6 +263,34 @@ class StockPostingServiceTests(TestCase):
             clearing_totals.append(Decimal(totals["debit"] or 0) - Decimal(totals["credit"] or 0))
         self.assertEqual(sum(clearing_totals), Decimal("0.0000"))
 
+        # Verify that the stock snapshot and posted inventory account agree
+        # independently for both branches and in the consolidated company view.
+        self.user.is_superuser = True
+        self.user.save(update_fields=("is_superuser",))
+        factory = APIRequestFactory()
+
+        def reconcile(branch_id=None):
+            query = f"?company={self.company.pk}"
+            if branch_id is not None:
+                query += f"&branch={branch_id}"
+            request = factory.get(f"/api/inventory/balances/reconciliation/{query}")
+            force_authenticate(request, user=self.user)
+            return StockBalanceViewSet.as_view({"get": "reconciliation"})(request)
+
+        source_report = reconcile(self.branch.pk)
+        destination_report = reconcile(destination_branch.pk)
+        company_report = reconcile()
+        for report, expected in (
+            (source_report, Decimal("36.0000")),
+            (destination_report, Decimal("60.0000")),
+            (company_report, Decimal("96.0000")),
+        ):
+            self.assertEqual(report.status_code, 200)
+            self.assertEqual(Decimal(report.data["stock_value"]), expected)
+            self.assertEqual(Decimal(report.data["gl_balance"]), expected)
+            self.assertEqual(Decimal(report.data["difference"]), Decimal("0.0000"))
+            self.assertTrue(report.data["is_reconciled"])
+
 
     def test_fifo_transfer_preserves_location_expiry_and_cost_layers_across_branches(self):
         self.product.costing_method = Product.CostingMethod.FIFO
