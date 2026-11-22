@@ -798,6 +798,70 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(trial_balance.data["closing_debit_credit_difference"], Decimal("0.0000"))
 
 
+class BranchSpecificOpeningBalanceTests(TestCase):
+    def test_reports_keep_carry_forward_for_branches_without_current_year_opening(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(code="BR-OPEN", name_ar="شركة افتتاحيات الفروع", country="EG",
+            activity="commercial", base_currency=currency)
+        main = Branch.objects.create(company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        east = Branch.objects.create(company=company, code="EAST", name_ar="الشرقي")
+        year_2026 = FiscalYear.objects.create(company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
+        year_2027 = FiscalYear.objects.create(company=company, name="2027",
+            start_date=date(2027, 1, 1), end_date=date(2027, 12, 31))
+        cash = ChartOfAccount.objects.create(company=company, code="1000", name_ar="النقدية", nature="asset")
+        capital = ChartOfAccount.objects.create(company=company, code="3000", name_ar="رأس المال", nature="equity")
+        revenue = ChartOfAccount.objects.create(company=company, code="4000", name_ar="الإيرادات", nature="revenue")
+
+        for branch, number, amount in ((main, "MAIN-2026", "100"), (east, "EAST-2026", "200")):
+            prior = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year_2026,
+                entry_number=number, entry_date=date(2026, 12, 30), description="رصيد مرحل")
+            JournalLine.objects.create(entry=prior, account=cash, debit=Decimal(amount))
+            JournalLine.objects.create(entry=prior, account=capital, credit=Decimal(amount))
+            post_journal(prior.pk)
+
+        opening = JournalEntry.objects.create(company=company, branch=main, fiscal_year=year_2027,
+            entry_number="MAIN-OPEN-2027", entry_date=date(2027, 1, 1), description="افتتاحي الفرع الرئيسي",
+            source_type=JournalEntry.Source.OPENING)
+        JournalLine.objects.create(entry=opening, account=cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("100"))
+        post_journal(opening.pk)
+
+        for branch, number, amount in ((main, "MAIN-2027", "10"), (east, "EAST-2027", "20")):
+            movement = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year_2027,
+                entry_number=number, entry_date=date(2027, 1, 2), description="حركة الفترة")
+            JournalLine.objects.create(entry=movement, account=cash, debit=Decimal(amount))
+            JournalLine.objects.create(entry=movement, account=revenue, credit=Decimal(amount))
+            post_journal(movement.pk)
+
+        user = User.objects.create_user(username="branch_opening_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        trial = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}"
+            "&date_from=2027-01-01&date_to=2027-01-02")
+        ledger = client.get(f"/api/accounting/journal-entries/general-ledger/?company={company.pk}"
+            f"&account={cash.pk}&date_from=2027-01-01&date_to=2027-01-02")
+        equity = client.get(f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
+            "&date_from=2027-01-01&date_to=2027-01-02")
+
+        self.assertEqual(trial.status_code, 200, trial.data)
+        self.assertEqual(ledger.status_code, 200, ledger.data)
+        self.assertEqual(equity.status_code, 200, equity.data)
+        cash_row = next(row for row in trial.data["accounts"] if row["account_id"] == cash.pk)
+        self.assertEqual(cash_row["opening_balance"], Decimal("300.0000"))
+        self.assertEqual(cash_row["debit_total"], Decimal("30.0000"))
+        self.assertEqual(cash_row["closing_balance"], Decimal("330.0000"))
+        self.assertEqual(trial.data["closing_debit_credit_difference"], Decimal("0.0000"))
+        self.assertEqual(ledger.data["opening_balance"], Decimal("300.0000"))
+        self.assertEqual(ledger.data["closing_balance"], Decimal("330.0000"))
+        self.assertEqual(equity.data["opening_equity"], Decimal("300.0000"))
+        self.assertEqual(equity.data["period_net_profit"], Decimal("30.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("330.0000"))
+
+
 class TrialBalanceClosingFilterTests(TestCase):
     def test_closing_entries_can_be_excluded_from_trial_balance(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
