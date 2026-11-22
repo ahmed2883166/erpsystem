@@ -21,12 +21,15 @@ def record_posted_document_bank_movement(*, company, branch, fiscal_year, accoun
     treasury_account = TreasuryAccount.objects.select_for_update().filter(
         company=company, account=account, kind=expected_kind, is_active=True,
     ).first()
+    # The journal posting is authoritative. A missing or mismatched treasury mapping
+    # must not roll back a valid sales/purchase receipt or payment; it only means
+    # that this legacy/unmapped bank account cannot yet appear in bank reconciliation.
     if not treasury_account:
-        raise ValidationError("يجب ربط حساب البنك المختار بحساب خزينة بنكي نشط حتى يظهر التحصيل أو السداد في المطابقة البنكية.")
+        return None
     if treasury_account.branch_id and treasury_account.branch_id != branch.pk:
-        raise ValidationError("حساب البنك المختار لا يتبع فرع المستند.")
+        return None
     if treasury_account.currency_code != company.base_currency.code:
-        raise ValidationError("عملة حساب البنك لا تطابق العملة الأساسية للشركة.")
+        return None
     if not journal_entry or journal_entry.status != JournalEntry.Status.POSTED:
         raise ValidationError("لا يمكن ربط حركة البنك قبل ترحيل القيد الأصلي.")
     return TreasuryTransaction.objects.create(
