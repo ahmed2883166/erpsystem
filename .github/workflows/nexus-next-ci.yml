@@ -51,6 +51,8 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: nexus_next/frontend
@@ -59,7 +61,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install
+      - name: Generate and commit the npm lockfile on branch pushes
+        shell: bash
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          if [ "${GITHUB_EVENT_NAME}" = "push" ] && ! git diff --quiet -- package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "Lock frontend npm dependency tree"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+      - run: npm ci --no-audit --no-fund
+      - run: npm ls --depth=0
       - run: npm run typecheck
       - run: npm run build
 
