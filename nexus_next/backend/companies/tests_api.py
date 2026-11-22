@@ -1,6 +1,6 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from .models import Branch, Company, CompanyMembership, Currency
+from .models import Branch, Company, CompanyMembership, Currency, PlatformOwner
 
 
 class CompanySetupApiTests(APITestCase):
@@ -50,6 +50,7 @@ class CompanySetupApiTests(APITestCase):
         system_admin = get_user_model().objects.create_superuser(
             username="first-company-admin", email="admin@example.test", password="test-password"
         )
+        PlatformOwner.objects.create(user=system_admin)
         self.client.force_authenticate(system_admin)
         response = self.client.post("/api/setup/companies/", {
             "code": "FIRST-CO",
@@ -61,10 +62,8 @@ class CompanySetupApiTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         company_id = response.data["id"]
-        membership = CompanyMembership.objects.get(user=system_admin, company_id=company_id)
-        self.assertEqual(membership.role, CompanyMembership.Role.ADMIN)
-        self.assertTrue(membership.all_branches)
-        self.assertTrue(membership.is_active)
+        self.assertFalse(CompanyMembership.objects.filter(user=system_admin, company_id=company_id).exists())
+        self.assertTrue(Company.objects.filter(pk=company_id).exists())
 
     def test_non_staff_user_cannot_create_first_company(self):
         self.client.force_authenticate(self.user)
@@ -524,3 +523,38 @@ class CompanySetupApiTests(APITestCase):
         membership.refresh_from_db()
         self.assertEqual(membership.user_id, original.pk)
 
+
+
+    def test_staff_without_platform_owner_profile_cannot_create_company(self):
+        staff = get_user_model().objects.create_user(
+            username="ordinary-staff", password="test-password", is_staff=True
+        )
+        self.client.force_authenticate(staff)
+        response = self.client.post("/api/setup/companies/", {
+            "code": "STAFF-DENIED", "name_ar": "محاولة موظف",
+            "country": "EG", "activity": "commercial", "base_currency": self.currency.pk,
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Company.objects.filter(code="STAFF-DENIED").exists())
+
+    def test_platform_owner_can_list_company_registry_without_tenant_membership(self):
+        owner = get_user_model().objects.create_superuser(
+            username="platform-owner-registry", email="owner@example.test", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.company.is_active = False
+        self.company.save(update_fields=["is_active"])
+        self.client.force_authenticate(owner)
+        response = self.client.get("/api/setup/companies/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({row["id"] for row in response.data}, {self.company.pk, self.other_company.pk})
+        self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
+
+    def test_company_admin_cannot_permanently_delete_company(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.delete(f"/api/setup/companies/{self.company.pk}/")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertTrue(Company.objects.filter(pk=self.company.pk).exists())
