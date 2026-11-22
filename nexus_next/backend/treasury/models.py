@@ -54,7 +54,6 @@ class TreasuryAccount(models.Model):
     def delete(self, *args, **kwargs):
         if self.opening_journal_entry_id:
             raise ValidationError("لا يمكن حذف خزينة مرتبطة بقيد افتتاحي؛ عطّل الحساب للحفاظ على الأثر المحاسبي.")
-        from .models import TreasuryTransaction
         if TreasuryTransaction.objects.filter(models.Q(source_account=self) | models.Q(destination_account=self)).exists():
             raise ValidationError("لا يمكن حذف خزينة لها حركات؛ عطّل الحساب بدلًا من حذفها.")
         return super().delete(*args, **kwargs)
