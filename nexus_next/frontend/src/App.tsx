@@ -536,10 +536,11 @@ export default function App() {
       setCompanies(items);
       if (items.length) setCompanyId(items[0].id);
       else setActive("setup");
-    }).catch((reason: Error) => {
+    }).catch((reason: Error & { status?: number }) => {
       if (cancelled) return;
       setError(reason.message);
-      setAuthStatus("signed-out");
+      // فشل تحميل الشركات بسبب الصلاحيات لا يعني أن جلسة المستخدم انتهت.
+      setAuthStatus(reason.status === 401 ? "signed-out" : "signed-in");
     });
     return () => { cancelled = true; };
   }, [authRefresh]);
@@ -707,7 +708,7 @@ const postDraft = async (entry: Journal) => {
             <p className="welcome-copy">{active === "overview" ? "نظرة موحدة على أعمال شركتك وبياناتها." : "بيانات مباشرة من خدمات النظام المحاسبية."}</p></div>
             {companyId !== null && active !== "customers" && active !== "suppliers" && active !== "purchasing" && active !== "inventory" && <button className="primary-button" onClick={() => { setActive("journals"); setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}><span>＋</span> قيد جديد</button>}</section>
 
-          {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span><a href="/admin/" target="_blank" rel="noreferrer">تسجيل الدخول من لوحة الإدارة</a></div>}
+          {error && <div className="error-banner"><strong>تعذر تحميل البيانات</strong><span>{error}</span></div>}
           {active === "overview" && <Suspense fallback={panelFallback}><DashboardPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} onNavigate={(section) => setActive(section)} /></Suspense>}
           {active === "overview" && <>
             <div className="section-heading"><div><h2>ملخص البيانات</h2><p>الأرقام التالية مبنية على السجلات المحملة من قاعدة البيانات</p></div><span className="module-count">{loading ? "جارٍ التحديث…" : "تحديث مباشر"}</span></div>
