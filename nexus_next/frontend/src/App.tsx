@@ -434,6 +434,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
   const [to, setTo] = useState(today);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [accountId, setAccountId] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
