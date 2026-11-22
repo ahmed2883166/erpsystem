@@ -71,6 +71,15 @@ class TreasuryFxSnapshotTests(TestCase):
         with self.assertRaises(ValidationError):
             transaction.full_clean()
 
+    def test_foreign_treasury_draft_cannot_omit_snapshot(self):
+        transaction = self.make_transaction()
+        transaction.transaction_currency = None
+        transaction.transaction_amount = None
+        transaction.exchange_rate = None
+        transaction.exchange_rate_date = None
+        with self.assertRaises(ValidationError):
+            transaction.full_clean()
+
     def test_exchange_rate_cannot_be_from_after_transaction_date(self):
         transaction = self.make_transaction()
         transaction.exchange_rate_date = date(2026, 3, 2)
