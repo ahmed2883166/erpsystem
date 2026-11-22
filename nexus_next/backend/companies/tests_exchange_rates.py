@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate
+from .models import Company, CompanyMembership, Currency, ExchangeRate
 from .services import get_exchange_rate
 
 
