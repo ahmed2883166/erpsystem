@@ -419,6 +419,25 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(leave.status, LeaveRequest.Status.PENDING)
         self.assertFalse(AuditEvent.objects.filter(resource="hr.leave.self_approval_override", object_id=str(leave.pk)).exists())
 
+    def test_employee_login_cannot_approve_or_reject_own_leave_created_by_hr(self):
+        manager = User.objects.create_user(username="hr_employee_linked", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.employee.user = manager
+        self.employee.save(update_fields=("user",))
+        hr_creator = User.objects.create_user(username="hr_leave_proxy_creator", password="test-password")
+        leave = LeaveRequest.objects.create(
+            employee=self.employee, kind=LeaveRequest.Kind.ANNUAL,
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 2),
+            days=Decimal("2"), created_by=hr_creator,
+        )
+        self.client.force_authenticate(manager)
+        approved = self.client.post(f"/api/hr/leave-requests/{leave.pk}/approve/", {}, format="json")
+        rejected = self.client.post(f"/api/hr/leave-requests/{leave.pk}/reject/", {}, format="json")
+        self.assertEqual(approved.status_code, 403)
+        self.assertEqual(rejected.status_code, 403)
+        leave.refresh_from_db()
+        self.assertEqual(leave.status, LeaveRequest.Status.PENDING)
+
     def test_superuser_self_approval_override_requires_reason_and_is_audited_for_leave(self):
         from audit.models import AuditEvent
         root = User.objects.create_superuser(username="hr_leave_root", email="root@example.test", password="test-password")
