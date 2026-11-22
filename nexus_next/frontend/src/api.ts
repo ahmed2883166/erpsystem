@@ -273,7 +273,7 @@ export type EquityChangesReport = {
 export type VATReturnLine = {
   tax_code_id: number | null; tax_code: string | null; tax_name: string | null;
   category: "standard" | "zero_rated" | "exempt" | "out_of_scope" | "reverse_charge" | "legacy_unclassified";
-  tax_rate: string; taxable_base: string; tax_amount: string; recoverable_tax_amount: string; gross_amount: string;
+  tax_rate: string; taxable_base: string; tax_amount: string; recoverable_tax_amount: string; gross_amount: string; line_count: number;
 };
 export type VATReturnReport = {
   company: number; country: "EG" | "SA"; currency: string; date_from: string; date_to: string;
@@ -287,6 +287,13 @@ export type VATReturnReport = {
     by_category: { category: string; taxable_base: string; tax_amount: string; recoverable_tax_amount: string; gross_amount: string }[];
     by_code: VATReturnLine[] };
   output_tax: string; input_tax: string; net_tax_payable: string;
+  ledger_reconciliation: {
+    output_tax_from_invoices: string; output_tax_gl_net_credit: string; output_tax_difference: string;
+    recoverable_input_tax_from_invoices: string; input_tax_gl_net_debit: string; input_tax_difference: string;
+    invoice_net_tax_payable: string; ledger_net_tax_payable: string; net_tax_difference: string;
+    output_account_configured: boolean; input_account_configured: boolean;
+  };
+  unclassified_tax: { sales_amount: string; sales_groups: number; purchase_amount: string; purchase_groups: number; purchase_recoverable_amount: string };
   report_kind: "internal_vat_reconciliation"; note: string;
 };
 export type TaxCode = {
@@ -322,6 +329,8 @@ export const api = {
   updateCostCenter: async (id: number, payload: Partial<CostCenter>) => { await request<{ detail: string }>("/api/csrf/"); return request<CostCenter>(`/api/accounting/cost-centers/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
   // إضافة كود ضريبي جديد للشركة.
   createTaxCode: async (payload: Partial<TaxCode>) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>("/api/accounting/tax-codes/", { method: "POST", body: JSON.stringify(payload) }); },
+  // إنشاء أكواد ضريبة القيمة المضافة الابتدائية حسب بلد الشركة دون تعديل الأكواد الموجودة.
+  initializeTaxPresets: async (companyId: number) => { await request<{ detail: string }>("/api/csrf/"); return request<{country:"EG"|"SA";country_label:string;created:{id:number;code:string;rate:string;is_active:boolean}[];existing:{id:number;code:string;rate:string;is_active:boolean}[];note:string}>("/api/accounting/tax-codes/initialize-country-presets/", {method:"POST",body:JSON.stringify({company:companyId})}); },
   // تعطيل الكود الضريبي دون حذف السجل التاريخي.
   deactivateTaxCode: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>(`/api/accounting/tax-codes/${id}/`, { method: "PATCH", body: JSON.stringify({ is_active: false }) }); },
   // جلب العملات النشطة المتاحة في النظام.
