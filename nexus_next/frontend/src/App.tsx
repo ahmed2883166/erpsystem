@@ -4,6 +4,7 @@
  */
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import LoginPanel from "./LoginPanel";
+import OwnerPortalPanel from "./OwnerPortalPanel";
 import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode, type ThemePreference } from "./api";
 const BackupPanel = lazy(() => import("./BackupPanel"));
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
@@ -490,6 +491,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
 export default function App() {
   const [authStatus, setAuthStatus] = useState<"checking" | "signed-out" | "signed-in">("checking");
   const [authRefresh, setAuthRefresh] = useState(0);
+  const [isPlatformOwner, setIsPlatformOwner] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
   const effectiveTheme = themePreference === "system" ? (systemPrefersDark ? "dark" : "light") : themePreference;
@@ -540,14 +542,15 @@ export default function App() {
         setAuthStatus("signed-out");
         return;
       }
+      setIsPlatformOwner(Boolean(session.user?.is_platform_owner));
       setThemePreference(session.user?.theme_preference || "system");
       setAuthStatus("signed-in");
       try {
         const items = await api.companies();
         if (cancelled) return;
         setCompanies(items);
-        if (items.length) setCompanyId(items[0].id);
-        else setActive("setup");
+        if (items.length && !session.user?.is_platform_owner) setCompanyId(items[0].id);
+        else if (!session.user?.is_platform_owner) setActive("setup");
       } catch (reason) {
         if (cancelled) return;
         const failure = reason as Error & { status?: number };
@@ -680,6 +683,7 @@ const postDraft = async (entry: Journal) => {
     try {
       await authApi.logout();
       setAuthStatus("signed-out");
+      setIsPlatformOwner(false);
       setCompanies([]); setCompanyId(null); setAccounts([]); setJournals([]);
       setSelectedJournal(null); setSidebarOpen(false);
     } catch (reason) {
@@ -692,6 +696,9 @@ const postDraft = async (entry: Journal) => {
   }
   if (authStatus === "signed-out") {
     return <LoginPanel onLogin={() => setAuthRefresh((value) => value + 1)} />;
+  }
+  if (isPlatformOwner) {
+    return <OwnerPortalPanel companies={companies} onCompaniesChanged={setCompanies} onLogout={logoutCurrentUser} />;
   }
 
   return (
