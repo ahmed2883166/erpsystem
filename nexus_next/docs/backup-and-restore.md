@@ -22,6 +22,15 @@ cd nexus_next
 
 The recovery command prompts for the passphrase and binds the recovered key to the replacement machine's DPAPI. Do not delete or replace the original USB recovery file.
 
+If the USB recovery copy is lost while the original Windows installation still works, create a replacement copy from the local DPAPI key:
+
+```powershell
+cd nexus_next
+.\\backend\\.venv\\Scripts\\python.exe .\\backend\\manage.py export_backup_encryption_recovery --output E:\\NEXUS_Backup_Recovery_New.nexuskey
+```
+
+This command prompts for a new recovery passphrase and refuses to overwrite an existing file. Verify the replacement copy before retiring the old one.
+
 ## Configure destination and schedule
 
 1. Sign in as the system superuser.
