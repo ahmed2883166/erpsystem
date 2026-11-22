@@ -1299,3 +1299,22 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(len(second.data["created"]), 0)
         self.assertEqual(len(second.data["existing"]), 4)
         self.assertEqual(TaxCode.objects.filter(company=self.company).count(), 4)
+
+    def test_country_tax_presets_do_not_create_overlapping_versions(self):
+        Branch.objects.create(company=self.company, code="VAT-OVERLAP", name_ar="الرئيسي", is_head_office=True)
+        TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-STD", name_ar="نسبة قياسية حالية",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=True,
+        )
+        user = User.objects.create_user(username="vat_overlap_admin", password="test-password")
+        CompanyMembership.objects.create(user=user, company=self.company, role="admin", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+        response = client.post(
+            "/api/accounting/tax-codes/initialize-country-presets/",
+            {"company": self.company.pk}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(TaxCode.objects.filter(company=self.company, code="VAT-STD").count(), 1)
+        self.assertEqual(len(response.data["existing"]), 1)
