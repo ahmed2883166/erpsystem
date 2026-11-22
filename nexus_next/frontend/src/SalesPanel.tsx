@@ -133,7 +133,7 @@ const beginEditInvoice = (invoice: SalesInvoice) => {
         : receiptForm.amount;
       await salesApi.createReceipt({ company: companyId, customer: invoice.customer, invoice: invoice.id,
         receipt_number: receiptForm.receipt_number, receipt_date: receiptForm.receipt_date,
-        method: receiptForm.method, payment_account: Number(receiptForm.payment_account), amount: baseAmount,
+        method: receiptForm.method, payment_account: receiptForm.payment_account ? Number(receiptForm.payment_account) : null, amount: baseAmount,
         ...(invoice.transaction_currency ? { transaction_currency: invoice.transaction_currency, transaction_amount: receiptForm.transaction_amount, exchange_rate: receiptForm.exchange_rate, exchange_rate_date: receiptForm.exchange_rate_date } : {}),
         reference: receiptForm.reference });
       setShowForm(false); setReceiptForm(old => ({ ...old, invoice: "", receipt_number: "", amount: "", reference: "" }));
@@ -235,7 +235,7 @@ const post = async (action: () => Promise<unknown>) => {
         <label>المقابل بالعملة الأساسية<input readOnly value={(Number(receiptForm.transaction_amount || 0)*Number(receiptForm.exchange_rate || 0)).toFixed(4)} /></label>
       </>}
       <label>طريقة التحصيل<select value={receiptForm.method} onChange={e => setReceiptForm({...receiptForm, method:e.target.value as "cash" | "bank", payment_account:String(treasuryAccounts.find(x => x.is_active && x.kind === (e.target.value as "cash" | "bank"))?.account || "")})}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
-      <label className="inventory-wide">حساب الخزينة / البنك<select required value={receiptForm.payment_account} onChange={e => setReceiptForm({...receiptForm, payment_account:e.target.value})}><option value="">اختر الحساب</option>{treasuryAccounts.filter(account => account.is_active && account.kind === receiptForm.method).map(account => <option key={account.id} value={account.account}>{account.code} - {account.name_ar} ({account.account_code})</option>)}</select></label>
+      <label className="inventory-wide">حساب الخزينة / البنك<select value={receiptForm.payment_account} onChange={e => setReceiptForm({...receiptForm, payment_account:e.target.value})}><option value="">الحساب الافتراضي حسب طريقة التحصيل</option>{treasuryAccounts.filter(account => account.is_active && account.kind === receiptForm.method).map(account => <option key={account.id} value={account.account}>{account.code} - {account.name_ar} ({account.account_code})</option>)}</select></label>
       {!receiptForm.transaction_currency && <label>المبلغ بالعملة الأساسية<input required type="number" min="0.0001" step="0.0001" value={receiptForm.amount} onChange={e => setReceiptForm({...receiptForm, amount:e.target.value})} /></label>}
       <label>مرجع التحويل/الإيصال<input value={receiptForm.reference} onChange={e => setReceiptForm({...receiptForm, reference:e.target.value})} /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !receiptForm.invoice}>{busy ? "جارٍ الحفظ…" : "حفظ سند القبض كمسودة"}</button></div>
