@@ -181,3 +181,20 @@ class CompanyMembership(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.company} ({self.get_role_display()})"
+
+
+class PlatformOwner(models.Model):
+    """هوية مستقلة لمالك المنصة، منفصلة عن عضويات الشركات."""
+    user = models.OneToOneField(
+        "accounts.User", on_delete=models.PROTECT,
+        related_name="platform_owner_profile",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "مالك المنصة"
+        verbose_name_plural = "مالكو المنصة"
+
+    def __str__(self):
+        return f"مالك المنصة: {self.user}"
