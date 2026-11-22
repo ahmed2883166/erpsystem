@@ -3,6 +3,9 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Backend = Join-Path $Root "backend"
 $EnvFile = Join-Path $Backend ".env"
 $Python = Join-Path $Backend ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    $Python = Join-Path (Split-Path -Parent $Root) "runtime\python.exe"
+}
 $Tag = Get-Date -Format "yyyyMMdd_HHmmss"
 
 if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) { throw "backend/.env is missing." }
