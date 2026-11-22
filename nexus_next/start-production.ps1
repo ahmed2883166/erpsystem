@@ -64,10 +64,11 @@ if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Backend." }
 
 Push-Location $Frontend
 try {
-  if (-not (Test-Path "node_modules")) {
-    & npm.cmd install
-    if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Frontend." }
+  if (-not (Test-Path "package-lock.json")) {
+    throw "ملف package-lock.json غير موجود؛ أُوقف تشغيل الإنتاج."
   }
+  & npm.cmd ci
+  if ($LASTEXITCODE -ne 0) { throw "فشل تثبيت متطلبات Frontend المثبتة." }
   & npm.cmd run build
   if ($LASTEXITCODE -ne 0) { throw "فشل بناء واجهة React." }
 } finally { Pop-Location }
