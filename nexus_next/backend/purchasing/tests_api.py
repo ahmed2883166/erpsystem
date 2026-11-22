@@ -846,3 +846,37 @@ class PurchasingWorkflowTests(APITestCase):
             {"entry_date": "2026-03-13"}, format="json",
         )
         self.assertEqual(repeated.status_code, 400, repeated.data)
+
+    def test_branch_limited_user_cannot_read_or_create_documents_in_shared_default_warehouse(self):
+        shared_warehouse = Warehouse.objects.create(
+            company=self.company, branch=None, code="WH-SHARED", name_ar="مخزن عام"
+        )
+        created = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": shared_warehouse.pk,
+            "order_number": "PO-SHARED-001", "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        restricted_branch = Branch.objects.create(company=self.company, code="LIMITED", name_ar="فرع محدود")
+        limited_user = get_user_model().objects.create_user(
+            username="purchase-branch-limited", password="test-password"
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant", all_branches=False
+        )
+        membership.branches.add(restricted_branch)
+        self.client.force_authenticate(limited_user)
+
+        listing = self.client.get(f"/api/purchasing/orders/?company={self.company.pk}")
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertNotIn(created.data["id"], [row["id"] for row in listing.data])
+        detail = self.client.get(f"/api/purchasing/orders/{created.data['id']}/")
+        self.assertEqual(detail.status_code, 404, detail.data)
+
+        denied_create = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": shared_warehouse.pk,
+            "order_number": "PO-SHARED-DENIED", "order_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(denied_create.status_code, 403, denied_create.data)
