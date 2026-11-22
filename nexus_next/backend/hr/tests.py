@@ -159,9 +159,13 @@ class EmployeePayrollReportApiTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def test_attendance_cannot_be_changed_or_deleted_after_payroll_is_paid(self):
+        self.cycle.status = PayrollCycle.Status.CALCULATED
+        self.cycle.save(update_fields=("status", "updated_at"))
         attendance = AttendanceRecord.objects.create(
             employee=self.employee, work_date=date(2026, 1, 15), status=AttendanceRecord.Status.PRESENT,
         )
+        self.cycle.status = PayrollCycle.Status.PAID
+        self.cycle.save(update_fields=("status", "updated_at"))
         attendance.status = AttendanceRecord.Status.ABSENT
         with self.assertRaises(ValidationError):
             attendance.save()
