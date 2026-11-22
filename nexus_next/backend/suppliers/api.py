@@ -2,7 +2,7 @@ from rest_framework import viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_companies, can_access_company, has_company_role
+from companies.access import accessible_companies, can_access_company, has_company_role, is_platform_owner
 
 from .models import Supplier
 from .serializers import SupplierSerializer
@@ -18,7 +18,7 @@ class SupplierViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """تجهيز السجلات التي يمكن للمستخدم الوصول إليها ضمن شركته وصلاحياته."""
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
