@@ -17,6 +17,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "The local DPAPI backup key could not be opened by this Windows account." }
 } finally { Pop-Location }
 $CurrentIdentity = "$env:USERDOMAIN\$env:USERNAME"
+$KeyDirectory = Split-Path -Parent $KeyFile
+& icacls.exe $KeyDirectory /inheritance:r /grant:r "${CurrentIdentity}:(OI)(CI)(F)" "SYSTEM:(OI)(CI)(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to the backup key directory." }
 & icacls.exe $KeyFile /inheritance:r /grant:r "${CurrentIdentity}:(F)" "SYSTEM:(F)" | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to the local backup encryption key." }
 
