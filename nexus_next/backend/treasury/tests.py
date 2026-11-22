@@ -87,6 +87,35 @@ class BankReconciliationOpeningBalanceTests(TestCase):
         self.assertEqual(response.data["expected_book_balance"], "900.0000")
         self.assertEqual(response.data["unexplained_difference"], "0.0000")
 
+    def test_unmapped_bank_account_does_not_block_posted_document(self):
+        year = FiscalYear.objects.create(
+            company=self.company, name="2026", start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        unmapped_bank = ChartOfAccount.objects.create(
+            company=self.company, code="1199", name_ar="بنك غير مربوط", nature="asset",
+        )
+        counter = ChartOfAccount.objects.create(
+            company=self.company, code="2199", name_ar="حساب مقابل", nature="liability",
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=year,
+            entry_number="BANK-UNMAPPED-001", entry_date=date(2026, 1, 20),
+            description="تحصيل بنكي", source_type=JournalEntry.Source.SALES,
+            status=JournalEntry.Status.POSTED,
+        )
+
+        mirrored = record_posted_document_bank_movement(
+            company=self.company, branch=self.branch, fiscal_year=year, account=unmapped_bank,
+            kind=TreasuryTransaction.Kind.RECEIPT, amount=Decimal("25"),
+            transaction_date=date(2026, 1, 20), document_number="AUTO-SALE-UNMAPPED-1",
+            description="تحصيل عميل", counter_account=counter, journal_entry=entry,
+        )
+
+        self.assertIsNone(mirrored)
+        self.assertFalse(TreasuryTransaction.objects.filter(
+            company=self.company, document_number="AUTO-SALE-UNMAPPED-1",
+        ).exists())
+
     def test_reconciliation_can_be_approved_when_opening_balances_match(self):
         user = User.objects.create_user(username="bank_accountant", password="test-password")
         CompanyMembership.objects.create(
