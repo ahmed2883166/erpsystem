@@ -62,5 +62,5 @@ class SupplierApiTests(APITestCase):
         supplier.refresh_from_db()
         self.assertFalse(supplier.is_active)
         deleted = self.client.delete(f"/api/purchases/suppliers/{supplier.pk}/")
-        self.assertEqual(deleted.status_code, 400, getattr(deleted, "data", None))
+        self.assertEqual(deleted.status_code, 403, getattr(deleted, "data", None))
         self.assertTrue(Supplier.objects.filter(pk=supplier.pk).exists())
