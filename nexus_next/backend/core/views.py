@@ -1,7 +1,7 @@
 import json
 
 from django.contrib.auth import authenticate, login, logout
-from django.db import connection
+from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST, require_http_methods
@@ -15,7 +15,7 @@ def health(request):
             cursor.fetchone()
         payload["database"] = "ok"
         return JsonResponse(payload)
-    except Exception:
+    except DatabaseError:
         return JsonResponse(
             {"service": "nexus-api", "status": "degraded", "database": "unavailable"},
             status=503,
