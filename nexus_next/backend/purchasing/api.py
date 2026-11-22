@@ -238,7 +238,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             events.append({
                 "date": payment.payment_date, "kind": "payment",
                 "number": payment.payment_number, "description": f"سداد فاتورة {payment.invoice.invoice_number}",
-                "debit": payment.amount, "credit": Decimal("0"), "sort": 0,
+                "debit": payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount, "credit": Decimal("0"), "sort": 0,
             })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
@@ -301,7 +301,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         suppliers = {}
         for invoice in invoices:
             paid = sum(
-                (payment.amount for payment in invoice.payments.all()
+                ((payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount) for payment in invoice.payments.all()
                  if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= as_of),
                 Decimal("0"),
             )
