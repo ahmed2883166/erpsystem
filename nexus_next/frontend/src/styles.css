@@ -421,6 +421,12 @@ button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
 .setup-subform { margin-top: 14px; padding: 16px; border: 1px solid var(--border-color, #293548); border-radius: 12px; }
 .setup-complete { margin-top: 18px; }
 .company-setup-panel textarea { width: 100%; resize: vertical; }
+.setup-section-title { display:flex; align-items:center; justify-content:space-between; gap:14px; margin:22px 0 12px; }
+.setup-section-title h3 { margin:0 0 5px; }
+.setup-section-title p { margin:0; color:var(--muted, #9aa7b8); line-height:1.7; }
+.company-profile-form { padding:16px; border:1px solid var(--border-color, #293548); border-radius:12px; }
+.company-status-field { display:flex; align-items:center; gap:9px; }
+.company-status-field input { width:18px; height:18px; }
 /* قواعد تجاوب هذا الجزء مع عرض الشاشة، دون تغيير سلوك الوظائف. */
 @media (max-width: 680px) {
   .setup-company-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
