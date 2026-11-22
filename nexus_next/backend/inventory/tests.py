@@ -310,9 +310,9 @@ class StockPostingServiceTests(TestCase):
         response = StockBalanceViewSet.as_view({"get": "reconciliation"})(request)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["stock_value"], "70")
-        self.assertEqual(response.data["gl_balance"], "70")
-        self.assertEqual(response.data["difference"], "0")
+        self.assertEqual(Decimal(response.data["stock_value"]), Decimal("70.0000"))
+        self.assertEqual(Decimal(response.data["gl_balance"]), Decimal("70.0000"))
+        self.assertEqual(Decimal(response.data["difference"]), Decimal("0.0000"))
         self.assertTrue(response.data["is_reconciled"])
         self.assertEqual(response.data["scope_branch_ids"], [second_branch.pk])
 
