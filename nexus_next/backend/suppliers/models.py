@@ -6,7 +6,8 @@ from django.db import models
 from companies.models import Company
 
 
-class Supplier    """يحفظ بيانات المورد وشروط السداد والحد الائتماني وحالة التعامل."""
+class Supplier(models.Model):
+    """يحفظ بيانات المورد وشروط السداد والحد الائتماني وحالة التعامل."""
     class SupplierType(models.TextChoices):
         COMPANY = "company", "شركة"
         INDIVIDUAL = "individual", "فرد"
