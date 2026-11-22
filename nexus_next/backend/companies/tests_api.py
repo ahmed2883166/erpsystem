@@ -806,11 +806,17 @@ class FiscalYearClosingApiTests(APITestCase):
             f"/api/setup/fiscal-years/{self.year.pk}/closing_review/"
         )
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertFalse(response.data["can_close"])
+        self.assertTrue(response.data["can_close"])
         self.year.refresh_from_db()
         self.assertEqual(self.year.status, "open")
 
-    def test_close_is_blocked_until_a_posted_closing_entry_exists(self):
+    def test_close_is_blocked_while_draft_entries_exist(self):
+        from accounting.models import JournalEntry
+        JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="DRAFT-CLOSE-001", entry_date="2026-06-01",
+            description="مسودة تمنع الإقفال", source_type=JournalEntry.Source.MANUAL,
+        )
         response = self.client.post(
             f"/api/setup/fiscal-years/{self.year.pk}/close/", {}, format="json"
         )
