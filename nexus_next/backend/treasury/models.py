@@ -99,6 +99,7 @@ class TreasuryTransaction(models.Model):
     transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
     exchange_rate_date = models.DateField(null=True, blank=True)
+    carrying_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     description = models.CharField(max_length=500)
     reference = models.CharField(max_length=120, blank=True)
     cash_flow_category = models.CharField(max_length=12, choices=CashFlowCategory.choices, default=CashFlowCategory.OPERATING)
@@ -199,6 +200,54 @@ class TreasuryTransaction(models.Model):
         if self.status != self.Status.DRAFT:
             raise ValidationError("لا يمكن حذف مستند خزينة مرحّل.")
         return super().delete(*args, **kwargs)
+
+
+class TreasuryFxPosition(models.Model):
+    """الرصيد الاسمي والقيمة الدفترية الحالية لحساب خزينة أجنبي."""
+    account = models.OneToOneField(
+        TreasuryAccount, on_delete=models.PROTECT, related_name="fx_position",
+    )
+    foreign_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    carrying_base_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(foreign_amount__gte=0), name="ck_treasury_fx_position_foreign_nonnegative"),
+            models.CheckConstraint(condition=models.Q(carrying_base_amount__gte=0), name="ck_treasury_fx_position_base_nonnegative"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.account_id and self.account.currency_code == self.account.company.base_currency.code:
+            raise ValidationError({"account": "مركز العملة متاح لحسابات الخزينة الأجنبية فقط."})
+
+
+class TreasuryFxRevaluation(models.Model):
+    """سجل إعادة تقييم مركز عملة أجنبية وربطه بقيد اليومية."""
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="treasury_fx_revaluations")
+    account = models.ForeignKey(TreasuryAccount, on_delete=models.PROTECT, related_name="fx_revaluations")
+    fiscal_year = models.ForeignKey("companies.FiscalYear", on_delete=models.PROTECT, related_name="treasury_fx_revaluations")
+    revaluation_date = models.DateField()
+    rate_date = models.DateField()
+    rate = models.DecimalField(max_digits=20, decimal_places=10)
+    foreign_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    previous_carrying_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    new_carrying_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    difference = models.DecimalField(max_digits=20, decimal_places=4)
+    journal_entry = models.OneToOneField(
+        JournalEntry, on_delete=models.PROTECT, related_name="treasury_fx_revaluation",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-revaluation_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("account", "revaluation_date"), name="uq_treasury_fx_revaluation_account_date"),
+            models.CheckConstraint(condition=models.Q(rate__gt=0), name="ck_treasury_fx_revaluation_rate_positive"),
+            models.CheckConstraint(condition=models.Q(foreign_amount__gte=0), name="ck_treasury_fx_revaluation_foreign_nonnegative"),
+        ]
+        indexes = [models.Index(fields=("company", "revaluation_date"), name="tr_fx_rev_co_date_idx")]
 
 
 class BankReconciliation(models.Model):
