@@ -65,6 +65,7 @@ try {
   Copy-Item -LiteralPath (Join-Path $Frontend "dist") -Destination $FrontendTarget -Recurse -Force
   Get-ChildItem -LiteralPath $PSScriptRoot -File -Force | Copy-Item -Destination $ScriptsTarget -Force
   Copy-Item -LiteralPath (Join-Path $Root "backend\.env.example") -Destination (Join-Path $BackendTarget ".env.example") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "initialize-admrail.cmd") -Destination (Join-Path $Stage "initialize-admrail.cmd") -Force
 
   @'
 @echo off
@@ -82,22 +83,33 @@ cd /d "%ROOT%backend"
 '@ | Set-Content -LiteralPath (Join-Path $Stage "run-admrail.cmd") -Encoding ASCII
 
   @'
-Admrail ERP v2 — Portable Windows Runtime
+Admrail ERP v2 — Portable Windows Trial Runtime
 
-This package contains an embedded Python 3.12 runtime, the Django backend dependencies,
-and the prebuilt React frontend. Python and Node.js do not need to be installed on the
-target Windows computer.
+Included: embedded Python 3.12, Django backend dependencies, and the prebuilt React
+frontend. Python and Node.js do not need to be installed on the target Windows computer.
 
-PostgreSQL 16 for Windows remains a required external database service. This portable
-runtime is a packaging milestone, not the final guided installer. It does not create a
-PostgreSQL role/database, write secrets, migrate a live database, or open network access.
+Required external service: PostgreSQL 16 for Windows. This is a trial runtime, not the
+final guided installer. It does not create PostgreSQL roles/databases or open network access.
 
-Before first use, configure backend\.env from backend\.env.example using a secure
-administrative process. Start the local service with run-admrail.cmd. The application
-binds to 127.0.0.1:8000 only.
+FIRST RUN
+1. Install/start PostgreSQL 16.
+2. Create a dedicated empty trial database and login. Example in psql as a PostgreSQL administrator
+   (choose your own strong password):
+     CREATE ROLE nexus_app LOGIN PASSWORD 'your-strong-password';
+     CREATE DATABASE nexus_dev OWNER nexus_app ENCODING 'UTF8';
+   Do not run these commands against an existing production database.
+3. Copy backend\.env.example to backend\.env. Set a unique DJANGO_SECRET_KEY and the
+   PostgreSQL values. Keep DJANGO_DEBUG=False and do not share backend\.env.
+   Generate a secret with:
+     runtime\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
+4. Run initialize-admrail.cmd. It checks the project, applies migrations, creates the
+   initial administrator if needed, and registers that user as the platform owner.
+5. Run run-admrail.cmd and open http://127.0.0.1:8000.
 
-For upgrades, create and verify a PostgreSQL backup before applying migrations.
-Do not use this package against the legacy Flask/SQLite database.
+The initializer never creates or deletes a database and never deletes existing records.
+Use a new empty trial database. For upgrades, create and verify a PostgreSQL backup first.
+Do not use this package against the legacy Flask/SQLite database. The service binds to
+127.0.0.1 only; LAN access is not enabled by this package.
 '@ | Set-Content -LiteralPath (Join-Path $Stage "PORTABLE-README.txt") -Encoding UTF8
 
   $env:DJANGO_SECRET_KEY = "portable-build-check-only-secret"
@@ -125,7 +137,7 @@ Do not use this package against the legacy Flask/SQLite database.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "run-admrail.cmd", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "run-admrail.cmd", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
