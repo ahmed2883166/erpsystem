@@ -15,7 +15,7 @@ export default function CostCentersPanel({ companyId }: Props) {
 
   const load = async () => {
     if (!companyId) { setItems([]); return; }
-    try { setItems(await api.costCenters(companyId)); }
+    try { setItems(await api.allCostCenters(companyId)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل مراكز التكلفة."); }
   };
 
