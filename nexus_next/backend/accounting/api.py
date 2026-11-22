@@ -517,10 +517,12 @@ class JournalEntryViewSet(AccountingViewSet):
             opening_year = FiscalYear.objects.filter(
                 company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
             ).order_by("-start_date").first()
-            opening_scope = (
-                {"branch_id": int(branch_raw)} if branch_raw
-                else {"branch__in": accessible_branches(request.user, int(company_id))}
-            )
+            if branch_raw:
+                opening_scope = {"branch_id": int(branch_raw)}
+            elif not request.user.is_superuser or is_platform_owner(request.user):
+                opening_scope = {"branch__in": accessible_branches(request.user, int(company_id))}
+            else:
+                opening_scope = {}
             has_opening_snapshot = bool(opening_year and JournalEntry.objects.filter(
                 company_id=company_id, fiscal_year=opening_year,
                 status=JournalEntry.Status.POSTED, source_type=JournalEntry.Source.OPENING,
