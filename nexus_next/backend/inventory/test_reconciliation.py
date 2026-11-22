@@ -166,7 +166,7 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
             code="FIFO-1", name_ar="صنف FIFO", costing_method=Product.CostingMethod.FIFO,
         )
         warehouse = Warehouse.objects.get(company=self.company, code="WH-HQ")
-        balance = StockBalance.objects.create(
+        StockBalance.objects.create(
             product=product, warehouse=warehouse, quantity=Decimal("10"),
             inventory_value=Decimal("100"), average_cost=Decimal("10"),
         )
