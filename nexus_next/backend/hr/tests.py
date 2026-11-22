@@ -158,6 +158,25 @@ class EmployeePayrollReportApiTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
+    def test_attendance_cannot_be_changed_or_deleted_after_payroll_is_paid(self):
+        attendance = AttendanceRecord.objects.create(
+            employee=self.employee, work_date=date(2026, 1, 15), status=AttendanceRecord.Status.PRESENT,
+        )
+        attendance.status = AttendanceRecord.Status.ABSENT
+        with self.assertRaises(ValidationError):
+            attendance.save()
+        with self.assertRaises(ValidationError):
+            attendance.delete()
+        with self.assertRaises(ValidationError):
+            AttendanceRecord.objects.create(
+                employee=self.employee, work_date=date(2026, 1, 16), status=AttendanceRecord.Status.PRESENT,
+            )
+
+    def test_employee_basic_salary_cannot_be_changed_outside_salary_history(self):
+        self.employee.basic_salary = Decimal("12000")
+        with self.assertRaises(ValidationError):
+            self.employee.save(update_fields=("basic_salary", "updated_at"))
+
     def test_employee_pay_report_returns_posted_payroll_totals_and_dynamic_components(self):
         response = self.client.get(
             f"/api/hr/payroll-cycles/employee-pay-report/?company={self.company.pk}"
