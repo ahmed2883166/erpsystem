@@ -550,7 +550,7 @@ def complete_payroll_payment(cycle_id, actor=None):
                 branch_results.values_list("employee__currency__code", flat=True).distinct()
             )
         ):
-            raise ValidationError("بيانات مستند صرف المرتبات لا تطابق صافي استحقاق الفرع أو حساب الخزينة المعتمد؛ ألغِ الإعداد وأعده.")
+            raise ValidationError("بيانات مستند صرف المرتبات لا تطابق صافي استحقاق الفرع أو حساب الخزينة المعتمد. لم يتم إلغاء الإعداد تلقائيًا؛ أوقف العملية وراجع المستندات المسودة وطلبات الموافقة قبل إعادة المحاولة.")
         document = post_treasury_transaction(document.pk, actor)
         posting.payment_journal_entry = document.journal_entry
         posting.save(update_fields=("payment_journal_entry",))
