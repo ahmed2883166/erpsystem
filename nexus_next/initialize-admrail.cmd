@@ -24,7 +24,7 @@ if not errorlevel 1 (
   pause
   exit /b 2
 )
-findstr /x /c:"POSTGRES_PASSWORD=nexus_local_only" "%ENV_FILE%" >nul
+findstr /x /c:"POSTGRES_PASSWORD=replace-with-a-strong-local-password" "%ENV_FILE%" >nul
 if not errorlevel 1 (
   echo Change the sample PostgreSQL password in backend\.env before continuing.
   pause
