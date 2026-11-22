@@ -480,7 +480,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
     @transaction.atomic
     def reverse(self, request, pk=None):
         """عكس آخر سند قبض مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
-        receipt = CustomerReceipt.objects.select_for_update().select_related(
+        receipt = CustomerReceipt.objects.select_for_update(of=("self",)).select_related(
             "invoice", "invoice__delivery__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(receipt.company_id)
