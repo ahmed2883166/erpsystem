@@ -11,6 +11,9 @@ if ($TargetDatabase -notmatch "^[a-zA-Z][a-zA-Z0-9_]{2,62}$") { throw "Target da
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Backend = Join-Path $Root "backend"
+$Python = Join-Path $Backend ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { $Python = Join-Path $Root "runtime\python.exe" }
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { throw "Backend Python runtime is missing." }
 $EnvFile = Join-Path $Backend ".env"
 if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) { throw "backend/.env is missing." }
 $Values = @{}
@@ -44,18 +47,32 @@ if (-not $PgRestore -or -not $Createdb) {
 }
 
 $env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
+$DecryptedTemp = $null
+$RestoreSource = $BackupFile
 try {
-    & $PgRestorePath --list $BackupFile | Out-Null
+    if ($BackupFile.EndsWith(".nexusenc", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $DecryptedTemp = Join-Path $env:TEMP ("nexus-restore-" + [guid]::NewGuid().ToString("N") + ".dump")
+        Push-Location $Backend
+        try {
+            & $Python manage.py decrypt_backup_file --input $BackupFile --output $DecryptedTemp
+            if ($LASTEXITCODE -ne 0) { throw "Encrypted backup could not be authenticated and decrypted." }
+        } finally { Pop-Location }
+        $RestoreSource = $DecryptedTemp
+    }
+    & $PgRestorePath --list $RestoreSource | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Backup archive is invalid or unreadable." }
 
     & $CreatedbPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --owner=$Values["POSTGRES_USER"] --template=template0 $TargetDatabase
     if ($LASTEXITCODE -ne 0) { throw "Target database could not be created. It may already exist; no existing database was overwritten." }
 
-    & $PgRestorePath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --exit-on-error --no-owner --dbname=$TargetDatabase $BackupFile
+    & $PgRestorePath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --exit-on-error --no-owner --dbname=$TargetDatabase $RestoreSource
     if ($LASTEXITCODE -ne 0) { throw "Restore failed. The incomplete database '$TargetDatabase' was left separate; the active database was not changed." }
 
     Write-Host "Restore completed into separate database '$TargetDatabase'." -ForegroundColor Green
     Write-Host "The active NEXUS database was not overwritten. Validate this database before any controlled switch."
 } finally {
+    if ($DecryptedTemp -and (Test-Path -LiteralPath $DecryptedTemp)) {
+        Remove-Item -LiteralPath $DecryptedTemp -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 }
