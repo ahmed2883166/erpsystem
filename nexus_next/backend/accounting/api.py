@@ -302,14 +302,11 @@ class TaxCodeViewSet(AccountingViewSet):
 
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
-        company = serializer.validated_data.get("company", serializer.instance.company)
-        self._validate_scope(serializer.validated_data)
-        self._require_write_role(company.pk)
         instance = serializer.instance
         is_used = instance.sales_invoice_lines.exists() or instance.purchase_invoice_lines.exists()
         if is_used and set(serializer.validated_data) - {"is_active"}:
             raise ValidationError("لا يمكن تغيير نسبة أو تصنيف أو فترة كود ضريبي مستخدم في فواتير؛ أنشئ إصدارًا جديدًا بتاريخ سريان جديد.")
-        serializer.save()
+        super().perform_update(serializer)
 
     def perform_destroy(self, instance):
         """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
@@ -341,8 +338,7 @@ class JournalEntryViewSet(AccountingViewSet):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
-        self._validate_scope(serializer.validated_data)
-        serializer.save()
+        super().perform_update(serializer)
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
@@ -829,24 +825,26 @@ class JournalEntryViewSet(AccountingViewSet):
         )
         opening_lines = base.filter(opening_scope)
         opening_totals = opening_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        opening_balance = (opening_totals["debit"] or Decimal("0")) - (opening_totals["credit"] or Decimal("0"))
+        debit_nature = account.nature in (ChartOfAccount.Nature.ASSET, ChartOfAccount.Nature.EXPENSE)
+        balance_sign = Decimal("1") if debit_nature else Decimal("-1")
+        opening_balance = ((opening_totals["debit"] or Decimal("0")) - (opening_totals["credit"] or Decimal("0"))) * balance_sign
         period_lines = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
             entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
         ).select_related("entry", "entry__branch").order_by("entry__entry_date", "entry_id", "id")
         running = opening_balance
         rows = []
         for line in period_lines:
-            running += line.debit - line.credit
+            running += (line.debit - line.credit) * balance_sign
             rows.append({
                 "line_id": line.pk, "date": line.entry.entry_date, "entry_id": line.entry_id,
                 "entry_number": line.entry.entry_number, "description": line.description or line.entry.description,
                 "source_type": line.entry.source_type, "branch": line.entry.branch.name_ar,
-                "debit": line.debit, "credit": line.credit, "running_balance": running,
+                "debit": str(line.debit), "credit": str(line.credit), "running_balance": str(running),
             })
         return response.Response({
             "company": company_id, "account": account_id, "account_code": account.code,
             "account_name": account.name_ar, "date_from": date_from, "date_to": date_to,
-            "opening_balance": opening_balance, "rows": rows, "closing_balance": running,
+            "opening_balance": str(opening_balance), "rows": rows, "closing_balance": str(running),
         })
 
     @decorators.action(detail=False, methods=("get",), url_path="changes-in-equity")
