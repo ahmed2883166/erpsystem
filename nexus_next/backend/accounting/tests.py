@@ -263,6 +263,10 @@ class AccountingApiTests(TestCase):
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.VAT_OUTPUT).account.code, "2120")
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE).account.code, "2160")
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE).account.code, "2170")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.REALIZED_FX_GAIN).account.code, "7200")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.REALIZED_FX_LOSS).account.code, "6150")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_GAIN).account.code, "7210")
+        self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_LOSS).account.code, "6160")
 
     def test_activity_chart_template_is_idempotent_and_never_overwrites_existing_role(self):
         company = Company.objects.create(
