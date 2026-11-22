@@ -2,7 +2,8 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch\nfrom types import SimpleNamespace
+from unittest.mock import patch
+from types import SimpleNamespace
 from rest_framework.test import APIClient
 
 from core.models import BackupConfiguration, BackupRun
@@ -60,7 +61,7 @@ class BackupConfigurationApiTests(TestCase):
                 )
                 return SimpleNamespace(
                     returncode=0,
-                    stdout=f"Encrypted backup verified: {archive.resolve()}\\n",
+                    stdout=f"Encrypted backup verified: {archive.resolve()}\n",
                     stderr="",
                 )
 
