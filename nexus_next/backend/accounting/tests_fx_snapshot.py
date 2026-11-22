@@ -28,6 +28,11 @@ class JournalLineFxSnapshotTests(TestCase):
             company=self.company, branch=self.branch, fiscal_year=self.year,
             entry_number="FX-0001", entry_date=date(2026, 3, 2), description="اختبار عملة أجنبية",
         )
+        from companies.models import ExchangeRate
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd, rate_date=date(2026, 3, 1),
+            rate=Decimal("30.0000000000"), source="اختبار",
+        )
 
     def make_line(self, **overrides):
         values = {
@@ -63,5 +68,15 @@ class JournalLineFxSnapshotTests(TestCase):
             transaction_currency=self.base, transaction_amount=Decimal("100.0000"),
             exchange_rate=Decimal("30.0000000000"),
         )
+        with self.assertRaises(ValidationError):
+            line.full_clean()
+
+    def test_snapshot_rate_must_match_approved_rate_for_exact_date(self):
+        line = self.make_line(exchange_rate=Decimal("31.0000000000"))
+        with self.assertRaises(ValidationError):
+            line.full_clean()
+
+    def test_snapshot_date_must_reference_an_approved_rate_record(self):
+        line = self.make_line(exchange_rate_date=date(2026, 2, 28))
         with self.assertRaises(ValidationError):
             line.full_clean()
