@@ -4,7 +4,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.db import connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 @require_GET
 def health(request):
@@ -40,6 +40,7 @@ def session_status(request):
             "display_name": getattr(user, "display_name", "") or user.get_username(),
             "is_staff": user.is_staff,
             "is_superuser": user.is_superuser,
+            "theme_preference": user.theme_preference,
         },
     })
 
@@ -78,3 +79,21 @@ def session_logout(request):
         return JsonResponse({"detail": "لا توجد جلسة دخول نشطة."}, status=401)
     logout(request)
     return JsonResponse({"authenticated": False})
+
+
+@csrf_protect
+@require_http_methods(["PATCH"])
+def user_preferences(request):
+    """تحديث تفضيلات العرض الخاصة بالمستخدم الحالي دون التأثير على زملائه."""
+    if not request.user.is_authenticated:
+        return JsonResponse({"detail": "يلزم تسجيل الدخول."}, status=401)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({"detail": "بيانات التفضيلات غير صالحة."}, status=400)
+    theme = payload.get("theme_preference")
+    if theme not in {"light", "dark", "system"}:
+        return JsonResponse({"detail": "اختر مظهرًا فاتحًا أو داكنًا أو حسب الجهاز."}, status=400)
+    request.user.theme_preference = theme
+    request.user.save(update_fields=["theme_preference"])
+    return JsonResponse({"theme_preference": request.user.theme_preference})
