@@ -1,3 +1,5 @@
+"""نماذج دليل الحسابات والأدوار المحاسبية والأكواد الضريبية ومراكز التكلفة وقيود اليومية."""
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -6,6 +8,7 @@ from companies.models import Branch, Company, FiscalYear
 
 
 class ChartOfAccount(models.Model):
+    """يمثل حسابًا في دليل حسابات الشركة مع طبيعته وتسلسله."""
     class Nature(models.TextChoices):
         ASSET = "asset", "أصول"
         LIABILITY = "liability", "التزامات"
@@ -48,6 +51,7 @@ class ChartOfAccount(models.Model):
 
 
 class AccountRole(models.Model):
+    """يربط وظيفة محاسبية بحساب الشركة بدل الاعتماد على كود ثابت."""
     class Role(models.TextChoices):
         CASH = "cash", "النقدية"
         BANK = "bank", "البنوك"
@@ -91,6 +95,7 @@ class AccountRole(models.Model):
 
 
 class TaxCode(models.Model):
+    """يعرّف المعالجة الضريبية وفترة سريانها ونطاق استخدامها."""
     class Category(models.TextChoices):
         STANDARD = "standard", "خاضع بالنسبة القياسية"
         ZERO_RATED = "zero_rated", "نسبة صفرية"
@@ -149,6 +154,7 @@ class TaxCode(models.Model):
 
 
 class CostCenter(models.Model):
+    """يمثل مركز تكلفة لتحليل المصروفات والإيرادات."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="cost_centers")
     code = models.CharField(max_length=32)
     name_ar = models.CharField(max_length=160)
@@ -166,6 +172,7 @@ class CostCenter(models.Model):
 
 
 class JournalEntry(models.Model):
+    """يمثل رأس قيد اليومية وحالته ومصدره والفترة المالية."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
@@ -236,6 +243,7 @@ class JournalEntry(models.Model):
 
 
 class JournalLine(models.Model):
+    """يمثل سطرًا مدينًا أو دائنًا تابعًا لقيد اليومية."""
     entry = models.ForeignKey(JournalEntry, on_delete=models.PROTECT, related_name="lines")
     account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="journal_lines")
     description = models.CharField(max_length=300, blank=True)
