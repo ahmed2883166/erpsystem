@@ -393,7 +393,7 @@ class EmployeePayrollReportApiTests(TestCase):
         self.client.force_authenticate(manager)
         created = self.client.post("/api/hr/leave-requests/", {
             "employee": self.employee.pk, "kind": LeaveRequest.Kind.ANNUAL,
-            "start_date": "2026-10-1", "end_date": "2026-10-2", "days": "2",
+            "start_date": "2026-10-01", "end_date": "2026-10-02", "days": "2",
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
         leave = LeaveRequest.objects.get(pk=created.data["id"])
