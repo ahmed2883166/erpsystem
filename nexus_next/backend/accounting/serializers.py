@@ -4,6 +4,7 @@
 
 from django.db import transaction
 from django.db.models import Q
+from companies.models import FiscalYear
 from rest_framework import serializers
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 
@@ -174,6 +175,9 @@ class JournalEntrySerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=validated_data["fiscal_year"].pk)
+        if fiscal_year.status != FiscalYear.Status.OPEN:
+            raise serializers.ValidationError({"fiscal_year": "لا يمكن إنشاء قيد داخل سنة مالية مغلقة."})
         request = self.context.get("request")
         if request and request.user.is_authenticated:
             validated_data["created_by"] = request.user
@@ -185,6 +189,10 @@ class JournalEntrySerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """تحديث المستند وبنوده مع حماية القيود والمستندات المرحلة."""
         lines = validated_data.pop("lines", None)
+        target_year = validated_data.get("fiscal_year", instance.fiscal_year)
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=target_year.pk)
+        if fiscal_year.status != FiscalYear.Status.OPEN:
+            raise serializers.ValidationError({"fiscal_year": "لا يمكن حفظ قيد داخل سنة مالية مغلقة."})
         for key, value in validated_data.items():
             setattr(instance, key, value)
         instance.save()
