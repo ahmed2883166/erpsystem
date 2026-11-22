@@ -286,6 +286,28 @@ class CompanySetupApiTests(APITestCase):
         branch.refresh_from_db()
         self.assertTrue(branch.is_active)
 
+    def test_company_admin_cannot_disable_both_active_branches(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        first = Branch.objects.create(company=self.company, code="FIRST", name_ar="الفرع الأول")
+        second = Branch.objects.create(company=self.company, code="SECOND", name_ar="الفرع الثاني")
+        self.client.force_authenticate(self.user)
+
+        first_response = self.client.patch(
+            f"/api/setup/branches/{first.pk}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(first_response.status_code, 200, first_response.data)
+
+        second_response = self.client.patch(
+            f"/api/setup/branches/{second.pk}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(second_response.status_code, 400, second_response.data)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertFalse(first.is_active)
+        self.assertTrue(second.is_active)
+
     def test_only_company_admin_can_view_inactive_branches_in_setup(self):
         CompanyMembership.objects.create(
             user=self.user, company=self.company, role="admin", all_branches=True
