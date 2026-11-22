@@ -7,6 +7,7 @@ from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
 from accounting.models import ChartOfAccount, TaxCode
+from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
@@ -145,7 +146,8 @@ class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
     receipt_line = serializers.PrimaryKeyRelatedField(
         queryset=StockMovementLine.objects.select_related("movement", "product")
     )
-    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
+    transaction_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     tax_rate = serializers.DecimalField(
         max_digits=7, decimal_places=4, min_value=Decimal("0"),
         max_value=Decimal("100"), required=False, default=Decimal("0")
@@ -164,7 +166,7 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
         model = PurchaseInvoiceLine
         fields = (
             "id", "receipt_line", "product_code", "product_name", "quantity",
-            "unit_price", "tax_rate", "tax_code", "net_amount", "tax_amount", "total_amount",
+            "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "net_amount", "tax_amount", "total_amount",
         )
         read_only_fields = (
             "id", "product_code", "product_name", "quantity",
@@ -185,12 +187,12 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         model = PurchaseInvoice
         fields = (
             "id", "company", "supplier", "supplier_name", "receipt", "receipt_number",
-            "invoice_number", "invoice_date", "status", "net_total", "tax_total",
+            "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "tax_total",
             "grand_total", "paid_total", "balance_due", "notes", "journal_entry", "journal_number", "invoice_lines",
             "lines", "created_at", "posted_at",
         )
         read_only_fields = (
-            "status", "net_total", "tax_total", "grand_total", "journal_entry",
+            "status", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "net_total", "tax_total", "grand_total", "journal_entry",
             "journal_number", "paid_total", "balance_due", "created_at", "posted_at", "invoice_lines",
         )
 
@@ -334,10 +336,10 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         model = SupplierPayment
         fields = (
             "id", "company", "supplier", "supplier_name", "invoice", "invoice_number",
-            "payment_number", "payment_date", "method", "payment_account", "payment_account_name", "amount", "reference",
+            "payment_number", "payment_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference",
             "status", "journal_entry", "journal_number", "created_at", "posted_at",
         )
-        read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
+        read_only_fields = ("status", "carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
