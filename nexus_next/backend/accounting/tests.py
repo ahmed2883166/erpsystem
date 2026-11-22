@@ -773,9 +773,14 @@ class FinancialStatementsApiTests(TestCase):
             f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
             "&date_from=2027-01-01&date_to=2027-01-02"
         )
+        trial_balance = client.get(
+            f"/api/accounting/journal-entries/trial-balance/?company={company.pk}"
+            "&date_from=2027-01-01&date_to=2027-01-02"
+        )
         self.assertEqual(balance.status_code, 200, balance.data)
         self.assertEqual(ledger.status_code, 200, ledger.data)
         self.assertEqual(equity.status_code, 200, equity.data)
+        self.assertEqual(trial_balance.status_code, 200, trial_balance.data)
         self.assertEqual(balance.data["total_assets"], Decimal("280.0000"))
         self.assertEqual(balance.data["total_equity"], Decimal("280.0000"))
         self.assertEqual(balance.data["difference"], Decimal("0.0000"))
@@ -784,6 +789,13 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(equity.data["opening_equity"], Decimal("250.0000"))
         self.assertEqual(equity.data["period_net_profit"], Decimal("30.0000"))
         self.assertEqual(equity.data["closing_equity"], Decimal("280.0000"))
+        cash_trial_balance = next(
+            row for row in trial_balance.data["accounts"] if row["account_id"] == cash.pk
+        )
+        self.assertEqual(cash_trial_balance["opening_balance"], Decimal("250.0000"))
+        self.assertEqual(cash_trial_balance["debit_total"], Decimal("30.0000"))
+        self.assertEqual(cash_trial_balance["closing_balance"], Decimal("280.0000"))
+        self.assertEqual(trial_balance.data["closing_debit_credit_difference"], Decimal("0.0000"))
 
 
 class TrialBalanceClosingFilterTests(TestCase):
