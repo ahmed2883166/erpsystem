@@ -224,24 +224,37 @@ def post_supplier_payment(payment_id, user):
             raise ValidationError(str(exc)) from exc
         if expected_amount != payment.amount:
             raise ValidationError("مبلغ السداد الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
-        posted_payments = SupplierPayment.objects.filter(
-            invoice=invoice, status=SupplierPayment.Status.POSTED
-        ).exclude(pk=payment.pk)
-        paid_foreign = posted_payments.aggregate(total=Sum("transaction_amount"))["total"] or Decimal("0")
-        carrying_used = posted_payments.aggregate(total=Sum("carrying_base_amount"))["total"] or Decimal("0")
-        remaining_foreign = invoice.transaction_grand_total - paid_foreign
-        remaining_base = invoice.grand_total - carrying_used
+        from accounting.fx_settlement import allocate_carrying_base_amount, calculate_realized_fx
+        from accounting.fx_subledger_services import open_fx_invoice_balances
+        from accounting.models import FxSubledgerRevaluation
+        if SupplierPayment.objects.filter(
+            invoice=invoice, status=SupplierPayment.Status.POSTED,
+            payment_date__gt=payment.payment_date,
+        ).exists() or FxSubledgerRevaluation.objects.filter(
+            purchase_invoice=invoice, revaluation_date__gt=payment.payment_date,
+        ).exists():
+            raise ValidationError("لا يمكن ترحيل سداد بتاريخ يسبق حركة سداد أو إعادة تقييم مرحّلة.")
+        remaining_foreign, historical_remaining, current_remaining = open_fx_invoice_balances(
+            invoice, direction="payable", as_of=payment.payment_date,
+        )
         try:
             settlement = settle_foreign_balance(
                 direction="payable", remaining_foreign_amount=remaining_foreign,
-                remaining_carrying_base_amount=remaining_base,
+                remaining_carrying_base_amount=current_remaining,
                 settled_foreign_amount=payment.transaction_amount,
                 settlement_rate=payment.exchange_rate,
+            )
+            historical_carrying = allocate_carrying_base_amount(
+                remaining_foreign, historical_remaining, payment.transaction_amount,
+            )
+            realized_gain, realized_loss = calculate_realized_fx(
+                "payable", historical_carrying, settlement.settlement_base_amount,
             )
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         carrying_amount = settlement.carrying_base_amount
-        realized_gain, realized_loss = settlement.realized_gain, settlement.realized_loss
+        current_gain, current_loss = settlement.realized_gain, settlement.realized_loss
+        unrealized_adjustment = carrying_amount - historical_carrying
     else:
         if any(value is not None for value in (
             payment.transaction_currency_id, payment.transaction_amount,
@@ -255,6 +268,8 @@ def post_supplier_payment(payment_id, user):
             remaining = max(Decimal("0"), invoice.grand_total - paid_before)
             raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
         carrying_amount = payment.amount
+        historical_carrying = payment.amount
+        current_gain = current_loss = unrealized_adjustment = Decimal("0")
         realized_gain = realized_loss = Decimal("0")
 
     receipt = invoice.receipt
@@ -278,16 +293,27 @@ def post_supplier_payment(payment_id, user):
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
     ]
-    if realized_gain:
-        gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN)
-        if gain.pk in {payable.pk, payment_account.pk}:
-            raise ValidationError("حساب أرباح فروق العملة يجب أن يكون مستقلًا عن الموردين والنقدية.")
-        journal_lines.append(JournalLine(account=gain, description="أرباح فروق عملة محققة", debit=0, credit=realized_gain))
-    if realized_loss:
-        loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS)
-        if loss.pk in {payable.pk, payment_account.pk}:
-            raise ValidationError("حساب خسائر فروق العملة يجب أن يكون مستقلًا عن الموردين والنقدية.")
-        journal_lines.append(JournalLine(account=loss, description="خسائر فروق عملة محققة", debit=realized_loss, credit=0))
+    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN) if current_gain or unrealized_adjustment < 0 else None
+    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS) if current_loss or unrealized_adjustment > 0 else None
+    unrealized_gain = _account(payment.company, AccountRole.Role.UNREALIZED_FX_GAIN) if unrealized_adjustment < 0 else None
+    unrealized_loss = _account(payment.company, AccountRole.Role.UNREALIZED_FX_LOSS) if unrealized_adjustment > 0 else None
+    used_ids = {payable.pk, payment_account.pk}
+    for account in (gain, loss, unrealized_gain, unrealized_loss):
+        if account and account.pk in used_ids:
+            raise ValidationError("حسابات فروق العملة يجب أن تكون مستقلة عن الموردين والنقدية.")
+        if account:
+            used_ids.add(account.pk)
+    if current_gain:
+        journal_lines.append(JournalLine(account=gain, description="فرق سداد محقق منذ آخر تقييم", debit=0, credit=current_gain))
+    if current_loss:
+        journal_lines.append(JournalLine(account=loss, description="خسارة سداد محققة منذ آخر تقييم", debit=current_loss, credit=0))
+    if unrealized_adjustment > 0:
+        journal_lines.append(JournalLine(account=loss, description="إعادة تصنيف خسارة العملة إلى محققة", debit=unrealized_adjustment, credit=0))
+        journal_lines.append(JournalLine(account=unrealized_loss, description="عكس خسارة إعادة تقييم غير محققة عند السداد", debit=0, credit=unrealized_adjustment))
+    elif unrealized_adjustment < 0:
+        released_gain = -unrealized_adjustment
+        journal_lines.append(JournalLine(account=unrealized_gain, description="عكس ربح إعادة تقييم غير محقق عند السداد", debit=released_gain, credit=0))
+        journal_lines.append(JournalLine(account=gain, description="إعادة تصنيف ربح العملة إلى محقق", debit=0, credit=released_gain))
 
     entry = JournalEntry.objects.create(
         company=payment.company, branch=branch, fiscal_year=year,
@@ -315,10 +341,11 @@ def post_supplier_payment(payment_id, user):
             counter_account=payable, journal_entry=posted_entry, user=user, reference=payment.reference,
         )
     payment.carrying_base_amount = carrying_amount
+    payment.historical_carrying_base_amount = historical_carrying
     payment.realized_fx_gain = realized_gain
     payment.realized_fx_loss = realized_loss
     payment.journal_entry = posted_entry
     payment.status = SupplierPayment.Status.POSTED
     payment.posted_at = timezone.now()
-    payment.save(update_fields=("carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "status", "posted_at"))
+    payment.save(update_fields=("carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "status", "posted_at"))
     return payment
