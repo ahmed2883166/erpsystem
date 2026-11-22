@@ -125,3 +125,14 @@ class PlatformOwnerSessionTests(TestCase):
         response = self.client.get("/api/auth/session/")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["user"]["is_platform_owner"])
+
+    def test_platform_owner_superuser_is_blocked_from_django_admin(self):
+        user = get_user_model().objects.create_user(
+            username="platform-owner-admin-block", password="strong-owner-password",
+            is_staff=True, is_superuser=True,
+        )
+        PlatformOwner.objects.create(user=user)
+        self.client.force_login(user)
+        response = self.client.get("/admin/")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/login/", response.url)
