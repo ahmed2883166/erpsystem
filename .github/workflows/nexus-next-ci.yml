@@ -106,6 +106,13 @@ jobs:
               exit 1
             }
           }
+      - name: Guard temporary plaintext backup cleanup
+        shell: pwsh
+        run: |
+          $backupScript = Get-Content nexus_next/scripts/backup-postgres.ps1 -Raw
+          if ($backupScript -notmatch '(?s)finally\s*\{.*Test-Path\s+-LiteralPath\s+\$DailyFile.*Remove-Item\s+-LiteralPath\s+\$DailyFile\s+-Force') {
+            throw "The scheduled backup script must remove its temporary plaintext dump in a finally block."
+          }
       - name: Build Windows trial package
         shell: pwsh
         run: ./nexus_next/scripts/package-trial.ps1 -OutputDirectory "$env:RUNNER_TEMP/nexus-trial"
