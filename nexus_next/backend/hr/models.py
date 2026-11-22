@@ -262,6 +262,7 @@ class LeaveRequest(models.Model):
     days = models.DecimalField(max_digits=8, decimal_places=2)
     reason = models.TextField(blank=True)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="created_hr_leave_requests")
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_hr_leaves")
     created_at = models.DateTimeField(auto_now_add=True)
 
