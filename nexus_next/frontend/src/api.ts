@@ -13,10 +13,15 @@ export type FiscalYearClosingReview = {
   status: string;
   draft_entries: number;
   unbalanced_entries: number;
+  closing_entry_required: boolean;
+  closing_entry_exists: boolean;
   closing_entry_posted: boolean;
+  unclosed_income_statement_accounts: number;
   next_fiscal_year: number | null;
   opening_entry_required: boolean;
+  opening_entry_exists: boolean;
   opening_entry_posted: boolean;
+  opening_balance_mismatches: number;
   can_close: boolean;
   checks: { no_drafts: boolean; balanced_entries: boolean; closing_entry: boolean; next_year_opening: boolean };
 };
