@@ -469,7 +469,8 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
-        warehouse = receipt.invoice.delivery.warehouse
+        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse").get(pk=receipt.invoice_id)
+        warehouse = invoice.delivery.warehouse
         if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, receipt.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         receipt = post_customer_receipt(receipt.pk, request.user)
