@@ -137,3 +137,92 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         entry.refresh_from_db()
         self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+    def create_and_post(self, source_type, number, date, lines):
+        payload = {
+            "company": self.company.pk,
+            "branch": self.branch.pk,
+            "fiscal_year": self.year.pk,
+            "entry_number": number,
+            "entry_date": date,
+            "description": "اختبار ترحيل قيد السنة",
+            "source_type": source_type,
+            "lines": lines,
+        }
+        created = self.client.post(
+            "/api/accounting/journal-entries/", payload, format="json"
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        posted = self.client.post(
+            f"/api/accounting/journal-entries/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.content)
+        return posted.data
+
+    def test_closing_review_accepts_a_posted_closing_entry_that_clears_pnl(self):
+        revenue = ChartOfAccount.objects.create(
+            company=self.company, code="4000", name_ar="إيرادات", nature="revenue",
+            is_group=False, allow_posting=True,
+        )
+        self.create_and_post("manual", "REV-001", "2026-05-01", [
+            {"account": self.asset.pk, "debit": "100.0000", "credit": "0"},
+            {"account": revenue.pk, "debit": "0", "credit": "100.0000"},
+        ])
+        self.create_and_post(JournalEntry.Source.CLOSING, "CLS-001", "2026-12-31", [
+            {"account": revenue.pk, "debit": "100.0000", "credit": "0"},
+            {"account": self.equity.pk, "debit": "0", "credit": "100.0000"},
+        ])
+        review = self.client.get(
+            f"/api/setup/fiscal-years/{self.year.pk}/closing_review/"
+        )
+        self.assertEqual(review.status_code, 200, review.content)
+        self.assertTrue(review.data["can_close"], review.data)
+        self.assertEqual(review.data["unclosed_income_statement_accounts"], 0)
+        closed = self.client.post(
+            f"/api/setup/fiscal-years/{self.year.pk}/close/", {}, format="json"
+        )
+        self.assertEqual(closed.status_code, 200, closed.content)
+        self.year.refresh_from_db()
+        self.assertEqual(self.year.status, FiscalYear.Status.CLOSED)
+
+    def test_next_year_opening_must_match_prior_year_balance_sheet(self):
+        revenue = ChartOfAccount.objects.create(
+            company=self.company, code="4000", name_ar="إيرادات", nature="revenue",
+            is_group=False, allow_posting=True,
+        )
+        next_year = FiscalYear.objects.create(
+            company=self.company, name="2027",
+            start_date="2027-01-01", end_date="2027-12-31",
+        )
+        self.create_and_post("manual", "REV-002", "2026-05-01", [
+            {"account": self.asset.pk, "debit": "100.0000", "credit": "0"},
+            {"account": revenue.pk, "debit": "0", "credit": "100.0000"},
+        ])
+        self.create_and_post(JournalEntry.Source.CLOSING, "CLS-002", "2026-12-31", [
+            {"account": revenue.pk, "debit": "100.0000", "credit": "0"},
+            {"account": self.equity.pk, "debit": "0", "credit": "100.0000"},
+        ])
+        opening = self.client.post(
+            "/api/accounting/journal-entries/",
+            {
+                "company": self.company.pk, "branch": self.branch.pk,
+                "fiscal_year": next_year.pk, "entry_number": "OPEN-2027",
+                "entry_date": "2027-01-01", "description": "افتتاح السنة الجديدة",
+                "source_type": JournalEntry.Source.OPENING,
+                "lines": [
+                    {"account": self.asset.pk, "debit": "99.0000", "credit": "0"},
+                    {"account": self.equity.pk, "debit": "0", "credit": "99.0000"},
+                ],
+            }, format="json",
+        )
+        self.assertEqual(opening.status_code, 201, opening.content)
+        posted = self.client.post(
+            f"/api/accounting/journal-entries/{opening.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.content)
+        review = self.client.get(
+            f"/api/setup/fiscal-years/{self.year.pk}/closing_review/"
+        )
+        self.assertEqual(review.status_code, 200, review.content)
+        self.assertEqual(review.data["opening_balance_mismatches"], 2)
+        self.assertFalse(review.data["can_close"])
