@@ -51,6 +51,21 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "فشل تجهيز العملات المرجعية." }
   $SuperuserCount = & $Python manage.py shell -c "from django.contrib.auth import get_user_model; print(get_user_model().objects.filter(is_superuser=True).count())"
   if ($LASTEXITCODE -ne 0) { throw "تعذر التحقق من مستخدم الإدارة." }
+
+  if ([int]($SuperuserCount | Select-Object -Last 1) -eq 0) {
+    Write-Host "إنشاء مستخدم الإدارة الأول..." -ForegroundColor Cyan
+    & $Python manage.py createsuperuser
+    if ($LASTEXITCODE -ne 0) { throw "لم يكتمل إنشاء مستخدم الإدارة." }
+  }
+
+  $OwnerCount = & $Python manage.py shell -c "from companies.models import PlatformOwner; print(PlatformOwner.objects.filter(is_active=True).count())"
+  if ($LASTEXITCODE -ne 0) { throw "تعذر التحقق من مالك المنصة." }
+  if ([int]($OwnerCount | Select-Object -Last 1) -eq 0) {
+    $OwnerUsername = Read-Host "أدخل اسم مستخدم مالك المنصة (يجب أن يكون مستخدم إدارة نشطًا)"
+    if ([string]::IsNullOrWhiteSpace($OwnerUsername)) { throw "اسم مستخدم مالك المنصة مطلوب." }
+    & $Python manage.py bootstrap_platform_owner --username $OwnerUsername
+    if ($LASTEXITCODE -ne 0) { throw "تعذر تسجيل مالك المنصة؛ راجع بيانات المستخدم وحالة المالك الحالي." }
+  }
 } finally { Pop-Location }
 
 Push-Location $Frontend
@@ -64,7 +79,4 @@ try {
 Start-Process -FilePath $Python -WorkingDirectory $Backend -ArgumentList @("manage.py", "runserver", "127.0.0.1:8000")
 Start-Process -FilePath "cmd.exe" -WorkingDirectory $Frontend -ArgumentList @("/c", "npm.cmd run dev -- --host 127.0.0.1")
 
-if ([int]($SuperuserCount | Select-Object -Last 1) -eq 0) {
-  Start-Process -FilePath $Python -WorkingDirectory $Backend -ArgumentList @("manage.py", "createsuperuser")
-}
 Write-Host "Admrail ERP v2 بدأ على Windows باستخدام PostgreSQL المحلي: http://127.0.0.1:5173" -ForegroundColor Green
