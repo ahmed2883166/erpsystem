@@ -231,7 +231,7 @@ def post_supplier_payment(payment_id, user):
             invoice=invoice, status=SupplierPayment.Status.POSTED,
             payment_date__gt=payment.payment_date,
         ).exists() or FxSubledgerRevaluation.objects.filter(
-            purchase_invoice=invoice, revaluation_date__gt=payment.payment_date,
+            purchase_invoice=invoice, revaluation_date__gte=payment.payment_date,
         ).exists():
             raise ValidationError("لا يمكن ترحيل سداد بتاريخ يسبق حركة سداد أو إعادة تقييم مرحّلة.")
         remaining_foreign, historical_remaining, current_remaining = open_fx_invoice_balances(
