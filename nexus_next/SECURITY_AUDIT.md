@@ -91,4 +91,4 @@ At baseline commit `f36bc6516da0ea7516db0f60c0f06e90c9ad445b`:
 ### Base-currency journal precision
 - Before a journal can be posted, each debit and credit line is rounded using ROUND_HALF_UP to the configured base currency decimal_places.
 - A line that rounds to zero on both sides is rejected, and the journal is rejected if the rounded totals do not balance.
-- FX snapshot validation compares the base equivalent at the company's configured base-currency precision. Stored journal columns retain four decimal places for schema compatibility, but posted EGP/SAR values are rounded to two decimals.
+- FX snapshot validation compares the base equivalent at the company's configured base-currency precision. Stored journal columns retain four decimal places for schema compatibility, but posted general-ledger debit/credit amounts are rounded to two decimals. Invoice, receipt, payment, treasury-position, and inventory subledger fields still retain four-decimal precision; end-to-end subledger-to-GL reconciliation at the base-currency minor unit remains a required acceptance check.
