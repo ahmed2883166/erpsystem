@@ -226,7 +226,7 @@ class LeaveRequestViewSet(EmployeeScopedViewSet):
         self.check_employee_write(leave.employee, admin_only=True)
         if leave.status != LeaveRequest.Status.PENDING:
             raise ValidationError("لا يمكن رفض طلب تمت معالجته.")
-        if leave.created_by_id == request.user.pk:
+        if leave.created_by_id == request.user.pk or leave.employee.user_id == request.user.pk:
             reason = str(request.data.get("self_approval_override_reason", "")).strip()
             if not request.user.is_superuser or len(reason) < 10:
                 raise PermissionDenied("لا يجوز اتخاذ قرار في طلب الإجازة الذي أنشأته أو الخاص بحسابك الوظيفي. الاستثناء محصور بمشرف النظام مع سبب مكتوب لا يقل عن 10 أحرف.")
