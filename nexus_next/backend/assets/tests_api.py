@@ -253,3 +253,17 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(response.data["cost_accounts"][0]["expected"], "120000.0000")
         self.assertEqual(response.data["accumulated_depreciation_accounts"][0]["expected"], "5000.0000")
         self.assertEqual(response.data["depreciation_expense_accounts"][0]["expected"], "5000.0000")
+
+    def test_asset_accounts_must_separate_cost_accumulated_and_valid_acquisition_counter(self):
+        from assets.models import FixedAsset
+        same_contra = self._payload()
+        same_contra["accumulated_depreciation_account"] = self.asset_gl.pk
+        rejected_same = self.client.post("/api/assets/fixed-assets/", same_contra, format="json")
+        self.assertEqual(rejected_same.status_code, 400, rejected_same.data)
+        self.assertFalse(FixedAsset.objects.filter(code="FA-001").exists())
+
+        expense_counter = self._payload()
+        expense_counter["acquisition_counter_account"] = self.expense_gl.pk
+        rejected_expense = self.client.post("/api/assets/fixed-assets/", expense_counter, format="json")
+        self.assertEqual(rejected_expense.status_code, 400, rejected_expense.data)
+        self.assertFalse(FixedAsset.objects.filter(code="FA-001").exists())
