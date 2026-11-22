@@ -41,3 +41,8 @@ class SupplierViewSet(viewsets.ModelViewSet):
             raise ValidationError("لا يمكن نقل سجل مورد إلى شركة أخرى بعد إنشائه.")
         self._check_company_write(company.pk)
         serializer.save()
+
+    def perform_destroy(self, instance):
+        """منع الحذف النهائي والحفاظ على مراجع المستندات المحاسبية التاريخية."""
+        self._check_company_write(instance.company_id)
+        raise ValidationError("لا يمكن حذف المورد نهائيًا؛ أوقفه من خلال حالة النشاط للحفاظ على السجلات التاريخية.")
