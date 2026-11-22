@@ -227,7 +227,7 @@ export type ExpenseAnalysisReport = {
   monthly_rows:{month:string;amount:string}[];
   note:string;
 };
-export type CostCenter = {id:number;code:string;name_ar:string;is_active:boolean};
+export type CostCenter = {id:number;company:number;code:string;name_ar:string;parent:number|null;is_active:boolean};
 export type BalanceSheetReport = {
   company: number; as_of: string; assets: {account_id:number|null;code:string;name_ar:string;balance:string}[];
   liabilities: {account_id:number|null;code:string;name_ar:string;balance:string}[];
@@ -297,6 +297,12 @@ export const api = {
   },
   // جلب أكواد الضرائب المعرفة للشركة.
   taxCodes: (companyId: number) => request<TaxCode[]>(`/api/accounting/tax-codes/?company=${companyId}&ordering=code`),
+  // جلب مراكز التكلفة مع ترتيبها حسب الكود.
+  costCenters: (companyId: number) => request<CostCenter[]>(`/api/accounting/cost-centers/?company=${companyId}&ordering=code`),
+  // إنشاء مركز تكلفة جديد.
+  createCostCenter: async (payload: Partial<CostCenter>) => { await request<{ detail: string }>("/api/csrf/"); return request<CostCenter>("/api/accounting/cost-centers/", { method: "POST", body: JSON.stringify(payload) }); },
+  // تحديث بيانات مركز تكلفة أو حالته دون حذف السجل.
+  updateCostCenter: async (id: number, payload: Partial<CostCenter>) => { await request<{ detail: string }>("/api/csrf/"); return request<CostCenter>(`/api/accounting/cost-centers/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
   // إضافة كود ضريبي جديد للشركة.
   createTaxCode: async (payload: Partial<TaxCode>) => { await request<{ detail: string }>("/api/csrf/"); return request<TaxCode>("/api/accounting/tax-codes/", { method: "POST", body: JSON.stringify(payload) }); },
   // تعطيل الكود الضريبي دون حذف السجل التاريخي.
