@@ -15,7 +15,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Company, FiscalYear
 from purchasing.models import PurchaseInvoiceLine
 from sales.models import SalesInvoiceLine
@@ -32,7 +32,7 @@ class AccountingViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return self.queryset
         return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
@@ -284,7 +284,7 @@ class JournalEntryViewSet(AccountingViewSet):
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         qs = super().get_queryset()
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         return qs.filter(branch__in=accessible_branches(self.request.user))
 
@@ -377,7 +377,7 @@ class JournalEntryViewSet(AccountingViewSet):
             if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), int(company_id)):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             date_filter &= Q(journal_lines__entry__branch_id=int(branch_raw))
-        elif not request.user.is_superuser:
+        elif not request.user.is_superuser or is_platform_owner(request.user):
             date_filter &= Q(
                 journal_lines__entry__branch__in=accessible_branches(request.user, int(company_id))
             )
@@ -966,7 +966,7 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError({"company": "تقرير ضريبة القيمة المضافة متاح لمصر والسعودية فقط."})
 
         visible_branches = accessible_branches(request.user, company.pk)
-        if request.user.is_superuser:
+        if request.user.is_superuser and not is_platform_owner(request.user):
             visible_branches = company.branches.all()
         if branch_id:
             if not branch_id.isdigit() or not can_access_branch(request.user, int(branch_id), company.pk):
