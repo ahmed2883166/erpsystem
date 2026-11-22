@@ -1265,3 +1265,35 @@ class AccountRoleRuntimeValidationTests(TestCase):
         )
         self.assertEqual(filtered.status_code, 200, filtered.data)
         self.assertEqual(filtered.data["total"], Decimal("120.0000"))
+
+    def test_vat_return_reports_ledger_reconciliation_and_unclassified_inputs(self):
+        branch = Branch.objects.create(company=self.company, code="VAT-HQ", name_ar="الرئيسي", is_head_office=True)
+        user = User.objects.create_user(username="vat_reconcile_viewer", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=user)
+        response = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn("ledger_reconciliation", response.data)
+        self.assertFalse(response.data["ledger_reconciliation"]["output_account_configured"])
+        self.assertFalse(response.data["ledger_reconciliation"]["input_account_configured"])
+        self.assertEqual(response.data["unclassified_tax"]["purchase_recoverable_amount"], "0")
+
+    def test_country_tax_presets_are_idempotent_and_use_egypt_standard_rate(self):
+        branch = Branch.objects.create(company=self.company, code="VAT-ADMIN", name_ar="الرئيسي", is_head_office=True)
+        user = User.objects.create_user(username="vat_preset_admin", password="test-password")
+        CompanyMembership.objects.create(user=user, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(user=user)
+        url = "/api/accounting/tax-codes/initialize-country-presets/"
+        first = self.client.post(url, {"company": self.company.pk}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(len(first.data["created"]), 4)
+        standard = TaxCode.objects.get(company=self.company, code="VAT-STD")
+        self.assertEqual(standard.rate, Decimal("14"))
+        second = self.client.post(url, {"company": self.company.pk}, format="json")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(len(second.data["created"]), 0)
+        self.assertEqual(len(second.data["existing"]), 4)
+        self.assertEqual(TaxCode.objects.filter(company=self.company).count(), 4)
