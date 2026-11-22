@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type FiscalYear, type FiscalYearClosingReview } from "./api";
 
-type Props = { companyId: number | null };
+type Props = { companyId: number | null; onStructureChanged: () => Promise<void> };
 const currentYear = new Date().getFullYear();
 
-export default function FiscalYearsPanel({ companyId }: Props) {
+export default function FiscalYearsPanel({ companyId, onStructureChanged }: Props) {
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [review, setReview] = useState<FiscalYearClosingReview | null>(null);
@@ -43,7 +43,7 @@ export default function FiscalYearsPanel({ companyId }: Props) {
       const payload = { name: name.trim(), start_date: startDate, end_date: endDate };
       if (editingId) await api.updateFiscalYear(editingId, payload);
       else await api.createFiscalYear({ company: companyId, ...payload });
-      resetForm(); await load();
+      resetForm(); await load(); await onStructureChanged();
       setNotice(editingId ? "تم تحديث بيانات السنة المالية." : "تم إنشاء السنة المالية.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ السنة المالية."); }
     finally { setBusy(false); }
@@ -66,7 +66,7 @@ export default function FiscalYearsPanel({ companyId }: Props) {
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await api.closeFiscalYear(selectedId);
-      await load(); setReview(result.review); setNotice(result.detail);
+      await load(); await onStructureChanged(); setReview(result.review); setNotice(result.detail);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إقفال السنة المالية."); }
     finally { setBusy(false); }
   };
