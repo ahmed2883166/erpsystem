@@ -594,6 +594,39 @@ class CompanySetupApiTests(APITestCase):
         ).exists())
         self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
 
+    def test_platform_owner_can_create_regular_company_admin_account(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-create-admin", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.post("/api/setup/memberships/create-company-admin/", {
+            "company": self.company.pk,
+            "username": "new-tenant-admin",
+            "display_name": "مدير الشركة الجديد",
+            "email": "tenant-admin@example.test",
+            "password": "VeryStrong#Password-2026",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        tenant_admin = get_user_model().objects.get(username="new-tenant-admin")
+        self.assertFalse(tenant_admin.is_staff)
+        self.assertFalse(tenant_admin.is_superuser)
+        self.assertTrue(tenant_admin.check_password("VeryStrong#Password-2026"))
+        membership = CompanyMembership.objects.get(user=tenant_admin, company=self.company)
+        self.assertEqual(membership.role, CompanyMembership.Role.ADMIN)
+        self.assertTrue(membership.all_branches)
+        self.assertFalse(CompanyMembership.objects.filter(user=owner).exists())
+
+    def test_non_owner_cannot_create_company_admin_account(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/setup/memberships/create-company-admin/", {
+            "company": self.company.pk,
+            "username": "unauthorized-tenant-admin",
+            "password": "VeryStrong#Password-2026",
+        }, format="json")
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(get_user_model().objects.filter(username="unauthorized-tenant-admin").exists())
+
     def test_platform_owner_cannot_be_added_to_company_as_operational_member(self):
         owner = get_user_model().objects.create_user(
             username="platform-owner-no-membership", password="test-password"
