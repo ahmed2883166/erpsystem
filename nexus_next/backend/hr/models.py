@@ -27,6 +27,14 @@ class Department(CompanyScopedModel):
         ordering = ("code",)
         constraints = [models.UniqueConstraint(fields=("company", "code"), name="uq_hr_department_code")]
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous_salary = type(self).objects.filter(pk=self.pk).values_list("basic_salary", flat=True).first()
+            if (previous_salary is not None and previous_salary != self.basic_salary
+                    and not getattr(self, "_salary_history_update", False)):
+                raise ValidationError({"basic_salary": "لا تعدّل الراتب الأساسي مباشرة؛ سجّل التغيير من شاشة تاريخ الرواتب لضمان حفظ الأثر التاريخي."})
+        return super().save(*args, **kwargs)
+
     def clean(self):
         super().clean()
         if self.branch_id and self.branch.company_id != self.company_id:
@@ -203,6 +211,30 @@ class AttendanceRecord(models.Model):
         ordering = ("work_date", "employee__code")
         constraints = [models.UniqueConstraint(fields=("employee", "work_date"), name="uq_hr_attendance_day")]
         indexes = [models.Index(fields=("employee", "work_date"), name="hr_attendance_period_idx")]
+
+    @staticmethod
+    def _is_locked_by_paid_payroll(employee_id, work_date):
+        employee = Employee.objects.only("company_id").get(pk=employee_id)
+        return PayrollCycle.objects.filter(
+            company_id=employee.company_id, results__employee_id=employee_id,
+            period_start__lte=work_date, period_end__gte=work_date,
+            status__in=(PayrollCycle.Status.POSTED, PayrollCycle.Status.PAYMENT_PENDING, PayrollCycle.Status.PAID),
+        ).exists()
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.filter(pk=self.pk).values("employee_id", "work_date").first()
+            if old and (self._is_locked_by_paid_payroll(old["employee_id"], old["work_date"])
+                        or self._is_locked_by_paid_payroll(self.employee_id, self.work_date)):
+                raise ValidationError("لا يمكن تعديل الحضور بعد ترحيل أو صرف مرتبات الفترة؛ استخدم إجراء تصحيح موثق.")
+        elif self._is_locked_by_paid_payroll(self.employee_id, self.work_date):
+            raise ValidationError("لا يمكن إضافة حضور لفترة مرتبات مرحلة أو مصروفة.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self._is_locked_by_paid_payroll(self.employee_id, self.work_date):
+            raise ValidationError("لا يمكن حذف الحضور بعد ترحيل أو صرف مرتبات الفترة؛ استخدم إجراء تصحيح موثق.")
+        return super().delete(*args, **kwargs)
 
     def clean(self):
         super().clean()
