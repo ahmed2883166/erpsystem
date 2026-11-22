@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 from django.db.models import Q, Sum
 
 from accounting.models import JournalEntry, JournalLine
@@ -582,6 +583,50 @@ def complete_payroll_payment(cycle_id, actor=None):
     cycle.save(update_fields=("status", "updated_at"))
     return {"cycle_id": cycle.pk, "status": cycle.status, "payments": completed}
 
+
+
+@transaction.atomic
+def cancel_payroll_payment_preparation(cycle_id, actor=None):
+    """إلغاء إعداد صرف المرتبات دون المساس بقيد الاستحقاق أو أي مستند مرحّل."""
+    cycle = PayrollCycle.objects.select_for_update().select_related("company").get(pk=cycle_id)
+    if cycle.status != PayrollCycle.Status.PAYMENT_PENDING:
+        raise ValidationError("لا توجد عملية إعداد صرف معلقة لإلغائها.")
+    postings = list(cycle.postings.select_related("branch", "payment_treasury_transaction").order_by("branch__code"))
+    if not postings or any(not item.payment_treasury_transaction_id for item in postings):
+        raise ValidationError("مستندات إعداد الصرف غير مكتملة؛ لا يمكن إلغاء العملية بأمان.")
+    documents = []
+    for posting in postings:
+        document = TreasuryTransaction.objects.select_for_update().get(pk=posting.payment_treasury_transaction_id)
+        if (
+            document.company_id != cycle.company_id
+            or document.branch_id != posting.branch_id
+            or document.kind != TreasuryTransaction.Kind.PAYMENT
+            or document.status != TreasuryTransaction.Status.DRAFT
+            or document.journal_entry_id is not None
+        ):
+            raise ValidationError("توجد حركة صرف غير مسودة أو مرتبطة بقيد؛ أوقف الإلغاء وراجع المستندات يدويًا.")
+        documents.append((posting, document))
+
+    cancelled = []
+    for posting, document in documents:
+        approvals = FinancialApprovalRequest.objects.select_for_update().filter(
+            treasury_transaction=document,
+            status=FinancialApprovalRequest.Status.PENDING,
+        )
+        for approval in approvals:
+            approval.status = FinancialApprovalRequest.Status.SUPERSEDED
+            approval.save(update_fields=("status", "decided_at"))
+        document.status = TreasuryTransaction.Status.VOID
+        document.reference = (document.reference + " | " if document.reference else "") + f"إلغاء إعداد صرف دورة المرتبات {cycle.pk}"
+        document.save(update_fields=("status", "reference"))
+        posting.payment_treasury_transaction = None
+        posting.payment_journal_entry = None
+        posting.save(update_fields=("payment_treasury_transaction", "payment_journal_entry"))
+        cancelled.append({"branch_id": posting.branch_id, "treasury_transaction_id": document.pk})
+
+    cycle.status = PayrollCycle.Status.POSTED
+    cycle.save(update_fields=("status", "updated_at"))
+    return {"cycle_id": cycle.pk, "status": cycle.status, "cancelled_documents": cancelled}
 
 def models_q_end(start_date):
     """إنشاء شرط استعلام يضم السجلات التي يبدأ تاريخها قبل نهاية الفترة."""
