@@ -115,8 +115,8 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         if sales_return.status != SalesReturn.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل مردود مبيعات مرحّل.")
         lines_data = validated_data.pop("lines", None)
+        movement = StockMovement.objects.select_for_update().get(pk=sales_return.stock_movement_id)
         if lines_data is not None:
-            movement = StockMovement.objects.select_for_update().get(pk=sales_return.stock_movement_id)
             movement.lines.all().delete()
             sales_return.lines.all().delete()
             for row in lines_data:
