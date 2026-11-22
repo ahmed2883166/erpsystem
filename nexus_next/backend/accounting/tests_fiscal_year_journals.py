@@ -94,3 +94,46 @@ class FiscalYearJournalSafetyTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(JournalEntry.objects.filter(entry_number="MANUAL-001").exists())
+
+    def test_duplicate_closing_draft_is_rejected_for_same_branch_and_year(self):
+        first = self.client.post(
+            "/api/accounting/journals/",
+            self.payload(JournalEntry.Source.CLOSING, "2026-12-31"),
+            format="json",
+        )
+        self.assertEqual(first.status_code, 201, first.data)
+        second_payload = self.payload(JournalEntry.Source.CLOSING, "2026-12-31")
+        second_payload["entry_number"] = "CLOSING-002"
+        second = self.client.post(
+            "/api/accounting/journals/", second_payload, format="json"
+        )
+        self.assertEqual(second.status_code, 400, second.data)
+        self.assertEqual(
+            JournalEntry.objects.filter(
+                fiscal_year=self.year, branch=self.branch,
+                source_type=JournalEntry.Source.CLOSING,
+            ).count(),
+            1,
+        )
+
+    def test_existing_draft_cannot_be_posted_after_fiscal_year_is_closed(self):
+        from accounting.models import JournalLine
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="DRAFT-BEFORE-CLOSE", entry_date="2026-06-01",
+            description="مسودة قبل الإقفال", source_type=JournalEntry.Source.MANUAL,
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.asset, debit="100.0000", credit="0",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.equity, debit="0", credit="100.0000",
+        )
+        self.year.status = FiscalYear.Status.CLOSED
+        self.year.save(update_fields=("status",))
+        response = self.client.post(
+            f"/api/accounting/journals/{entry.pk}/post/", {}, format="json"
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
