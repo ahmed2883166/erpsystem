@@ -138,7 +138,7 @@ def post_purchase_invoice(invoice_id, user):
             )
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
-        if expected_base != net_amount + tax_amount:
+        if abs(expected_base - (net_amount + tax_amount)) > Decimal("0.0002") * max(len(lines), 1):
             raise ValidationError("قيمة فاتورة المورد بالعملة الأساسية لا تطابق إجماليها الأجنبي وسعر الصرف.")
         invoice.transaction_net_total = foreign_net
         invoice.transaction_tax_total = foreign_tax
