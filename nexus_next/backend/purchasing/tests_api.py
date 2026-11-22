@@ -647,6 +647,45 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(refreshed["paid_total"], "200.0000")
         self.assertEqual(refreshed["balance_due"], "0.0000")
 
+    def test_supplier_fx_revaluation_can_be_reversed_before_later_payments(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        for rate_date, rate in (
+            (date(2026, 3, 10), "50"), (date(2026, 3, 31), "53"),
+            (date(2026, 4, 2), "51"),
+        ):
+            ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate))
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-AP-FX-REV", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "transaction_unit_price": "2", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_id = created.data["id"]
+        posted = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        revalued = self.client.post(f"/api/purchasing/invoices/{invoice_id}/revalue/", {
+            "revaluation_date": "2026-03-31", "rate_date": "2026-03-31", "rate": "53",
+        }, format="json")
+        self.assertEqual(revalued.status_code, 201, revalued.data)
+
+        reversed_entry = self.client.post(
+            f"/api/accounting/journal-entries/{revalued.data['journal_entry']}/reverse/",
+            {"entry_date": "2026-04-01"}, format="json",
+        )
+        self.assertEqual(reversed_entry.status_code, 201, reversed_entry.data)
+        history = self.client.get(f"/api/purchasing/invoices/{invoice_id}/revaluations/")
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertEqual(history.data[0]["status"], "reversed")
+
+        later = self.client.post(f"/api/purchasing/invoices/{invoice_id}/revalue/", {
+            "revaluation_date": "2026-04-02", "rate_date": "2026-04-02", "rate": "51",
+        }, format="json")
+        self.assertEqual(later.status_code, 201, later.data)
+        self.assertEqual(later.data["previous_carrying_amount"], "200.0000")
+        self.assertEqual(later.data["new_carrying_amount"], "204.0000")
+
     def test_supplier_fx_revaluation_is_released_to_realized_fx_on_partial_and_final_payments(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
