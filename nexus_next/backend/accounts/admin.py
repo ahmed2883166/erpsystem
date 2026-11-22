@@ -7,7 +7,7 @@ from .models import User
 @admin.register(User)
 class NexusUserAdmin(UserAdmin):
     fieldsets = UserAdmin.fieldsets + (
-        ("NEXUS", {"fields": ("display_name", "preferred_language")}),
+        ("NEXUS", {"fields": ("display_name", "preferred_language", "theme_preference")}),
     )
     add_fieldsets = UserAdmin.add_fieldsets + (
         ("NEXUS", {"fields": ("display_name", "preferred_language")}),
