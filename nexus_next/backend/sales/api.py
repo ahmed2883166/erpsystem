@@ -223,6 +223,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             "new_carrying_amount": str(row.new_carrying_amount), "difference": str(row.difference),
             "journal_entry": row.journal_entry_id,
             "journal_number": row.journal_entry.entry_number if row.journal_entry_id else None,
+            "status": "reversed" if row.journal_entry_id and row.journal_entry.status == "reversed" else ("posted" if row.journal_entry_id else "no_difference"),
         } for row in rows])
 
     @action(detail=False, methods=("get",), url_path="customer-statement")
