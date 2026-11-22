@@ -9,7 +9,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from inventory.models import Warehouse
 from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer
@@ -41,7 +41,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=accessible_branches(self.request.user)))
 
@@ -100,7 +100,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
         return qs.filter(Q(warehouse__branch__isnull=True) | Q(warehouse__branch__in=branches))
@@ -152,7 +152,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
         return qs.filter(Q(receipt__warehouse__branch__isnull=True) | Q(receipt__warehouse__branch__in=branches))
@@ -367,7 +367,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if self.request.user.is_superuser:
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
         return qs.filter(
