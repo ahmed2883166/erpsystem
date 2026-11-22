@@ -28,6 +28,7 @@ try {
             $Segments -contains ".pytest_cache" -or
             $Segments -contains "dist" -or
             $Segments -contains "release" -or
+            $Relative -eq "compose.yaml" -or
             $Segments -contains "data" -or
             $Segments -contains "backups" -or
             $_.Name -eq ".env" -or
@@ -53,7 +54,7 @@ try {
     $Archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
     try {
         $Entries = @($Archive.Entries | ForEach-Object { $_.FullName })
-        foreach ($RequiredEntry in @("backend/.env.example", "compose.yaml", "start-local.ps1", "TRIAL-QUICKSTART.md")) {
+        foreach ($RequiredEntry in @("backend/.env.example", "start-local.ps1", "TRIAL-QUICKSTART.md")) {
             if ($Entries -notcontains $RequiredEntry) {
                 throw "Trial package is missing required file: $RequiredEntry"
             }
