@@ -1,10 +1,13 @@
 from pathlib import Path
 import environ
 
+"""إعدادات تشغيل Admrail ERP v2 مع اعتماد PostgreSQL وضوابط الجلسات والنشر المحلي."""
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(DJANGO_DEBUG=(bool, False))
 environ.Env.read_env(BASE_DIR / ".env")
 
+# مفاتيح التشغيل تُقرأ من ملف البيئة ولا تُضمّن داخل المستودع.
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env("DJANGO_DEBUG")
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
@@ -44,6 +47,7 @@ TEMPLATES = [{
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+# قاعدة البيانات الوحيدة المدعومة في النسخة الجديدة هي PostgreSQL.
 DATABASES = {"default": {
     "ENGINE": "django.db.backends.postgresql",
     "NAME": env("POSTGRES_DB", default="nexus_dev"),
@@ -55,6 +59,7 @@ DATABASES = {"default": {
     "OPTIONS": {"connect_timeout": 5},
 }}
 
+# Axes يراقب محاولات الدخول الفاشلة ويقفل الحساب وفق الحدود المحددة أدناه.
 AUTHENTICATION_BACKENDS = [
     "axes.backends.AxesStandaloneBackend",
     "django.contrib.auth.backends.ModelBackend",
@@ -73,10 +78,12 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+# اللغة والتوقيت الافتراضيان مناسبان لواجهة عربية تعمل في مصر.
 LANGUAGE_CODE = "ar"
 TIME_ZONE = "Africa/Cairo"
 USE_I18N = True
 USE_TZ = True
+# ملفات React المبنية تُقدّم مع ملفات Django الثابتة في تشغيل الإنتاج.
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 WHITENOISE_ROOT = BASE_DIR.parent / "frontend" / "dist"
@@ -94,6 +101,7 @@ SECURE_REFERRER_POLICY = "same-origin"
 X_FRAME_OPTIONS = "DENY"
 SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)
 SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=0)
+# توحيد المصادقة والصلاحيات ومعالجة الأخطاء على مستوى واجهات API.
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
