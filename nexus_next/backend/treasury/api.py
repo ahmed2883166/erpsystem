@@ -13,7 +13,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
-from .services import post_treasury_transaction
+from .services import post_treasury_transaction, revalue_treasury_fx_account
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
@@ -93,6 +93,51 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             posted = post_journal(entry.pk)
             account.opening_journal_entry = posted
             account.save(update_fields=("opening_journal_entry",))
+
+    @decorators.action(detail=True, methods=("post",), url_path="revalue")
+    def revalue(self, request, pk=None):
+        """إعادة تقييم مركز عملة الحساب بسعر صرف معتمد وتسجيل قيد الفروق."""
+        account = self.get_object()
+        self._scope(account.company_id)
+        self._write(account.company_id)
+        if account.branch_id and not can_access_branch(request.user, account.branch_id, account.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع حساب الخزينة.")
+        fiscal_year_id = request.data.get("fiscal_year")
+        revaluation_date = dateparse.parse_date(str(request.data.get("revaluation_date", "")))
+        rate_date = dateparse.parse_date(str(request.data.get("rate_date", "")))
+        if not fiscal_year_id or not revaluation_date or not rate_date:
+            raise ValidationError({
+                "detail": "أدخل السنة المالية وتاريخ إعادة التقييم وتاريخ سعر الصرف المعتمد."
+            })
+        branch = account.branch
+        if not branch:
+            branch = accessible_branches(request.user, account.company_id).filter(
+                is_active=True
+            ).order_by("-is_head_office", "code").first()
+        if not branch:
+            raise ValidationError({"branch": "لا يوجد فرع نشط ومتاح لتسجيل قيد إعادة التقييم."})
+        try:
+            result = revalue_treasury_fx_account(
+                account_id=account.pk, fiscal_year_id=fiscal_year_id,
+                revaluation_date=revaluation_date, rate_date=rate_date,
+                branch=branch, user=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+        return response.Response({
+            "id": result.pk,
+            "account": result.account_id,
+            "currency": result.account.currency_code,
+            "revaluation_date": result.revaluation_date,
+            "rate_date": result.rate_date,
+            "rate": result.rate,
+            "foreign_amount": result.foreign_amount,
+            "previous_carrying_amount": result.previous_carrying_amount,
+            "new_carrying_amount": result.new_carrying_amount,
+            "difference": result.difference,
+            "journal_entry": result.journal_entry_id,
+            "journal_number": result.journal_entry.entry_number if result.journal_entry_id else "",
+        }, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
