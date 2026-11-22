@@ -217,6 +217,7 @@ class CompanySetupApiTests(APITestCase):
             user=self.user, company=self.company, role="admin", all_branches=True
         )
         branch = Branch.objects.create(company=self.company, code="EDIT-BR", name_ar="الفرع قبل التعديل")
+        Branch.objects.create(company=self.company, code="KEEP-BR", name_ar="فرع بديل نشط")
         self.client.force_authenticate(self.user)
         response = self.client.patch(
             f"/api/setup/branches/{branch.pk}/",
