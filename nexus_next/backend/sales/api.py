@@ -1,6 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -10,7 +12,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from accounting.models import FxSubledgerRevaluation
+from accounting.models import FxSubledgerRevaluation, JournalEntry
+from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
@@ -471,3 +474,47 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         receipt = post_customer_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def reverse(self, request, pk=None):
+        """عكس آخر سند قبض مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
+        receipt = CustomerReceipt.objects.select_for_update().select_related(
+            "invoice", "invoice__delivery__warehouse", "journal_entry"
+        ).get(pk=self.get_object().pk)
+        self._check_write(receipt.company_id)
+        warehouse = receipt.invoice.delivery.warehouse
+        if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, receipt.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        if receipt.status != CustomerReceipt.Status.POSTED or not receipt.journal_entry_id:
+            raise ValidationError("لا يمكن عكس سند قبض غير مرحّل.")
+        if receipt.journal_entry.status != JournalEntry.Status.POSTED:
+            raise ValidationError("القيد المرتبط بسند القبض ليس مرحّلًا.")
+        later_receipts = CustomerReceipt.objects.filter(
+            invoice_id=receipt.invoice_id, status=CustomerReceipt.Status.POSTED
+        ).filter(
+            Q(receipt_date__gt=receipt.receipt_date)
+            | Q(receipt_date=receipt.receipt_date, pk__gt=receipt.pk)
+        ).exists()
+        if later_receipts:
+            raise ValidationError("يجب عكس أحدث سند قبض على الفاتورة أولًا.")
+        if FxSubledgerRevaluation.objects.filter(sales_invoice_id=receipt.invoice_id).exists():
+            raise ValidationError("لا يمكن عكس سند قبض لفاتورة لها سجل إعادة تقييم عملة؛ راجع تسلسل التسويات وإعادة التقييم أولًا.")
+        entry_date = parse_date(request.data.get("entry_date", "")) if request.data.get("entry_date") else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        try:
+            reversal = reverse_operational_journal(
+                receipt.journal_entry_id, request.user, entry_date, JournalEntry.Source.SALES
+            )
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            raise ValidationError(detail) from exc
+        CustomerReceipt.objects.filter(pk=receipt.pk, status=CustomerReceipt.Status.POSTED).update(
+            status=CustomerReceipt.Status.REVERSED
+        )
+        receipt.refresh_from_db()
+        data = self.get_serializer(receipt).data
+        data["reversal_journal_entry"] = reversal.pk
+        data["reversal_journal_number"] = reversal.entry_number
+        return Response(data, status=status.HTTP_200_OK)
