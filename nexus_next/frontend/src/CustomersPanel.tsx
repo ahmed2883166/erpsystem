@@ -17,6 +17,7 @@ export default function CustomersPanel({ companyId }: Props) {
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
   const [statement, setStatement] = useState<CustomerStatement | null>(null);
   const [statementBusy, setStatementBusy] = useState(false);
@@ -52,22 +53,49 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     setSaving(true);
     setError("");
     try {
-      await api.createCustomer({
+      const payload = {
         ...form,
         company: companyId,
         credit_limit: form.credit_limit || "0",
         payment_terms_days: Number(form.payment_terms_days || 0),
-      });
+      };
+      if (editingId) await api.updateCustomer(editingId, payload);
+      else await api.createCustomer(payload);
       setForm({
         code: "", customer_type: "company", name_ar: "", tax_number: "",
         phone: "", mobile: "", email: "", credit_limit: "0",
         payment_terms_days: "0", address: "",
       });
       setShowForm(false);
+      setEditingId(null);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر حفظ العميل.");
     } finally { setSaving(false); }
+  };
+
+  // فتح نموذج تعديل العميل مع تحميل بياناته الحالية.
+  const editCustomer = (customer: Customer) => {
+    setEditingId(customer.id);
+    setForm({
+      code: customer.code, customer_type: customer.customer_type, name_ar: customer.name_ar,
+      tax_number: customer.tax_number || "", phone: customer.phone || "", mobile: customer.mobile || "",
+      email: customer.email || "", credit_limit: customer.credit_limit || "0",
+      payment_terms_days: String(customer.payment_terms_days || 0), address: customer.address || "",
+    });
+    setShowForm(true);
+    setError("");
+  };
+
+  // إيقاف العميل أو إعادة تنشيطه دون حذف المستندات السابقة.
+  const toggleCustomerActive = async (customer: Customer) => {
+    const action = customer.is_active ? "إيقاف" : "إعادة تنشيط";
+    if (!window.confirm("هل تريد " + action + " العميل \"" + customer.name_ar + "\"؟ لن تُحذف أي مستندات أو حركات سابقة.")) return;
+    setSaving(true);
+    setError("");
+    try { await api.updateCustomer(customer.id, { is_active: !customer.is_active }); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تغيير حالة العميل."); }
+    finally { setSaving(false); }
   };
 
   // تحميل كشف حركة العميل ورصيد أول وآخر المدة.
@@ -109,13 +137,17 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     <section className="work-panel customers-panel">
       <div className="work-panel-head">
         <div><h2>سجل العملاء</h2><p>بيانات العملاء وحدود الائتمان وشروط السداد للشركة المحددة.</p></div>
-        <button className="primary-button" type="button" disabled={!companyId} onClick={() => setShowForm((value) => !value)}>
+        <button className="primary-button" type="button" disabled={!companyId} onClick={() => {
+          if (showForm) { setShowForm(false); setEditingId(null); }
+          else { setEditingId(null); setShowForm(true); }
+        }}>
           <span>＋</span>{showForm ? "إغلاق النموذج" : "إضافة عميل"}
         </button>
       </div>
       {error && <div className="error-banner">{error}</div>}
       {!companyId && <div className="table-empty">اختر شركة لعرض سجل العملاء.</div>}
       {showForm && companyId && <form className="customer-form" onSubmit={(event) => void submit(event)}>
+        <div className="customer-form-wide"><strong>{editingId ? "تعديل بيانات العميل" : "إضافة عميل جديد"}</strong></div>
         <label>كود العميل<input required maxLength={40} value={form.code} onChange={(event) => setForm({ ...form, code: event.target.value })} placeholder="CUS-001" /></label>
         <label>نوع العميل<select value={form.customer_type} onChange={(event) => setForm({ ...form, customer_type: event.target.value as "company" | "individual" })}><option value="company">شركة</option><option value="individual">فرد</option></select></label>
         <label>اسم العميل<input required value={form.name_ar} onChange={(event) => setForm({ ...form, name_ar: event.target.value })} /></label>
@@ -127,8 +159,8 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         <label>مدة السداد (يوم)<input type="number" min="0" max="32767" value={form.payment_terms_days} onChange={(event) => setForm({ ...form, payment_terms_days: event.target.value })} /></label>
         <label className="customer-form-wide">العنوان<textarea rows={2} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
         <div className="customer-form-actions customer-form-wide">
-          <button className="subtle-button" type="button" disabled={saving} onClick={() => setShowForm(false)}>إلغاء</button>
-          <button className="primary-button" type="submit" disabled={saving}>{saving ? "جارٍ الحفظ…" : "حفظ العميل"}</button>
+          <button className="subtle-button" type="button" disabled={saving} onClick={() => { setShowForm(false); setEditingId(null); }}>إلغاء</button>
+          <button className="primary-button" type="submit" disabled={saving}>{saving ? "جارٍ الحفظ…" : editingId ? "حفظ التعديلات" : "حفظ العميل"}</button>
         </div>
       </form>}
       {companyId && <div className="customer-toolbar">
@@ -137,7 +169,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         <button className="subtle-button" type="button" onClick={() => void refresh()} disabled={loading}>{loading ? "تحديث…" : "تحديث القائمة"}</button>
       </div>}
       {companyId && <div className="data-table-wrap"><table>
-        <thead><tr><th>الكود</th><th>اسم العميل</th><th>النوع</th><th>الهاتف</th><th>الرقم الضريبي</th><th>حد الائتمان</th><th>السداد</th><th>الحالة</th><th>كشف الحساب</th></tr></thead>
+        <thead><tr><th>الكود</th><th>اسم العميل</th><th>النوع</th><th>الهاتف</th><th>الرقم الضريبي</th><th>حد الائتمان</th><th>السداد</th><th>الحالة</th><th>كشف الحساب</th><th>إجراءات</th></tr></thead>
         <tbody>{filtered.map((customer) => <tr key={customer.id}>
           <td className="code-cell">{customer.code}</td><td>{customer.name_ar}</td>
           <td>{customer.customer_type === "company" ? "شركة" : "فرد"}</td>
@@ -145,6 +177,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
           <td>{money(customer.credit_limit)}</td><td>{customer.payment_terms_days} يوم</td>
           <td><span className={customer.is_active ? "customer-status-active" : "customer-status-inactive"}>{customer.is_active ? "نشط" : "موقوف"}</span></td>
           <td><button className="text-action-button" type="button" onClick={() => void loadStatement(customer)}>كشف الحساب ←</button></td>
+          <td><div className="table-actions"><button className="subtle-button" type="button" disabled={saving} onClick={() => editCustomer(customer)}>تعديل</button><button className="subtle-button" type="button" disabled={saving} onClick={() => void toggleCustomerActive(customer)}>{customer.is_active ? "إيقاف" : "تنشيط"}</button></div></td>
         </tr>)}</tbody>
       </table>{!loading && filtered.length === 0 && <div className="table-empty">لا توجد سجلات مطابقة. أضف أول عميل للشركة.</div>}</div>}
       {statementCustomer && <section className="customer-statement">
