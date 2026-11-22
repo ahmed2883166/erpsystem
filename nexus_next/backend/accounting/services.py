@@ -73,6 +73,7 @@ def post_journal(entry_id: int) -> JournalEntry:
             raise ValidationError("كل سطر يجب أن يحتوي على مدين أو دائن فقط وبقيمة غير سالبة.")
         if line.cost_center_id and line.cost_center.company_id != entry.company_id:
             raise ValidationError("مركز تكلفة لا يتبع شركة القيد.")
+        line.validate_currency_snapshot(entry_date=entry.entry_date, company=entry.company)
         debit_total += line.debit
         credit_total += line.credit
 
