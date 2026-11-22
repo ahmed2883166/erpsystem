@@ -72,6 +72,11 @@ class TreasuryFxSnapshotTests(TestCase):
         with self.assertRaises(ValidationError):
             transaction.full_clean()
 
+    def test_foreign_treasury_cannot_use_ambiguous_base_currency_opening_balance(self):
+        self.bank.opening_balance = Decimal("1000")
+        with self.assertRaises(ValidationError):
+            self.bank.full_clean()
+
     def test_foreign_treasury_draft_cannot_omit_snapshot(self):
         transaction = self.make_transaction()
         transaction.transaction_currency = None
