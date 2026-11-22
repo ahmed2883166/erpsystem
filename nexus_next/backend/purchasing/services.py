@@ -104,7 +104,7 @@ def post_purchase_invoice(invoice_id, user):
     receipt = invoice.receipt
     if receipt.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن الاستلام.")
-    lines = list(invoice.lines.select_related("receipt_line", "receipt_line__product"))
+    lines = list(invoice.lines.select_related("receipt_line", "receipt_line__product", "tax_code"))
     expected = list(receipt.stock_movement.lines.all())
     if len(lines) != len(expected) or {x.receipt_line_id for x in lines} != {x.pk for x in expected}:
         raise ValidationError("أصناف الفاتورة لا تطابق إذن الاستلام.")
@@ -146,11 +146,23 @@ def post_purchase_invoice(invoice_id, user):
     elif any(line.transaction_unit_price is not None for line in lines):
         raise ValidationError("توجد أسعار أجنبية دون تحديد عملة فاتورة المورد.")
 
+    recoverable_tax_amount = sum(
+        (line.tax_amount for line in lines if not line.tax_code_id or line.tax_code.input_tax_recoverable),
+        Decimal("0"),
+    ).quantize(Decimal("0.0001"))
+    nonrecoverable_tax_amount = (tax_amount - recoverable_tax_amount).quantize(Decimal("0.0001"))
+
     payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if tax_amount > 0 else None
-    if len({account.pk for account in (payable, grni, *([vat_input] if vat_input else []))}) != (3 if vat_input else 2):
-        raise ValidationError("يجب ربط حسابات الموردين والبضاعة غير المفوترة وضريبة المدخلات بحسابات مختلفة.")
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_tax_amount > 0 else None
+    nonrecoverable_expense = (
+        _account(invoice.company, AccountRole.Role.OPERATING_EXPENSE)
+        if nonrecoverable_tax_amount > 0 else None
+    )
+    posting_accounts = [payable, grni]
+    posting_accounts.extend(account for account in (vat_input, nonrecoverable_expense) if account)
+    if len({account.pk for account in posting_accounts}) != len(posting_accounts):
+        raise ValidationError("يجب ربط حسابات الموردين والاستلام وضريبة المدخلات ومصروف الضريبة غير القابلة للخصم بحسابات مختلفة.")
 
     branch, year = _branch_and_year(receipt, invoice.invoice_date)
     entry = JournalEntry.objects.create(
@@ -163,8 +175,17 @@ def post_purchase_invoice(invoice_id, user):
         JournalLine(entry=entry, account=grni, description="تسوية بضاعة مستلمة غير مفوترة", debit=grni_amount, credit=0),
         JournalLine(entry=entry, account=payable, description="إثبات مستحقات المورد", debit=0, credit=net_amount + tax_amount),
     ]
-    if vat_input and tax_amount:
-        journal_lines.append(JournalLine(entry=entry, account=vat_input, description="ضريبة قيمة مضافة مدخلات", debit=tax_amount, credit=0))
+    if vat_input and recoverable_tax_amount:
+        journal_lines.append(JournalLine(
+            entry=entry, account=vat_input, description="ضريبة قيمة مضافة مدخلات قابلة للخصم",
+            debit=recoverable_tax_amount, credit=0,
+        ))
+    if nonrecoverable_expense and nonrecoverable_tax_amount:
+        journal_lines.append(JournalLine(
+            entry=entry, account=nonrecoverable_expense,
+            description="ضريبة مشتريات غير قابلة للخصم - مصروف",
+            debit=nonrecoverable_tax_amount, credit=0,
+        ))
     JournalLine.objects.bulk_create(journal_lines)
     try:
         posted_entry = post_journal(entry.pk)
