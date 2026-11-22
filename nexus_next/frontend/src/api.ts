@@ -166,7 +166,7 @@ export type TreasuryFxRevaluation = {
 export type TreasuryTransaction = {
   id: number; company: number; branch: number; fiscal_year: number; source_account: number; source_name: string;
   destination_account: number | null; destination_name: string; counter_account: number | null; counter_account_code: string;
-  kind: "receipt" | "payment" | "transfer"; status: "draft" | "posted"; document_number: string;
+  kind: "receipt" | "payment" | "transfer"; status: "draft" | "posted" | "void"; document_number: string;
   transaction_date: string; amount: string; description: string; reference: string; journal_entry: number | null;
   journal_number: string; transaction_currency: number|null; transaction_amount: string|null; exchange_rate: string|null; exchange_rate_date: string|null; carrying_amount: string|null; cash_flow_category: "operating" | "investing" | "financing"; created_at: string; posted_at: string | null;
 };
@@ -776,6 +776,8 @@ export const hrApi = {
   preparePayrollPayment: async (id:number, treasuryAccountId:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/prepare_payment/`, {method:"POST",body:JSON.stringify({treasury_account_id:treasuryAccountId})}); },
   // إتمام صرف دفعة المرتبات وتحديث حالة الدورة.
   completePayrollPayment: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/complete_payment/`, {method:"POST"}); },
+  // إلغاء إعداد الصرف قبل ترحيل أي سند، مع إعادة الدورة لحالة الاستحقاق المرحلة.
+  cancelPayrollPaymentPreparation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>(`/api/hr/payroll-cycles/${id}/cancel_payment_preparation/`, {method:"POST"}); },
   // جلب تقرير مستحقات الموظفين للفترة والفرع.
   employeePayReport: (companyId:number, dateFrom:string, dateTo:string, branchId?:number) => {
     const q = new URLSearchParams({company:String(companyId),date_from:dateFrom,date_to:dateTo});
