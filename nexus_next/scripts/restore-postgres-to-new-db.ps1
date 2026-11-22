@@ -5,43 +5,57 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-if (-not (Test-Path -LiteralPath $BackupFile -PathType Leaf)) {
-    throw "Backup file does not exist: $BackupFile"
-}
+if (-not (Test-Path -LiteralPath $BackupFile -PathType Leaf)) { throw "Backup file does not exist: $BackupFile" }
 $BackupFile = (Resolve-Path -LiteralPath $BackupFile).Path
-if ($TargetDatabase -notmatch "^[a-zA-Z][a-zA-Z0-9_]{2,62}$") {
-    throw "Target database name must be 3-63 letters, digits or underscores and start with a letter."
-}
+if ($TargetDatabase -notmatch "^[a-zA-Z][a-zA-Z0-9_]{2,62}$") { throw "Target database name must be 3-63 letters, digits or underscores and start with a letter." }
 
 $Root = Split-Path -Parent $PSScriptRoot
-$Compose = Join-Path $Root "compose.yaml"
-$ContainerPath = "/tmp/nexus-restore-$([guid]::NewGuid().ToString('N')).dump"
-$ContainerId = $null
+$Backend = Join-Path $Root "backend"
+$EnvFile = Join-Path $Backend ".env"
+if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) { throw "backend/.env is missing." }
+$Values = @{}
+foreach ($Line in Get-Content -LiteralPath $EnvFile) {
+    if ($Line -match '^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$') {
+        $Value = $Matches[2].Trim()
+        if ($Value.Length -ge 2 -and (($Value.StartsWith('"') -and $Value.EndsWith('"')) -or ($Value.StartsWith("'") -and $Value.EndsWith("'")))) {
+            $Value = $Value.Substring(1, $Value.Length - 2)
+        }
+        $Values[$Matches[1]] = $Value
+    }
+}
+foreach ($Key in @("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD")) {
+    if (-not $Values.ContainsKey($Key) -or -not $Values[$Key]) { throw "Required PostgreSQL setting $Key is missing from backend/.env." }
+}
+if ($TargetDatabase -eq $Values["POSTGRES_DB"]) { throw "Restore target must be different from the active database." }
+$PgHost = if ($Values["POSTGRES_HOST"]) { $Values["POSTGRES_HOST"] } else { "127.0.0.1" }
+$PgPort = if ($Values["POSTGRES_PORT"]) { $Values["POSTGRES_PORT"] } else { "5432" }
 
-Push-Location $Root
+$PgRestore = Get-Command "pg_restore.exe" -ErrorAction SilentlyContinue
+$Createdb = Get-Command "createdb.exe" -ErrorAction SilentlyContinue
+if (-not $PgRestore -or -not $Createdb) {
+    $PgRoot = Join-Path $env:ProgramFiles "PostgreSQL"
+    $PgBin = if (Test-Path $PgRoot) { Get-ChildItem $PgRoot -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName "bin" } | Where-Object { (Test-Path (Join-Path $_ "pg_restore.exe")) -and (Test-Path (Join-Path $_ "createdb.exe")) } | Select-Object -First 1 } else { $null }
+    if (-not $PgBin) { throw "PostgreSQL pg_restore.exe and createdb.exe were not found in PATH or Program Files." }
+    $PgRestorePath = Join-Path $PgBin "pg_restore.exe"
+    $CreatedbPath = Join-Path $PgBin "createdb.exe"
+} else {
+    $PgRestorePath = $PgRestore.Source
+    $CreatedbPath = $Createdb.Source
+}
+
+$env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
 try {
-    $ContainerId = (docker compose -f $Compose ps -q db | Select-Object -First 1).Trim()
-    if (-not $ContainerId) { throw "PostgreSQL container is not running." }
-
-    docker cp $BackupFile "${ContainerId}:$ContainerPath"
-    if ($LASTEXITCODE -ne 0) { throw "Could not copy backup into PostgreSQL container." }
-
-    docker compose -f $Compose exec -T db sh -lc "pg_restore --list '$ContainerPath' >/dev/null"
+    & $PgRestorePath --list $BackupFile | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Backup archive is invalid or unreadable." }
 
-    docker compose -f $Compose exec -T db sh -lc "createdb -U `$POSTGRES_USER -T template0 '$TargetDatabase'"
-    if ($LASTEXITCODE -ne 0) { throw "Target database could not be created. It may already exist." }
+    & $CreatedbPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --owner=$Values["POSTGRES_USER"] --template=template0 $TargetDatabase
+    if ($LASTEXITCODE -ne 0) { throw "Target database could not be created. It may already exist; no existing database was overwritten." }
 
-    docker compose -f $Compose exec -T db sh -lc "pg_restore --exit-on-error --no-owner -U `$POSTGRES_USER -d '$TargetDatabase' '$ContainerPath'"
-    if ($LASTEXITCODE -ne 0) {
-        throw "Restore failed. The incomplete database '$TargetDatabase' was left separate; the active database was not changed."
-    }
+    & $PgRestorePath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --exit-on-error --no-owner --dbname=$TargetDatabase $BackupFile
+    if ($LASTEXITCODE -ne 0) { throw "Restore failed. The incomplete database '$TargetDatabase' was left separate; the active database was not changed." }
 
     Write-Host "Restore completed into separate database '$TargetDatabase'." -ForegroundColor Green
     Write-Host "The active NEXUS database was not overwritten. Validate this database before any controlled switch."
 } finally {
-    if ($ContainerId) {
-        docker compose -f $Compose exec -T db sh -lc "rm -f '$ContainerPath'" 2>$null | Out-Null
-    }
-    Pop-Location
+    Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
 }
