@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
-from companies.models import Company, Branch, FiscalYear
+from companies.models import Company, Branch
 from accounting.models import ChartOfAccount, JournalEntry
 
 
