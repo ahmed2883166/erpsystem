@@ -9,6 +9,7 @@ type Props = {
   companies: Company[];
   companyId: number | null;
   onCompanyCreated: (company: Company) => void;
+  onCompanyUpdated: (company: Company) => void;
   onStructureChanged: () => Promise<void>;
 };
 
@@ -21,11 +22,18 @@ const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
 };
 
 // شاشة تأسيس الشركة وإدارة الفروع والسنوات المالية والعملات والنشاط.
-export default function CompanySetupPanel({ companies, companyId, onCompanyCreated, onStructureChanged }: Props) {
+export default function CompanySetupPanel({ companies, companyId, onCompanyCreated, onCompanyUpdated, onStructureChanged }: Props) {
   const [currencies, setCurrencies] = useState<Currency[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [companyCode, setCompanyCode] = useState("");
+  const [profileName, setProfileName] = useState("");
+  const [profileNameEn, setProfileNameEn] = useState("");
+  const [profileTaxNumber, setProfileTaxNumber] = useState("");
+  const [profileAddress, setProfileAddress] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profileActive, setProfileActive] = useState(true);
   const [companyName, setCompanyName] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
@@ -45,6 +53,17 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [notice, setNotice] = useState("");
 
   const selectedCompany = companies.find(item => item.id === companyId) || null;
+
+  useEffect(() => {
+    if (!selectedCompany) return;
+    setProfileName(selectedCompany.name_ar || "");
+    setProfileNameEn(selectedCompany.name_en || "");
+    setProfileTaxNumber(selectedCompany.tax_registration_number || "");
+    setProfileAddress(selectedCompany.address || "");
+    setProfilePhone(selectedCompany.phone || "");
+    setProfileEmail(selectedCompany.email || "");
+    setProfileActive(selectedCompany.is_active !== false);
+  }, [selectedCompany?.id, selectedCompany?.updated_at]);
 
   // تحديث فروع وسنوات الشركة المحددة بعد الإنشاء أو التعديل.
 const refreshStructure = async (id: number) => {
@@ -97,6 +116,28 @@ const createCompany = async (event: FormEvent) => {
       setCompanyCode(""); setCompanyName(""); setTaxNumber(""); setAddress(""); setPhone(""); setEmail("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة. تأكد من تسجيل الدخول بحساب مسؤول النظام.");
+    } finally { setBusy(false); }
+  };
+
+  // حفظ بيانات الملف التعريفي للشركة الحالية دون إنشاء شركة جديدة.
+  const saveCompanyProfile = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !profileName.trim()) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const updated = await api.updateCompany(companyId, {
+        name_ar: profileName.trim(),
+        name_en: profileNameEn.trim(),
+        tax_registration_number: profileTaxNumber.trim(),
+        address: profileAddress.trim(),
+        phone: profilePhone.trim(),
+        email: profileEmail.trim(),
+        is_active: profileActive,
+      });
+      onCompanyUpdated(updated);
+      setNotice("تم حفظ بيانات الشركة بنجاح.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ بيانات الشركة.");
     } finally { setBusy(false); }
   };
 
@@ -166,12 +207,25 @@ const createYear = async (event: FormEvent) => {
     </form>}
 
     {selectedCompany && <>
+      <div className="setup-section-title"><div><h3>الملف التعريفي للشركة</h3><p>تعديل بيانات الشركة الحالية مع الاحتفاظ بنفس رقمها وسجلاتها المحاسبية.</p></div><span className="coming-soon">تعديل آمن</span></div>
+      <form className="journal-form company-profile-form" onSubmit={saveCompanyProfile}>
+        <label>اسم الشركة بالعربية<input required maxLength={180} value={profileName} onChange={e => setProfileName(e.target.value)} /></label>
+        <label>اسم الشركة بالإنجليزية<input maxLength={180} value={profileNameEn} onChange={e => setProfileNameEn(e.target.value)} /></label>
+        <label>رقم التسجيل الضريبي<input maxLength={80} value={profileTaxNumber} onChange={e => setProfileTaxNumber(e.target.value)} /></label>
+        <label>رقم الهاتف<input maxLength={40} value={profilePhone} onChange={e => setProfilePhone(e.target.value)} /></label>
+        <label>البريد الإلكتروني<input type="email" maxLength={254} value={profileEmail} onChange={e => setProfileEmail(e.target.value)} /></label>
+        <label className="form-wide">العنوان<textarea rows={2} value={profileAddress} onChange={e => setProfileAddress(e.target.value)} /></label>
+        <label className="form-wide"><span className="company-status-field"><input type="checkbox" checked={profileActive} onChange={e => setProfileActive(e.target.checked)} /> الشركة نشطة ويمكن استخدامها في العمليات</span></label>
+        <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !profileName.trim()}>{busy ? "جارٍ حفظ البيانات…" : "حفظ بيانات الشركة"}</button></div>
+        <p className="asset-report-note form-wide">الدولة والنشاط والعملة الأساسية معروضة أدناه كإعدادات تأسيسية؛ لا نغيّرها من تعديل الملف التعريفي حتى لا تتأثر المعالجة الضريبية أو الأرصدة المحاسبية القائمة.</p>
+      </form>
       <div className="setup-company-summary">
         <div><span>الشركة المحددة</span><strong>{selectedCompany.name_ar}</strong></div>
         <div><span>الكود</span><strong>{selectedCompany.code}</strong></div>
         <div><span>الدولة</span><strong>{selectedCompany.country === "EG" ? "مصر" : "السعودية"}</strong></div>
         <div><span>النشاط</span><strong>{activityLabels[selectedCompany.activity || "commercial"]}</strong></div>
         <div><span>العملة الأساسية</span><strong>{selectedCompany.base_currency_code}</strong></div>
+        <div><span>حالة الشركة</span><strong>{selectedCompany.is_active === false ? "موقوفة" : "نشطة"}</strong></div>
       </div>
 
       <div className="setup-step-heading"><span>1</span><div><strong>الفروع</strong><small>أنشئ الفرع الرئيسي أولًا، ويمكن إضافة فروع أخرى لاحقًا.</small></div></div>
