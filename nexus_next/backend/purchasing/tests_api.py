@@ -492,6 +492,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(report.status_code, 200, report.data)
         self.assertEqual(report.data["input_tax"], "28.0000")
+        self.assertEqual(report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
