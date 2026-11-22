@@ -1271,8 +1271,9 @@ class AccountRoleRuntimeValidationTests(TestCase):
         user = User.objects.create_user(username="vat_reconcile_viewer", password="test-password")
         user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
         CompanyMembership.objects.create(user=user, company=self.company, role="viewer", all_branches=True)
-        self.client.force_authenticate(user=user)
-        response = self.client.get(
+        client = APIClient()
+        client.force_authenticate(user=user)
+        response = client.get(
             f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-01-01&date_to=2026-01-31"
         )
         self.assertEqual(response.status_code, 200, response.data)
@@ -1287,12 +1288,12 @@ class AccountRoleRuntimeValidationTests(TestCase):
         CompanyMembership.objects.create(user=user, company=self.company, role="admin", all_branches=True)
         self.client.force_authenticate(user=user)
         url = "/api/accounting/tax-codes/initialize-country-presets/"
-        first = self.client.post(url, {"company": self.company.pk}, format="json")
+        first = client.post(url, {"company": self.company.pk}, format="json")
         self.assertEqual(first.status_code, 200, first.data)
         self.assertEqual(len(first.data["created"]), 4)
         standard = TaxCode.objects.get(company=self.company, code="VAT-STD")
         self.assertEqual(standard.rate, Decimal("14"))
-        second = self.client.post(url, {"company": self.company.pk}, format="json")
+        second = client.post(url, {"company": self.company.pk}, format="json")
         self.assertEqual(second.status_code, 200, second.data)
         self.assertEqual(len(second.data["created"]), 0)
         self.assertEqual(len(second.data["existing"]), 4)
