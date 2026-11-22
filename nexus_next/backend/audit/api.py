@@ -1,3 +1,5 @@
+"""واجهات البحث والاستعراض في سجل التدقيق مع مراعاة صلاحيات المستخدم."""
+
 from django.db.models import Q
 from django.utils.dateparse import parse_date
 from rest_framework.permissions import IsAuthenticated
