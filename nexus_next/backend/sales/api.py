@@ -437,10 +437,23 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
 
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
-        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
+        branches = accessible_branches(self.request.user)
+        default_company_ids = []
         if self.request.user.is_superuser and not is_platform_owner(self.request.user):
-            return qs
-        return qs.filter(Q(invoice__delivery__warehouse__branch__isnull=True) | Q(invoice__delivery__warehouse__branch__in=accessible_branches(self.request.user)))
+            default_company_ids = list(companies.values_list("id", flat=True))
+        else:
+            for company_id in companies.values_list("id", flat=True):
+                default_branch = Branch.objects.filter(
+                    company_id=company_id, is_active=True
+                ).order_by("-is_head_office", "code").first()
+                if default_branch and can_access_branch(self.request.user, default_branch.pk, company_id):
+                    default_company_ids.append(company_id)
+        return qs.filter(
+            Q(invoice__delivery__warehouse__branch__in=branches)
+            | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+        )
 
     def create(self, request, *args, **kwargs):
         """استقبال طلب إنشاء سجل والتحقق من مدخلاته قبل الحفظ."""
@@ -455,8 +468,8 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         warehouse = data["invoice"].delivery.warehouse
-        if warehouse.branch_id and not can_access_branch(self.request.user, warehouse.branch_id, data["company"].pk):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        if not _sales_warehouse_accessible(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
     def perform_update(self, serializer):
@@ -469,10 +482,9 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
-        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse").get(pk=receipt.invoice_id)
-        warehouse = invoice.delivery.warehouse
-        if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, receipt.company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        warehouse = receipt.invoice.delivery.warehouse
+        if not _sales_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         receipt = post_customer_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
 
@@ -484,9 +496,10 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             "invoice", "invoice__delivery__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(receipt.company_id)
-        warehouse = receipt.invoice.delivery.warehouse
-        if warehouse.branch_id and not can_access_branch(request.user, warehouse.branch_id, receipt.company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse").get(pk=receipt.invoice_id)
+        warehouse = invoice.delivery.warehouse
+        if not _sales_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         if receipt.status != CustomerReceipt.Status.POSTED or not receipt.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند قبض غير مرحّل.")
         if receipt.journal_entry.status != JournalEntry.Status.POSTED:
