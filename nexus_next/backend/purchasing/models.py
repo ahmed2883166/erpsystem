@@ -268,12 +268,12 @@ class SupplierPayment(models.Model):
             raise ValidationError({"invoice": "الفاتورة لا تتبع المورد والشركة المحددين."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
+        if self.pk and type(self).objects.filter(pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)).exists():
             raise ValidationError("سند صرف المورد المرحّل غير قابل للتعديل.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.status == self.Status.POSTED:
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
             raise ValidationError("لا يمكن حذف سند صرف مورد مرحّل.")
         return super().delete(*args, **kwargs)
 
