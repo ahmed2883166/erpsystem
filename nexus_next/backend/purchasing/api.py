@@ -274,6 +274,17 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
             raise ValidationError({"company": "حدد الشركة لعرض أعمار المديونية."})
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        branch_raw = request.query_params.get("branch")
+        branch_id = None
+        if branch_raw:
+            try:
+                branch_id = int(branch_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."})
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
         as_of_raw = request.query_params.get("as_of")
         as_of = parse_date(as_of_raw) if as_of_raw else None
         if as_of_raw and not as_of:
@@ -284,7 +295,9 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
         invoices = self.get_queryset().filter(
             company_id=company_id, status=PurchaseInvoice.Status.POSTED, invoice_date__lte=as_of
-        ).select_related("supplier").prefetch_related("payments")
+        ).select_related("supplier", "receipt__warehouse").prefetch_related("payments")
+        if branch_id:
+            invoices = invoices.filter(receipt__warehouse__branch_id=branch_id)
         suppliers = {}
         for invoice in invoices:
             paid = sum(
