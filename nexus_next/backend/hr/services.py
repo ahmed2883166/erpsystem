@@ -488,6 +488,14 @@ def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
         amount = sum((row.net_pay for row in results), Decimal("0"))
         if amount <= 0:
             raise ValidationError(f"صافي الصرف لفرع {posting.branch.name_ar} غير موجب.")
+        document_number = f"PAYDISB{cycle.pk}-{posting.branch_id}"
+        if TreasuryTransaction.objects.filter(company=cycle.company, document_number=document_number).exists():
+            suffix = 2
+            while TreasuryTransaction.objects.filter(
+                company=cycle.company, document_number=f"{document_number}-{suffix}"
+            ).exists():
+                suffix += 1
+            document_number = f"{document_number}-{suffix}"
         document = TreasuryTransaction.objects.create(
             company=cycle.company,
             branch=posting.branch,
@@ -495,7 +503,7 @@ def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
             source_account=treasury_account,
             counter_account=payroll_payable,
             kind=TreasuryTransaction.Kind.PAYMENT,
-            document_number=f"PAYDISB{cycle.pk}-{posting.branch_id}",
+            document_number=document_number,
             transaction_date=cycle.payment_date,
             amount=money(amount),
             description=f"صرف مرتبات دورة {cycle.pk} — {posting.branch.name_ar}",
