@@ -613,7 +613,7 @@ const validateDraft = () => {
     setJournalError("");
     if (!companyId || !draft.branch || !draft.fiscal_year) { setJournalError("حدد الشركة والفرع والسنة المالية."); return; }
     if (!draft.entry_number.trim() || !draft.description.trim()) { setJournalError("أدخل رقم القيد والبيان العام قبل المراجعة."); return; }
-    if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(draft.entry_date) || Number.isNaN(Date.parse(draft.entry_date))) { setJournalError("أدخل تاريخاً صحيحاً للقيد."); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.entry_date) || Number.isNaN(Date.parse(draft.entry_date))) { setJournalError("أدخل تاريخاً صحيحاً للقيد."); return; }
     const selectedYear = fiscalYears.find((year) => year.id === Number(draft.fiscal_year));
     if (!selectedYear || selectedYear.status !== "open") { setJournalError("لا يمكن تسجيل القيد إلا في سنة مالية مفتوحة."); return; }
     if (draft.entry_date < selectedYear.start_date || draft.entry_date > selectedYear.end_date) { setJournalError("تاريخ القيد خارج حدود السنة المالية المحددة."); return; }
