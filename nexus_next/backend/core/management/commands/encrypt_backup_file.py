@@ -38,14 +38,14 @@ class Command(BaseCommand):
                 decrypt_backup(destination, verified, phrase)
                 if digest(source) != digest(verified):
                     raise CommandError("فشل التحقق من تطابق النسخة بعد التشفير.")
+            if options["delete_source"]:
+                source.unlink()
             if options["update_history"]:
                 BackupRun.objects.filter(backup_file__iexact=str(source)).update(
                     backup_file=str(destination.resolve()),
                     size_bytes=destination.stat().st_size,
                     details="تم تشفير النسخة القديمة والتحقق منها؛ تم تحديث مرجع سجل النسخ.",
                 )
-            if options["delete_source"]:
-                source.unlink()
         except Exception as exc:
             if created and source.exists():
                 destination.unlink(missing_ok=True)
