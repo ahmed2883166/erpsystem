@@ -1,3 +1,5 @@
+"""خدمات التحقق من أدوار الحسابات وترحيل قيود اليومية مع حماية الفترة المالية والتوازن."""
+
 from collections import defaultdict
 from decimal import Decimal
 from django.core.exceptions import ValidationError
