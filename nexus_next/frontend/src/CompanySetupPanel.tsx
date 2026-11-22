@@ -34,6 +34,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [profilePhone, setProfilePhone] = useState("");
   const [profileEmail, setProfileEmail] = useState("");
   const [companyName, setCompanyName] = useState("");
+  const [companyNameEn, setCompanyNameEn] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
   const [currencyId, setCurrencyId] = useState("");
@@ -105,6 +106,7 @@ const createCompany = async (event: FormEvent) => {
       const company = await api.createCompany({
         code: companyCode.trim().toUpperCase(),
         name_ar: companyName.trim(),
+        name_en: companyNameEn.trim(),
         country,
         activity,
         base_currency: Number(currencyId),
@@ -116,7 +118,7 @@ const createCompany = async (event: FormEvent) => {
       });
       onCompanyCreated(company);
       setNotice("تم إنشاء الشركة وربط حسابك بصفة مدير شركة. أكمل إعداد الفرع والسنة المالية.");
-      setCompanyCode(""); setCompanyName(""); setTaxNumber(""); setAddress(""); setPhone(""); setEmail("");
+      setCompanyCode(""); setCompanyName(""); setCompanyNameEn(""); setTaxNumber(""); setAddress(""); setPhone(""); setEmail("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة. تأكد من تسجيل الدخول بحساب مسؤول النظام.");
     } finally { setBusy(false); }
@@ -237,6 +239,7 @@ const createYear = async (event: FormEvent) => {
       <h3 className="form-wide">بيانات الشركة الأساسية</h3>
       <label>كود الشركة<input required maxLength={30} value={companyCode} onChange={e => setCompanyCode(e.target.value)} placeholder="COMP-001" /></label>
       <label>اسم الشركة بالعربية<input required maxLength={180} value={companyName} onChange={e => setCompanyName(e.target.value)} /></label>
+      <label>اسم الشركة بالإنجليزية<input maxLength={180} value={companyNameEn} onChange={e => setCompanyNameEn(e.target.value)} /></label>
       <label>الدولة<select value={country} onChange={e => setCountry(e.target.value as "EG" | "SA")}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
       <label>النشاط<select value={activity} onChange={e => setActivity(e.target.value as NonNullable<Company["activity"]>)}>{Object.entries(activityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
       <label>العملة الأساسية<select required value={currencyId} onChange={e => setCurrencyId(e.target.value)}><option value="">اختر العملة</option>{currencies.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name_ar}</option>)}</select></label>
