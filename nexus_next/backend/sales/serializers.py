@@ -7,7 +7,6 @@ from accounting.models import ChartOfAccount, TaxCode
 from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
-from customers.models import Customer
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation, Warehouse
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine
 from approvals.snapshots import invoice_discount_snapshot
