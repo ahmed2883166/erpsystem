@@ -262,6 +262,52 @@ class TreasuryFxSnapshotTests(TestCase):
         with self.assertRaises(ValidationError):
             post_treasury_transaction(backdated.pk)
 
+    def test_transfer_is_blocked_when_destination_has_later_fx_revaluation(self):
+        self.setUp_fx_roles()
+        destination_ledger = ChartOfAccount.objects.create(
+            company=self.company, code="1121", name_ar="بنك دولار آخر",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        destination = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=destination_ledger,
+            kind=TreasuryAccount.Kind.BANK, code="USD-2", name_ar="حساب دولار آخر",
+            currency_code="USD",
+        )
+        # Fund the source account before the transfer.
+        source_receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-SOURCE-FUND",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(source_receipt.pk)
+        # Fund and revalue the destination account at a later date.
+        destination_receipt = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=destination, counter_account=self.counter,
+            kind=TreasuryTransaction.Kind.RECEIPT, document_number="FX-DEST-FUND",
+            transaction_date=date(2026, 3, 1), amount=Decimal("3000"),
+            transaction_currency=self.usd, transaction_amount=Decimal("100"),
+            exchange_rate=Decimal("30"), exchange_rate_date=date(2026, 3, 1),
+            description="تمويل الحساب المستلم",
+        )
+        post_treasury_transaction(destination_receipt.pk)
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
+        revalue_treasury_fx_account(
+            account_id=destination.pk, fiscal_year_id=self.year.pk,
+            revaluation_date=date(2026, 3, 2), rate_date=date(2026, 3, 2),
+            branch=self.branch,
+        )
+        transfer = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.TRANSFER, number="FX-TRANSFER-BACK",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"), destination=destination,
+        )
+        with self.assertRaises(ValidationError):
+            post_treasury_transaction(transfer.pk)
+
     def test_revaluation_cannot_be_repeated_for_same_account_and_date(self):
         self.setUp_fx_roles()
         self.make_postable_transaction(
