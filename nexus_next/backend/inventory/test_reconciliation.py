@@ -183,8 +183,9 @@ class InventoryReconciliationBranchScopeTests(APITestCase):
         response = self.client.get(f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["fifo_mismatch_count"], 1)
-        self.assertEqual(response.data["fifo_mismatches"][0]["quantity_difference"], "1.0000")
-        self.assertEqual(response.data["fifo_mismatches"][0]["value_difference"], "10.0000")
+        # Draft cost layers are excluded from the posted FIFO valuation.
+        self.assertEqual(response.data["fifo_mismatches"][0]["quantity_difference"], "10.0000")
+        self.assertEqual(response.data["fifo_mismatches"][0]["value_difference"], "100.0000")
         self.assertEqual(response.data["pending_movements_count"], 1)
         self.assertEqual(response.data["pending_movements"][0]["movement_number"], "DRAFT-FIFO")
 
