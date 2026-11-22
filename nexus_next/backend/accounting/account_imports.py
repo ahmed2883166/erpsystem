@@ -8,6 +8,8 @@ from io import BytesIO
 
 from django.db import transaction
 from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+from zipfile import BadZipFile
 
 from .models import ChartOfAccount
 
@@ -78,7 +80,7 @@ def inspect_account_workbook(upload, company):
                 continue
             if len(raw_rows) >= MAX_ROWS:
                 return {"errors": [f"الملف يتجاوز الحد الأقصى وهو {MAX_ROWS} حساب."], "rows": [], "summary": {}}
-            def cell(field):
+            def cell(field, values=values):
                 idx = columns.get(field)
                 return values[idx] if idx is not None and idx < len(values) else None
             code = _code_value(cell("code"))
@@ -102,7 +104,7 @@ def inspect_account_workbook(upload, company):
         workbook.close()
         if not raw_rows:
             return {"errors": ["لا توجد حسابات في الملف بعد صف العناوين."], "rows": [], "summary": {}}
-    except Exception:
+    except (InvalidFileException, BadZipFile, OSError, ValueError, TypeError, KeyError, AttributeError):
         return {"errors": ["تعذر قراءة الملف. تأكد أنه ملف Excel سليم وغير محمي بكلمة مرور."], "rows": [], "summary": {}}
 
     by_code = {}
