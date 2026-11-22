@@ -204,7 +204,7 @@ def post_treasury_transaction(transaction_id, user=None):
             destination_position.carrying_base_amount += carrying_amount
             destination_position.save(update_fields=("foreign_amount", "carrying_base_amount", "updated_at"))
 
-    if foreign and doc.kind != TreasuryTransaction.Kind.TRANSFER:
+    if foreign:
         source_position.save(update_fields=("foreign_amount", "carrying_base_amount", "updated_at"))
 
     from assets.models import FixedAsset
