@@ -32,7 +32,28 @@ $Waitress = Join-Path $Backend ".venv\Scripts\waitress-serve.exe"
 if (-not (Test-Path -LiteralPath $EnvFile)) {
   throw "ملف backend/.env غير موجود. جهّز إعداد الاتصال بقاعدة PostgreSQL أولًا."
 }
+
+# Fail closed: production must be served behind a trusted HTTPS-terminating proxy.
+$ProductionEnv = @{}
+foreach ($Line in Get-Content -LiteralPath $EnvFile) {
+  if ($Line -match "^\s*([A-Z0-9_]+)\s*=\s*(.*)$") {
+    $ProductionEnv[$Matches[1]] = $Matches[2].Trim().Trim('"').Trim("'")
+  }
+}
+foreach ($SecureKey in @("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT", "DJANGO_HTTPS_TERMINATED_BY_PROXY", "SECURE_HSTS_INCLUDE_SUBDOMAINS")) {
+  if ($ProductionEnv[$SecureKey] -notin @("True", "true", "1", "yes", "on")) {
+    throw "إعداد الإنتاج $SecureKey يجب أن يكون مفعّلًا. لم يتم تشغيل التطبيق أو ترحيل قاعدة البيانات."
+  }
+}
+$HstsSeconds = 0
+if (-not [int]::TryParse($ProductionEnv["SECURE_HSTS_SECONDS"], [ref]$HstsSeconds) -or $HstsSeconds -lt 31536000) {
+  throw "SECURE_HSTS_SECONDS يجب ألا يقل عن سنة (31536000 ثانية)."
+}
+if (-not $ProductionEnv["CSRF_TRUSTED_ORIGINS"] -or $ProductionEnv["CSRF_TRUSTED_ORIGINS"] -notmatch "https://") {
+  throw "أضف عنوان HTTPS الخاص ببوابة الشركة إلى CSRF_TRUSTED_ORIGINS."
+}
 $env:DJANGO_DEBUG = "False"
+$env:DJANGO_HTTPS_TERMINATED_BY_PROXY = "True"
 
 if (-not (Test-Path $Python)) {
   py -3.12 -m venv (Join-Path $Backend ".venv")
