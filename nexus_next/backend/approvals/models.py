@@ -1,3 +1,5 @@
+"""نماذج سياسات الاعتماد وحدود الخصم والموافقات المالية على المستندات."""
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
