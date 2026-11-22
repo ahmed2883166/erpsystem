@@ -51,6 +51,8 @@ class TreasuryAccount(models.Model):
             raise ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا قابلًا للترحيل."})
         if self.opening_balance < 0:
             raise ValidationError({"opening_balance": "الرصيد الافتتاحي لا يمكن أن يكون سالبًا."})
+        if self.company_id and self.currency_code != self.company.base_currency.code and self.opening_balance > 0:
+            raise ValidationError({"opening_balance": "الرصيد الافتتاحي الأجنبي يحتاج مبلغًا اسميًا وسعر صرف معتمدًا؛ لا تستخدم قيمة أساسية غير محددة."})
 
     def delete(self, *args, **kwargs):
         if self.opening_journal_entry_id:
