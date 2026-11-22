@@ -80,7 +80,13 @@ class AuditTrailMiddleware:
     def __call__(self, request):
         """تسجيل أثر الطلب والتغيرات الناتجة عنه وفق قواعد التدقيق."""
         method = request.method.upper()
-        should_audit = request.path.startswith("/api/") and method in _ACTIONS
+        is_global_superuser_read = (
+            method == "GET"
+            and request.path.startswith("/api/")
+            and getattr(getattr(request, "user", None), "is_authenticated", False)
+            and getattr(request.user, "is_superuser", False)
+        )
+        should_audit = request.path.startswith("/api/") and (method in _ACTIONS or is_global_superuser_read)
         prior_object_id, prior_company_id, prior_branch_id = (
             _target_before_request(request) if should_audit else (None, None, None)
         )
@@ -124,7 +130,7 @@ class AuditTrailMiddleware:
             if object_id is None and path_parts:
                 object_id = _numeric_id(path_parts[-1])
 
-            action = _ACTIONS[method]
+            action = _ACTIONS.get(method, AuditEvent.Action.ACTION)
             if method == "POST" and path_parts and path_parts[-1].lower() in _ACTION_ENDPOINTS:
                 action = AuditEvent.Action.ACTION
 
@@ -156,7 +162,11 @@ class AuditTrailMiddleware:
                 succeeded=response.status_code < 400,
                 ip_address=ip_address,
                 user_agent=request.META.get("HTTP_USER_AGENT", "")[:300],
-                metadata={"status_code": response.status_code},
+                metadata=(
+                    {"status_code": response.status_code, "access_scope": "all_active_companies_and_branches",
+                     "superuser_global_access": True}
+                    if is_global_superuser_read else {"status_code": response.status_code}
+                ),
             )
         except Exception:
             # Auditing must never turn a completed business request into a 500.
