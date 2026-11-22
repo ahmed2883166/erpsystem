@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type Branch, type CostCenter, type ExpenseAnalysisReport } from "./api";
+import { api, type Branch, type CostCenter, type ExpenseAnalysisReport, type GeneralLedgerReport } from "./api";
 
 function localDate(date: Date) {
   const y=date.getFullYear(), m=String(date.getMonth()+1).padStart(2,"0"), d=String(date.getDate()).padStart(2,"0");
@@ -21,6 +21,8 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
   const [costCenter,setCostCenter]=useState("");
   const [centers,setCenters]=useState<CostCenter[]>([]);
   const [report,setReport]=useState<ExpenseAnalysisReport|null>(null);
+  const [ledger,setLedger]=useState<GeneralLedgerReport|null>(null);
+  const [ledgerBusy,setLedgerBusy]=useState(false);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   useEffect(()=>{ if(!companyId){setCenters([]);return;} api.costCenters(companyId).then(setCenters).catch(()=>setCenters([])); },[companyId]);
@@ -32,6 +34,7 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
     finally{setBusy(false);}
   };
   useEffect(()=>{if(companyId)void load();},[companyId]);
+  const openLedger=async(accountId:number)=>{if(!companyId)return;setLedgerBusy(true);try{setLedger(await api.generalLedger(companyId,accountId,from,to,branch?Number(branch):undefined));}catch(e){setError(e instanceof Error?e.message:"تعذر فتح دفتر الأستاذ للحساب.");}finally{setLedgerBusy(false);}};
   const maxMonth=Math.max(1,...(report?.monthly_rows||[]).map(x=>Number(x.amount)));
   const exportRows=useMemo(()=>[
     ["كود الحساب","الحساب","الفرع","مركز التكلفة","التصنيف","مدين","دائن","صافي المصروف"],
@@ -61,10 +64,17 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
       <h3>الاتجاه الشهري</h3>
       <div className="expense-month-chart">{report.monthly_rows.map(x=><div className="expense-month" key={x.month}><div className="expense-month-track"><span style={{height:`${Math.max(2,Math.abs(Number(x.amount))/maxMonth*100)}%`}} /></div><b>{money(x.amount)}</b><small>{x.month}</small></div>)}</div>
       <h3>تفصيل المصروفات حسب الحساب والفرع ومركز التكلفة</h3>
-      <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الفرع</th><th>مركز التكلفة</th><th>التصنيف</th><th>مدين</th><th>دائن</th><th>الصافي</th></tr></thead>
-        <tbody>{report.rows.map((x,i)=><tr key={`${x.account_id}-${x.branch_id}-${x.cost_center_id}-${i}`}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.branch_name}</td><td>{x.cost_center_name}</td><td>{x.category==="direct_cost"?"تكلفة مباشرة":"تشغيلي / إداري"}</td><td>{money(x.debit)}</td><td>{money(x.credit)}</td><td>{money(x.amount)}</td></tr>)}</tbody>
-        <tfoot><tr><th colSpan={7}>الإجمالي</th><th>{money(report.total)}</th></tr></tfoot>
+      <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الفرع</th><th>مركز التكلفة</th><th>التصنيف</th><th>مدين</th><th>دائن</th><th>الصافي</th><th>التفاصيل</th></tr></thead>
+        <tbody>{report.rows.map((x,i)=><tr key={`${x.account_id}-${x.branch_id}-${x.cost_center_id}-${i}`}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.branch_name}</td><td>{x.cost_center_name}</td><td>{x.category==="direct_cost"?"تكلفة مباشرة":"تشغيلي / إداري"}</td><td>{money(x.debit)}</td><td>{money(x.credit)}</td><td>{money(x.amount)}</td><td><button type="button" className="text-action-button" disabled={ledgerBusy} onClick={()=>void openLedger(x.account_id)}>{ledgerBusy?"جارٍ التحميل…":"دفتر الأستاذ ←"}</button></td></tr>)}</tbody>
+        <tfoot><tr><th colSpan={8}>الإجمالي</th><th>{money(report.total)}</th></tr></tfoot>
       </table>{!report.rows.length&&<div className="table-empty">لا توجد مصروفات مرحلة خلال الفترة المحددة.</div>}</div>
+      {ledger&&<section className="report-drilldown">
+        <div className="work-panel-head"><div><h3>دفتر الأستاذ — {ledger.account_code} · {ledger.account_name}</h3><p>حركة الحساب خلال نفس الفترة المحددة</p></div><button type="button" className="subtle-button" onClick={()=>setLedger(null)}>إغلاق التفاصيل</button></div>
+        <div className="asset-cashflow-totals"><span>رصيد أول المدة: {money(ledger.opening_balance)}</span><b>رصيد آخر المدة: {money(ledger.closing_balance)}</b></div>
+        <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>الفرع</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>
+          {ledger.rows.map(row=><tr key={row.line_id}><td>{row.date}</td><td>{row.entry_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.running_balance)}</td></tr>)}
+        </tbody></table></div>
+      </section>}
       <p className="asset-report-note">{report.note}</p>
     </>}
     {!report&&!error&&<div className="table-empty">{busy?"جارٍ تحميل التقرير…":"حدد الفترة ثم حدّث التقرير."}</div>}
