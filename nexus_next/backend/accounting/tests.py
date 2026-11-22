@@ -1267,7 +1267,7 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(filtered.data["total"], Decimal("120.0000"))
 
     def test_vat_return_reports_ledger_reconciliation_and_unclassified_inputs(self):
-        branch = Branch.objects.create(company=self.company, code="VAT-HQ", name_ar="الرئيسي", is_head_office=True)
+        Branch.objects.create(company=self.company, code="VAT-HQ", name_ar="الرئيسي", is_head_office=True)
         user = User.objects.create_user(username="vat_reconcile_viewer", password="test-password")
         user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
         CompanyMembership.objects.create(user=user, company=self.company, role="viewer", all_branches=True)
@@ -1282,7 +1282,7 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(response.data["unclassified_tax"]["purchase_recoverable_amount"], "0")
 
     def test_country_tax_presets_are_idempotent_and_use_egypt_standard_rate(self):
-        branch = Branch.objects.create(company=self.company, code="VAT-ADMIN", name_ar="الرئيسي", is_head_office=True)
+        Branch.objects.create(company=self.company, code="VAT-ADMIN", name_ar="الرئيسي", is_head_office=True)
         user = User.objects.create_user(username="vat_preset_admin", password="test-password")
         CompanyMembership.objects.create(user=user, company=self.company, role="admin", all_branches=True)
         self.client.force_authenticate(user=user)
