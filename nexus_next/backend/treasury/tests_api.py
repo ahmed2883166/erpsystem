@@ -9,7 +9,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
+from treasury.models import TreasuryAccount, TreasuryTransaction, BankStatementLine
 
 
 class TreasuryWorkflowTests(APITestCase):
