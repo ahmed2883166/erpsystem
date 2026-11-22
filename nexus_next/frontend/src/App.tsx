@@ -22,6 +22,7 @@ const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
 const AccountsPanel = lazy(() => import("./AccountsPanel"));
+const ExpenseAnalysisPanel = lazy(() => import("./ExpenseAnalysisPanel"));
 const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
 
@@ -791,6 +792,7 @@ const postDraft = async (entry: Journal) => {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
+            <Suspense fallback={panelFallback}><ExpenseAnalysisPanel companyId={companyId} branches={branches} /></Suspense>
             <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /><Suspense fallback={panelFallback}><PartyStatementsPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} /></Suspense><Suspense fallback={panelFallback}><OperationalReconciliationPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} branches={branches} /></Suspense></section>}
           {active === "tax" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><VATReturnPanel companyId={companyId} /></section></>}
           {active === "backup" && <Suspense fallback={panelFallback}><BackupPanel /></Suspense>}
