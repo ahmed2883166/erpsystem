@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection, DatabaseError, transaction
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer
