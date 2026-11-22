@@ -381,7 +381,7 @@ def post_payroll_cycle(cycle_id, actor=None):
         )
         line_count = 0
 
-        def add_line(account, debit, credit, description, cost_center=None):
+        def add_line(account, debit, credit, description, cost_center=None, entry=entry):
             """تنفيذ مسؤولية الدالة add_line ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             nonlocal line_count
             debit = money(debit)
