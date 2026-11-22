@@ -38,6 +38,8 @@ class SalesWorkflowTests(APITestCase):
             AccountRole.Role.CASH: ("1005", "الصندوق", ChartOfAccount.Nature.ASSET),
             AccountRole.Role.REALIZED_FX_GAIN: ("4900", "أرباح فروق عملة محققة", ChartOfAccount.Nature.REVENUE),
             AccountRole.Role.REALIZED_FX_LOSS: ("6900", "خسائر فروق عملة محققة", ChartOfAccount.Nature.EXPENSE),
+            AccountRole.Role.UNREALIZED_FX_GAIN: ("7210", "أرباح فروق عملة غير محققة", ChartOfAccount.Nature.REVENUE),
+            AccountRole.Role.UNREALIZED_FX_LOSS: ("6160", "خسائر فروق عملة غير محققة", ChartOfAccount.Nature.EXPENSE),
         }
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
