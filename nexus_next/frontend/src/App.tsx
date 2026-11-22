@@ -715,7 +715,7 @@ const postDraft = async (entry: Journal) => {
           </select></div>
         <nav className="navigation">
           {["الرئيسية", "المحاسبة", "المبيعات", "المشتريات", "المخزون", "المالية", "التقارير", "الإدارة"].map((group) => <div className="nav-group" key={group}><p>{group}</p>
-            {navigation.filter((item) => item.group === group).map((item) => <button key={item.id} className={`nav-item ${active === item.id ? "nav-active" : ""}`}
+            {navigation.filter((item) => item.group === group).map((item) => <button key={item.id} className={`nav-item ${active === item.id ? "nav-active" : ""}`} title={item.label} aria-label={item.label}
               onClick={() => { setActive(item.id); setSearch(""); setSidebarOpen(false); }}><span className="nav-icon">{item.icon}</span><span>{item.label}</span>{active === item.id && <i />}</button>)}
           </div>)}
         </nav>
