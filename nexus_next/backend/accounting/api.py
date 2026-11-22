@@ -506,7 +506,13 @@ class JournalEntryViewSet(AccountingViewSet):
             )
         opening_filter = date_filter
         if date_from:
-            opening_filter &= Q(journal_lines__entry__entry_date__lt=date_from)
+            opening_filter &= (
+                Q(journal_lines__entry__entry_date__lt=date_from)
+                | Q(
+                    journal_lines__entry__entry_date=date_from,
+                    journal_lines__entry__source_type=JournalEntry.Source.OPENING,
+                )
+            )
             date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
             opening_year = FiscalYear.objects.filter(
                 company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
@@ -518,10 +524,14 @@ class JournalEntryViewSet(AccountingViewSet):
             has_opening_snapshot = bool(opening_year and JournalEntry.objects.filter(
                 company_id=company_id, fiscal_year=opening_year,
                 status=JournalEntry.Status.POSTED, source_type=JournalEntry.Source.OPENING,
-                entry_date__lt=date_from, **opening_scope,
+                entry_date__lte=date_from, **opening_scope,
             ).exists())
             if has_opening_snapshot:
                 opening_filter &= Q(journal_lines__entry__entry_date__gte=opening_year.start_date)
+                date_filter &= ~Q(
+                    journal_lines__entry__entry_date=date_from,
+                    journal_lines__entry__source_type=JournalEntry.Source.OPENING,
+                )
         if date_to:
             date_filter &= Q(journal_lines__entry__entry_date__lte=date_to)
         accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
