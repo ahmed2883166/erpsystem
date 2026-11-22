@@ -67,3 +67,28 @@ At baseline commit `f36bc6516da0ea7516db0f60c0f06e90c9ad445b`:
 3. Finish role-management and approval workflows with least-privilege defaults.
 4. Review historical visibility for inactive branches and company-wide consolidated reports.
 5. Test production backup/restore, TLS-enabled private-LAN deployment, concurrent users, and large-ledger performance.
+
+## Follow-up controls added — 2026-11-22
+
+### HR segregation of duties
+- Leave requests now persist the creating user. The creator cannot approve or reject their own request.
+- A payroll-cycle creator cannot approve that cycle.
+- A narrowly scoped emergency override is available only to a Django superuser and requires a written reason of at least 10 characters. The override is written to the append-only audit stream with the target, decision, actor, and reason.
+- Both approval paths lock the target row during the decision to reduce concurrent double-decision races.
+- Existing leave rows have a nullable creator because historical records predate this field; new API-created requests always set it server-side.
+
+### Superuser global visibility
+- A Django superuser is intentionally a platform-wide operator: company and branch access helpers return all active companies and branches, except for a separately designated platform owner account which has no company operating access.
+- Every authenticated superuser API GET request is now recorded as an audit action with metadata identifying the superuser API read and the global company/branch visibility policy. This is intentionally broad and can increase audit volume.
+- Keep superuser accounts to a very small named set (recommended maximum: two), protect them with unique strong credentials, and use ordinary company roles for daily work. Review the superuser audit stream regularly.
+
+### Production HTTPS gate
+- The production launcher now refuses to run before database migration unless secure session cookies, secure CSRF cookies, HTTPS redirect, a one-year HSTS policy, HTTPS CSRF trusted origins, and a trusted HTTPS-terminating proxy are configured.
+- Django only trusts the forwarded-proto header when DJANGO_HTTPS_TERMINATED_BY_PROXY=True. The reverse proxy must remove any client-supplied forwarded-proto header and set it itself.
+- The application server is not itself a TLS server. Production and LAN deployments must place a correctly configured TLS reverse proxy in front of Waitress; do not expose the raw Waitress HTTP listener to untrusted networks.
+- The Django deployment check remains a mandatory startup gate.
+
+### Base-currency journal precision
+- Before a journal can be posted, each debit and credit line is rounded using ROUND_HALF_UP to the configured base currency decimal_places.
+- A line that rounds to zero on both sides is rejected, and the journal is rejected if the rounded totals do not balance.
+- FX snapshot validation compares the base equivalent at the company's configured base-currency precision. Stored journal columns retain four decimal places for schema compatibility, but posted EGP/SAR values are rounded to two decimals.
