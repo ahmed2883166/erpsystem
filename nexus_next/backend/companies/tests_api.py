@@ -589,3 +589,31 @@ class CompanySetupApiTests(APITestCase):
         )
         PlatformOwner.objects.create(user=owner)
         self.assertFalse(accessible_companies(owner).exists())
+
+
+    def test_company_admin_cannot_deactivate_company(self):
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(self.user)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+        self.company.refresh_from_db()
+        self.assertTrue(self.company.is_active)
+
+    def test_platform_owner_can_deactivate_company_without_deleting_its_records(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-deactivate", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        branch = Branch.objects.create(company=self.company, code="OWNER-BR", name_ar="فرع محفوظ")
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/", {"is_active": False}, format="json"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.company.refresh_from_db()
+        self.assertFalse(self.company.is_active)
+        self.assertTrue(Branch.objects.filter(pk=branch.pk, company=self.company).exists())
