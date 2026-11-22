@@ -50,6 +50,22 @@ class BackupKeyTests(TestCase):
                 actual = backup_key.machine_backup_passphrase(key_file)
             self.assertEqual(actual, base64.urlsafe_b64encode(key).decode("ascii"))
 
+    def test_recovery_file_can_be_reexported_if_usb_copy_is_lost(self):
+        from django.core.management import call_command
+        key = bytes(range(32))
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "replacement-usb.nexuskey"
+            with patch("core.backup_key.machine_backup_key", return_value=key), patch(
+                "core.management.commands.export_backup_encryption_recovery.getpass",
+                side_effect=["new long recovery phrase", "new long recovery phrase"],
+            ):
+                call_command(
+                    "export_backup_encryption_recovery", output=str(output), verbosity=0,
+                )
+            self.assertEqual(
+                decrypt_recovery_key(output, "new long recovery phrase"), key
+            )
+
     def test_machine_key_protection_refuses_non_windows(self):
         if os.name == "nt":
             self.skipTest("non-Windows guard test")
