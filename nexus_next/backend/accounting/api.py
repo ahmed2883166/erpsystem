@@ -6,7 +6,7 @@ from io import BytesIO
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
+from django.db import DatabaseError, transaction
 from django.http import HttpResponse
 from openpyxl import Workbook
 from django.db.models import Q, Sum
@@ -189,7 +189,7 @@ class AccountImportView(APIView):
         try:
             with transaction.atomic():
                 created = import_account_rows(company, result["rows"])
-        except Exception as exc:
+        except (DatabaseError, DjangoValidationError, ValueError) as exc:
             return response.Response({
                 "detail": "لم يتم استيراد أي حساب بسبب تعارض أثناء الاعتماد.",
                 "errors": [str(exc)],
