@@ -1,10 +1,8 @@
 """Deterministic FX rules shared by foreign-currency AR/AP document posting."""
 from dataclasses import dataclass
-from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 FOUR_PLACES = Decimal("0.0001")
-TEN_PLACES = Decimal("0.0000000001")
 ZERO = Decimal("0.0000")
 
 
