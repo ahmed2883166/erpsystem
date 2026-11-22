@@ -289,7 +289,11 @@ class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
             serializer.save(previous_salary=previous, changed_by=self.request.user)
             if effective_date <= timezone.localdate():
                 locked.basic_salary = salary_for_date(locked, timezone.localdate())
-                locked.save(update_fields=("basic_salary", "updated_at"))
+                locked._salary_history_update = True
+                try:
+                    locked.save(update_fields=("basic_salary", "updated_at"))
+                finally:
+                    del locked._salary_history_update
 
 
 class PayrollRuleSetViewSet(CompanyScopedViewSet):
