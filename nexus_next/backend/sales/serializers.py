@@ -397,11 +397,20 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
 
+    reversal_journal_entry = serializers.SerializerMethodField()
+
+    def get_reversal_journal_entry(self, obj):
+        """إظهار رقم القيد العكسي المرتبط بقيد المستند عند وجوده."""
+        if not obj.journal_entry_id:
+            return None
+        reversal = getattr(obj.journal_entry, "reversal_entry", None)
+        return reversal.pk if reversal else None
+
     class Meta:
         model = CustomerReceipt
         fields = ("id", "company", "customer", "customer_name", "invoice", "invoice_number",
                   "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
-                  "journal_entry", "journal_number", "created_at", "posted_at")
+                  "journal_entry", "journal_number", "created_at", "posted_at", "reversal_journal_entry")
         read_only_fields = ("status", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
     def validate(self, attrs):
