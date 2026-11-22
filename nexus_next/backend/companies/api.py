@@ -261,20 +261,24 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
             company__in=accessible_companies(self.request.user)
         ).select_related("company")
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
+        """حفظ السنة مع قفل الشركة لمنع إنشاء فترتين ماليتين متداخلتين بالتزامن."""
         company = serializer.validated_data["company"]
         if not has_company_role(self.request.user, company.pk, ("admin",)):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("إنشاء السنوات المالية متاح لمدير الشركة فقط.")
+        Company.objects.select_for_update().get(pk=company.pk)
         serializer.save()
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
+        """تحديث السنة مع تسلسل عمليات الشركة ومنع تداخل الفترات بالتزامن."""
         from rest_framework.exceptions import PermissionDenied
         current_company_id = serializer.instance.company_id
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
+        Company.objects.select_for_update().get(pk=current_company_id)
         # يمنع FiscalYearSerializer تغيير الشركة ويعيد خطأ تحقق واضحًا قبل الوصول للحفظ.
         serializer.save()
 
