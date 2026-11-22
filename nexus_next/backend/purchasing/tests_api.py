@@ -631,16 +631,16 @@ class PurchasingWorkflowTests(APITestCase):
         final = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-FX-002", "payment_date": "2026-03-12", "method": "cash",
-            "amount": "52.0000", "transaction_currency": usd.pk, "transaction_amount": "1",
+            "amount": "156.0000", "transaction_currency": usd.pk, "transaction_amount": "3",
             "exchange_rate": "52", "exchange_rate_date": "2026-03-12",
         }, format="json")
         self.assertEqual(final.status_code, 201, final.data)
         final_posted = self.client.post(f"/api/purchasing/payments/{final.data['id']}/post/", {}, format="json")
         self.assertEqual(final_posted.status_code, 200, final_posted.data)
         self.assertEqual(final_posted.data["carrying_base_amount"], "150.0000")
-        self.assertEqual(final_posted.data["realized_fx_loss"], "2.0000")
+        self.assertEqual(final_posted.data["realized_fx_loss"], "6.0000")
         loss_line = JournalLine.objects.get(entry_id=final_posted.data["journal_entry"], account__code="6900")
-        self.assertEqual(loss_line.debit, Decimal("2.0000"))
+        self.assertEqual(loss_line.debit, Decimal("6.0000"))
         refreshed = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
         self.assertEqual(refreshed["paid_total"], "200.0000")
         self.assertEqual(refreshed["balance_due"], "0.0000")
