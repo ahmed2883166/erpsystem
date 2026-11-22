@@ -198,18 +198,30 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
 
     def get_paid_total(self, obj):
         """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""
-        paid = sum(
-            (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
-            Decimal("0"),
-        )
+        if obj.transaction_currency_id:
+            paid = sum(
+                (payment.carrying_base_amount or Decimal("0") for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
+                Decimal("0"),
+            )
+        else:
+            paid = sum(
+                (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
+                Decimal("0"),
+            )
         return str(paid)
 
     def get_balance_due(self, obj):
         """حساب الرصيد المتبقي بعد خصم الدفعات المرحلة."""
-        paid = sum(
-            (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
-            Decimal("0"),
-        )
+        if obj.transaction_currency_id:
+            paid = sum(
+                (payment.carrying_base_amount or Decimal("0") for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
+                Decimal("0"),
+            )
+        else:
+            paid = sum(
+                (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
+                Decimal("0"),
+            )
         return str(max(obj.grand_total - paid, Decimal("0")))
 
     def validate(self, attrs):
