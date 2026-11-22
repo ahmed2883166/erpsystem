@@ -15,6 +15,7 @@ const TreasuryPanel = lazy(() => import("./TreasuryPanel"));
 const FixedAssetsPanel = lazy(() => import("./FixedAssetsPanel"));
 const DashboardPanel = lazy(() => import("./DashboardPanel"));
 const PartyStatementsPanel = lazy(() => import("./PartyStatementsPanel"));
+const OperationalReconciliationPanel = lazy(() => import("./OperationalReconciliationPanel"));
 const SystemMonitorPanel = lazy(() => import("./SystemMonitorPanel"));
 const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
@@ -783,7 +784,7 @@ const postDraft = async (entry: Journal) => {
             </div><div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>اسم الحساب</th><th>مدين</th><th>دائن</th><th>الرصيد (مدين - دائن)</th></tr></thead>
               <tbody>{trialBalance.accounts.map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{Number(row.debit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.credit_total).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td><td>{Number(row.net_balance).toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</td></tr>)}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
-            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /><Suspense fallback={panelFallback}><PartyStatementsPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} /></Suspense></section>}
+            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /><Suspense fallback={panelFallback}><PartyStatementsPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} /></Suspense><Suspense fallback={panelFallback}><OperationalReconciliationPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} branches={branches} /></Suspense></section>}
           {active === "tax" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><VATReturnPanel companyId={companyId} /></section></>}
           {active === "backup" && <Suspense fallback={panelFallback}><BackupPanel /></Suspense>}
           {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}
