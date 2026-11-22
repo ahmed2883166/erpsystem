@@ -62,3 +62,49 @@ class CompanySetupApiTests(APITestCase):
             "code": "AED", "name_ar": "درهم"
         }, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+from django.core.management import call_command
+from django.core.management.base import CommandError
+from .models import PlatformOwner
+
+
+class PlatformOwnerBootstrapCommandTests(TestCase):
+    def test_registers_an_active_superuser(self):
+        user = get_user_model().objects.create_superuser(
+            username="initial-owner", email="owner@example.test", password="long-test-password"
+        )
+        call_command("bootstrap_platform_owner", username=user.username)
+        owner = PlatformOwner.objects.get(user=user)
+        self.assertTrue(owner.is_active)
+
+    def test_rejects_a_regular_user(self):
+        user = get_user_model().objects.create_user(
+            username="regular-user", email="regular@example.test", password="long-test-password"
+        )
+        with self.assertRaises(CommandError):
+            call_command("bootstrap_platform_owner", username=user.username)
+        self.assertFalse(PlatformOwner.objects.filter(user=user).exists())
+
+    def test_rejects_an_inactive_superuser(self):
+        user = get_user_model().objects.create_superuser(
+            username="inactive-owner", email="inactive@example.test", password="long-test-password"
+        )
+        user.is_active = False
+        user.save(update_fields=("is_active",))
+        with self.assertRaises(CommandError):
+            call_command("bootstrap_platform_owner", username=user.username)
+        self.assertFalse(PlatformOwner.objects.filter(user=user).exists())
+
+    def test_does_not_replace_an_existing_platform_owner(self):
+        User = get_user_model()
+        owner_user = User.objects.create_superuser(
+            username="owner-one", email="one@example.test", password="long-test-password"
+        )
+        other_user = User.objects.create_superuser(
+            username="owner-two", email="two@example.test", password="long-test-password"
+        )
+        PlatformOwner.objects.create(user=owner_user)
+        with self.assertRaises(CommandError):
+            call_command("bootstrap_platform_owner", username=other_user.username)
+        self.assertFalse(PlatformOwner.objects.filter(user=other_user).exists())
