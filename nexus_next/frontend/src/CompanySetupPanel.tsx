@@ -44,6 +44,11 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [branchCode, setBranchCode] = useState("MAIN");
   const [branchName, setBranchName] = useState("الفرع الرئيسي");
   const [branchAddress, setBranchAddress] = useState("");
+  const [branchPhone, setBranchPhone] = useState("");
+  const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
+  const [editBranchName, setEditBranchName] = useState("");
+  const [editBranchAddress, setEditBranchAddress] = useState("");
+  const [editBranchPhone, setEditBranchPhone] = useState("");
   const [yearName, setYearName] = useState(String(new Date().getFullYear()));
   const [yearStart, setYearStart] = useState(new Date().getFullYear() + "-01-01");
   const [yearEnd, setYearEnd] = useState(new Date().getFullYear() + "-12-31");
@@ -65,7 +70,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
 
   // تحديث فروع وسنوات الشركة المحددة بعد الإنشاء أو التعديل.
 const refreshStructure = async (id: number) => {
-    const [branchRows, yearRows] = await Promise.all([api.branches(id), api.fiscalYears(id)]);
+    const [branchRows, yearRows] = await Promise.all([api.allBranches(id), api.fiscalYears(id)]);
     setBranches(branchRows.filter(item => item.company === id));
     setYears(yearRows.filter(item => item.company === id));
   };
@@ -146,15 +151,56 @@ const createBranch = async (event: FormEvent) => {
     try {
       await api.createBranch({
         company: companyId, code: branchCode.trim().toUpperCase(),
-        name_ar: branchName.trim(), address: branchAddress.trim(),
+        name_ar: branchName.trim(), address: branchAddress.trim(), phone: branchPhone.trim(),
         is_head_office: branches.length === 0, is_active: true,
       });
       await refreshStructure(companyId);
       await onStructureChanged();
       setNotice("تم إنشاء الفرع وحفظه.");
-      setBranchCode(""); setBranchName(""); setBranchAddress("");
+      setBranchCode(""); setBranchName(""); setBranchAddress(""); setBranchPhone("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء الفرع."); }
     finally { setBusy(false); }
+  };
+
+  const beginBranchEdit = (branch: Branch) => {
+    setEditingBranchId(branch.id);
+    setEditBranchName(branch.name_ar);
+    setEditBranchAddress(branch.address || "");
+    setEditBranchPhone(branch.phone || "");
+    setError(""); setNotice("");
+  };
+
+  const saveBranchEdit = async (event: FormEvent, branchId: number) => {
+    event.preventDefault();
+    if (!editBranchName.trim() || !companyId) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.updateBranch(branchId, {
+        name_ar: editBranchName.trim(),
+        address: editBranchAddress.trim(),
+        phone: editBranchPhone.trim(),
+      });
+      await refreshStructure(companyId);
+      await onStructureChanged();
+      setEditingBranchId(null);
+      setNotice("تم تحديث بيانات الفرع دون تغيير كوده أو ارتباطه بالشركة.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحديث بيانات الفرع.");
+    } finally { setBusy(false); }
+  };
+
+  const toggleBranchStatus = async (branch: Branch) => {
+    if (!companyId) return;
+    if (branch.is_active && !window.confirm("هل تريد إيقاف هذا الفرع؟ لن يظهر في العمليات الجديدة، وستظل سجلاته السابقة محفوظة.")) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.updateBranch(branch.id, { is_active: !branch.is_active });
+      await refreshStructure(companyId);
+      await onStructureChanged();
+      setNotice(branch.is_active ? "تم إيقاف الفرع مع الاحتفاظ بسجلاته." : "تمت إعادة تفعيل الفرع.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تغيير حالة الفرع.");
+    } finally { setBusy(false); }
   };
 
   // إنشاء سنة مالية للشركة مع تواريخ بدايتها ونهايتها.
@@ -226,10 +272,30 @@ const createYear = async (event: FormEvent) => {
       </div>
 
       <div className="setup-step-heading"><span>1</span><div><strong>الفروع</strong><small>أنشئ الفرع الرئيسي أولًا، ويمكن إضافة فروع أخرى لاحقًا.</small></div></div>
-      {branches.length > 0 && <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الفرع</th><th>نوع الفرع</th><th>الحالة</th></tr></thead><tbody>{branches.map(item => <tr key={item.id}><td>{item.code}</td><td>{item.name_ar}</td><td>{item.is_head_office ? "رئيسي" : "فرعي"}</td><td>{item.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table></div>}
+      {branches.length > 0 && <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الفرع</th><th>نوع الفرع</th><th>العنوان</th><th>الهاتف</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>{branches.map(item => <tr key={item.id}>
+        <td>{item.code}</td>
+        {editingBranchId === item.id ? <>
+          <td colSpan={2}><form className="branch-inline-edit" onSubmit={event => saveBranchEdit(event, item.id)}>
+            <input required maxLength={160} aria-label="اسم الفرع" value={editBranchName} onChange={event => setEditBranchName(event.target.value)} />
+            <input maxLength={40} aria-label="هاتف الفرع" value={editBranchPhone} onChange={event => setEditBranchPhone(event.target.value)} placeholder="الهاتف" />
+            <input aria-label="عنوان الفرع" value={editBranchAddress} onChange={event => setEditBranchAddress(event.target.value)} placeholder="العنوان" />
+            <button className="primary-button" type="submit" disabled={busy}>حفظ</button>
+            <button type="button" onClick={() => setEditingBranchId(null)} disabled={busy}>إلغاء</button>
+          </form></td>
+          <td>{item.is_head_office ? "رئيسي" : "فرعي"}</td><td>{item.address || "—"}</td><td>{item.phone || "—"}</td>
+        </> : <>
+          <td>{item.name_ar}</td><td>{item.is_head_office ? "رئيسي" : "فرعي"}</td><td>{item.address || "—"}</td><td>{item.phone || "—"}</td>
+        </>}
+        <td>{item.is_active ? "نشط" : "موقوف"}</td>
+        <td><div className="table-actions">
+          <button type="button" onClick={() => editingBranchId === item.id ? setEditingBranchId(null) : beginBranchEdit(item)} disabled={busy}>{editingBranchId === item.id ? "إغلاق التعديل" : "تعديل"}</button>
+          <button type="button" onClick={() => toggleBranchStatus(item)} disabled={busy}>{item.is_active ? "إيقاف" : "إعادة تفعيل"}</button>
+        </div></td>
+      </tr>)}</tbody></table></div>}
       <form className="journal-form setup-subform" onSubmit={createBranch}>
         <label>كود الفرع<input required maxLength={30} value={branchCode} onChange={e => setBranchCode(e.target.value)} placeholder="MAIN" /></label>
         <label>اسم الفرع<input required maxLength={160} value={branchName} onChange={e => setBranchName(e.target.value)} placeholder="الفرع الرئيسي" /></label>
+        <label>الهاتف<input maxLength={40} value={branchPhone} onChange={e => setBranchPhone(e.target.value)} /></label>
         <label className="form-wide">العنوان<input value={branchAddress} onChange={e => setBranchAddress(e.target.value)} /></label>
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : branches.length ? "إضافة فرع" : "إنشاء الفرع الرئيسي"}</button></div>
       </form>
