@@ -69,7 +69,8 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
         model = TreasuryTransaction
         fields = ("id", "company", "branch", "fiscal_year", "source_account", "source_name",
                   "destination_account", "destination_name", "counter_account", "counter_account_code",
-                  "kind", "status", "document_number", "transaction_date", "amount",\n                  "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "description",
+                  "kind", "status", "document_number", "transaction_date", "amount",
+                  "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "description",
                   "reference", "cash_flow_category", "journal_entry", "journal_number", "created_at", "posted_at")
         read_only_fields = ("status", "journal_entry", "created_at", "posted_at")
 
