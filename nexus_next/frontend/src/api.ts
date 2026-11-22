@@ -95,7 +95,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   return response.json() as Promise<T>;
 }
-export type SupplierPayment = { id: number; company: number; supplier: number; supplier_name: string; invoice: number; invoice_number: string; payment_number: string; payment_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; historical_carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
+export type SupplierPayment = { id: number; company: number; supplier: number; supplier_name: string; invoice: number; invoice_number: string; payment_number: string; payment_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; historical_carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
   opening_balance: string; closing_balance: string;
@@ -144,6 +144,8 @@ export const purchasingApi = {
   createPayment: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierPayment>("/api/purchasing/payments/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل دفعة المورد وتسجيل أثرها المحاسبي.
   postPayment: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierPayment>(`/api/purchasing/payments/${id}/post/`, { method: "POST" }); },
+  // عكس آخر سند صرف مرحّل مع إنشاء قيد عكسي مرتبط.
+  reversePayment: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierPayment>(`/api/purchasing/payments/${id}/reverse/`, { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }),
 };
 
 
@@ -550,7 +552,7 @@ export const approvalsApi = {
   rejectFinancial: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
 };
 
-export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null; created_at: string; posted_at: string | null };
+export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
@@ -591,6 +593,8 @@ export const salesApi = {
   createReceipt: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>("/api/sales-documents/receipts/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل سند القبض وتحديث رصيد العميل والخزينة.
   postReceipt: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/post/`, { method: "POST" }); },
+  // عكس آخر سند قبض مرحّل مع إنشاء قيد عكسي مرتبط.
+  reverseReceipt: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/reverse/`, { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }); },
 };
 
 
