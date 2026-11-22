@@ -298,7 +298,7 @@ export const api = {
   // جلب أكواد الضرائب المعرفة للشركة.
   taxCodes: (companyId: number) => request<TaxCode[]>(`/api/accounting/tax-codes/?company=${companyId}&ordering=code`),
   // جلب مراكز التكلفة مع ترتيبها حسب الكود.
-  costCenters: (companyId: number) => request<CostCenter[]>(`/api/accounting/cost-centers/?company=${companyId}&ordering=code`),
+  allCostCenters: (companyId: number) => request<CostCenter[]>(`/api/accounting/cost-centers/?company=${companyId}&ordering=code`),
   // إنشاء مركز تكلفة جديد.
   createCostCenter: async (payload: Partial<CostCenter>) => { await request<{ detail: string }>("/api/csrf/"); return request<CostCenter>("/api/accounting/cost-centers/", { method: "POST", body: JSON.stringify(payload) }); },
   // تحديث بيانات مركز تكلفة أو حالته دون حذف السجل.
