@@ -504,39 +504,67 @@ class JournalEntryViewSet(AccountingViewSet):
             date_filter &= Q(
                 journal_lines__entry__branch__in=accessible_branches(request.user, int(company_id))
             )
+        opening_filter = date_filter
         if date_from:
+            opening_filter &= Q(journal_lines__entry__entry_date__lt=date_from)
             date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
+            opening_year = FiscalYear.objects.filter(
+                company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
+            ).order_by("-start_date").first()
+            has_opening_snapshot = bool(opening_year and JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=opening_year,
+                status=JournalEntry.Status.POSTED, source_type=JournalEntry.Source.OPENING,
+                entry_date__lt=date_from,
+                branch__in=accessible_branches(request.user, int(company_id)),
+            ).exists())
+            if has_opening_snapshot:
+                opening_filter &= Q(journal_lines__entry__entry_date__gte=opening_year.start_date)
         if date_to:
             date_filter &= Q(journal_lines__entry__entry_date__lte=date_to)
         accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
             debit_total=Sum("journal_lines__debit", filter=date_filter),
             credit_total=Sum("journal_lines__credit", filter=date_filter),
+            opening_debit=Sum("journal_lines__debit", filter=opening_filter) if date_from else Sum("journal_lines__debit", filter=Q(pk__isnull=True)),
+            opening_credit=Sum("journal_lines__credit", filter=opening_filter) if date_from else Sum("journal_lines__credit", filter=Q(pk__isnull=True)),
         ).order_by("code")
         rows = []
         debit_sum = 0
         credit_sum = 0
+        opening_debit_sum = 0
+        opening_credit_sum = 0
         for account in accounts:
             debit = account.debit_total or 0
             credit = account.credit_total or 0
+            opening_debit = account.opening_debit or 0
+            opening_credit = account.opening_credit or 0
             debit_sum += debit
             credit_sum += credit
+            opening_debit_sum += opening_debit
+            opening_credit_sum += opening_credit
             rows.append({
                 "account_id": account.pk,
                 "code": account.code,
                 "name_ar": account.name_ar,
                 "nature": account.nature,
                 "is_group": account.is_group,
+                "opening_debit": opening_debit,
+                "opening_credit": opening_credit,
+                "opening_balance": opening_debit - opening_credit,
                 "debit_total": debit,
                 "credit_total": credit,
                 "net_balance": debit - credit,
+                "closing_balance": opening_debit - opening_credit + debit - credit,
             })
         return response.Response({
             "company_id": int(company_id),
             "date_from": date_from,
             "date_to": date_to,
             "accounts": rows,
+            "opening_debit_total": opening_debit_sum,
+            "opening_credit_total": opening_credit_sum,
             "debit_total": debit_sum,
             "credit_total": credit_sum,
+            "closing_debit_credit_difference": (opening_debit_sum + debit_sum) - (opening_credit_sum + credit_sum),
             "difference": debit_sum - credit_sum,
         })
 
