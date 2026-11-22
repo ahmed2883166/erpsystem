@@ -90,6 +90,11 @@ try {
     } finally { Pop-Location }
     Get-ChildItem $DailyRoot -Filter "nexus-*.dump.nexusenc" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$DailyKeep) } | Remove-Item -Force
     Get-ChildItem $MonthlyRoot -Filter "nexus-*.dump.nexusenc" -File | Where-Object { $_.LastWriteTime -lt (Get-Date).AddMonths(-$MonthlyKeep) } | Remove-Item -Force
+    Push-Location $Backend
+    try {
+        & $Python manage.py record_backup_run --file $EncryptedFile
+        if ($LASTEXITCODE -ne 0) { Write-Warning "The encrypted backup is valid, but its history record could not be saved." }
+    } finally { Pop-Location }
     Write-Output "Encrypted backup verified: $EncryptedFile"
 } finally {
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
