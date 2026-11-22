@@ -5,7 +5,7 @@ from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from .access import accessible_branches, accessible_companies, can_access_company, has_company_role
+from .access import accessible_branches, accessible_companies, can_access_company, has_company_role, is_platform_owner
 from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, ExchangeRateSerializer, FiscalYearSerializer
 
@@ -62,34 +62,35 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
-        return accessible_companies(self.request.user).select_related("base_currency")
+        if is_platform_owner(self.request.user):\n            # Owner sees company registry metadata only; tenant ledgers remain membership-scoped.\n            return Company.objects.all().select_related("base_currency")\n        return accessible_companies(self.request.user).select_related("base_currency")
 
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
-        if not self.request.user.is_staff:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("إنشاء شركة جديدة يتطلب صلاحية مسؤول النظام.")
-        company = serializer.save()
-        CompanyMembership.objects.get_or_create(
-            user=self.request.user, company=company,
-            defaults={"role": CompanyMembership.Role.ADMIN, "all_branches": True, "is_active": True},
-        )
+        from rest_framework.exceptions import PermissionDenied
+        if not is_platform_owner(self.request.user):
+            raise PermissionDenied("إنشاء الشركات متاح لمالك المنصة المسجل فقط.")
+        # لا ننشئ عضوية تشغيلية للمالك؛ تعيين مدير الشركة خطوة مستقلة ومقصودة.
+        serializer.save()
 
     def perform_update(self, serializer):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
-        if not has_company_role(self.request.user, self.get_object().pk, ("admin",)):
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("إدارة بيانات الشركة متاحة لمدير الشركة فقط.")
+        from rest_framework.exceptions import PermissionDenied
+        if not (
+            is_platform_owner(self.request.user)
+            or has_company_role(self.request.user, self.get_object().pk, ("admin",))
+        ):
+            raise PermissionDenied("تعديل بيانات الشركة متاح لمالك المنصة أو مدير الشركة فقط.")
         serializer.save()
 
     def perform_destroy(self, instance):
         """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         from rest_framework.exceptions import PermissionDenied, ValidationError
-        if not has_company_role(self.request.user, instance.pk, ("admin",)):
-            raise PermissionDenied("حذف الشركة متاح لمدير الشركة فقط.")
-        if instance.audit_events.exists():
-            raise ValidationError("لا يمكن حذف شركة لها سجل تدقيق؛ أوقف الشركة بدل حذفها.")
-        instance.delete()
+        if not (
+            is_platform_owner(self.request.user)
+            or has_company_role(self.request.user, instance.pk, ("admin",))
+        ):
+            raise PermissionDenied("إدارة حالة الشركة متاحة لمالك المنصة أو مدير الشركة فقط.")
+        raise ValidationError("الحذف النهائي للشركات غير متاح؛ أوقف الشركة للاحتفاظ بالسجلات والمراجع المالية.")
 
 
 
