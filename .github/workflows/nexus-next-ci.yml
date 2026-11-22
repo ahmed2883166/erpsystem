@@ -70,6 +70,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Verify Windows DPAPI backup key protection
+        shell: pwsh
+        working-directory: nexus_next/backend
+        run: |
+          python -m pip install "cryptography>=45,<47"
+          if ($LASTEXITCODE -ne 0) { throw "Cryptography dependency installation failed." }
+          python -c "import os; from core.backup_key import protect_machine_key, unprotect_machine_key; key=os.urandom(32); protected=protect_machine_key(key); assert protected != key; assert unprotect_machine_key(protected) == key; print('Windows DPAPI backup key round-trip passed.')"
+          if ($LASTEXITCODE -ne 0) { throw "Windows DPAPI backup key verification failed." }
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
