@@ -1,3 +1,5 @@
+"""تهيئة عرض الأصول الثابتة وجداول الإهلاك في لوحة Django الإدارية."""
+
 from django.contrib import admin
 from .models import FixedAsset, AssetDepreciation
 
