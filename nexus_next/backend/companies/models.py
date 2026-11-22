@@ -1,8 +1,11 @@
+"""نماذج الشركات والعملات والفروع والسنوات المالية وعضويات المستخدمين."""
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
 class Currency(models.Model):
+    """يعرّف العملة ورمزها وبيانات عرضها."""
     code = models.CharField(max_length=3, unique=True)
     name_ar = models.CharField(max_length=80)
     name_en = models.CharField(max_length=80, blank=True)
@@ -20,6 +23,7 @@ class Currency(models.Model):
 
 
 class Company(models.Model):
+    """يحفظ هوية الشركة وإعداداتها المالية والتشغيلية."""
     class Country(models.TextChoices):
         EGYPT = "EG", "مصر"
         SAUDI_ARABIA = "SA", "السعودية"
@@ -55,6 +59,7 @@ class Company(models.Model):
 
 
 class Branch(models.Model):
+    """يمثل فرعًا تابعًا للشركة ويحدد الفرع الرئيسي عند الحاجة."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="branches")
     code = models.CharField(max_length=30)
     name_ar = models.CharField(max_length=160)
@@ -81,6 +86,7 @@ class Branch(models.Model):
 
 
 class FiscalYear(models.Model):
+    """يحدد حدود السنة المالية وحالة فتحها أو إغلاقها."""
     class Status(models.TextChoices):
         OPEN = "open", "مفتوحة"
         CLOSED = "closed", "مغلقة"
