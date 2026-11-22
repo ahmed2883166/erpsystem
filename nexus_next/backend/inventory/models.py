@@ -1,3 +1,5 @@
+"""نماذج الأصناف والمخازن ومواقع التخزين وحركات المخزون وتقييم التكلفة والربط المحاسبي."""
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -7,6 +9,7 @@ from companies.models import Branch, Company
 
 
 class ProductCategory(models.Model):
+    """يمثل التصنيف الهرمي للأصناف داخل شركة واحدة."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="product_categories")
     code = models.CharField(max_length=40)
     name_ar = models.CharField(max_length=160)
@@ -28,6 +31,7 @@ class ProductCategory(models.Model):
 
 
 class UnitOfMeasure(models.Model):
+    """يعرّف وحدة قياس الأصناف ودقة الكميات المسموح بها."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="inventory_units")
     code = models.CharField(max_length=24)
     name_ar = models.CharField(max_length=80)
@@ -46,6 +50,7 @@ class UnitOfMeasure(models.Model):
 
 
 class Product(models.Model):
+    """يحفظ بيانات الصنف أو الخدمة وأسعارها وطريقة تقييم مخزونها."""
     class ProductType(models.TextChoices):
         GOODS = "goods", "صنف مخزني"
         SERVICE = "service", "خدمة"
@@ -95,6 +100,7 @@ class Product(models.Model):
 
 
 class Warehouse(models.Model):
+    """يمثل مخزنًا تابعًا لشركة وفرع محدد عند الحاجة."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="warehouses")
     branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="warehouses")
     code = models.CharField(max_length=40)
@@ -117,6 +123,7 @@ class Warehouse(models.Model):
 
 
 class WarehouseProductSetting(models.Model):
+    """يضبط حد إعادة الطلب الخاص بصنف داخل مخزن بعينه."""
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="warehouse_settings")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="product_settings")
     min_stock = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
@@ -145,6 +152,7 @@ class WarehouseProductSetting(models.Model):
 
 
 class StorageLocation(models.Model):
+    """يمثل موقعًا فرعيًا داخل المخزن مثل الدور أو الرف أو الخانة."""
     class LocationType(models.TextChoices):
         FLOOR = "floor", "دور"
         AREA = "area", "منطقة"
@@ -178,6 +186,7 @@ class StorageLocation(models.Model):
 
 
 class StockMovement(models.Model):
+    """يمثل مستند حركة مخزنية قبل الترحيل وبعده."""
     class MovementType(models.TextChoices):
         RECEIPT = "receipt", "استلام"
         ISSUE = "issue", "صرف"
@@ -229,6 +238,7 @@ class StockMovement(models.Model):
 
 
 class StockMovementLine(models.Model):
+    """يحفظ صنفًا وكمية وتفاصيل التكلفة ضمن حركة مخزنية."""
     class AdjustmentDirection(models.TextChoices):
         IN = "in", "زيادة"
         OUT = "out", "عجز"
@@ -266,6 +276,7 @@ class StockMovementLine(models.Model):
 
 
 class StockBalance(models.Model):
+    """يحفظ الرصيد الكمي والقيمة الدفترية للصنف في المخزن."""
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="stock_balances")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="stock_balances")
     location = models.ForeignKey(StorageLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="stock_balances")
@@ -287,6 +298,7 @@ class StockBalance(models.Model):
 
 
 class StockCostLayer(models.Model):
+    """يمثل طبقة تكلفة تستخدم في FIFO أو احتساب التكلفة."""
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="cost_layers")
     source_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="created_cost_layers")
@@ -304,6 +316,7 @@ class StockCostLayer(models.Model):
 
 
 class StockMovementJournalLink(models.Model):
+    """يربط حركة المخزون بقيد اليومية الناتج عن ترحيلها."""
     movement = models.ForeignKey(StockMovement, on_delete=models.PROTECT, related_name="journal_links")
     journal_entry = models.ForeignKey("accounting.JournalEntry", on_delete=models.PROTECT, related_name="stock_movement_links")
     created_at = models.DateTimeField(auto_now_add=True)
