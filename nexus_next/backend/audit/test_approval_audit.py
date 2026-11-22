@@ -35,7 +35,7 @@ class ApprovalAuditTrailTests(TestCase):
                 )
                 request.user = self.user
                 middleware = AuditTrailMiddleware(
-                    lambda _request: JsonResponse({"id": 17}, status=status_code)
+                    lambda _request, status_code=status_code: JsonResponse({"id": 17}, status=status_code)
                 )
                 with patch(
                     "audit.middleware._target_before_request",
