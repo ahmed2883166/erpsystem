@@ -884,6 +884,53 @@ class TaxCodeConfigurationApiTests(TestCase):
         self.assertEqual(TaxCode.objects.count(), 0)
 
 
+class JournalBaseCurrencyRoundingTests(TestCase):
+    def setUp(self):
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري", decimal_places=2)
+        self.company = Company.objects.create(
+            code="ROUND-EGP", name_ar="شركة اختبار التقريب", country="EG",
+            activity="commercial", base_currency=self.currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026", start_date=date(2026, 1, 1),
+            end_date=date(2026, 12, 31),
+        )
+        self.debit_account = ChartOfAccount.objects.create(
+            company=self.company, code="1100", name_ar="مدين", nature="asset",
+        )
+        self.credit_account = ChartOfAccount.objects.create(
+            company=self.company, code="4100", name_ar="دائن", nature="revenue",
+        )
+
+    def make_entry(self, number, debit, credit):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number=number, entry_date=date(2026, 11, 1), description="اختبار تقريب العملة الأساسية",
+        )
+        JournalLine.objects.create(entry=entry, account=self.debit_account, debit=debit, credit=0)
+        JournalLine.objects.create(entry=entry, account=self.credit_account, debit=0, credit=credit)
+        return entry
+
+    def test_posting_rounds_each_line_to_egyptian_piaster(self):
+        entry = self.make_entry("ROUND-2DP", Decimal("10.1250"), Decimal("10.1250"))
+        posted = post_journal(entry.pk)
+        lines = list(posted.lines.order_by("id"))
+        self.assertEqual(lines[0].debit, Decimal("10.1300"))
+        self.assertEqual(lines[1].credit, Decimal("10.1300"))
+        self.assertEqual(sum((line.debit for line in lines), Decimal("0")),
+                         sum((line.credit for line in lines), Decimal("0")))
+
+    def test_posting_rejects_imbalance_created_by_minor_unit_rounding(self):
+        entry = self.make_entry("ROUND-IMBALANCE", Decimal("10.1240"), Decimal("10.1250"))
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+
 class AccountExcelImportTests(TestCase):
     def setUp(self):
         from io import BytesIO
