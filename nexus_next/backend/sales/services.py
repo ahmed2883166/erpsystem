@@ -196,24 +196,37 @@ def post_customer_receipt(receipt_id, user):
             raise ValidationError(str(exc)) from exc
         if expected_amount != receipt.amount:
             raise ValidationError("مبلغ التحصيل الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
-        posted_receipts = CustomerReceipt.objects.filter(
-            invoice=invoice, status=CustomerReceipt.Status.POSTED
-        ).exclude(pk=receipt.pk)
-        paid_foreign = posted_receipts.aggregate(total=Sum("transaction_amount"))["total"] or Decimal("0")
-        carrying_used = posted_receipts.aggregate(total=Sum("carrying_base_amount"))["total"] or Decimal("0")
-        remaining_foreign = invoice.transaction_grand_total - paid_foreign
-        remaining_base = invoice.grand_total - carrying_used
+        from accounting.fx_settlement import allocate_carrying_base_amount, calculate_realized_fx
+        from accounting.fx_subledger_services import open_fx_invoice_balances
+        from accounting.models import FxSubledgerRevaluation
+        if CustomerReceipt.objects.filter(
+            invoice=invoice, status=CustomerReceipt.Status.POSTED,
+            receipt_date__gt=receipt.receipt_date,
+        ).exists() or FxSubledgerRevaluation.objects.filter(
+            sales_invoice=invoice, revaluation_date__gt=receipt.receipt_date,
+        ).exists():
+            raise ValidationError("لا يمكن ترحيل تحصيل بتاريخ يسبق حركة تحصيل أو إعادة تقييم مرحّلة.")
+        remaining_foreign, historical_remaining, current_remaining = open_fx_invoice_balances(
+            invoice, direction="receivable", as_of=receipt.receipt_date,
+        )
         try:
             settlement = settle_foreign_balance(
                 direction="receivable", remaining_foreign_amount=remaining_foreign,
-                remaining_carrying_base_amount=remaining_base,
+                remaining_carrying_base_amount=current_remaining,
                 settled_foreign_amount=receipt.transaction_amount,
                 settlement_rate=receipt.exchange_rate,
+            )
+            historical_carrying = allocate_carrying_base_amount(
+                remaining_foreign, historical_remaining, receipt.transaction_amount,
+            )
+            realized_gain, realized_loss = calculate_realized_fx(
+                "receivable", historical_carrying, settlement.settlement_base_amount,
             )
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         carrying_amount = settlement.carrying_base_amount
-        realized_gain, realized_loss = settlement.realized_gain, settlement.realized_loss
+        current_gain, current_loss = settlement.realized_gain, settlement.realized_loss
+        unrealized_adjustment = carrying_amount - historical_carrying
     else:
         if any(value is not None for value in (
             receipt.transaction_currency_id, receipt.transaction_amount,
@@ -227,6 +240,8 @@ def post_customer_receipt(receipt_id, user):
             remaining = max(Decimal("0"), invoice.grand_total - paid)
             raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
         carrying_amount = receipt.amount
+        historical_carrying = receipt.amount
+        current_gain = current_loss = unrealized_adjustment = Decimal("0")
         realized_gain = realized_loss = Decimal("0")
 
     receivable = _account(receipt.company, AccountRole.Role.ACCOUNTS_RECEIVABLE)
@@ -249,16 +264,27 @@ def post_customer_receipt(receipt_id, user):
         JournalLine(account=cash, description="استلام نقدية/تحويل من العميل", debit=receipt.amount, credit=0),
         JournalLine(account=receivable, description="تخفيض مستحقات العميل بالقيمة الدفترية", debit=0, credit=carrying_amount),
     ]
-    if realized_gain:
-        gain = _account(receipt.company, AccountRole.Role.REALIZED_FX_GAIN)
-        if gain.pk in {cash.pk, receivable.pk}:
-            raise ValidationError("حساب أرباح فروق العملة يجب أن يكون مستقلًا عن النقدية والعملاء.")
-        journal_lines.append(JournalLine(account=gain, description="أرباح فروق عملة محققة", debit=0, credit=realized_gain))
-    if realized_loss:
-        loss = _account(receipt.company, AccountRole.Role.REALIZED_FX_LOSS)
-        if loss.pk in {cash.pk, receivable.pk}:
-            raise ValidationError("حساب خسائر فروق العملة يجب أن يكون مستقلًا عن النقدية والعملاء.")
-        journal_lines.append(JournalLine(account=loss, description="خسائر فروق عملة محققة", debit=realized_loss, credit=0))
+    gain = _account(receipt.company, AccountRole.Role.REALIZED_FX_GAIN) if current_gain or unrealized_adjustment > 0 else None
+    loss = _account(receipt.company, AccountRole.Role.REALIZED_FX_LOSS) if current_loss or unrealized_adjustment < 0 else None
+    unrealized_gain = _account(receipt.company, AccountRole.Role.UNREALIZED_FX_GAIN) if unrealized_adjustment > 0 else None
+    unrealized_loss = _account(receipt.company, AccountRole.Role.UNREALIZED_FX_LOSS) if unrealized_adjustment < 0 else None
+    used_ids = {cash.pk, receivable.pk}
+    for account in (gain, loss, unrealized_gain, unrealized_loss):
+        if account and account.pk in used_ids:
+            raise ValidationError("حسابات فروق العملة يجب أن تكون مستقلة عن النقدية والعملاء.")
+        if account:
+            used_ids.add(account.pk)
+    if current_gain:
+        journal_lines.append(JournalLine(account=gain, description="فرق تسوية محقق منذ آخر تقييم", debit=0, credit=current_gain))
+    if current_loss:
+        journal_lines.append(JournalLine(account=loss, description="خسارة تسوية محققة منذ آخر تقييم", debit=current_loss, credit=0))
+    if unrealized_adjustment > 0:
+        journal_lines.append(JournalLine(account=unrealized_gain, description="عكس ربح إعادة تقييم غير محقق عند التحصيل", debit=unrealized_adjustment, credit=0))
+        journal_lines.append(JournalLine(account=gain, description="إعادة تصنيف ربح العملة إلى محقق", debit=0, credit=unrealized_adjustment))
+    elif unrealized_adjustment < 0:
+        released_loss = -unrealized_adjustment
+        journal_lines.append(JournalLine(account=loss, description="إعادة تصنيف خسارة العملة إلى محققة", debit=released_loss, credit=0))
+        journal_lines.append(JournalLine(account=unrealized_loss, description="عكس خسارة إعادة تقييم غير محققة عند التحصيل", debit=0, credit=released_loss))
 
     entry = JournalEntry.objects.create(
         company=receipt.company, branch=branch, fiscal_year=year,
@@ -285,10 +311,11 @@ def post_customer_receipt(receipt_id, user):
             counter_account=receivable, journal_entry=posted, user=user, reference=receipt.reference,
         )
     receipt.carrying_base_amount = carrying_amount
+    receipt.historical_carrying_base_amount = historical_carrying
     receipt.realized_fx_gain = realized_gain
     receipt.realized_fx_loss = realized_loss
     receipt.journal_entry = posted
     receipt.status = CustomerReceipt.Status.POSTED
     receipt.posted_at = timezone.now()
-    receipt.save(update_fields=("carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "status", "posted_at"))
+    receipt.save(update_fields=("carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "status", "posted_at"))
     return receipt
