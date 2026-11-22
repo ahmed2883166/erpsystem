@@ -15,6 +15,7 @@ from .models import (
     Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse,
 )
 from .api import StockBalanceViewSet
+from .serializers import ProductSerializer
 from .services import post_stock_movement
 
 
@@ -136,6 +137,38 @@ class StockPostingServiceTests(TestCase):
         self.assertEqual(lines[0].account_id, self.inventory_account.pk)
         self.assertEqual(lines[1].account_id, self.gain_account.pk)
 
+
+    def test_product_costing_method_and_type_cannot_change_after_posted_history_when_empty(self):
+        receipt = self._movement(
+            "METHOD-HISTORY-R", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="2", unit_cost="4",
+        )
+        post_stock_movement(receipt.pk, self.user)
+        issue = self._movement(
+            "METHOD-HISTORY-I", StockMovement.MovementType.ISSUE,
+            source=self.warehouse, quantity="2",
+        )
+        post_stock_movement(issue.pk, self.user)
+
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("0.0000"))
+        self.assertTrue(
+            self.product.stock_movement_lines.filter(
+                movement__status=StockMovement.Status.POSTED,
+            ).exists()
+        )
+
+        costing_serializer = ProductSerializer(
+            self.product, data={"costing_method": Product.CostingMethod.FIFO}, partial=True,
+        )
+        self.assertFalse(costing_serializer.is_valid())
+        self.assertIn("حركات مخزنية مرحلة", str(costing_serializer.errors))
+
+        service_serializer = ProductSerializer(
+            self.product, data={"product_type": Product.ProductType.SERVICE}, partial=True,
+        )
+        self.assertFalse(service_serializer.is_valid())
+        self.assertIn("حركات مخزنية مرحلة", str(service_serializer.errors))
 
     def test_fifo_issue_consumes_oldest_cost_layers_first(self):
         self.product.costing_method = Product.CostingMethod.FIFO
