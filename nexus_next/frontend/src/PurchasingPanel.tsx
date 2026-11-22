@@ -3,7 +3,7 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -15,6 +15,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
+  const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
@@ -35,17 +37,17 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [receiptLines, setReceiptLines] = useState<ReceiptDraftLine[]>([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
   const [orderForm, setOrderForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10), expected_date: "", notes: "" });
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
-  const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", notes: "" });
-  const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "" });
+  const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
 
   // تحميل بيانات الموردين والأصناف والمخازن ومستندات الشراء للشركة.
 const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, t, ta] = await Promise.all([
+      const [s, p, w, o, r, i, pay, t, ta, cur, fx] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
       setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
@@ -66,6 +68,11 @@ const refresh = async () => {
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
+
+  const findRate = (currencyId: string, onDate: string) => exchangeRates
+    .filter(rate => rate.currency === Number(currencyId) && rate.rate_date <= onDate)
+    .sort((a, b) => b.rate_date.localeCompare(a.rate_date))[0];
+
 
   // تحميل كشف حساب المورد للفترة والمورد المختارين.
 const loadStatement = async () => {
@@ -138,7 +145,10 @@ const saveInvoice = async (event: React.FormEvent) => {
       await purchasingApi.createInvoice({
         company: companyId, supplier: receipt.supplier, receipt: receipt.id,
         invoice_number: invoiceForm.invoice_number, invoice_date: invoiceForm.invoice_date, notes: invoiceForm.notes,
-        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, unit_price: line.unit_cost, tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null })),
+        transaction_currency: invoiceForm.transaction_currency ? Number(invoiceForm.transaction_currency) : null,
+        exchange_rate: invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
+        exchange_rate_date: invoiceForm.transaction_currency ? invoiceForm.exchange_rate_date : null,
+        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, ...(invoiceForm.transaction_currency ? { transaction_unit_price: (Number(line.unit_cost) / Number(invoiceForm.exchange_rate)).toFixed(4) } : { unit_price: line.unit_cost }), tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null })),
       });
       setShowForm(false); setInvoiceForm((old) => ({ ...old, receipt: "", invoice_number: "", notes: "" }));
       await refresh();
@@ -153,7 +163,12 @@ const savePayment = async (event: React.FormEvent) => {
     if (!invoice) { setError("اختر فاتورة مورد لها رصيد مستحق."); return; }
     setBusy(true); setError("");
     try {
-      await purchasingApi.createPayment({ company: companyId, supplier: invoice.supplier, invoice: invoice.id, payment_number: paymentForm.payment_number, payment_date: paymentForm.payment_date, method: paymentForm.method, payment_account: Number(paymentForm.payment_account), amount: paymentForm.amount, reference: paymentForm.reference });
+      const baseAmount = invoice.transaction_currency
+        ? (Number(paymentForm.transaction_amount) * Number(paymentForm.exchange_rate)).toFixed(4)
+        : paymentForm.amount;
+      await purchasingApi.createPayment({ company: companyId, supplier: invoice.supplier, invoice: invoice.id, payment_number: paymentForm.payment_number, payment_date: paymentForm.payment_date, method: paymentForm.method, payment_account: Number(paymentForm.payment_account), amount: baseAmount,
+        ...(invoice.transaction_currency ? { transaction_currency: invoice.transaction_currency, transaction_amount: paymentForm.transaction_amount, exchange_rate: paymentForm.exchange_rate, exchange_rate_date: paymentForm.exchange_rate_date } : {}),
+        reference: paymentForm.reference });
       setShowForm(false); setPaymentForm((old) => ({ ...old, invoice: "", payment_number: "", amount: "", reference: "" })); await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند الصرف."); }
     finally { setBusy(false); }
