@@ -22,6 +22,7 @@ const DiscountApprovalsPanel = lazy(() => import("./DiscountApprovalsPanel"));
 const CompanyAccessPanel = lazy(() => import("./CompanyAccessPanel"));
 const CompanySetupPanel = lazy(() => import("./CompanySetupPanel"));
 const AccountsPanel = lazy(() => import("./AccountsPanel"));
+const CostCentersPanel = lazy(() => import("./CostCentersPanel"));
 const ExpenseAnalysisPanel = lazy(() => import("./ExpenseAnalysisPanel"));
 const HrPayrollPanel = lazy(() => import("./HrPayrollPanel"));
 const panelFallback = <section className="work-panel"><div className="table-empty">جارٍ تحميل الشاشة…</div></section>;
@@ -35,7 +36,7 @@ const localISODate = () => {
   return `${year}-${month}-${day}`;
 };
 
-type Section = "overview" | "journals" | "accounts" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
+type Section = "overview" | "journals" | "accounts" | "cost-centers" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
 type DraftLine = { account: string; debit: string; credit: string; description: string };
 
 // تجهيز ملف CSV للتنزيل مع تنسيق القيم وحماية النصوص من كسر الأعمدة.
@@ -58,6 +59,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "overview", label: "نظرة عامة", icon: "◫", group: "الرئيسية" },
   { id: "journals", label: "قيود اليومية", icon: "⇄", group: "المحاسبة" },
   { id: "accounts", label: "دليل الحسابات", icon: "☷", group: "المحاسبة" },
+  { id: "cost-centers", label: "مراكز التكلفة", icon: "◎", group: "المحاسبة" },
   { id: "customers", label: "العملاء", icon: "♙", group: "المبيعات" },
   { id: "sales-workflow", label: "دورة المبيعات", icon: "↗", group: "المبيعات" },
   { id: "suppliers", label: "الموردون", icon: "♧", group: "المشتريات" },
@@ -781,6 +783,7 @@ const postDraft = async (entry: Journal) => {
                 : <div className="empty-state"><div className="empty-graphic">◷</div><strong>{loading ? "جارٍ تحميل القيود" : "لا توجد قيود حتى الآن"}</strong><p>ستظهر القيود هنا بمجرد تسجيلها في الشركة المختارة.</p></div>}</section>
           </>}
 
+          {active === "cost-centers" && <Suspense fallback={panelFallback}><CostCentersPanel companyId={companyId} /></Suspense>}
           {active === "accounts" && <Suspense fallback={panelFallback}><AccountsPanel companyId={companyId} companyName={selectedCompany?.name_ar || "الشركة"} activity={selectedCompany?.activity} accounts={accounts} onRefresh={async () => { if (!companyId) return; const rows = await api.accounts(companyId); setAccounts(rows); }} /></Suspense>}
 
           {active === "journals" && <section className="work-panel journal-register-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setReviewingJournal(false); setJournalLines([{ account: "", debit: "", credit: "", description: "" }, { account: "", debit: "", credit: "", description: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
