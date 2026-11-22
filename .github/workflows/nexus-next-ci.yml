@@ -106,6 +106,51 @@ jobs:
               exit 1
             }
           }
+          $initializer = Get-Content nexus_next/initialize-admrail.cmd -Raw
+          foreach ($required in @("manage.py migrate --noinput", "manage.py createsuperuser", "bootstrap_platform_owner", "DJANGO_SECRET_KEY=replace-this-for-local-development", "POSTGRES_PASSWORD=replace-with-a-strong-local-password")) {
+            if ($initializer -notmatch [regex]::Escape($required)) {
+              throw "Portable first-run initializer is missing required safety step: $required"
+            }
+          }
+          if ($initializer -match '(?i)manage\.py\s+(flush|reset_db)') {
+            throw "Portable first-run initializer must never flush or reset a database."
+          }
+          $envExample = Get-Content nexus_next/backend/.env.example -Raw
+          if ($envExample -notmatch '(?m)^DJANGO_DEBUG=False\s*
+      - name: Guard temporary plaintext backup cleanup
+        shell: pwsh
+        run: |
+          $backupScript = Get-Content nexus_next/scripts/backup-postgres.ps1 -Raw
+          if ($backupScript -notmatch '(?s)finally\s*\{.*Test-Path\s+-LiteralPath\s+\$DailyFile.*Remove-Item\s+-LiteralPath\s+\$DailyFile\s+-Force') {
+            throw "The scheduled backup script must remove its temporary plaintext dump in a finally block."
+          }
+      - name: Build Windows trial package
+        shell: pwsh
+        run: ./nexus_next/scripts/package-trial.ps1 -OutputDirectory "$env:RUNNER_TEMP/nexus-trial"
+      - name: Upload Windows trial package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Admrail-ERP-v2-Trial-Windows
+          path: ${{ runner.temp }}/nexus-trial/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build embedded Python Windows package
+        shell: pwsh
+        run: ./nexus_next/scripts/package-portable-windows.ps1 -OutputDirectory "$env:RUNNER_TEMP/nexus-portable"
+      - name: Upload portable Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Admrail-ERP-v2-Portable-Windows
+          path: ${{ runner.temp }}/nexus-portable/*
+          if-no-files-found: error
+          retention-days: 14
+) {
+            throw "The environment template must default Django DEBUG to False."
+          }
+          $portableBuilder = Get-Content nexus_next/scripts/package-portable-windows.ps1 -Raw
+          if ($portableBuilder -notmatch 'initialize-admrail\.cmd') {
+            throw "Portable ZIP builder must include the first-run initializer."
+          }
       - name: Guard temporary plaintext backup cleanup
         shell: pwsh
         run: |
