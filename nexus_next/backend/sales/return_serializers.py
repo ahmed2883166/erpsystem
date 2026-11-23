@@ -19,7 +19,8 @@ class SalesReturnLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesReturnLine
         fields = ("id", "invoice_line", "product_code", "product_name", "quantity",
-                  "net_amount", "tax_amount", "total_amount", "cost_amount")
+                  "net_amount", "tax_amount", "total_amount", "transaction_net_amount",
+                  "transaction_tax_amount", "transaction_total_amount", "cost_amount")
         read_only_fields = fields
 
 
@@ -37,11 +38,13 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         model = SalesReturn
         fields = ("id", "company", "invoice", "invoice_number", "customer_name", "warehouse",
                   "return_number", "return_date", "status", "net_total", "tax_total", "grand_total",
+                  "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                   "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                   "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                   "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
                   "notes", "lines", "line_items", "created_at", "posted_at")
         read_only_fields = ("warehouse", "status", "net_total", "tax_total", "grand_total",
+                            "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                             "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                             "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                             "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
@@ -75,6 +78,11 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         for row in lines:
             if row["invoice_line"].invoice_id != invoice.pk:
                 raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون من الفاتورة المحددة."})
+            if invoice.transaction_currency_id and (
+                row["invoice_line"].transaction_net_amount is None
+                or row["invoice_line"].transaction_tax_amount is None
+            ):
+                raise serializers.ValidationError({"lines": "لقطة العملة الأجنبية غير مكتملة في بند الفاتورة الأصلية."})
         return attrs
 
     @transaction.atomic
@@ -108,11 +116,22 @@ class SalesReturnSerializer(serializers.ModelSerializer):
             invoice_line = row["invoice_line"]
             net = (invoice_line.net_amount * quantity / original_qty).quantize(Decimal("0.0001"))
             tax = (invoice_line.tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
+            transaction_net = (
+                (invoice_line.transaction_net_amount * quantity / original_qty).quantize(Decimal("0.0001"))
+                if invoice.transaction_currency_id else None
+            )
+            transaction_tax = (
+                (invoice_line.transaction_tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
+                if invoice.transaction_currency_id else None
+            )
             cost = (source.cost_amount * quantity / original_qty).quantize(Decimal("0.0001"))
             SalesReturnLine.objects.create(
                 sales_return=sales_return, invoice_line=invoice_line,
                 movement_line=movement_line, quantity=quantity,
                 net_amount=net, tax_amount=tax, total_amount=net + tax,
+                transaction_net_amount=transaction_net,
+                transaction_tax_amount=transaction_tax,
+                transaction_total_amount=(transaction_net + transaction_tax) if transaction_net is not None else None,
                 cost_amount=cost,
             )
         return sales_return
@@ -139,11 +158,22 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                 invoice_line = row["invoice_line"]
                 net = (invoice_line.net_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
                 tax = (invoice_line.tax_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                transaction_net = (
+                    (invoice_line.transaction_net_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                    if sales_return.invoice.transaction_currency_id else None
+                )
+                transaction_tax = (
+                    (invoice_line.transaction_tax_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                    if sales_return.invoice.transaction_currency_id else None
+                )
                 cost = (source.cost_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
                 SalesReturnLine.objects.create(
                     sales_return=sales_return, invoice_line=invoice_line,
                     movement_line=movement_line, quantity=quantity,
                     net_amount=net, tax_amount=tax, total_amount=net + tax,
+                    transaction_net_amount=transaction_net,
+                    transaction_tax_amount=transaction_tax,
+                    transaction_total_amount=(transaction_net + transaction_tax) if transaction_net is not None else None,
                     cost_amount=cost,
                 )
         for field, value in validated_data.items():
