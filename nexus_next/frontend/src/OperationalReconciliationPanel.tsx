@@ -36,7 +36,7 @@ export default function OperationalReconciliationPanel({ companyId, currency, br
       stockApi.valuationIntegrity(companyId, branchId ? Number(branchId) : undefined),
       treasuryApi.accounts(companyId),
       bankReconciliationApi.list(companyId),
-    ]).then(([stock, checks, controlReport, accounts, bankRows]) => {
+    ]).then(([stock, controlReport, checks, accounts, bankRows]) => {
       if (!active || id !== sequence.current) return;
       setInventory(stock); setIntegrity(checks); setSubledger(controlReport);
       setBankAccounts(accounts.filter((item) => item.kind === "bank"));
