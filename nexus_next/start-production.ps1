@@ -145,6 +145,10 @@ try {
     Get-ChildItem -LiteralPath $BackupDirectory -Directory -Filter ".nexus-verify-*" -ErrorAction SilentlyContinue |
       Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
       Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $BackupDirectory -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -like ".nexus-decrypt-*" -or $_.Name -like ".nexus-encrypt-*" } |
+      Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
     Get-ChildItem -LiteralPath $BackupDirectory -Filter "admrail-before-migration-*.dump" -File -ErrorAction SilentlyContinue |
       Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
       Remove-Item -Force -ErrorAction SilentlyContinue
