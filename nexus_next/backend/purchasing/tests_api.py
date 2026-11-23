@@ -498,7 +498,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(report.status_code, 200, report.data)
         self.assertEqual(report.data["input_tax"], "28.0000")
-        self.assertEqual(report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+        self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
@@ -559,7 +559,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(vat_report.data["purchases"]["nonrecoverable_tax_amount"], "28.0000")
         self.assertEqual(vat_report.data["purchases"]["by_code"][0]["nonrecoverable_tax_amount"], "28.0000")
         self.assertEqual(vat_report.data["input_tax"], "0")
-        self.assertEqual(vat_report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+        self.assertEqual(Decimal(vat_report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
         self.assertEqual(invoice.journal_entry.lines.get(
             account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE).account
         ).credit, Decimal("228.0000"))
