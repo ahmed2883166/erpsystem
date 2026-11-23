@@ -1,4 +1,5 @@
 from collections import deque
+import os
 from statistics import median
 from threading import Lock
 from time import perf_counter
@@ -10,6 +11,8 @@ from django.db import DatabaseError, connection
 _EVENTS = deque(maxlen=250)
 _LOCK = Lock()
 _SLOW_REQUEST_MS = 1000.0
+_SLOW_QUERY_MS = float(os.getenv("PERFORMANCE_SLOW_QUERY_MS", "250"))
+_SLOW_QUERIES = deque(maxlen=100)
 
 
 def _record(event):
@@ -75,6 +78,8 @@ def performance_snapshot():
     errors = sum(1 for item in events if item["status_code"] >= 500)
     slow = sum(1 for item in events if item["duration_ms"] >= _SLOW_REQUEST_MS)
     query_total = sum(item["db_queries"] for item in events)
+    with _LOCK:
+        slow_queries = list(_SLOW_QUERIES)
     db_total = sum(item["db_duration_ms"] for item in events)
     p95 = durations[min(len(durations) - 1, int(len(durations) * .95))] if durations else 0
     return {
@@ -87,6 +92,8 @@ def performance_snapshot():
         "slow_request_count": slow,
         "average_db_queries": round(query_total / count, 2) if count else 0,
         "total_db_duration_ms": round(db_total, 2),
+        "slow_query_threshold_ms": _SLOW_QUERY_MS,
+        "recent_slow_queries": list(reversed(slow_queries[-30:])),
         "system": _system_resources(),
         "postgresql": _postgres_resources(),
         "recent": list(reversed(events[-30:])),
@@ -115,7 +122,18 @@ class PerformanceMetricsMiddleware:
             try:
                 return execute(sql, params, many, context)
             finally:
-                query_duration += (perf_counter() - query_started) * 1000
+                elapsed_ms = (perf_counter() - query_started) * 1000
+                query_duration += elapsed_ms
+                if elapsed_ms >= _SLOW_QUERY_MS:
+                    # Keep SQL shape only; never retain bound parameters or user data.
+                    statement = " ".join(str(sql).split())[:1200]
+                    with _LOCK:
+                        _SLOW_QUERIES.append({
+                            "route": getattr(getattr(request, "resolver_match", None), "route", None)
+                                or request.path_info.split("?")[0][:160],
+                            "duration_ms": round(elapsed_ms, 2),
+                            "sql": statement,
+                        })
 
         try:
             with connection.execute_wrapper(track_execute):
