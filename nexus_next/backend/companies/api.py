@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -11,6 +11,7 @@ from django.db.models.functions import Coalesce
 from rest_framework import permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from .access import accessible_branches, accessible_companies, has_company_role, is_platform_owner
 from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
