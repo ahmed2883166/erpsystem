@@ -51,6 +51,14 @@ if (-not $PgRestore -or -not $Createdb -or -not $Psql) {
 
 $DecryptedTemp = $null
 $RestoreSource = $BackupFile
+$RestoreTempRoot = Join-Path $env:TEMP "AdmrailRestore"
+New-Item -ItemType Directory -Path $RestoreTempRoot -Force | Out-Null
+$RestoreIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+& icacls.exe $RestoreTempRoot /inheritance:r /grant:r "$($RestoreIdentity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Could not restrict access to the restore temporary directory." }
+Get-ChildItem -LiteralPath $RestoreTempRoot -Filter "nexus-restore-*.dump" -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 $AdminPassword = $null
 $AdminPasswordPtr = [IntPtr]::Zero
 try {
@@ -59,7 +67,7 @@ try {
     $AdminPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($AdminPasswordPtr)
     if ([string]::IsNullOrWhiteSpace($AdminPassword)) { throw "The PostgreSQL administrator password cannot be empty." }
     if ($BackupFile.EndsWith(".nexusenc", [System.StringComparison]::OrdinalIgnoreCase)) {
-        $DecryptedTemp = Join-Path $env:TEMP ("nexus-restore-" + [guid]::NewGuid().ToString("N") + ".dump")
+        $DecryptedTemp = Join-Path $RestoreTempRoot ("nexus-restore-" + [guid]::NewGuid().ToString("N") + ".dump")
         Push-Location $Backend
         try {
             & $Python manage.py decrypt_backup_file --input $BackupFile --output $DecryptedTemp
