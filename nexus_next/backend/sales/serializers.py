@@ -15,10 +15,8 @@ from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLi
 from approvals.snapshots import invoice_discount_snapshot
 
 
-def _customer_discount_for_line(*, customer, delivery_line, gross_invoice_amount, rules):
+def _customer_discount_for_line(*, customer, product, quantity, gross_invoice_amount, rules):
     """اختر قاعدة واحدة فقط؛ الأولوية ثم التخصيص الأعلى، دون تراكم خصومات."""
-    product = delivery_line.product
-    quantity = delivery_line.quantity
     matches = []
     for rule in rules:
         if rule.customer_id and rule.customer_id != customer.pk:
@@ -405,7 +403,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 discount_percent = line["discount_percent"]
             else:
                 selected_rule = _customer_discount_for_line(
-                    customer=invoice.customer, delivery_line=delivery_line,
+                    customer=invoice.customer, product=delivery_line.product, quantity=delivery_line.quantity,
                     gross_invoice_amount=gross_invoice_amount, rules=discount_rules,
                 )
                 discount_percent = selected_rule.discount_percent if selected_rule else invoice.customer.default_discount_percent
