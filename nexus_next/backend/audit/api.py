@@ -24,9 +24,16 @@ class AuditEventListView(APIView):
                 company__is_active=True,
             )
             company_ids = memberships.values_list("company_id", flat=True)
-            qs = qs.filter(company_id__in=company_ids).filter(
+            qs = qs.filter(
+                Q(company_id__in=company_ids)
+                | Q(
+                    company__isnull=True,
+                    actor__memberships__company_id__in=company_ids,
+                    resource__in=("authentication.login", "authentication.logout"),
+                )
+            ).filter(
                 Q(branch__isnull=True) | Q(branch__in=accessible_branches(request.user))
-            ).order_by("-created_at", "-pk")
+            ).distinct().order_by("-created_at", "-pk")
 
         company_raw = request.query_params.get("company")
         if company_raw:
@@ -38,7 +45,17 @@ class AuditEventListView(APIView):
                 role__in=(CompanyMembership.Role.ADMIN, CompanyMembership.Role.ACCOUNTANT),
             ).exists():
                 raise PermissionDenied("لا تملك صلاحية مراجعة سجل هذه الشركة.")
-            qs = qs.filter(company_id=company_id)
+            if not request.user.is_superuser or is_platform_owner(request.user):
+                qs = qs.filter(
+                    Q(company_id=company_id)
+                    | Q(
+                        company__isnull=True,
+                        actor__memberships__company_id=company_id,
+                        resource__in=("authentication.login", "authentication.logout"),
+                    )
+                )
+            else:
+                qs = qs.filter(company_id=company_id)
 
         branch_raw = request.query_params.get("branch")
         if branch_raw:
