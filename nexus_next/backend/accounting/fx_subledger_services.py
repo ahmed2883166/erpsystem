@@ -12,7 +12,7 @@ from accounting.models import (
 )
 from accounting.services import get_account_for_role, post_journal
 from companies.models import ExchangeRate
-from purchasing.models import PurchaseInvoice, SupplierPayment
+from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn
 from sales.models import CustomerReceipt, SalesInvoice
 
 
@@ -43,16 +43,28 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
     historical_used = _sum(settlements, "historical_carrying_base_amount")
     if historical_used == 0:
         historical_used = _sum(settlements, "carrying_base_amount")
-    remaining_foreign = (invoice.transaction_grand_total or Decimal("0")) - foreign_used
-    historical_remaining = invoice.grand_total - historical_used
+    returned_foreign = Decimal("0")
+    returned_base = Decimal("0")
+    if direction == "payable":
+        active_returns = SupplierReturn.objects.filter(
+            invoice=invoice,
+            return_date__lte=as_of,
+        ).filter(
+            Q(status=SupplierReturn.Status.POSTED)
+            | Q(status=SupplierReturn.Status.REVERSED, reversal_date__gt=as_of)
+        )
+        returned_foreign = _sum(active_returns, "transaction_grand_total")
+        returned_base = _sum(active_returns, "grand_total")
+    remaining_foreign = (invoice.transaction_grand_total or Decimal("0")) - foreign_used - returned_foreign
+    historical_remaining = invoice.grand_total - historical_used - returned_base
 
     if latest:
         date_field = "receipt_date" if direction == "receivable" else "payment_date"
         after_latest = settlements.filter(**{f"{date_field}__gt": latest.revaluation_date})
         current_used_after = _sum(after_latest, "carrying_base_amount")
-        current_remaining = latest.new_carrying_amount - current_used_after
+        current_remaining = latest.new_carrying_amount - current_used_after - returned_base
     else:
-        current_remaining = invoice.grand_total - _sum(settlements, "carrying_base_amount")
+        current_remaining = invoice.grand_total - _sum(settlements, "carrying_base_amount") - returned_base
 
     return (
         remaining_foreign.quantize(Decimal("0.0001")),
