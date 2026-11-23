@@ -259,7 +259,7 @@ def post_treasury_transaction(transaction_id, user=None):
         ],
     ])
     from accounting.services import post_journal
-    post_journal(entry.pk)
+    post_journal(entry.pk, actor=user or doc.created_by)
     doc.status = TreasuryTransaction.Status.POSTED
     doc.journal_entry = entry
     doc.posted_at = timezone.now()
