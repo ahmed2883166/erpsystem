@@ -321,6 +321,22 @@ class SubledgerReconciliationView(APIView):
         payroll_journal_ids = {value for row in payroll_rows for value in row if value}
         payroll_journal_ids = _with_reversals(payroll_journal_ids)
 
+        # Only payroll branches whose original posting remains posted at the
+        # cutoff contribute a liability; a later reversal must not erase history.
+        payroll_reversal_as_of = JournalEntry.objects.filter(
+            reversal_of_id=OuterRef("journal_entry_id"),
+            entry_date__lte=as_of, status__in=POSTED_STATUSES,
+        )
+        active_payroll_postings = PayrollPosting.objects.filter(
+            cycle__company_id=company_id, cycle__period_end__lte=as_of,
+            branch_id__in=branch_ids, journal_entry__entry_date__lte=as_of,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).annotate(_reversed_as_of=Exists(payroll_reversal_as_of)).filter(
+            _reversed_as_of=False
+        )
+        active_posting_for_employee = active_payroll_postings.filter(
+            cycle_id=OuterRef("cycle_id"), branch_id=OuterRef("employee__branch_id")
+        )
         reversed_payroll_payment = JournalEntry.objects.filter(
             reversal_of_id=OuterRef("payment_journal_entry_id"),
             entry_date__lte=as_of, status__in=POSTED_STATUSES,
@@ -330,7 +346,7 @@ class SubledgerReconciliationView(APIView):
             branch_id=OuterRef("employee__branch_id"),
             payment_journal_entry__isnull=False,
             payment_journal_entry__entry_date__lte=as_of,
-            payment_journal_entry__status__in=POSTED_STATUSES,
+            payment_journal_entry__status=JournalEntry.Status.POSTED,
         ).annotate(
             _payment_reversed=Exists(reversed_payroll_payment)
         ).filter(_payment_reversed=False)
@@ -339,9 +355,10 @@ class SubledgerReconciliationView(APIView):
             cycle__period_end__lte=as_of,
             cycle__status__in=(PayrollCycle.Status.POSTED, PayrollCycle.Status.PAYMENT_PENDING, PayrollCycle.Status.PAID),
             employee__branch_id__in=branch_ids,
-        ).annotate(_has_posted_payment=Exists(paid_payroll_posting)).filter(
-            _has_posted_payment=False
-        )
+        ).annotate(
+            _has_active_posting=Exists(active_posting_for_employee),
+            _has_posted_payment=Exists(paid_payroll_posting),
+        ).filter(_has_active_posting=True, _has_posted_payment=False)
         payroll_employee_totals = grouped_amount(
             unpaid_payroll_results, "employee_id", "net_pay"
         )
@@ -361,17 +378,7 @@ class SubledgerReconciliationView(APIView):
 
         # Statutory payroll liabilities are rebuilt from immutable payroll result
         # lines belonging to payroll journals still posted at the requested date.
-        payroll_reversal_as_of = JournalEntry.objects.filter(
-            reversal_of_id=OuterRef("journal_entry_id"),
-            entry_date__lte=as_of, status__in=POSTED_STATUSES,
-        )
-        active_payroll_postings = PayrollPosting.objects.filter(
-            cycle__company_id=company_id, cycle__period_end__lte=as_of,
-            branch_id__in=branch_ids, journal_entry__entry_date__lte=as_of,
-            journal_entry__status=JournalEntry.Status.POSTED,
-        ).annotate(_reversed_as_of=Exists(payroll_reversal_as_of)).filter(
-            _reversed_as_of=False
-        )
+        # The active posting queryset above is reused for statutory detail.
 
         statutory_specs = (
             ("employee_insurance", PayrollComponent.Method.EMPLOYEE_INSURANCE,
