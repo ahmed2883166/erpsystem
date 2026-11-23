@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from customers.models import CustomerDiscountRule
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine
 from approvals.snapshots import invoice_discount_snapshot
 
 
@@ -65,8 +65,8 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         model = SalesDelivery
         fields = ("id", "company", "customer", "customer_name", "warehouse", "warehouse_name",
                   "delivery_number", "delivery_date", "customer_reference", "notes",
-                  "movement_status", "line_items", "lines", "created_at")
-        read_only_fields = ("movement_status", "line_items", "created_at")
+                  "movement_status", "line_items", "quotation_snapshot", "lines", "created_at")
+        read_only_fields = ("movement_status", "line_items", "quotation_snapshot", "created_at")
 
     def get_line_items(self, obj):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
@@ -156,6 +156,130 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
                 ) for line in lines
             ])
         return delivery
+
+
+
+class SalesQuotationLineInputSerializer(serializers.Serializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
+    tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False, default=Decimal("0"))
+    tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
+    discount_percent = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False)
+
+
+class SalesQuotationLineSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    discount_rule_name = serializers.CharField(source="discount_rule.notes", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SalesQuotationLine
+        fields = ("id", "product", "product_code", "product_name", "quantity", "unit_price",
+                  "tax_rate", "tax_code", "discount_percent", "discount_rule",
+                  "discount_rule_name", "discount_amount", "net_amount", "tax_amount", "total_amount")
+
+
+class SalesQuotationSerializer(serializers.ModelSerializer):
+    lines = SalesQuotationLineInputSerializer(many=True, write_only=True, required=False)
+    quotation_lines = SalesQuotationLineSerializer(source="lines", many=True, read_only=True)
+    customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
+    converted_delivery_number = serializers.CharField(source="converted_delivery.delivery_number", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SalesQuotation
+        fields = ("id", "company", "customer", "customer_name", "quotation_number",
+                  "quotation_date", "valid_until", "status", "net_total", "discount_total",
+                  "tax_total", "grand_total", "notes", "quotation_lines", "lines",
+                  "converted_delivery", "converted_delivery_number", "created_at",
+                  "updated_at", "sent_at", "accepted_at", "converted_at")
+        read_only_fields = ("status", "net_total", "discount_total", "tax_total", "grand_total",
+                            "quotation_lines", "converted_delivery", "converted_delivery_number",
+                            "created_at", "updated_at", "sent_at", "accepted_at", "converted_at")
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        customer = attrs.get("customer", instance.customer if instance else None)
+        quote_date = attrs.get("quotation_date", instance.quotation_date if instance else None)
+        valid_until = attrs.get("valid_until", instance.valid_until if instance else None)
+        if instance and instance.status != SalesQuotation.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل عرض سعر غير مسودة.")
+        if customer and customer.company_id != company.pk:
+            raise serializers.ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if quote_date and valid_until and valid_until < quote_date:
+            raise serializers.ValidationError({"valid_until": "تاريخ الصلاحية لا يسبق تاريخ العرض."})
+        lines = attrs.get("lines")
+        if lines is not None:
+            if not lines:
+                raise serializers.ValidationError({"lines": "أضف بندًا واحدًا على الأقل."})
+            for line in lines:
+                if line["product"].company_id != company.pk:
+                    raise serializers.ValidationError({"lines": "كل الأصناف يجب أن تتبع الشركة."})
+                tax_code = line.get("tax_code")
+                if tax_code and (tax_code.company_id != company.pk or tax_code.country != company.country):
+                    raise serializers.ValidationError({"lines": "كود الضريبة لا يتبع الشركة المحددة."})
+        elif not instance:
+            raise serializers.ValidationError({"lines": "أضف بندًا واحدًا على الأقل."})
+        return attrs
+
+    def _save_lines(self, quotation, lines):
+        gross_total = sum((row["quantity"] * row["unit_price"] for row in lines), Decimal("0"))
+        rules = list(
+            CustomerDiscountRule.objects.filter(company=quotation.company, is_active=True,
+                effective_from__lte=quotation.quotation_date)
+            .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=quotation.quotation_date))
+            .filter(Q(customer__isnull=True) | Q(customer=quotation.customer))
+            .filter(Q(customer_type="") | Q(customer_type=quotation.customer.customer_type))
+            .filter(Q(min_invoice_amount__isnull=True) | Q(min_invoice_amount__lte=gross_total))
+            .order_by("-priority", "id")
+        )
+        for row in lines:
+            rule = None
+            if "discount_percent" in row:
+                discount = row["discount_percent"]
+            else:
+                rule = _customer_discount_for_line(
+                    customer=quotation.customer, product=row["product"], quantity=row["quantity"],
+                    gross_invoice_amount=gross_total, rules=rules,
+                )
+                discount = rule.discount_percent if rule else quotation.customer.default_discount_percent
+            line = SalesQuotationLine.objects.create(
+                quotation=quotation, product=row["product"], quantity=row["quantity"],
+                unit_price=row["unit_price"], tax_rate=row.get("tax_rate", Decimal("0")),
+                tax_code=row.get("tax_code"), discount_percent=discount, discount_rule=rule,
+            )
+            line.calculate()
+            line.save(update_fields=("tax_rate", "discount_amount", "net_amount", "tax_amount", "total_amount"))
+        invoice_lines = list(quotation.lines.all())
+        quotation.net_total = sum((line.net_amount for line in invoice_lines), Decimal("0"))
+        quotation.discount_total = sum((line.discount_amount for line in invoice_lines), Decimal("0"))
+        quotation.tax_total = sum((line.tax_amount for line in invoice_lines), Decimal("0"))
+        quotation.grand_total = quotation.net_total + quotation.tax_total
+        quotation.save(update_fields=("net_total", "discount_total", "tax_total", "grand_total", "updated_at"))
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lines = validated_data.pop("lines")
+        quotation = SalesQuotation.objects.create(**validated_data, created_by=self.context["request"].user)
+        self._save_lines(quotation, lines)
+        return quotation
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        quotation = SalesQuotation.objects.select_for_update().get(pk=instance.pk)
+        if quotation.status != SalesQuotation.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل عرض سعر غير مسودة.")
+        lines = validated_data.pop("lines", None)
+        for field, value in validated_data.items():
+            setattr(quotation, field, value)
+        quotation.save()
+        if lines is not None:
+            for old_line in quotation.lines.all():
+                old_line.delete()
+            self._save_lines(quotation, lines)
+        return quotation
 
 
 class SalesInvoiceLineInputSerializer(serializers.Serializer):
