@@ -125,8 +125,13 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__gt=revaluation_date,
         ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
-    if later_settlements or later_revaluations:
-        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو إعادة تقييم مرحّلة.")
+        later_returns = SupplierReturn.objects.filter(
+            invoice=invoice,
+            status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),
+            return_date__gte=revaluation_date,
+        ).exists()
+    if later_settlements or later_revaluations or (direction == "payable" and later_returns):
+        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو مرتجعًا أو إعادة تقييم مرحّلة.")
 
     approved = ExchangeRate.objects.filter(
         company=invoice.company, currency=invoice.transaction_currency,
