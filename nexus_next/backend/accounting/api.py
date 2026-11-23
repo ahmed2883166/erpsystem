@@ -78,6 +78,15 @@ def _branch_aware_balance_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal
     return result
 
 
+def _ensure_period_open(fiscal_year, entry_date):
+    """تحويل أخطاء إقفال الفترة إلى استجابة تحقق مناسبة لواجهة API."""
+    try:
+        ensure_fiscal_period_open(fiscal_year, entry_date)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+
 class AccountingViewSet(viewsets.ModelViewSet):
     permission_classes = (CompanyRolePermission,)
 
@@ -440,7 +449,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
     def perform_create(self, serializer):
         """حصر إنشاء القيود الافتتاحية والختامية في مدير الشركة ومنع إنشاء قيد في فترة مغلقة."""
-        ensure_fiscal_period_open(serializer.validated_data["fiscal_year"], serializer.validated_data["entry_date"])
+        _ensure_period_open(serializer.validated_data["fiscal_year"], serializer.validated_data["entry_date"])
         company_id = serializer.validated_data["company"].pk
         source_type = serializer.validated_data.get("source_type", JournalEntry.Source.MANUAL)
         if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and not has_company_role(
@@ -453,7 +462,7 @@ class JournalEntryViewSet(AccountingViewSet):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
-        ensure_fiscal_period_open(
+        _ensure_period_open(
             serializer.validated_data.get("fiscal_year", serializer.instance.fiscal_year),
             serializer.validated_data.get("entry_date", serializer.instance.entry_date),
         )
@@ -467,7 +476,7 @@ class JournalEntryViewSet(AccountingViewSet):
     def perform_destroy(self, instance):
         if instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن حذف قيد مرحّل أو معكوس.")
-        ensure_fiscal_period_open(instance.fiscal_year, instance.entry_date)
+        _ensure_period_open(instance.fiscal_year, instance.entry_date)
         super().perform_destroy(instance)
 
     @decorators.action(detail=True, methods=("post",))
