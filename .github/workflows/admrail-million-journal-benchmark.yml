@@ -39,7 +39,6 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       ALLOW_BENCHMARK_DATABASE: "1"
-      BENCHMARK_OUTPUT: ${{ runner.temp }}/million-journal-benchmark.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -56,6 +55,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Admrail-Million-Journal-Benchmark
-          path: ${{ runner.temp }}/million-journal-benchmark.json
+          path: nexus_next/backend/million-journal-benchmark.json
           if-no-files-found: warn
           retention-days: 14
