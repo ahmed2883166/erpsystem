@@ -503,7 +503,7 @@ class JournalEntryViewSet(AccountingViewSet):
         entry = self.get_object()
         self._require_write_role(entry.company_id)
         try:
-            entry = post_journal(entry.pk)
+            entry = post_journal(entry.pk, actor=request.user)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
@@ -586,7 +586,7 @@ class JournalEntryViewSet(AccountingViewSet):
             for line in original_lines
         ])
         try:
-            reversal = post_journal(reversal.pk)
+            reversal = post_journal(reversal.pk, actor=request.user)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
