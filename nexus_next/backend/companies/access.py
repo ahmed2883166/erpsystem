@@ -71,3 +71,19 @@ def is_platform_owner(user):
         return False
     from .models import PlatformOwner
     return PlatformOwner.objects.filter(user=user, is_active=True).exists()
+
+
+
+def resolve_warehouse_branch(company, warehouse):
+    """توحيد الفرع المحاسبي للمخزن بين التحقق والترحيل."""
+    branch = warehouse.branch if warehouse.branch_id else None
+    if branch:
+        return branch
+    branch = Branch.objects.filter(
+        company=company, is_active=True, is_head_office=True,
+    ).first()
+    if not branch:
+        branch = Branch.objects.filter(
+            company=company, is_active=True,
+        ).order_by("code", "pk").first()
+    return branch
