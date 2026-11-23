@@ -801,6 +801,10 @@ def post_supplier_return(return_id, user):
     invoice = PurchaseInvoice.objects.select_for_update().select_related(
         "company", "supplier", "receipt", "receipt__warehouse",
     ).get(pk=document.invoice_id)
+    if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
+        purchase_invoice=invoice,
+    ).exists():
+        raise ValidationError("لا يمكن ترحيل مرتجع فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if invoice.status != PurchaseInvoice.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل مرتجع قبل ترحيل فاتورة المورد.")
     if document.return_date < invoice.invoice_date:
@@ -952,6 +956,10 @@ def reverse_supplier_return(return_id, user, entry_date):
     if entry_date < document.return_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ المرتجع.")
     invoice = PurchaseInvoice.objects.select_for_update().get(pk=document.invoice_id)
+    if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
+        purchase_invoice=invoice,
+    ).exists():
+        raise ValidationError("لا يمكن عكس مرتجع فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if document.journal_entry.status != JournalEntry.Status.POSTED:
         raise ValidationError("القيد الأصلي للمرتجع ليس مرحّلًا.")
     lines = list(document.lines.select_for_update(of=("self",)).select_related(
