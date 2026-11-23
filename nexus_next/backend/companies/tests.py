@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.contrib.auth import get_user_model
-from .access import accessible_branches, accessible_companies
+from .access import accessible_branches, accessible_companies, can_access_branch
 from .models import Branch, Company, Currency, FiscalYear
 
 class CompanyFoundationTests(TestCase):
@@ -173,6 +173,9 @@ class BranchMembershipIsolationTests(TestCase):
             accessible_branches(self.user, self.company.pk).values_list("pk", flat=True)
         )
         self.assertSetEqual(visible_ids, {self.cairo.pk})
+        self.assertTrue(can_access_branch(self.user, self.cairo.pk, self.company.pk))
+        self.assertFalse(can_access_branch(self.user, self.alex.pk, self.company.pk))
+        self.assertFalse(can_access_branch(self.user, self.other_branch.pk, self.company.pk))
         self.assertFalse(accessible_branches(self.user, self.other_company.pk).exists())
 
     def test_all_branches_membership_includes_only_that_company(self):
