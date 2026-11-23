@@ -1271,6 +1271,7 @@ class PurchasingWorkflowTests(APITestCase):
         TreasuryAccount.objects.create(
             company=self.company, branch=self.branch, account=bank, kind=TreasuryAccount.Kind.BANK,
             code="BANK-REFUND", name_ar="بنك استرداد المورد", currency_code="EGP",
+            opening_balance=Decimal("228"),
         )
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
