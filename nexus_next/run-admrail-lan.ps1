@@ -39,6 +39,11 @@ if (-not [int]::TryParse($Settings["SECURE_HSTS_SECONDS"], [ref]$Hsts) -or $Hsts
   throw "SECURE_HSTS_SECONDS must be at least 31536000."
 }
 
+if ($ConfigureFirewall) {
+  $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  if (-not $IsAdmin) { throw "Run PowerShell as Administrator when using -ConfigureFirewall." }
+}
+
 $Caddy = Join-Path $Root "tools\caddy.exe"
 if (-not (Test-Path -LiteralPath $Caddy)) {
   $Command = Get-Command "caddy.exe" -ErrorAction SilentlyContinue
@@ -75,8 +80,6 @@ Start-Sleep -Seconds 2
 if ($CaddyProcess.HasExited) { throw "Caddy failed to start. Check port 443 and the Caddy log." }
 
 if ($ConfigureFirewall) {
-  $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-  if (-not $IsAdmin) { throw "Run PowerShell as Administrator when using -ConfigureFirewall." }
   New-NetFirewallRule -DisplayName "Admrail ERP HTTPS LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private -ErrorAction SilentlyContinue | Out-Null
 } else {
   Write-Host "If needed, allow TCP 443 on the Windows Private profile only; do not open 8000 or 5432." -ForegroundColor Yellow
