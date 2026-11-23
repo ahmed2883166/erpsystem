@@ -29,7 +29,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [quoteLines, setQuoteLines] = useState<QuotationDraftLine[]>([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]);
   const [quoteForm, setQuoteForm] = useState({customer:"",quotation_number:"",quotation_date:new Date().toISOString().slice(0,10),valid_until:new Date(Date.now()+14*86400000).toISOString().slice(0,10),notes:""});
   const [convertingQuoteId, setConvertingQuoteId] = useState<number|null>(null);
-  const [quoteDeliveryForm, setQuoteDeliveryForm] = useState({warehouse:"",delivery_number:"",delivery_date:new Date().toISOString().slice(0,10)});
+  const [quoteDeliveryForm, setQuoteDeliveryForm] = useState<{warehouse:string;delivery_number:string;delivery_date:string;expiry_dates:Record<string,string>}>({warehouse:"",delivery_number:"",delivery_date:new Date().toISOString().slice(0,10),expiry_dates:{}});
   const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
   const [aging, setAging] = useState<CustomerAging | null>(null);
   const [busy, setBusy] = useState(false);
@@ -114,6 +114,7 @@ const refresh = async () => {
         warehouse:Number(quoteDeliveryForm.warehouse),
         delivery_number:quoteDeliveryForm.delivery_number,
         delivery_date:quoteDeliveryForm.delivery_date,
+        expiry_dates:quoteDeliveryForm.expiry_dates,
       });
       setConvertingQuoteId(null); setQuoteDeliveryForm(old=>({...old,delivery_number:""}));
       await refresh(); setTab("deliveries");
@@ -272,7 +273,7 @@ const post = async (action: () => Promise<unknown>) => {
       <label>صالح حتى<input required type="date" min={quoteForm.quotation_date} value={quoteForm.valid_until} onChange={e=>setQuoteForm({...quoteForm,valid_until:e.target.value})}/></label>
       <div className="inventory-line-editor inventory-wide"><div className="inventory-line-heading"><strong>بنود عرض السعر</strong><button type="button" className="subtle-button" onClick={()=>setQuoteLines(old=>[...old,{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}])}>إضافة بند</button></div>
         {quoteLines.map((line,index)=><div className="inventory-form-row" key={index}>
-          <label>الصنف<select required value={line.product} onChange={e=>{const product=products.find(x=>x.id===Number(e.target.value));setQuoteLines(old=>old.map((x,i)=>i===index?{...x,product:e.target.value,unit_price:product?.sale_price||"0"}:x));}}><option value="">اختر الصنف</option>{products.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
+          <label>الصنف<select required value={line.product} onChange={e=>{const product=products.find(x=>x.id===Number(e.target.value));setQuoteLines(old=>old.map((x,i)=>i===index?{...x,product:e.target.value,unit_price:product?.sale_price||"0"}:x));}}><option value="">اختر الصنف</option>{products.filter(x=>x.is_active && x.product_type === "goods").map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
           <label>الكمية<input required type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={e=>setQuoteLines(old=>old.map((x,i)=>i===index?{...x,quantity:e.target.value}:x))}/></label>
           <label>سعر الوحدة<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e=>setQuoteLines(old=>old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))}/></label>
           <label>الضريبة %<input type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e=>setQuoteLines(old=>old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))}/></label>
@@ -288,6 +289,7 @@ const post = async (action: () => Promise<unknown>) => {
       <label>المخزن<select required value={quoteDeliveryForm.warehouse} onChange={e=>setQuoteDeliveryForm({...quoteDeliveryForm,warehouse:e.target.value})}><option value="">اختر المخزن</option>{warehouses.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
       <label>رقم إذن التسليم<input required maxLength={37} value={quoteDeliveryForm.delivery_number} onChange={e=>setQuoteDeliveryForm({...quoteDeliveryForm,delivery_number:e.target.value})}/></label>
       <label>تاريخ التسليم<input required type="date" value={quoteDeliveryForm.delivery_date} onChange={e=>setQuoteDeliveryForm({...quoteDeliveryForm,delivery_date:e.target.value})}/></label>
+      {quotations.find(q=>q.id===convertingQuoteId)?.quotation_lines.filter(line=>products.find(p=>p.id===line.product)?.track_expiry).map(line=><label key={line.id}>تاريخ صلاحية {line.product_name}<input required type="date" value={quoteDeliveryForm.expiry_dates[String(line.id)]||""} onChange={e=>setQuoteDeliveryForm(old=>({...old,expiry_dates:{...old.expiry_dates,[String(line.id)]:e.target.value}}))}/></label>)}
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>إنشاء إذن تسليم مسودة</button><button type="button" className="subtle-button" onClick={()=>setConvertingQuoteId(null)}>إلغاء</button></div>
     </form>}
 \n    {showForm && tab === "deliveries" && <form className="inventory-form" onSubmit={createDelivery}>
@@ -357,7 +359,7 @@ const post = async (action: () => Promise<unknown>) => {
         <td><div className="table-actions">
           {q.status==="draft" && <button className="primary-button" type="button" disabled={busy} onClick={()=>void quoteAction("send",q.id)}>إرسال</button>}
           {q.status==="sent" && <><button className="primary-button" type="button" disabled={busy} onClick={()=>void quoteAction("accept",q.id)}>قبول</button><button className="subtle-button" type="button" disabled={busy} onClick={()=>void quoteAction("reject",q.id)}>رفض</button></>}
-          {q.status==="accepted" && <button className="primary-button" type="button" disabled={busy} onClick={()=>{setConvertingQuoteId(q.id);setQuoteDeliveryForm(old=>({...old,delivery_number:"SD-"+q.quotation_number}));}}>تحويل لإذن تسليم</button>}
+          {q.status==="accepted" && <button className="primary-button" type="button" disabled={busy} onClick={()=>{setConvertingQuoteId(q.id);setQuoteDeliveryForm(old=>({...old,delivery_number:("SD-"+q.quotation_number).slice(0,37),expiry_dates:{}}));}}>تحويل لإذن تسليم</button>}
           {q.converted_delivery_number && <span>{q.converted_delivery_number}</span>}
         </div></td>
       </tr>)}
