@@ -69,6 +69,8 @@ export const authApi = {
   },
 };
 
+export type ApiPage<T> = { count: number; next: string | null; previous: string | null; results: T[] };
+export type JournalSummary = { total: number; drafts: number; posted: number };
 export type Journal = {
   id: number; company: number; branch: number; branch_code: string; fiscal_year: number;
   fiscal_year_name: string; entry_number: string; entry_date: string; description: string;
@@ -434,7 +436,12 @@ export const api = {
     return body as AccountImportPreview | AccountImportResult;
   },
   // جلب قيود اليومية للشركة مرتبة حسب التاريخ.
-  journals: (companyId: number) => request<Journal[]>(`/api/accounting/journal-entries/?company=${companyId}&ordering=-entry_date`),
+  journals: (companyId: number, page = 1, search = "") => {
+    const q = new URLSearchParams({ company: String(companyId), ordering: "-entry_date", page: String(page), page_size: "100" });
+    if (search.trim()) q.set("search", search.trim());
+    return request<ApiPage<Journal>>(`/api/accounting/journal-entries/?${q.toString()}`);
+  },
+  journalSummary: (companyId: number) => request<JournalSummary>(`/api/accounting/journal-entries/summary/?company=${companyId}`),
   // جلب تفاصيل قيد يومية محدد بما فيها سطوره.
   journalDetail: (id: number) => request<Journal>(`/api/accounting/journal-entries/${id}/`),
   // جلب تقرير مطابقة ضريبة القيمة المضافة للفترة والفرع.
