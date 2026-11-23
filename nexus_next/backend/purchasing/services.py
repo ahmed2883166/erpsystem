@@ -9,7 +9,7 @@ from django.db.models import F, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement
@@ -609,7 +609,10 @@ def post_supplier_return(return_id, user):
     if invoice.status != PurchaseInvoice.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل مرتجع قبل ترحيل فاتورة المورد.")
     if invoice.transaction_currency_id:
-        raise ValidationError("مرتجعات الفواتير الأجنبية موقوفة مؤقتًا حتى استكمال معالجة فروق العملة.")
+        if SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists():
+            raise ValidationError("لا يمكن مرتجعة فاتورة أجنبية سبق سداد جزء منها؛ يلزم استكمال تسوية العملة على مستوى الدفعات أولًا.")
+        if FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists():
+            raise ValidationError("لا يمكن مرتجعة فاتورة أجنبية لها إعادة تقييم سابقة؛ يلزم عكس/تسوية إعادة التقييم أولًا.")
     if document.return_date < invoice.invoice_date:
         raise ValidationError("تاريخ المرتجع لا يجوز أن يسبق تاريخ فاتورة المورد.")
     if document.company_id != invoice.company_id or document.supplier_id != invoice.supplier_id:
@@ -630,6 +633,8 @@ def post_supplier_return(return_id, user):
     tax_total = Decimal("0")
     recoverable_total = Decimal("0")
     inventory_credit = Decimal("0")
+    transaction_net_total = Decimal("0")
+    transaction_tax_total = Decimal("0")
     movement = document.stock_movement
     if movement.status != StockMovement.Status.DRAFT or movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN:
         raise ValidationError("حركة المخزون المرتبطة بالمرتجع غير صالحة أو سبق ترحيلها.")
@@ -666,6 +671,15 @@ def post_supplier_return(return_id, user):
         net_total += line_net
         tax_total += line_tax
         recoverable_total += recoverable
+        if invoice.transaction_currency_id:
+            if invoice_line.transaction_net_amount is None or invoice_line.transaction_tax_amount is None:
+                raise ValidationError("بيانات العملة الأجنبية غير مكتملة في بند فاتورة المورد.")
+            transaction_net_total += (
+                invoice_line.transaction_net_amount * ratio
+            ).quantize(Decimal("0.0001"))
+            transaction_tax_total += (
+                invoice_line.transaction_tax_amount * ratio
+            ).quantize(Decimal("0.0001"))
 
     # The stock service consumes only layers whose root is the exact receipt line.
     movement = post_stock_movement(movement.pk, user)
@@ -728,10 +742,15 @@ def post_supplier_return(return_id, user):
     document.net_amount = net_total
     document.tax_amount = tax_total
     document.grand_total = grand_total
+    if invoice.transaction_currency_id:
+        document.transaction_net_amount = transaction_net_total
+        document.transaction_tax_amount = transaction_tax_total
+        document.transaction_grand_total = transaction_net_total + transaction_tax_total
     document.journal_entry = posted_entry
     document.status = SupplierReturn.Status.POSTED
     document.posted_at = timezone.now()
     document.save(update_fields=(
-        "net_amount", "tax_amount", "grand_total", "journal_entry", "status", "posted_at",
+        "net_amount", "tax_amount", "grand_total", "transaction_net_amount", "transaction_tax_amount",
+        "transaction_grand_total", "journal_entry", "status", "posted_at",
     ))
     return document
