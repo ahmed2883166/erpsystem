@@ -62,7 +62,7 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
         date_field = "receipt_date" if direction == "receivable" else "payment_date"
         after_latest = settlements.filter(**{f"{date_field}__gt": latest.revaluation_date})
         current_used_after = _sum(after_latest, "carrying_base_amount")
-        current_remaining = latest.new_carrying_amount - current_used_after - returned_base
+        current_remaining = latest.new_carrying_amount - current_used_after
     else:
         current_remaining = invoice.grand_total - _sum(settlements, "carrying_base_amount") - returned_base
 
