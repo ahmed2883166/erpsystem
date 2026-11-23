@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api, type Company, type CompanyMembership, type CompanyUserLookup, type Currency } from "./api";
+import AboutPanel from "./AboutPanel";
 
 type Props = {
   companies: Company[];
@@ -37,6 +38,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [editAddress, setEditAddress] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
+  const [showAbout, setShowAbout] = useState(false);
 
   const selected = companies.find(item => item.id === selectedId) || null;
   const refreshCompanies = async () => {
@@ -203,9 +205,10 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
     </aside>
     <main className="main-area">
       <header className="topbar"><div className="breadcrumb"><span>Admrail ERP v2</span><b>/</b>لوحة مالك المنصة</div>
-        <div className="topbar-actions"><span className="coming-soon">وصول إداري محدود</span><button type="button" className="subtle-button" onClick={() => void onLogout()}>تسجيل الخروج</button></div>
+        <div className="topbar-actions"><span className="coming-soon">وصول إداري محدود</span><button type="button" className="subtle-button" onClick={() => setShowAbout(true)}>حول البرنامج</button><button type="button" className="subtle-button" onClick={() => void onLogout()}>تسجيل الخروج</button></div>
       </header>
       <div className="page-content">
+        {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
         <section className="welcome-row"><div><p className="eyebrow">إدارة المنصة · Platform Owner</p><h1>لوحة مالك المنصة</h1><p className="welcome-copy">إدارة سجل الشركات وتعيين مديريها دون فتح دفاترها أو الاطلاع على معاملاتها المالية.</p></div></section>
         {error && <div className="error-banner">{error}</div>}
         {notice && <div className="success-banner">{notice}</div>}
