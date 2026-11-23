@@ -258,6 +258,29 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف فاتورة مسودة فقط إذا لم تنشئ اعتمادًا أو دفعة أو مردودًا أو قيدًا."""
+        invoice = PurchaseInvoice.objects.select_for_update().select_related(
+            "company", "receipt__warehouse"
+        ).get(pk=instance.pk)
+        self._check_write(invoice.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        if invoice.status != PurchaseInvoice.Status.DRAFT or invoice.journal_entry_id:
+            raise ValidationError("لا يمكن حذف فاتورة مورد مرحلة أو مرتبطة بقيد.")
+        if (
+            invoice.payments.exists()
+            or invoice.returns.exists()
+            or invoice.approval_requests.exists()
+            or invoice.fx_revaluations.exists()
+            or invoice.tax_allocations.exists()
+        ):
+            raise ValidationError("لا يمكن حذف فاتورة لها دفعة أو مردود أو طلب اعتماد أو إعادة تقييم أو توزيع ضريبي.")
+        for line in invoice.lines.select_for_update():
+            line.delete()
+        invoice.delete()
+
     @action(detail=True, methods=("post",), url_path="revalue")
     def revalue(self, request, pk=None):
         invoice = self.get_object()
