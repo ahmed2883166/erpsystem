@@ -13,7 +13,7 @@ from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment, cancel_payroll_payment_preparation, prepare_payroll_payment
 
 from hr.models import Department, Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet, EmployeeComponent
-from hr.services import calculate_component, money, salary_for_date
+from hr.services import calculate_component, calculate_payroll_cycle, money, salary_for_date
 
 
 
@@ -58,6 +58,69 @@ class EmployeeSalaryHistoryGuardTests(TestCase):
             del self.employee._salary_history_update
         self.employee.refresh_from_db()
         self.assertEqual(self.employee.basic_salary, Decimal("12000.0000"))
+
+
+class PayrollTaxPipelineTests(TestCase):
+    def test_employee_insurance_is_subtracted_before_progressive_tax_even_if_tax_assignment_is_older(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="HR-TAX-PIPE", name_ar="شركة اختبار وعاء الضريبة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        employee = Employee.objects.create(
+            company=company, code="EMP-TAX", full_name_ar="موظف ضريبة",
+            branch=branch, hire_date=date(2026, 1, 1),
+            basic_salary=Decimal("50000"), currency=currency,
+        )
+        from hr.services import EGYPT_2026_TAX_BRACKET_GROUPS
+        rule_set = PayrollRuleSet.objects.create(
+            company=company, country="EG", name="قواعد مصر 2026",
+            effective_from=date(2026, 1, 1),
+            configuration={
+                "insurance": {
+                    "min_base": "2700", "max_base": "16700",
+                    "employee_rate": "11", "employer_rate": "18.75",
+                },
+                "tax": {
+                    "annual_personal_exemption": "20000",
+                    "annual_bracket_groups": EGYPT_2026_TAX_BRACKET_GROUPS,
+                },
+            },
+        )
+        cycle = PayrollCycle.objects.create(
+            company=company, period_start=date(2026, 1, 1),
+            period_end=date(2026, 1, 31), payment_date=date(2026, 2, 1),
+            rule_set=rule_set,
+        )
+        insurance = PayrollComponent.objects.create(
+            company=company, code="INS", name_ar="تأمينات الموظف",
+            kind=PayrollComponent.Kind.DEDUCTION,
+            method=PayrollComponent.Method.EMPLOYEE_INSURANCE,
+        )
+        tax = PayrollComponent.objects.create(
+            company=company, code="TAX", name_ar="ضريبة المرتبات",
+            kind=PayrollComponent.Kind.DEDUCTION,
+            method=PayrollComponent.Method.PROGRESSIVE_TAX,
+        )
+        # Deliberately make the tax assignment sort before insurance.
+        EmployeeComponent.objects.create(
+            employee=employee, component=tax, effective_from=date(2026, 1, 2),
+        )
+        EmployeeComponent.objects.create(
+            employee=employee, component=insurance, effective_from=date(2026, 1, 1),
+        )
+
+        calculate_payroll_cycle(cycle.pk)
+
+        result = cycle.results.get(employee=employee)
+        insurance_line = result.lines.get(code_snapshot="INS")
+        tax_line = result.lines.get(code_snapshot="TAX")
+        self.assertEqual(insurance_line.amount, Decimal("1837.00"))
+        self.assertEqual(tax_line.calculation_snapshot["taxable_base"], "48163.00")
+        self.assertEqual(tax_line.calculation_snapshot["taxable_base_before_employee_insurance"], "50000.00")
 
 
 class PayrollCalculationTests(SimpleTestCase):
