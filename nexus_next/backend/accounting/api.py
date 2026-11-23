@@ -26,6 +26,7 @@ from .serializers import AccountRoleSerializer, ChartOfAccountSerializer, CostCe
 from .services import post_journal
 from .account_templates import ACTIVITY_LABELS, apply_activity_template, build_activity_template
 from .account_imports import inspect_account_workbook, import_account_rows
+from treasury.models import TreasuryFxRevaluation, TreasuryTransaction
 
 
 def _branch_aware_opening_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal_year_start, *, prefix="entry__"):
@@ -460,6 +461,11 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError("يمكن عكس قيد مرحّل أصلي فقط؛ لا يمكن عكس مسودة أو قيد عكسي.")
         if original.source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING):
             raise ValidationError("لا يمكن عكس قيد افتتاح أو إقفال من المسار العام؛ يلزم إجراء تصحيح مالي معتمد.")
+        if (
+            TreasuryTransaction.objects.filter(journal_entry=original).exists()
+            or TreasuryFxRevaluation.objects.filter(journal_entry=original).exists()
+        ):
+            raise ValidationError("لا يمكن عكس قيد خزينة أو إعادة تقييم خزينة من زر العكس العام؛ استخدم إجراء التصحيح داخل وحدة الخزينة حتى يتحدث رصيد العملة والمستند المرتبط.")
         fx_revaluation = None
         if original.source_type == JournalEntry.Source.FX_REVALUATION:
             fx_revaluation = FxSubledgerRevaluation.objects.select_for_update().filter(journal_entry=original).first()
@@ -544,7 +550,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
         lines = JournalLine.objects.filter(
             entry__company_id=company_id,
-            entry__status=JournalEntry.Status.POSTED,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry__entry_date__gte=date_from,
             entry__entry_date__lte=date_to,
             account__nature=ChartOfAccount.Nature.EXPENSE,
