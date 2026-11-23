@@ -597,6 +597,8 @@ export default function App() {
 
   useEffect(() => {
     if (!companyId) return;
+    setJournalPage(1);
+    setSearch("");
     let cancelled = false;
     setLoading(true);
     setError("");
