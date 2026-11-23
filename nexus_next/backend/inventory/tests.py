@@ -12,7 +12,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 
 from .models import (
-    Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse,
+    Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse,
 )
 from .api import StockBalanceViewSet
 from .serializers import ProductSerializer
@@ -290,6 +290,16 @@ class StockPostingServiceTests(TestCase):
         self.assertEqual(source_balance.inventory_value, Decimal("36.0000"))
         self.assertEqual(destination_balance.inventory_value, Decimal("60.0000"))
         self.assertEqual(transfer.lines.get().cost_amount, Decimal("60.0000"))
+        receipt_line = receipt.lines.get()
+        transfer_line = transfer.lines.get()
+        moved_layer = self.product.cost_layers.get(source_line=transfer_line)
+        original_layer = self.product.cost_layers.get(source_line=receipt_line)
+        self.assertEqual(moved_layer.root_source_line_id, receipt_line.pk)
+        self.assertEqual(moved_layer.parent_layer_id, original_layer.pk)
+        self.assertEqual(
+            list(StockCostConsumption.objects.filter(movement_line=transfer_line).values_list("source_layer_id", "quantity", "unit_cost")),
+            [(original_layer.pk, Decimal("5.0000"), Decimal("12.000000"))],
+        )
 
         linked_entries = list(
             transfer.journal_links.select_related("journal_entry__branch").order_by("journal_entry__entry_number")
