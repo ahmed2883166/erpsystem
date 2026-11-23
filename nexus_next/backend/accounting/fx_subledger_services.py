@@ -61,12 +61,13 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
             Q(status=SalesReturn.Status.POSTED)
             | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
         )
-    if direction == "receivable" and active_returns.filter(
-        transaction_grand_total__isnull=True
-    ).exists():
-        raise ValidationError(
+    if active_returns.filter(transaction_grand_total__isnull=True).exists():
+        message = (
             "يوجد مردود مبيعات قديم بلا لقطة عملة أجنبية؛ راجع بيانات المردود قبل تحصيل الفاتورة."
+            if direction == "receivable"
+            else "يوجد مرتجع مورد بلا لقطة عملة أجنبية؛ راجع بيانات المرتجع قبل سداد الفاتورة."
         )
+        raise ValidationError(message)
     returned_foreign = _sum(active_returns, "transaction_grand_total")
     returned_base = _sum(active_returns, "grand_total")
     remaining_foreign = (invoice.transaction_grand_total or Decimal("0")) - foreign_used - returned_foreign
