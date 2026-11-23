@@ -230,7 +230,15 @@ class JournalEntry(models.Model):
     class Meta:
         ordering = ("-entry_date", "-entry_number")
         constraints = [models.UniqueConstraint(fields=("company", "fiscal_year", "entry_number"), name="uq_journal_number_year")]
-        indexes = [models.Index(fields=("company", "entry_date", "status"))]
+        indexes = [
+            models.Index(fields=("company", "entry_date", "status")),
+            models.Index(
+                fields=("company", "branch", "entry_date"),
+                include=("source_type",),
+                condition=Q(status__in=("posted", "reversed")),
+                name="je_posted_branch_date_idx",
+            ),
+        ]
         verbose_name = "قيد يومية"
         verbose_name_plural = "قيود اليومية"
 
@@ -287,6 +295,10 @@ class JournalLine(models.Model):
         constraints = [
             models.CheckConstraint(condition=Q(debit__gte=0) & Q(credit__gte=0), name="ck_journal_line_nonnegative"),
             models.CheckConstraint(condition=(Q(debit__gt=0, credit=0) | Q(credit__gt=0, debit=0)), name="ck_journal_line_one_side"),
+        ]
+        indexes = [
+            models.Index(fields=("entry", "account"), include=("debit", "credit"), name="jl_entry_acct_cover_idx"),
+            models.Index(fields=("account", "entry"), include=("debit", "credit"), name="jl_acct_entry_cover_idx"),
         ]
 
     def save(self, *args, **kwargs):
