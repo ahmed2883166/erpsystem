@@ -30,6 +30,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [paymentAccountId, setPaymentAccountId] = useState("");
+  const [loanDisbursementAccount, setLoanDisbursementAccount] = useState("");
   const [results, setResults] = useState<HrPayrollResult[]>([]);
   const [payReport, setPayReport] = useState<HrEmployeePayReport | null>(null);
   const [salaryHistoryRows, setSalaryHistoryRows] = useState<HrSalaryHistory[]>([]);
@@ -73,6 +74,7 @@ const load = async () => {
       ]);
       setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows); setRuleSets(ruleRows);
       setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows); setAccounts(accountRows); setTreasuryAccounts(treasuryRows.filter(x=>x.is_active));
+      setLoanDisbursementAccount(old=>old || String(treasuryRows.find(x=>x.is_active)?.id || ""));
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
       setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(baseCurrencyId||currencyRows[0]?.id||"")}));
@@ -179,6 +181,16 @@ const submitLoan = async (event:FormEvent) => {
       await hrApi.createEmployeeLoanWithSchedule({...loanDraft,employee:Number(loanDraft.employee),receivable_account:Number(loanDraft.receivable_account),principal:principal.toFixed(4),installment_count:count,installment_amount:regular.toFixed(4),installments});
       setNotice("تم تسجيل السلفة وإنشاء جدول أقساطها دفعة واحدة.");await load();
     } catch(reason){setError(reason instanceof Error?reason.message:"تعذر تسجيل السلفة أو جدول أقساطها.");}
+    finally{setBusy(false);}
+  };
+  const disburseLoan = async (loanId:number) => {
+    if(!loanDisbursementAccount){setError("اختر الخزينة أو البنك الذي سيتم صرف السلفة منه.");return;}
+    setBusy(true);setError("");setNotice("");
+    try {
+      const result=await hrApi.disburseEmployeeLoan(loanId,Number(loanDisbursementAccount));
+      setNotice(result.approval_pending ? (result.detail || "تم تجهيز مستند الصرف وينتظر الاعتماد المالي.") : "تم صرف السلفة وترحيل قيدها المحاسبي.");
+      await load();
+    } catch(reason){setError(reason instanceof Error?reason.message:"تعذر صرف السلفة.");}
     finally{setBusy(false);}
   };
   const selectedSalaryEmployee=employees.find(employee=>employee.id===Number(salaryDraft.employee));
@@ -447,7 +459,8 @@ const exportEmployeePayReport = () => {
         <label>قيمة القسط<input type="number" min="0.01" step="0.01" value={loanDraft.installment_amount} onChange={e=>setLoanDraft({...loanDraft,installment_amount:e.target.value})}/></label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!employees.length}>إنشاء السلفة وجدول الأقساط</button></div>
       </form>
-      <div className="data-table-wrap"><table><thead><tr><th>رقم السلفة</th><th>الموظف</th><th>الأصل</th><th>الرصيد</th><th>قيمة القسط</th><th>الحالة</th></tr></thead><tbody>{loans.map(x=><tr key={x.id}><td>{x.reference}</td><td>{x.employee_name}</td><td>{money(x.principal)}</td><td>{money(x.outstanding_balance)}</td><td>{money(x.installment_amount)}</td><td>{x.status}</td></tr>)}</tbody></table>{!loans.length&&<div className="table-empty">لا توجد سلف مسجلة.</div>}</div>
+      <label style={{maxWidth:360,marginTop:14}}>الخزينة أو البنك لصرف السلفة<select value={loanDisbursementAccount} onChange={e=>setLoanDisbursementAccount(e.target.value)}><option value="">اختر حساب الخزينة</option>{treasuryAccounts.map(account=><option key={account.id} value={account.id}>{account.code} — {account.name_ar} ({account.currency_code})</option>)}</select></label>
+      <div className="data-table-wrap"><table><thead><tr><th>رقم السلفة</th><th>الموظف</th><th>الأصل</th><th>الرصيد</th><th>قيمة القسط</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{loans.map(x=><tr key={x.id}><td>{x.reference}</td><td>{x.employee_name}</td><td>{money(x.principal)}</td><td>{money(x.outstanding_balance)}</td><td>{money(x.installment_amount)}</td><td>{{draft:"مسودة",pending:"بانتظار الاعتماد",active:"سارية",settled:"مسددة",suspended:"موقوفة"}[x.status] || x.status}</td><td>{(x.status==="draft"||x.status==="pending") ? <button type="button" className="subtle-button" disabled={busy||!loanDisbursementAccount} onClick={()=>void disburseLoan(x.id)}>{x.status==="pending"?"إعادة محاولة الصرف":"صرف السلفة"}</button> : x.disbursement_transaction ? "تم الصرف" : "—"}</td></tr>)}</tbody></table>{!loans.length&&<div className="table-empty">لا توجد سلف مسجلة.</div>}</div>
     </>}
     {tab==="rules"&&<>
       <div className="asset-report-note">لا توجد نسب قانونية افتراضية. أدخل القيم المعتمدة للشركة والسنة من مستنداتك الرسمية. محرك الحساب لن يستخدم قواعد ناقصة.</div>
