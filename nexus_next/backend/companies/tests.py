@@ -205,6 +205,16 @@ class BranchMembershipIsolationTests(TestCase):
         )
         self.assertFalse(accessible_branches(self.user, self.company.pk).exists())
 
+    def test_company_admin_membership_requires_all_branches_at_model_save(self):
+        from .models import CompanyMembership
+
+        with self.assertRaises(ValidationError):
+            CompanyMembership.objects.create(
+                user=self.user,
+                company=self.company,
+                role=CompanyMembership.Role.ADMIN,
+                all_branches=False,
+            )
 
     def test_membership_serializer_rejects_branch_from_another_company(self):
         from .serializers import CompanyMembershipSerializer
