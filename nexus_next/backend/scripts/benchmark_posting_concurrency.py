@@ -1,9 +1,11 @@
 """Concurrent journal-draft creation and posting benchmark over authenticated HTTP."""
+import atexit
 import concurrent.futures
 import http.cookiejar
 import json
 import math
 import os
+import secrets
 import socket
 import threading
 import time
@@ -23,8 +25,34 @@ from accounts.models import User
 from companies.models import Company, CompanyMembership, FiscalYear
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
 
+def require_isolated_benchmark_database():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT current_database()")
+        database_name = cursor.fetchone()[0]
+    if not (
+        database_name.endswith("benchmark")
+        or database_name.endswith("nexus_test")
+        or os.getenv("ALLOW_BENCHMARK_DATABASE") == "1"
+    ):
+        raise SystemExit(
+            f"Refusing benchmark writes to database {database_name!r}; "
+            "use an isolated *benchmark or nexus_test database."
+        )
+
+
+def deactivate_benchmark_users(usernames):
+    try:
+        for user in User.objects.filter(username__in=usernames):
+            user.is_active = False
+            user.set_unusable_password()
+            user.save(update_fields=["is_active", "password"])
+        CompanyMembership.objects.filter(user__username__in=usernames).update(is_active=False)
+    except Exception:  # noqa: BLE001 - cleanup must not hide the benchmark's original result.
+        pass
+
+
 BASE = os.getenv("BENCHMARK_BASE_URL", "http://127.0.0.1:8000")
-PASSWORD = "Posting-Benchmark-Only-2026!"
+PASSWORD = secrets.token_urlsafe(32)
 ENTRIES_PER_USER = 5
 COUNTS = (10, 20, 30, 50)
 
@@ -59,6 +87,7 @@ def percentile(values, fraction):
 
 
 def main():
+    require_isolated_benchmark_database()
     company = Company.objects.filter(code__startswith="BENCH-").order_by("-id").first()
     if not company:
         raise SystemExit("The million-entry benchmark company was not found.")
@@ -70,6 +99,7 @@ def main():
         raise SystemExit("Benchmark fiscal year, branch, or posting accounts are missing.")
     suffix = str(int(time.time()))
     user_records = []
+    atexit.register(deactivate_benchmark_users, user_records)
     for index in range(max(COUNTS)):
         username = f"posting-load-{suffix}-{index + 1:02d}"
         user = User.objects.create_user(username=username, password=PASSWORD)
