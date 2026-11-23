@@ -327,6 +327,8 @@ class BranchViewSet(viewsets.ModelViewSet):
         if target_company.pk != current_company_id:
             raise ValidationError({"company": "لا يمكن نقل فرع قائم إلى شركة أخرى."})
         if branch.is_active and serializer.validated_data.get("is_active") is False:
+            if branch.is_head_office:
+                raise ValidationError({"is_active": "لا يمكن إيقاف المركز الرئيسي؛ يجب نقل صفته إلى فرع آخر أولًا."})
             active_count = Branch.objects.filter(company_id=current_company_id, is_active=True).count()
             if active_count <= 1:
                 raise ValidationError({"is_active": "لا يمكن إيقاف آخر فرع نشط بالشركة؛ أضف فرعًا بديلًا أولًا."})
