@@ -3,7 +3,7 @@
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
-from django.db import connection, transaction
+from django.db import transaction
 from django.utils import timezone
 
 from companies.models import FiscalYear
