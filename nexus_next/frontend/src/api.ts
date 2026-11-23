@@ -93,6 +93,7 @@ export type Customer = {
   id: number; company: number; code: string; customer_type: "company" | "individual";
   name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string;
   email: string; address: string; credit_limit: string; payment_terms_days: number;
+  default_discount_percent: string; discount_approval_limit: string | null;
   notes: string; is_active: boolean; created_at: string; updated_at: string;
 };
 export type PurchaseOrder = {
