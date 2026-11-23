@@ -49,7 +49,7 @@ class SalesBaseViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
-        raise PermissionDenied("لا يمكن حذف مستندات المبيعات؛ استخدم الإلغاء المعتمد بعد إضافته.")
+        raise PermissionDenied("لا يمكن حذف مستندات المبيعات؛ استخدم إجراء مردود المبيعات أو عكس سند القبض المعتمد حسب نوع المستند.")
 
 
 class SalesDeliveryViewSet(SalesBaseViewSet):
