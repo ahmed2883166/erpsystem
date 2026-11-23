@@ -60,7 +60,7 @@ def _create_posted_entry(movement, user, fiscal_year, branch, suffix, debit_acco
         JournalLine(entry=entry, account=credit_account, description=description[:300], debit=0, credit=amount),
     ])
     try:
-        posted = post_journal(entry.pk)
+        posted = post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
