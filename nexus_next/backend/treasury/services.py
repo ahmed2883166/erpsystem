@@ -159,7 +159,7 @@ def post_treasury_transaction(transaction_id, user=None):
         fx_difference = Decimal("0")
         doc.carrying_amount = None
         totals = source.account.journal_lines.filter(
-            entry__status=JournalEntry.Status.POSTED
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED)
         ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
         opening_base = Decimal("0") if source.opening_journal_entry_id else source.opening_balance
         available = opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
@@ -324,7 +324,7 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
             entry_number=f"FX-REV-{account.pk}-{revaluation_date:%Y%m%d}",
             entry_date=revaluation_date,
             description=f"إعادة تقييم {account.name_ar} بعملة {account.currency_code}",
-            source_type=JournalEntry.Source.MANUAL, created_by=user,
+            source_type=JournalEntry.Source.FX_REVALUATION, created_by=user,
         )
         if difference > 0:
             counterpart = get_account_for_role(account.company, "unrealized_fx_gain")
