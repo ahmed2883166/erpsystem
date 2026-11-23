@@ -13,7 +13,7 @@ from companies.models import Branch, Company, CompanyMembership, Currency, Excha
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 from suppliers.models import Supplier
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, SupplierPayment
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -1161,3 +1161,61 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["invoice_lines"][0]["tax_code"], code.pk)
         self.assertEqual(response.data["tax_total"], "0.0000")
+
+
+    def test_supplier_return_releases_only_original_receipt_cost_and_reduces_payable(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-RETURN-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        invoice_id = invoice_response.data["id"]
+        invoice_line_id = invoice_response.data["invoice_lines"][0]["id"]
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        created = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "return_number": "RET-001", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice_line_id, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        returned = self.client.post(
+            f"/api/purchasing/returns/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(returned.status_code, 200, returned.data)
+        self.assertEqual(returned.data["status"], "posted")
+        self.assertEqual(returned.data["net_amount"], "100.0000")
+        self.assertEqual(returned.data["tax_amount"], "14.0000")
+        self.assertEqual(returned.data["grand_total"], "114.0000")
+
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("1.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+        return_doc = SupplierReturn.objects.get(pk=returned.data["id"])
+        self.assertEqual(return_doc.stock_movement.status, StockMovement.Status.POSTED)
+        self.assertFalse(return_doc.stock_movement.journal_links.exists())
+        self.assertEqual(
+            JournalLine.objects.get(entry=return_doc.journal_entry, account__code="2200").debit,
+            Decimal("114.0000"),
+        )
+        self.assertEqual(
+            JournalLine.objects.get(entry=return_doc.journal_entry, account__code="1000").credit,
+            Decimal("100.0000"),
+        )
+        self.assertEqual(
+            JournalLine.objects.get(entry=return_doc.journal_entry, account__code="1300").credit,
+            Decimal("14.0000"),
+        )
+        invoice_data = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
+        self.assertEqual(invoice_data["balance_due"], "114.0000")
+        statement = self.client.get(
+            f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["closing_balance"], "114.0000")
+        self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_return")
