@@ -252,6 +252,36 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertIn("الرصيد المتاح غير كافٍ", str(posted.data))
         self.assertEqual(JournalEntry.objects.count(), 0)
 
+    def test_available_balance_counts_original_and_reversal_journal_together(self):
+        self.cash.opening_balance = Decimal("1000.0000")
+        self.cash.save(update_fields=("opening_balance",))
+        original = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CASH-MANUAL-REV-001", entry_date=date(2026, 3, 15),
+            description="مصروف نقدي يدوي سيتم عكسه",
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=original, account=self.cash_gl, debit=Decimal("500.0000"), credit=0),
+            JournalLine(entry=original, account=self.revenue_gl, debit=0, credit=Decimal("500.0000")),
+        ])
+        post_journal(original.pk)
+        reversed_response = self.client.post(
+            f"/api/accounting/journal-entries/{original.pk}/reverse/",
+            {"entry_date": "2026-03-16"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 201, reversed_response.data)
+
+        payment = self._create(
+            kind="payment", document_number="TR-PAY-AFTER-REVERSAL",
+            amount="800.0000",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+
 
     def test_foreign_bank_reconciliation_matches_statement_in_foreign_currency(self):
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
