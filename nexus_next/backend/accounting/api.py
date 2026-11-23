@@ -983,9 +983,14 @@ class JournalEntryViewSet(AccountingViewSet):
         page = int(page_raw)
         page_size = min(int(page_size_raw), 500)
 
-        period_lines = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
+        period_scope = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
             entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
-        ).annotate(
+        )
+        total_rows = period_scope.count()
+        period_totals = period_scope.aggregate(total=Sum(
+            ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
+        ))
+        period_lines = period_scope.annotate(
             movement_balance=Window(
                 expression=Sum(ExpressionWrapper(
                     F("debit") - F("credit"),
@@ -995,7 +1000,6 @@ class JournalEntryViewSet(AccountingViewSet):
             )
         ).select_related("entry", "entry__branch").order_by("entry__entry_date", "entry_id", "id")
 
-        total_rows = period_lines.count()
         offset = (page - 1) * page_size
         page_lines = period_lines[offset:offset + page_size]
         rows = []
@@ -1011,11 +1015,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "company": company_id, "account": account_id, "account_code": account.code,
             "account_name": account.name_ar, "date_from": date_from, "date_to": date_to,
             "opening_balance": opening_balance, "rows": rows,
-            "closing_balance": (
-                opening_balance + (period_lines.aggregate(total=Sum(
-                    ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
-                ))["total"] or Decimal("0")) * balance_sign
-            ),
+            "closing_balance": opening_balance + (period_totals["total"] or Decimal("0")) * balance_sign,
             "pagination": {
                 "page": page, "page_size": page_size, "total_rows": total_rows,
                 "total_pages": (total_rows + page_size - 1) // page_size,
