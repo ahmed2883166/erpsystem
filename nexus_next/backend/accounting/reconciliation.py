@@ -36,20 +36,26 @@ def _journal_balance(account_ids, company_id, branch_ids, as_of, journal_ids=Non
 
 
 def _collect_ids(querysets, fields):
-    ids = set()
+    """Return linked journal IDs as a database subquery, never a Python ID set."""
+    predicate = Q()
+    has_fields = False
     for queryset, field_names in zip(querysets, fields):
-        for row in queryset.values_list(*field_names):
-            ids.update(value for value in row if value)
-    return ids
+        for field_name in field_names:
+            predicate |= Q(
+                pk__in=queryset.exclude(**{f"{field_name}__isnull": True}).values(field_name)
+            )
+            has_fields = True
+    if not has_fields:
+        return JournalEntry.objects.none().values("pk")
+    return JournalEntry.objects.filter(predicate).values("pk")
 
 
 def _with_reversals(journal_ids):
-    if not journal_ids:
-        return set()
-    reversal_ids = JournalEntry.objects.filter(
-        reversal_of_id__in=journal_ids, status__in=POSTED_STATUSES
-    ).values_list("pk", flat=True)
-    return set(journal_ids).union(reversal_ids)
+    """Keep original and posted reversal IDs in SQL instead of materializing them."""
+    return JournalEntry.objects.filter(
+        Q(pk__in=journal_ids) | Q(reversal_of_id__in=journal_ids),
+        status__in=POSTED_STATUSES,
+    ).values("pk")
 
 
 
@@ -317,9 +323,10 @@ class SubledgerReconciliationView(APIView):
 
         payroll_rows = PayrollPosting.objects.filter(
             cycle__company_id=company_id, cycle__period_start__lte=as_of, branch_id__in=branch_ids
-        ).values_list("journal_entry_id", "payment_journal_entry_id")
-        payroll_journal_ids = {value for row in payroll_rows for value in row if value}
-        payroll_journal_ids = _with_reversals(payroll_journal_ids)
+        )
+        payroll_journal_ids = _with_reversals(_collect_ids(
+            [payroll_rows], [("journal_entry_id", "payment_journal_entry_id")]
+        ))
 
         # Only payroll branches whose original posting remains posted at the
         # cutoff contribute a liability; a later reversal must not erase history.
@@ -432,16 +439,16 @@ class SubledgerReconciliationView(APIView):
             Q(movement__source_warehouse__branch_id__in=branch_ids)
             | Q(movement__destination_warehouse__branch_id__in=branch_ids)
             | (Q(movement__source_warehouse__branch__isnull=True) | Q(movement__destination_warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
-        ).values_list("journal_entry_id")
-        inventory_journal_ids = _with_reversals({row[0] for row in stock_links if row[0]})
+        )
+        inventory_journal_ids = _with_reversals(_collect_ids(
+            [stock_links], [("journal_entry_id",)]
+        ))
 
         def scoped_ids(ids):
-            if not ids:
-                return set()
-            return set(JournalEntry.objects.filter(
+            return JournalEntry.objects.filter(
                 pk__in=ids, company_id=company_id, branch_id__in=branch_ids,
                 entry_date__lte=as_of, status__in=POSTED_STATUSES,
-            ).values_list("pk", flat=True))
+            ).values("pk")
 
         sales_journal_ids = scoped_ids(sales_journal_ids)
         purchase_journal_ids = scoped_ids(purchase_journal_ids)
