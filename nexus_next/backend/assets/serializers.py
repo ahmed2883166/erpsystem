@@ -1,5 +1,7 @@
 """تحويل بيانات الأصول وجداول الإهلاك والتحقق من مدخلات API."""
 
+from decimal import Decimal
+
 from rest_framework import serializers
 from .models import FixedAsset, AssetDepreciation
 
@@ -11,7 +13,8 @@ class FixedAssetSerializer(serializers.ModelSerializer):
     class Meta:
         model = FixedAsset
         fields = ("id", "company", "branch", "code", "name_ar", "description", "acquisition_date",
-                  "depreciation_start_date", "original_cost", "salvage_value", "useful_life_months",
+                  "depreciation_start_date", "original_cost", "acquisition_net_amount",
+                  "nonrecoverable_tax_amount", "acquisition_tax_code", "salvage_value", "useful_life_months",
                   "depreciation_method", "asset_account", "accumulated_depreciation_account",
                   "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account",
                   "acquisition_journal", "acquisition_treasury_transaction", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
@@ -53,6 +56,39 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         life = attrs.get("useful_life_months", getattr(self.instance, "useful_life_months", 0))
         if cost <= 0 or salvage < 0 or salvage > cost or life <= 0:
             raise serializers.ValidationError("راجع التكلفة والقيمة التخريدية والعمر الإنتاجي.")
+        net_amount = attrs.get("acquisition_net_amount", getattr(self.instance, "acquisition_net_amount", None))
+        nonrecoverable_tax = attrs.get(
+            "nonrecoverable_tax_amount",
+            getattr(self.instance, "nonrecoverable_tax_amount", Decimal("0")),
+        )
+        tax_code = attrs.get("acquisition_tax_code", getattr(self.instance, "acquisition_tax_code", None))
+        if nonrecoverable_tax < 0:
+            raise serializers.ValidationError({"nonrecoverable_tax_amount": "قيمة الضريبة لا يمكن أن تكون سالبة."})
+        if net_amount is not None and net_amount + nonrecoverable_tax != cost:
+            raise serializers.ValidationError({
+                "original_cost": "تكلفة الأصل يجب أن تساوي صافي الاقتناء مضافًا إليه الضريبة غير القابلة للخصم."
+            })
+        if nonrecoverable_tax and net_amount is None:
+            raise serializers.ValidationError({"acquisition_net_amount": "أدخل صافي تكلفة الاقتناء."})
+        if bool(tax_code) != bool(nonrecoverable_tax):
+            raise serializers.ValidationError({
+                "acquisition_tax_code": "حدد كود الضريبة غير القابلة للخصم مع قيمتها، أو اترك الاثنين دون قيمة."
+            })
+        if tax_code:
+            acquisition_date = attrs.get("acquisition_date", getattr(self.instance, "acquisition_date", None))
+            if (tax_code.company_id != company.pk or tax_code.country != company.country
+                    or not tax_code.is_active or tax_code.input_tax_recoverable
+                    or tax_code.category != "standard" or tax_code.rate <= 0
+                    or tax_code.effective_from > acquisition_date
+                    or (tax_code.effective_to and tax_code.effective_to < acquisition_date)):
+                raise serializers.ValidationError({
+                    "acquisition_tax_code": "اختر كود ضريبة قياسيًا نشطًا وغير قابل للخصم وساريًا بتاريخ الاقتناء."
+                })
+            expected_tax = (net_amount * tax_code.rate / Decimal("100")).quantize(Decimal("0.0001"))
+            if expected_tax != nonrecoverable_tax:
+                raise serializers.ValidationError({
+                    "nonrecoverable_tax_amount": "قيمة الضريبة لا تطابق صافي الاقتناء ونسبة كود الضريبة."
+                })
         acquisition_date = attrs.get("acquisition_date", getattr(self.instance, "acquisition_date", None))
         depreciation_start = attrs.get("depreciation_start_date", getattr(self.instance, "depreciation_start_date", None))
         if acquisition_date and depreciation_start and depreciation_start < acquisition_date:
