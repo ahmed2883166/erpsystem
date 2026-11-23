@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Sum
 from rest_framework import serializers
 
 from approvals.models import FinancialApprovalRequest
@@ -245,7 +246,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 (payment.amount for payment in obj.payments.all() if payment.status == SupplierPayment.Status.POSTED),
                 Decimal("0"),
             )
-        return str(max(obj.grand_total - paid, Decimal("0")))
+        returned = obj.returns.filter(status=SupplierReturn.Status.POSTED).aggregate(
+            total=Sum("grand_total")
+        )["total"] or Decimal("0")
+        return str(max(obj.grand_total - paid - returned, Decimal("0")))
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
