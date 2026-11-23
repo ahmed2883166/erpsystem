@@ -12,8 +12,52 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from hr.services import post_payroll_cycle, complete_payroll_payment, cancel_payroll_payment_preparation, prepare_payroll_payment
 
-from hr.models import Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet, EmployeeComponent
+from hr.models import Department, Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet, EmployeeComponent
 from hr.services import calculate_component, money, salary_for_date
+
+
+
+
+class EmployeeSalaryHistoryGuardTests(TestCase):
+    def setUp(self):
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="HR-SALARY-GUARD", name_ar="شركة اختبار حماية الراتب",
+            country="EG", activity="commercial", base_currency=self.currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.department = Department.objects.create(
+            company=self.company, code="ACC", name_ar="الحسابات",
+        )
+        self.employee = Employee.objects.create(
+            company=self.company, code="EMP-001", full_name_ar="موظف اختبار",
+            branch=self.branch, department=self.department,
+            hire_date=date(2026, 1, 1), basic_salary=Decimal("10000"),
+            currency=self.currency,
+        )
+
+    def test_department_can_be_edited_without_employee_salary_field_error(self):
+        self.department.name_ar = "الإدارة المالية"
+        self.department.save(update_fields=("name_ar",))
+        self.department.refresh_from_db()
+        self.assertEqual(self.department.name_ar, "الإدارة المالية")
+
+    def test_employee_salary_cannot_be_changed_outside_salary_history(self):
+        self.employee.basic_salary = Decimal("12000")
+        with self.assertRaises(ValidationError):
+            self.employee.save(update_fields=("basic_salary", "updated_at"))
+
+    def test_salary_history_workflow_can_apply_authorized_salary_change(self):
+        self.employee.basic_salary = Decimal("12000")
+        self.employee._salary_history_update = True
+        try:
+            self.employee.save(update_fields=("basic_salary", "updated_at"))
+        finally:
+            del self.employee._salary_history_update
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.basic_salary, Decimal("12000.0000"))
 
 
 class PayrollCalculationTests(SimpleTestCase):
