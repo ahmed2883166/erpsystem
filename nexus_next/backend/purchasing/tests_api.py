@@ -497,7 +497,8 @@ class PurchasingWorkflowTests(APITestCase):
             f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
         )
         self.assertEqual(report.status_code, 200, report.data)
-        self.assertEqual(report.data["input_tax"], "28.0000")        self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
+        self.assertEqual(report.data["input_tax"], "28.0000")
+        self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
