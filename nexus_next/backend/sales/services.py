@@ -10,7 +10,8 @@ from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
-from companies.models import Branch, ExchangeRate, FiscalYear
+from companies.access import resolve_warehouse_branch
+from companies.models import ExchangeRate, FiscalYear
 from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
@@ -24,14 +25,10 @@ def _account(company, role):
 
 def _branch_and_year(delivery, entry_date):
     """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
-    warehouse = delivery.warehouse
-    branch = warehouse.branch if warehouse.branch_id else None
+    branch = resolve_warehouse_branch(delivery.company, delivery.warehouse)
     if branch and not branch.is_active:
         raise ValidationError("فرع المخزن موقوف.")
     if not branch:
-        branch = Branch.objects.filter(company=delivery.company, is_active=True, is_head_office=True).first()
-        if not branch:
-            branch = Branch.objects.filter(company=delivery.company, is_active=True).order_by("code").first()
     if not branch:
         raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المبيعات.")
     year = FiscalYear.objects.filter(
