@@ -179,6 +179,14 @@ try {
   }
 } finally { Pop-Location }
 
+$WebThreads = 32
+if ($ProductionEnv["ADMRAIL_WEB_THREADS"]) {
+  $ParsedThreads = 0
+  if (-not [int]::TryParse($ProductionEnv["ADMRAIL_WEB_THREADS"], [ref]$ParsedThreads) -or $ParsedThreads -lt 8 -or $ParsedThreads -gt 64) {
+    throw "ADMRAIL_WEB_THREADS must be an integer from 8 to 64."
+  }
+  $WebThreads = $ParsedThreads
+}
 $Bind = "127.0.0.1:8000"
 if ($EnableLan) {
   $LanHost = $ProductionEnv["ADMRAIL_LAN_HOST"]
@@ -230,5 +238,5 @@ if ($EnableLan) {
 }
 
 if (-not (Test-Path $Waitress)) { throw "لم يتم تثبيت Waitress داخل بيئة Backend." }
-& $Waitress "--listen=$Bind" "config.wsgi:application"
+& $Waitress "--listen=$Bind" "--threads=$WebThreads" "config.wsgi:application"
 if ($LASTEXITCODE -ne 0) { throw "توقف خادم Waitress بخطأ." }
