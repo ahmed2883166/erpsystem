@@ -1235,3 +1235,58 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(vat.data["purchases"]["recoverable_tax_amount"], "14.0000")
         self.assertEqual(vat.data["input_tax"], "14.0000")
         self.assertEqual(vat.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+
+
+    def test_supplier_return_cannot_consume_another_receipts_cost_layers(self):
+        first_receipt_id, first_receipt_line_id = self._create_and_post_receipt()
+        second_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-002", "receipt_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "100"}],
+        }, format="json")
+        self.assertEqual(second_receipt.status_code, 201, second_receipt.data)
+        second_post = self.client.post(
+            f"/api/purchasing/receipts/{second_receipt.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(second_post.status_code, 200, second_post.data)
+
+        issue = StockMovement.objects.create(
+            company=self.company, movement_number="ISSUE-MIXED-LAYERS",
+            movement_type=StockMovement.MovementType.ISSUE,
+            movement_date=date(2026, 3, 12), source_warehouse=self.warehouse,
+        )
+        StockMovementLine.objects.create(
+            movement=issue, product=self.product, quantity=Decimal("2"),
+        )
+        post_stock_movement(issue.pk, self.user)
+        balance_before_return = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance_before_return.quantity, Decimal("2.0000"))
+
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": first_receipt_id,
+            "invoice_number": "INV-RETURN-LINEAGE", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": first_receipt_line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        created = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "return_number": "RET-LINEAGE",
+            "return_date": "2026-03-13",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "2"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        rejected = self.client.post(
+            f"/api/purchasing/returns/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        balance_after_rejection = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance_after_rejection.quantity, Decimal("2.0000"))
+        self.assertEqual(
+            SupplierReturn.objects.get(pk=created.data["id"]).status,
+            SupplierReturn.Status.DRAFT,
+        )
