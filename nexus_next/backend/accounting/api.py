@@ -1018,10 +1018,18 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
         )
         with _accounting_report_work_mem():
-            total_rows = period_scope.count()
-            period_totals = period_scope.aggregate(total=Sum(
-                ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
-            ))
+            # COUNT and SUM previously scanned the same period ledger separately.
+            # Keep exact pagination totals and accounting totals, but calculate both
+            # in one PostgreSQL aggregate pass.
+            period_stats = period_scope.aggregate(
+                total_rows=Count("pk"),
+                total=Sum(ExpressionWrapper(
+                    F("debit") - F("credit"),
+                    output_field=DecimalField(max_digits=20, decimal_places=4),
+                )),
+            )
+            total_rows = period_stats["total_rows"]
+            period_total = period_stats["total"]
             # Fetch the requested page first; aggregate only the movements before
             # that page instead of evaluating a window over the entire ledger.
             offset = (page - 1) * page_size
@@ -1064,7 +1072,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "company": company_id, "account": account_id, "account_code": account.code,
             "account_name": account.name_ar, "date_from": date_from, "date_to": date_to,
             "opening_balance": opening_balance, "rows": rows,
-            "closing_balance": opening_balance + (period_totals["total"] or Decimal("0")) * balance_sign,
+            "closing_balance": opening_balance + (period_total or Decimal("0")) * balance_sign,
             "pagination": {
                 "page": page, "page_size": page_size, "total_rows": total_rows,
                 "total_pages": (total_rows + page_size - 1) // page_size,
