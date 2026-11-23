@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
+from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, ExchangeRate, FiscalYear
@@ -674,6 +675,52 @@ def post_supplier_refund(refund_id, user):
     document.status = SupplierRefund.Status.POSTED
     document.posted_at = timezone.now()
     document.save(update_fields=("journal_entry", "status", "posted_at"))
+    return document
+
+
+@transaction.atomic
+def reverse_supplier_refund(refund_id, user, entry_date):
+    """عكس استرداد المورد بقيد عكسي وإعادة الرصيد الدائن للمورد."""
+    document = SupplierRefund.objects.select_for_update().select_related(
+        "company", "supplier", "return_document__invoice__receipt__warehouse",
+        "journal_entry",
+    ).get(pk=refund_id)
+    if document.status != SupplierRefund.Status.POSTED or not document.journal_entry_id:
+        raise ValidationError("لا يمكن عكس إلا استرداد مورد مرحّل.")
+    if document.reversal_journal_entry_id:
+        raise ValidationError("تم عكس استرداد المورد من قبل.")
+    if entry_date < document.refund_date:
+        raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ الاسترداد.")
+    if document.journal_entry.status != JournalEntry.Status.POSTED:
+        raise ValidationError("القيد الأصلي لاسترداد المورد ليس مرحّلًا.")
+
+    try:
+        reversal_entry = reverse_operational_journal(
+            document.journal_entry_id, user, entry_date, JournalEntry.Source.PURCHASES,
+        )
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    document.status = SupplierRefund.Status.REVERSED
+    document.reversal_journal_entry = reversal_entry
+    document.reversal_date = entry_date
+    document.reversed_at = timezone.now()
+    document.reversed_by = user
+    document.save(update_fields=(
+        "status", "reversal_journal_entry", "reversal_date", "reversed_at", "reversed_by",
+    ))
+    AuditEvent.objects.create(
+        actor=user, company=document.company,
+        branch=document.return_document.invoice.receipt.warehouse.branch,
+        action=AuditEvent.Action.ACTION, resource="purchasing.supplier_refund.reversed",
+        object_id=str(document.pk), http_method="POST", status_code=200, succeeded=True,
+        metadata={
+            "refund_number": document.refund_number,
+            "reversal_date": entry_date.isoformat(),
+            "reversal_journal_entry_id": reversal_entry.pk,
+        },
+    )
     return document
 
 
