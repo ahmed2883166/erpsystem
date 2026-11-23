@@ -218,3 +218,27 @@ class BranchMembershipIsolationTests(TestCase):
         })
         self.assertFalse(serializer.is_valid())
         self.assertIn("branches", serializer.errors)
+
+
+class CompanyDefaultBranchTests(TestCase):
+    def test_company_creation_creates_active_head_office_automatically(self):
+        egp = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        from .serializers import CompanySerializer
+
+        serializer = CompanySerializer(data={
+            "code": "AUTO-BRANCH",
+            "name_ar": "شركة بدون إعداد فروع",
+            "country": Company.Country.EGYPT,
+            "activity": Company.Activity.COMMERCIAL,
+            "base_currency": egp.pk,
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        company = serializer.save()
+
+        branches = Branch.objects.filter(company=company)
+        self.assertEqual(branches.count(), 1)
+        main = branches.get()
+        self.assertEqual(main.code, "MAIN")
+        self.assertEqual(main.name_ar, "الفرع الرئيسي")
+        self.assertTrue(main.is_head_office)
+        self.assertTrue(main.is_active)
