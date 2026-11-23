@@ -29,7 +29,6 @@ def _branch_and_year(delivery, entry_date):
     if branch and not branch.is_active:
         raise ValidationError("فرع المخزن موقوف.")
     if not branch:
-    if not branch:
         raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المبيعات.")
     year = FiscalYear.objects.filter(
         company=delivery.company, status=FiscalYear.Status.OPEN,
