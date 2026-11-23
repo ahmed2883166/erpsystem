@@ -140,6 +140,11 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(created.status_code, 201, created.data)
         draft_id = created.data["id"]
 
+        admin = get_user_model().objects.create_user(username="seller-admin-delete", password="test-password")
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
         deleted = self.client.delete(f"/api/sales-documents/invoices/{draft_id}/")
         self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
         self.assertEqual(self.client.get(f"/api/sales-documents/invoices/{draft_id}/").status_code, 404)
