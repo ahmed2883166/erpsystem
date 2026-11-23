@@ -124,10 +124,16 @@ export type SupplierReturn = {
     quantity: string; net_amount: string; tax_amount: string; recoverable_tax_amount: string; nonrecoverable_tax_amount: string }[];
   created_at: string; posted_at: string | null;
 };
+export type SupplierRefund = {
+  id: number; company: number; supplier: number; supplier_name: string; return_document: number; return_number: string;
+  refund_number: string; refund_date: string; method: "cash" | "bank"; payment_account: number; payment_account_name: string;
+  amount: string; reference: string; notes: string; status: "draft" | "posted"; journal_entry: number | null;
+  journal_number: string | null; created_at: string; posted_at: string | null;
+};
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
   opening_balance: string; closing_balance: string;
-  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return" | "supplier_return_reversal"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
+  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return" | "supplier_return_reversal" | "supplier_refund"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
 };
 export type SupplierAging = {
   company: number; as_of: string;
@@ -163,6 +169,10 @@ export const purchasingApi = {
   createReturn: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierReturn>("/api/purchasing/returns/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل المرتجع وتحديث المخزون والمورد والضريبة.
   postReturn: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierReturn>(`/api/purchasing/returns/${id}/post/`, { method: "POST" }); },
+  // جلب استردادات الموردين.
+  refunds: (companyId: number) => request<SupplierRefund[]>(`/api/purchasing/refunds/?company=${companyId}&ordering=-refund_date`),
+  createRefund: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierRefund>("/api/purchasing/refunds/", { method: "POST", body: JSON.stringify(payload) }); },
+  postRefund: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierRefund>(`/api/purchasing/refunds/${id}/post/`, { method: "POST" }); },
   // عكس مرتجع مرحّل بإرجاع طبقات التكلفة الأصلية وإنشاء قيد عكسي.
   reverseReturn: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierReturn>(`/api/purchasing/returns/${id}/reverse/`, { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }); },
   // إنشاء مستند استلام مشتريات جديد.
