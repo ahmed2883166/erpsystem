@@ -3,6 +3,8 @@ from decimal import Decimal, InvalidOperation
 from django.db.models import Q
 from rest_framework import serializers
 
+from companies.models import CompanyMembership
+
 from .models import (
     AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
     JobPosition, LeaveRequest, PayrollComponent, PayrollCycle, PayrollResult,
