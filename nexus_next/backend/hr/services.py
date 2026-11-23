@@ -264,18 +264,45 @@ def calculate_payroll_cycle(cycle_id, actor=None):
             else:
                 employer_share += amount
             lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "assigned_value": str(assignment.value), "overtime_hours": str(overtime_hours)}))
+        # Employee social-insurance contributions reduce the Egyptian annual
+        # salary-tax base. Calculate them before progressive tax regardless of
+        # the order in which statutory components were assigned to the employee.
         for assignment in statutory_assignments:
             component = assignment.component
+            if component.method != component.Method.EMPLOYEE_INSURANCE:
+                continue
             amount = safe_component_amount(
                 component, assignment.value, effective_basic_salary, payable_days,
                 overtime_hours, daily_divisor, friday_days, rule_configuration,
                 taxable_base, insurance_base,
             )
-            if component.method in (component.Method.EMPLOYEE_INSURANCE, component.Method.PROGRESSIVE_TAX):
+            deductions += amount
+            taxable_base = max(Decimal("0"), taxable_base - amount)
+            lines.append((component, component.code, component.name_ar, component.kind, amount, False, {
+                "method": component.method,
+                "taxable_base_before_employee_insurance": str(taxable_base + amount),
+                "taxable_base": str(taxable_base),
+                "insurance_base": str(insurance_base),
+            }))
+
+        for assignment in statutory_assignments:
+            component = assignment.component
+            if component.method == component.Method.EMPLOYEE_INSURANCE:
+                continue
+            amount = safe_component_amount(
+                component, assignment.value, effective_basic_salary, payable_days,
+                overtime_hours, daily_divisor, friday_days, rule_configuration,
+                taxable_base, insurance_base,
+            )
+            if component.method == component.Method.PROGRESSIVE_TAX:
                 deductions += amount
             else:
                 employer_share += amount
-            lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {"method": component.method, "taxable_base": str(taxable_base), "insurance_base": str(insurance_base)}))
+            lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {
+                "method": component.method,
+                "taxable_base": str(taxable_base),
+                "insurance_base": str(insurance_base),
+            }))
         installments = LoanInstallment.objects.filter(
             loan__employee=employee,
             loan__status=EmployeeLoan.Status.ACTIVE,
