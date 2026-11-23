@@ -254,6 +254,72 @@ class StockPostingServiceTests(TestCase):
         self.assertEqual(debit, Decimal("110.0000"))
         self.assertEqual(credit, Decimal("110.0000"))
 
+    def test_weighted_average_tracks_receipt_origins_through_transfer_without_changing_average_cost(self):
+        destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=self.branch,
+            code="WH-WA-02", name_ar="مخزن المتوسط المرجح الثاني",
+        )
+        first_receipt = self._movement(
+            "WA-R1", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="5", unit_cost="20",
+        )
+        second_receipt = self._movement(
+            "WA-R2", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="5", unit_cost="10",
+        )
+        post_stock_movement(first_receipt.pk, self.user)
+        post_stock_movement(second_receipt.pk, self.user)
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(source_balance.average_cost, Decimal("15.000000"))
+
+        transfer = self._movement(
+            "WA-X1", StockMovement.MovementType.TRANSFER,
+            source=self.warehouse, destination=destination_warehouse, quantity="4",
+        )
+        post_stock_movement(transfer.pk, self.user)
+        source_balance.refresh_from_db()
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=destination_warehouse)
+        self.assertEqual(source_balance.quantity, Decimal("6"))
+        self.assertEqual(source_balance.inventory_value, Decimal("90.0000"))
+        self.assertEqual(destination_balance.quantity, Decimal("4"))
+        self.assertEqual(destination_balance.inventory_value, Decimal("60.0000"))
+        self.assertEqual(transfer.lines.get().cost_amount, Decimal("60.0000"))
+
+        receipt_line_ids = {first_receipt.lines.get().pk, second_receipt.lines.get().pk}
+        moved_layers = list(self.product.cost_layers.filter(source_line=transfer.lines.get()))
+        self.assertEqual(len(moved_layers), 2)
+        self.assertEqual({layer.root_source_line_id for layer in moved_layers}, receipt_line_ids)
+        self.assertTrue(all(layer.parent_layer_id for layer in moved_layers))
+        self.assertEqual(
+            sum((layer.quantity_remaining for layer in moved_layers), Decimal("0")),
+            Decimal("4.0000"),
+        )
+        self.assertEqual(
+            StockCostConsumption.objects.filter(movement_line=transfer.lines.get()).aggregate(
+                total=Sum("quantity")
+            )["total"],
+            Decimal("4.0000"),
+        )
+
+        issue = self._movement(
+            "WA-I1", StockMovement.MovementType.ISSUE,
+            source=destination_warehouse, quantity="2",
+        )
+        post_stock_movement(issue.pk, self.user)
+        self.assertEqual(issue.lines.get().cost_amount, Decimal("30.0000"))
+        self.assertEqual(
+            StockCostConsumption.objects.filter(movement_line=issue.lines.get()).aggregate(
+                total=Sum("quantity")
+            )["total"],
+            Decimal("2.0000"),
+        )
+        self.assertEqual(
+            set(StockCostConsumption.objects.filter(movement_line=issue.lines.get()).values_list(
+                "source_layer__root_source_line_id", flat=True,
+            )),
+            receipt_line_ids,
+        )
+
     def test_cross_branch_transfer_preserves_fifo_cost_and_posts_balanced_interbranch_entries(self):
         self.product.costing_method = Product.CostingMethod.FIFO
         self.product.save(update_fields=("costing_method",))
