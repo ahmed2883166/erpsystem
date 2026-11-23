@@ -616,3 +616,50 @@ class TreasuryWorkflowTests(APITestCase):
             status=FinancialApprovalRequest.Status.PENDING,
         ).get()
         self.assertEqual(current.requested_amount, Decimal("160.0000"))
+
+
+    def test_treasury_payment_creator_cannot_approve_own_financial_request(self):
+        creator = get_user_model().objects.create_user(
+            username="treasury-payment-creator-admin", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=creator, company=self.company, role="admin", all_branches=True,
+        )
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_payment_amount=Decimal("100"),
+            created_by=creator, updated_by=creator,
+        )
+        self.client.force_authenticate(creator)
+        payment = self._create(
+            kind="payment", document_number="TR-SELF-APPROVAL",
+            amount="150.0000",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        approval = FinancialApprovalRequest.objects.get(
+            treasury_transaction_id=payment.data["id"]
+        )
+        self.assertEqual(approval.requested_by_id, creator.pk)
+
+        self_approval = self.client.post(
+            f"/api/approvals/financial-requests/{approval.pk}/approve/",
+            {"note": "محاولة اعتماد ذاتي"}, format="json",
+        )
+        self.assertEqual(self_approval.status_code, 403, self_approval.data)
+        approval.refresh_from_db()
+        self.assertEqual(approval.status, FinancialApprovalRequest.Status.PENDING)
+        self.assertIsNone(approval.decided_by_id)
+
+        independent_manager = get_user_model().objects.create_user(
+            username="treasury-independent-approver", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=independent_manager, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(independent_manager)
+        approved = self.client.post(
+            f"/api/approvals/financial-requests/{approval.pk}/approve/",
+            {"note": "اعتماد من مدير مستقل"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        approval.refresh_from_db()
+        self.assertEqual(approval.decided_by_id, independent_manager.pk)
