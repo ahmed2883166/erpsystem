@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, transaction
 from django.http import HttpResponse
 from openpyxl import Workbook
-from django.db.models import Count, Q, Sum, F, Window, ExpressionWrapper, DecimalField
+from django.db.models import Count, Q, Sum, F, ExpressionWrapper, DecimalField
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
@@ -1005,21 +1005,39 @@ class JournalEntryViewSet(AccountingViewSet):
         period_totals = period_scope.aggregate(total=Sum(
             ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
         ))
-        period_lines = period_scope.annotate(
-            movement_balance=Window(
-                expression=Sum(ExpressionWrapper(
+        # Do not calculate a window over every matching ledger line just to
+        # return one page. Fetch the requested page first, then calculate the
+        # balance immediately before that page with an indexed aggregate.
+        offset = (page - 1) * page_size
+        page_lines = list(
+            period_scope.select_related("entry", "entry__branch")
+            .order_by("entry__entry_date", "entry_id", "id")[offset:offset + page_size]
+        )
+        prior_movement = Decimal("0")
+        if page_lines:
+            first_line = page_lines[0]
+            prior_scope = period_scope.filter(
+                Q(entry__entry_date__lt=first_line.entry.entry_date)
+                | Q(entry__entry_date=first_line.entry.entry_date, entry_id__lt=first_line.entry_id)
+                | Q(
+                    entry__entry_date=first_line.entry.entry_date,
+                    entry_id=first_line.entry_id,
+                    pk__lt=first_line.pk,
+                )
+            )
+            prior_total = prior_scope.aggregate(
+                total=Sum(ExpressionWrapper(
                     F("debit") - F("credit"),
                     output_field=DecimalField(max_digits=20, decimal_places=4),
-                )),
-                order_by=(F("entry__entry_date").asc(), F("entry_id").asc(), F("id").asc()),
+                ))
             )
-        ).select_related("entry", "entry__branch").order_by("entry__entry_date", "entry_id", "id")
+            prior_movement = prior_total["total"] or Decimal("0")
 
-        offset = (page - 1) * page_size
-        page_lines = period_lines[offset:offset + page_size]
         rows = []
+        running_movement = prior_movement
         for line in page_lines:
-            running = opening_balance + (line.movement_balance or Decimal("0")) * balance_sign
+            running_movement += line.debit - line.credit
+            running = opening_balance + running_movement * balance_sign
             rows.append({
                 "line_id": line.pk, "date": line.entry.entry_date, "entry_id": line.entry_id,
                 "entry_number": line.entry.entry_number, "description": line.description or line.entry.description,
