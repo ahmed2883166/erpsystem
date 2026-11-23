@@ -1231,7 +1231,7 @@ class PurchasingWorkflowTests(APITestCase):
             "&date_from=2026-03-01&date_to=2026-03-31"
         )
         self.assertEqual(vat.status_code, 200, vat.data)
-        self.assertEqual(vat.data["purchases"]["tax_amount"], "14.0000")
+        self.assertEqual(vat.data["purchases"]["tax_amount"], "14.0000", vat.data)
         self.assertEqual(vat.data["purchases"]["recoverable_tax_amount"], "14.0000")
         self.assertEqual(vat.data["input_tax"], "14.0000")
         self.assertEqual(vat.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
@@ -1386,6 +1386,9 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(invoice_after["balance_due"], "228.0000")
 
         return_doc = SupplierReturn.objects.get(pk=draft.data["id"])
+        self.assertEqual(return_doc.status, SupplierReturn.Status.REVERSED)
+        self.assertEqual(return_doc.journal_entry.status, JournalEntry.Status.REVERSED)
+        self.assertEqual(return_doc.journal_entry.branch_id, return_doc.reversal_journal_entry.branch_id)
         self.assertEqual(return_doc.reversal_stock_movement.status, StockMovement.Status.POSTED)
         self.assertEqual(
             JournalLine.objects.get(entry=return_doc.reversal_journal_entry, account__code="2200").credit,
