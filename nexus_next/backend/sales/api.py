@@ -18,8 +18,8 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn
-from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation
+from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
 def _sales_warehouse_accessible(user, warehouse):
@@ -120,6 +120,150 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن أو الفرع الرئيسي للمخزن العام.")
         delivery = post_sales_delivery(delivery.pk, request.user)
         return Response(self.get_serializer(delivery).data, status=status.HTTP_200_OK)
+
+
+
+
+class SalesQuotationViewSet(SalesBaseViewSet):
+    """إدارة عروض الأسعار وتحويل المقبول منها إلى إذن تسليم مسودة."""
+    serializer_class = SalesQuotationSerializer
+    queryset = SalesQuotation.objects.select_related(
+        "company", "customer", "converted_delivery"
+    ).prefetch_related("lines__product", "lines__tax_code", "lines__discount_rule")
+    filterset_fields = ("company", "customer", "status", "quotation_date")
+    search_fields = ("quotation_number", "customer__name_ar")
+    ordering_fields = ("quotation_date", "quotation_number", "created_at", "grand_total")
+
+    def get_queryset(self):
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def perform_create(self, serializer):
+        self._check_write(serializer.validated_data["company"].pk)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        if serializer.instance.status != SalesQuotation.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل عرض سعر غير مسودة.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_write(instance.company_id)
+        if instance.status != SalesQuotation.Status.DRAFT or instance.converted_delivery_id:
+            raise ValidationError("لا يمكن حذف عرض سعر مرسل أو مقبول أو محول.")
+        for line in instance.lines.all():
+            line.delete()
+        instance.delete()
+
+    @action(detail=True, methods=("post",))
+    def send(self, request, pk=None):
+        quotation = self.get_object()
+        self._check_write(quotation.company_id)
+        if quotation.status != SalesQuotation.Status.DRAFT:
+            raise ValidationError("يمكن إرسال عرض السعر من حالة المسودة فقط.")
+        if quotation.valid_until < timezone.localdate():
+            quotation.status = SalesQuotation.Status.EXPIRED
+            quotation.save(update_fields=("status", "updated_at"))
+            raise ValidationError("انتهت صلاحية عرض السعر.")
+        quotation.status = SalesQuotation.Status.SENT
+        quotation.sent_at = timezone.now()
+        quotation.save(update_fields=("status", "sent_at", "updated_at"))
+        return Response(self.get_serializer(quotation).data)
+
+    @action(detail=True, methods=("post",))
+    def accept(self, request, pk=None):
+        quotation = self.get_object()
+        self._check_write(quotation.company_id)
+        if quotation.status != SalesQuotation.Status.SENT:
+            raise ValidationError("لا يمكن قبول عرض سعر غير مرسل.")
+        if quotation.valid_until < timezone.localdate():
+            quotation.status = SalesQuotation.Status.EXPIRED
+            quotation.save(update_fields=("status", "updated_at"))
+            raise ValidationError("انتهت صلاحية عرض السعر.")
+        quotation.status = SalesQuotation.Status.ACCEPTED
+        quotation.accepted_at = timezone.now()
+        quotation.save(update_fields=("status", "accepted_at", "updated_at"))
+        return Response(self.get_serializer(quotation).data)
+
+    @action(detail=True, methods=("post",))
+    def reject(self, request, pk=None):
+        quotation = self.get_object()
+        self._check_write(quotation.company_id)
+        if quotation.status != SalesQuotation.Status.SENT:
+            raise ValidationError("لا يمكن رفض عرض سعر غير مرسل.")
+        quotation.status = SalesQuotation.Status.REJECTED
+        quotation.save(update_fields=("status", "updated_at"))
+        return Response(self.get_serializer(quotation).data)
+
+    @action(detail=True, methods=("post",), url_path="convert-to-delivery")
+    @transaction.atomic
+    def convert_to_delivery(self, request, pk=None):
+        quotation = self.get_object()
+        self._check_write(quotation.company_id)
+        if quotation.status != SalesQuotation.Status.ACCEPTED:
+            raise ValidationError("يجب قبول عرض السعر قبل تحويله.")
+        if quotation.valid_until < timezone.localdate():
+            quotation.status = SalesQuotation.Status.EXPIRED
+            quotation.save(update_fields=("status", "updated_at"))
+            raise ValidationError("انتهت صلاحية عرض السعر.")
+        if quotation.converted_delivery_id:
+            return Response({
+                "detail": "تم تحويل عرض السعر من قبل؛ لا يُنشأ إذن تسليم مكرر.",
+                "delivery": SalesDeliverySerializer(quotation.converted_delivery, context=self.get_serializer_context()).data,
+            }, status=status.HTTP_200_OK)
+        try:
+            warehouse_id = int(request.data.get("warehouse"))
+        except (TypeError, ValueError):
+            raise ValidationError({"warehouse": "حدد المخزن."})
+        from inventory.models import Warehouse
+        warehouse = Warehouse.objects.filter(pk=warehouse_id, company_id=quotation.company_id, is_active=True).first()
+        if not warehouse:
+            raise ValidationError({"warehouse": "المخزن غير نشط أو لا يتبع الشركة."})
+        if not _sales_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        delivery_number = str(request.data.get("delivery_number", "")).strip()
+        if not delivery_number:
+            raise ValidationError({"delivery_number": "رقم إذن التسليم مطلوب."})
+        delivery_date = parse_date(request.data.get("delivery_date", "")) or timezone.localdate()
+        expiry_dates = request.data.get("expiry_dates") or {}
+        lines = []
+        for line in quotation.lines.select_related("product").all():
+            lines.append({
+                "product": line.product_id,
+                "quantity": str(line.quantity),
+                "expiry_date": expiry_dates.get(str(line.pk)),
+            })
+        delivery_serializer = SalesDeliverySerializer(
+            data={
+                "company": quotation.company_id, "customer": quotation.customer_id,
+                "warehouse": warehouse.pk, "delivery_number": delivery_number,
+                "delivery_date": delivery_date.isoformat(),
+                "customer_reference": quotation.quotation_number,
+                "notes": quotation.notes, "lines": lines,
+            },
+            context=self.get_serializer_context(),
+        )
+        delivery_serializer.is_valid(raise_exception=True)
+        delivery = delivery_serializer.save()
+        delivery.quotation_snapshot = {
+            "quotation_id": quotation.pk,
+            "quotation_number": quotation.quotation_number,
+            "quotation_date": quotation.quotation_date.isoformat(),
+            "valid_until": quotation.valid_until.isoformat(),
+            "lines": [{
+                "quotation_line_id": line.pk, "product": line.product_id,
+                "quantity": str(line.quantity), "unit_price": str(line.unit_price),
+                "tax_rate": str(line.tax_rate), "tax_code": line.tax_code_id,
+                "discount_percent": str(line.discount_percent),
+                "discount_rule": line.discount_rule_id,
+            } for line in quotation.lines.all()],
+        }
+        delivery.save(update_fields=("quotation_snapshot",))
+        quotation.converted_delivery = delivery
+        quotation.status = SalesQuotation.Status.CONVERTED
+        quotation.converted_at = timezone.now()
+        quotation.save(update_fields=("converted_delivery", "status", "converted_at", "updated_at"))
+        return Response(SalesDeliverySerializer(delivery, context=self.get_serializer_context()).data, status=status.HTTP_201_CREATED)
 
 
 class SalesInvoiceViewSet(SalesBaseViewSet):
