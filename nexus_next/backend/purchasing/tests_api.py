@@ -759,6 +759,49 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(posted.status_code, 200, posted.data)
 
+    def test_foreign_currency_nonrecoverable_tax_is_capitalized_in_base_currency_and_excluded_from_input_vat(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 10), rate=Decimal("50"),
+        )
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="FX-INPUT-NR",
+            name_ar="ضريبة أجنبية غير قابلة للخصم",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-FX-NR-001", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "transaction_unit_price": "2",
+                "tax_code": code.pk,
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["transaction_tax_total"], "0.5600")
+        self.assertEqual(created.data["tax_total"], "28.0000")
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["grand_total"], "228.0000")
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.inventory_value, Decimal("228.0000"))
+        report = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["purchases"]["tax_amount"], "28.0000")
+        self.assertEqual(report.data["purchases"]["recoverable_tax_amount"], "0")
+        self.assertEqual(report.data["purchases"]["nonrecoverable_tax_amount"], "28.0000")
+        self.assertEqual(report.data["input_tax"], "0")
+        self.assertEqual(report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+
     def test_foreign_supplier_invoice_partial_and_final_payments_post_realized_fx(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
