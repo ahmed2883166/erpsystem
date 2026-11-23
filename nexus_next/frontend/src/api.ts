@@ -48,11 +48,11 @@ export type JournalLine = { id: number; account: number; account_code: string; a
 export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; opening_debit: string; opening_credit: string; opening_balance: string; debit_total: string; credit_total: string; net_balance: string; closing_balance: string }[]; opening_debit_total: string; opening_credit_total: string; closing_debit_credit_difference: string };
 export type SubledgerReconciliation = {
   company:number; as_of:string; branch:number|null; branch_name:string; scope_branch_ids:number[];
-  currency:string; currency_decimal_places:number; matched_count:number; difference_count:number;
+  currency:string; currency_decimal_places:number; matched_count:number; partial_reconciliation_count:number; difference_count:number;
   pending_count:number; pending_documents_count:number; pending_documents:{sales:number;purchasing:number;payroll:number;inventory:number};
   posted_documents_missing_journal:{sales:number;purchasing:number;inventory:number}; posted_documents_missing_journal_count:number;
   configuration_issue_count:number; unavailable_count:number; is_reconciled:boolean; note:string;
-  rows:{key:string;label:string;status:"matched"|"difference"|"pending_documents"|"not_configured"|"invalid_account"|"historical_snapshot_unavailable";
+  rows:{key:string;label:string;status:"matched"|"partial_reconciliation"|"difference"|"pending_documents"|"not_configured"|"invalid_account"|"historical_snapshot_unavailable";
     accounts:{id:number;code:string;name:string}[];subledger_balance:string|null;gl_balance:string|null;difference:string|null;
     source_journal_count:number;pending_documents_count:number;unmatched_entry_count:number;detail:string;
     unmatched_entries:{journal_id:number;entry_number:string;entry_date:string;description:string;account_code:string;debit:string;credit:string}[];
