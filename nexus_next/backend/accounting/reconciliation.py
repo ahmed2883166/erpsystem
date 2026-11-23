@@ -571,6 +571,13 @@ class SubledgerReconciliationView(APIView):
             party_balances=payroll_employee_balances),
         ]
         for key, method, kind, display_only, role, label in statutory_specs:
+            if (
+                role not in role_rows
+                and not statutory_extra_accounts[key]
+                and statutory_balances[key] == 0
+                and statutory_unassigned[key] == 0
+            ):
+                continue
             row = make_row(
                 f"payroll_{key}", label, (role,), "liability", payroll_journal_ids,
                 document_balance=statutory_balances[key], require_partial=True,
