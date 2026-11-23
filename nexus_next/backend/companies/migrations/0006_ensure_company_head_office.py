@@ -7,9 +7,15 @@ def ensure_head_offices(apps, schema_editor):
     db_alias = schema_editor.connection.alias
 
     for company in Company.objects.using(db_alias).all().iterator():
-        if Branch.objects.using(db_alias).filter(
+        existing_head_office = Branch.objects.using(db_alias).filter(
             company_id=company.pk, is_head_office=True
-        ).exists():
+        ).first()
+        if existing_head_office:
+            # بيانات قديمة قد تحتوي على مركز رئيسي موقوف قبل تطبيق الحماية.
+            if not existing_head_office.is_active:
+                Branch.objects.using(db_alias).filter(pk=existing_head_office.pk).update(
+                    is_active=True
+                )
             continue
 
         base_code = "MAIN"
