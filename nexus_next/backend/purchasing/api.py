@@ -351,9 +351,8 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                     "debit": Decimal("0"), "credit": returned.grand_total, "sort": 1,
                 })
         refunds = SupplierRefund.objects.filter(
-            company=company, supplier=supplier, status=SupplierRefund.Status.POSTED,
-            refund_date__gte=date_from, refund_date__lte=date_to,
-        )
+            company_id=company_id, supplier_id=supplier_id, status=SupplierRefund.Status.POSTED,
+        ).select_related("return_document")
         for refund in refunds:
             events.append({
                 "date": refund.refund_date, "kind": "supplier_refund",
@@ -385,7 +384,8 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             "company": company_id, "supplier": supplier_id, "supplier_name": supplier_name,
             "date_from": date_from.isoformat() if date_from else None,
             "date_to": date_to.isoformat() if date_to else None,
-            "opening_balance": str(opening), "closing_balance": str(balance), "rows": rows,
+            "opening_balance": str(opening), "closing_balance": str(balance),
+            "supplier_credit_balance": str(max(Decimal("0"), -balance)), "rows": rows,
         })
 
     @action(detail=False, methods=("get",), url_path="supplier-aging")
