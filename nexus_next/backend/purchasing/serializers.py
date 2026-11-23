@@ -12,7 +12,7 @@ from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -421,6 +421,65 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             invoice, self.context["request"].user,
         )
         return invoice
+
+
+class SupplierRefundSerializer(serializers.ModelSerializer):
+    payment_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all())
+    supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
+    return_number = serializers.CharField(source="return_document.return_number", read_only=True)
+    payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True)
+    journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SupplierRefund
+        fields = (
+            "id", "company", "supplier", "supplier_name", "return_document", "return_number",
+            "refund_number", "refund_date", "method", "payment_account", "payment_account_name",
+            "amount", "reference", "notes", "status", "journal_entry", "journal_number",
+            "created_at", "posted_at",
+        )
+        read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
+
+    def validate(self, attrs):
+        company = attrs.get("company")
+        supplier = attrs.get("supplier")
+        returned = attrs.get("return_document")
+        account = attrs.get("payment_account")
+        if supplier and not supplier.is_active:
+            raise serializers.ValidationError({"supplier": "المورد موقوف."})
+        if not returned or returned.status != SupplierReturn.Status.POSTED:
+            raise serializers.ValidationError({"return_document": "اختر مرتجع مورد مرحّل وغير معكوس."})
+        if company and returned.company_id != company.pk:
+            raise serializers.ValidationError({"return_document": "المرتجع لا يتبع الشركة المحددة."})
+        if supplier and returned.supplier_id != supplier.pk:
+            raise serializers.ValidationError({"supplier": "المورد لا يطابق مورد المرتجع."})
+        refund_date = attrs.get("refund_date")
+        if refund_date and refund_date < returned.return_date:
+            raise serializers.ValidationError({"refund_date": "تاريخ الاسترداد لا يجوز أن يسبق تاريخ المرتجع."})
+        if account:
+            expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == SupplierRefund.Method.CASH else TreasuryAccount.Kind.BANK
+            treasury_account = TreasuryAccount.objects.filter(
+                company=company, account=account, kind=expected_kind, is_active=True,
+            ).first()
+            branch_id = returned.invoice.receipt.warehouse.branch_id
+            if (
+                account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
+                or not account.is_active or account.is_group or not account.allow_posting
+                or not treasury_account
+                or (treasury_account.branch_id and treasury_account.branch_id != branch_id)
+                or treasury_account.currency_code != company.base_currency.code
+            ):
+                raise serializers.ValidationError({
+                    "payment_account": "اختر حساب خزينة/بنك نشطًا تابعًا لفرع المرتجع (أو عامًا) وبعملة الشركة وبنفس طريقة الاسترداد."
+                })
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        refund = SupplierRefund.objects.create(
+            **validated_data, created_by=self.context["request"].user,
+        )
+        return refund
 
 
 class SupplierPaymentSerializer(serializers.ModelSerializer):
