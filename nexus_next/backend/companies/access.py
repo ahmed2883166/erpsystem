@@ -1,3 +1,4 @@
+from django.db import connection
 from django.db.models import F, Q
 from rest_framework.exceptions import ValidationError
 
@@ -119,6 +120,21 @@ def resolve_warehouse_branch(company, warehouse):
             company=company, is_active=True,
         ).order_by("code", "pk").first()
     return branch
+
+
+def acquire_fiscal_year_lock(fiscal_year, *, shared):
+    """Coordinate journal posting with fiscal-year and period closure on PostgreSQL.
+
+    Posting takes a transaction-scoped shared lock; closure/reopening takes the
+    matching exclusive lock. Other database engines retain their row-lock
+    fallback in the calling service.
+    """
+    if connection.vendor != "postgresql":
+        return
+    lock_key = f"admrail:fiscal-year:{fiscal_year.company_id}:{fiscal_year.pk}"
+    function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
+    with connection.cursor() as cursor:
+        cursor.execute(f"SELECT {function}(hashtextextended(%s, 0))", [lock_key])
 
 
 def ensure_fiscal_period_open(fiscal_year, target_date):
