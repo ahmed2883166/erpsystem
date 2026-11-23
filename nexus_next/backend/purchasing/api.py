@@ -62,7 +62,7 @@ class PurchaseBaseViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
-        raise PermissionDenied("لا يمكن حذف مستندات المشتريات؛ استخدم الإلغاء المعتمد بعد إضافته.")
+        raise PermissionDenied("لا يمكن حذف مستندات المشتريات؛ استخدم إجراء مرتجع المورد أو عكس سند الصرف/الاسترداد المعتمد حسب نوع المستند.")
 
 
 class PurchaseOrderViewSet(PurchaseBaseViewSet):
