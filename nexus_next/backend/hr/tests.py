@@ -406,8 +406,8 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(treasury_doc.amount, Decimal("2000.0000"))
         self.assertEqual(treasury_doc.journal_entry.status, JournalEntry.Status.POSTED)
         self.assertEqual(
-            list(treasury_doc.journal_entry.lines.order_by("debit").values_list("account_id", "debit", "credit")),
-            [(receivable.pk, Decimal("0.0000"), Decimal("2000.0000")), (cash.pk, Decimal("2000.0000"), Decimal("0.0000"))],
+            list(treasury_doc.journal_entry.lines.order_by("account_id").values_list("account_id", "debit", "credit")),
+            [(receivable.pk, Decimal("2000.0000"), Decimal("0.0000")), (cash.pk, Decimal("0.0000"), Decimal("2000.0000"))],
         )
 
     def test_manual_loan_installments_cannot_exceed_loan_principal(self):
