@@ -2,6 +2,10 @@
 import argparse, json, os, resource, time
 from datetime import date, timedelta
 from pathlib import Path
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+import django
+django.setup()
+
 import psutil
 from django.db import connection
 from rest_framework.test import APIClient
@@ -112,6 +116,4 @@ def main():
     print(json.dumps(metrics, ensure_ascii=False, indent=2), flush=True)
 
 if __name__ == "__main__":
-    import django
-    django.setup()
     main()
