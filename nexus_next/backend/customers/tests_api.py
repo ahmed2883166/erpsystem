@@ -87,3 +87,25 @@ class CustomerApiTests(APITestCase):
         deleted = self.client.delete(f"/api/sales/customers/{customer.pk}/")
         self.assertEqual(deleted.status_code, 403, getattr(deleted, "data", None))
         self.assertTrue(Customer.objects.filter(pk=customer.pk).exists())
+
+    def test_customer_discount_profile_is_saved_and_validated(self):
+        response = self.client.post("/api/sales/customers/", {
+            "company": self.company.pk,
+            "code": "C-DISCOUNT",
+            "name_ar": "عميل بخصم",
+            "default_discount_percent": "4.5000",
+            "discount_approval_limit": "6.0000",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["default_discount_percent"], "4.5000")
+        self.assertEqual(response.data["discount_approval_limit"], "6.0000")
+
+        invalid = self.client.post("/api/sales/customers/", {
+            "company": self.company.pk,
+            "code": "C-DISCOUNT-BAD",
+            "name_ar": "خصم غير صالح",
+            "default_discount_percent": "8",
+            "discount_approval_limit": "5",
+        }, format="json")
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+        self.assertFalse(Customer.objects.filter(company=self.company, code="C-DISCOUNT-BAD").exists())
