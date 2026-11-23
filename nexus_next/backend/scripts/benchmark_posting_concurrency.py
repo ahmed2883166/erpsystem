@@ -21,6 +21,8 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 import django
 django.setup()
 
+from django.db import connection
+
 from accounts.models import User
 from companies.models import Company, CompanyMembership, FiscalYear
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
