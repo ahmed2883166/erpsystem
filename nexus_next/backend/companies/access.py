@@ -60,6 +60,23 @@ def can_access_company(user, company_id):
     return not is_platform_owner(user) and (user.is_superuser or accessible_companies(user).filter(pk=company_id).exists())
 
 
+def has_company_wide_branch_access(user, company_id):
+    """التحقق من أن المستخدم يرى كل الفروع النشطة قبل كشف أرصدة حسابات الشركة العامة."""
+    if is_platform_owner(user):
+        return False
+    if user.is_superuser:
+        return True
+    active_branch_ids = list(
+        Branch.objects.filter(company_id=company_id, is_active=True).values_list("id", flat=True)
+    )
+    if not active_branch_ids:
+        return False
+    accessible_ids = accessible_branches(user, company_id).filter(
+        pk__in=active_branch_ids
+    ).count()
+    return accessible_ids == len(active_branch_ids)
+
+
 def can_access_branch(user, branch_id, company_id=None):
     """التحقق من صلاحية المستخدم على الفرع مع مراعاة نطاق الشركة."""
     return accessible_branches(user, company_id).filter(pk=branch_id).exists()
