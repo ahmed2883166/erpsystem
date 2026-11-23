@@ -333,7 +333,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
             if not treasury_account_id:
                 raise ValidationError({"treasury_account": "اختر الخزينة أو البنك الذي سيتم صرف السلفة منه."})
             try:
-                treasury_account = TreasuryAccount.objects.select_for_update().select_related(
+                treasury_account = TreasuryAccount.objects.select_for_update(of=("self",)).select_related(
                     "account", "company__base_currency",
                 ).get(pk=treasury_account_id, company_id=employee.company_id)
             except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
