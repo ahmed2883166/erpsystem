@@ -77,7 +77,7 @@ def main():
         lock = threading.Lock()
         start_stage = time.perf_counter()
 
-        def worker(username):
+        def worker(username, stage_errors=errors, stage_samples=samples, stage_lock=lock, stage_barrier=barrier):
             opener, jar = client()
             code, _, _ = call(opener, BASE + "/api/csrf/")
             csrf = next((c.value for c in jar if c.name == "csrftoken"), None)
@@ -88,18 +88,18 @@ def main():
                 {"Content-Type": "application/json", "X-CSRFToken": csrf, "Referer": BASE + "/"})
             if code != 200:
                 raise RuntimeError(f"Login failed for {username}: HTTP {code} {body[:200]!r}")
-            barrier.wait(timeout=30)
+            stage_barrier.wait(timeout=30)
             own = []
             for _ in range(ITERATIONS):
                 for name, path in endpoints:
                     status, duration, body = call(opener, BASE + path)
                     own.append((name, status, duration))
                     if status != 200:
-                        with lock:
-                            errors.append({"user": username, "endpoint": name, "status": status,
+                        with stage_lock:
+                            stage_errors.append({"user": username, "endpoint": name, "status": status,
                                            "body": body[:200].decode("utf-8", "replace")})
-            with lock:
-                samples.extend(own)
+            with stage_lock:
+                stage_samples.extend(own)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=count) as pool:
             futures = [pool.submit(worker, name) for name in usernames[:count]]
