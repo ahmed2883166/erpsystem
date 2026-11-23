@@ -89,9 +89,14 @@ class AuditTrailMiddleware:
             and not is_platform_owner(request.user)
         )
         should_audit = (request.path.startswith("/api/") and method in _ACTIONS) or is_global_superuser_read
-        prior_object_id, prior_company_id, prior_branch_id = (
-            _target_before_request(request) if should_audit else (None, None, None)
-        )
+        try:
+            prior_object_id, prior_company_id, prior_branch_id = (
+                _target_before_request(request) if should_audit else (None, None, None)
+            )
+        except Exception:
+            # Audit context lookup must never prevent the business request from running.
+            logger.exception("Could not resolve the target before request")
+            prior_object_id, prior_company_id, prior_branch_id = None, None, None
         raw_body = b""
         if should_audit and "json" in request.META.get("CONTENT_TYPE", "").lower():
             try:
@@ -110,12 +115,16 @@ class AuditTrailMiddleware:
             if raw_body:
                 payload = _json_object(raw_body)
 
-            company_id = _numeric_id(
+            requested_company_id = _numeric_id(
                 request.GET.get("company") or payload.get("company") or payload.get("company_id")
-            ) or prior_company_id
-            branch_id = _numeric_id(
+            )
+            requested_branch_id = _numeric_id(
                 request.GET.get("branch") or payload.get("branch") or payload.get("branch_id")
-            ) or prior_branch_id
+            )
+            # Existing target ownership is authoritative; request-controlled values
+            # may describe a different tenant and must never override it.
+            company_id = prior_company_id or requested_company_id
+            branch_id = prior_branch_id or requested_branch_id
             company = Company.objects.filter(pk=company_id).first() if company_id else None
             branch = Branch.objects.select_related("company").filter(pk=branch_id).first() if branch_id else None
             if branch and company and branch.company_id != company.pk:
