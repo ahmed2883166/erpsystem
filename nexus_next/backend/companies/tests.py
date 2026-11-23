@@ -242,3 +242,73 @@ class CompanyDefaultBranchTests(TestCase):
         self.assertEqual(main.name_ar, "الفرع الرئيسي")
         self.assertTrue(main.is_head_office)
         self.assertTrue(main.is_active)
+
+class HeadOfficeTransferApiTests(APITestCase):
+    def setUp(self):
+        from .models import CompanyMembership
+
+        self.user = get_user_model().objects.create_user(
+            username="branch-admin", password="long-test-password",
+        )
+        self.egp = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="HQ-TRANSFER", name_ar="شركة اختبار المركز الرئيسي",
+            country=Company.Country.EGYPT,
+            activity=Company.Activity.COMMERCIAL,
+            base_currency=self.egp,
+        )
+        self.main = Branch.objects.create(
+            company=self.company, code="MAIN", name_ar="المركز الرئيسي",
+            is_head_office=True, is_active=True,
+        )
+        self.new_branch = Branch.objects.create(
+            company=self.company, code="BR-01", name_ar="فرع جديد",
+            is_active=True,
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company,
+            role=CompanyMembership.Role.ADMIN, all_branches=True, is_active=True,
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_admin_can_transfer_head_office_atomically(self):
+        response = self.client.post(
+            f"/api/setup/branches/{self.new_branch.pk}/make-head-office/",
+            {}, format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.main.refresh_from_db()
+        self.new_branch.refresh_from_db()
+        self.assertFalse(self.main.is_head_office)
+        self.assertTrue(self.new_branch.is_head_office)
+        self.assertEqual(
+            Branch.objects.filter(company=self.company, is_head_office=True).count(), 1
+        )
+
+    def test_inactive_branch_cannot_become_head_office(self):
+        inactive = Branch.objects.create(
+            company=self.company, code="BR-OFF", name_ar="فرع موقوف",
+            is_active=False,
+        )
+        response = self.client.post(
+            f"/api/setup/branches/{inactive.pk}/make-head-office/",
+            {}, format="json",
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(self.main.refresh_from_db() is None)
+        self.assertTrue(self.main.is_head_office)
+
+    def test_non_admin_cannot_transfer_head_office(self):
+        from .models import CompanyMembership
+
+        CompanyMembership.objects.filter(user=self.user, company=self.company).update(
+            role=CompanyMembership.Role.ACCOUNTANT,
+        )
+        response = self.client.post(
+            f"/api/setup/branches/{self.new_branch.pk}/make-head-office/",
+            {}, format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.main.refresh_from_db()
+        self.assertTrue(self.main.is_head_office)
+
