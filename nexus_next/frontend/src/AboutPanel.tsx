@@ -38,8 +38,8 @@ export default function AboutPanel({ onClose }: Props) {
       <section className="about-detail-card">
         <span className="about-detail-kicker">SOFTWARE DEVELOPMENT</span>
         <h3>التطوير البرمجي</h3>
-        <strong>فريق تطوير Admrail ERP</strong>
-        <p>تطوير الواجهة والخدمات الخلفية وقاعدة البيانات والاختبارات. لا تُعرض بيانات اتصال شخصية أو اسم مبرمج فردي غير معتمد.</p>
+        <strong>أحمد مصطفى الشاعر</strong>
+        <p>المبرمج والمشرف على تطوير Admrail ERP، بما يشمل بناء الواجهة والخدمات الخلفية وقاعدة البيانات ومراجعة الاختبارات.</p>
       </section>
       <section className="about-detail-card">
         <span className="about-detail-kicker">TECHNOLOGY</span>
