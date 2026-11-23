@@ -17,7 +17,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, SupplierPayment, SupplierReturn
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -91,6 +91,83 @@ class PurchasingWorkflowTests(APITestCase):
         saved = self.client.get(f"/api/purchasing/receipts/{receipt_id}/")
         self.assertEqual(saved.status_code, 200, saved.data)
         self.assertEqual(saved.data["supplier"], self.supplier.pk)
+
+    def test_only_uninvoiced_draft_purchase_receipt_can_be_deleted_safely(self):
+        created = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-DELETE-DRAFT", "receipt_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        movement = StockMovement.objects.get(movement_number="PR-GR-DELETE-DRAFT")
+
+        # Accountant role cannot delete purchasing documents; deletion remains admin-only.
+        forbidden = self.client.delete(f"/api/purchasing/receipts/{created.data['id']}/")
+        self.assertEqual(forbidden.status_code, 403, forbidden.data)
+
+        admin = get_user_model().objects.create_user(
+            username="buyer-admin-receipt-delete", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
+        deleted = self.client.delete(f"/api/purchasing/receipts/{created.data['id']}/")
+        self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
+        self.assertEqual(self.client.get(f"/api/purchasing/receipts/{created.data['id']}/").status_code, 404)
+        self.assertFalse(StockMovement.objects.filter(pk=movement.pk).exists())
+        self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
+
+        posted_id, _ = self._create_and_post_receipt()
+        posted_movement = StockMovement.objects.get(movement_number="PR-GR-001")
+        rejected = self.client.delete(f"/api/purchasing/receipts/{posted_id}/")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(self.client.get(f"/api/purchasing/receipts/{posted_id}/").status_code, 200)
+        self.assertTrue(StockMovement.objects.filter(pk=posted_movement.pk).exists())
+
+    def test_deleting_draft_purchase_receipt_releases_purchase_order_quantity(self):
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-RECEIPT-DELETE", "order_date": "2026-03-01",
+            "lines": [{"product": self.product.pk, "quantity": "10", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_id = order.data["id"]
+        order_line_id = order.data["line_items"][0]["id"]
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-DELETE", "receipt_date": "2026-03-05",
+            "lines": [{
+                "product": self.product.pk, "quantity": "4", "unit_cost": "100",
+                "purchase_order_line": order_line_id,
+            }],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        receipt_line_id = receipt.data["line_items"][0]["id"]
+        self.assertTrue(PurchaseOrderReceiptLine.objects.filter(receipt_line_id=receipt_line_id).exists())
+        self.assertEqual(
+            PurchaseOrder.objects.get(pk=order_id).lines.get(pk=order_line_id).remaining_quantity,
+            Decimal("6.0000"),
+        )
+
+        admin = get_user_model().objects.create_user(
+            username="buyer-admin-po-receipt-delete", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
+        deleted = self.client.delete(f"/api/purchasing/receipts/{receipt.data['id']}/")
+        self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
+        self.assertFalse(PurchaseOrderReceiptLine.objects.filter(receipt_line_id=receipt_line_id).exists())
+        self.assertEqual(
+            PurchaseOrder.objects.get(pk=order_id).lines.get(pk=order_line_id).remaining_quantity,
+            Decimal("10.0000"),
+        )
+        self.assertFalse(StockMovement.objects.filter(movement_number="PR-GR-PO-DELETE").exists())
 
     def test_draft_purchase_order_supports_safe_partial_and_line_updates(self):
         created = self.client.post("/api/purchasing/orders/", {
