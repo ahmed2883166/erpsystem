@@ -28,6 +28,12 @@ $Drive = [System.IO.Path]::GetPathRoot($BackupRoot)
 if (-not $Drive -or $Drive.TrimEnd("\").ToUpperInvariant() -eq "C:") { throw "Backup destination must be on a drive other than C:." }
 if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) { throw "Configured backup folder is unavailable: $BackupRoot" }
 
+# Remove only abandoned verification workspaces older than one day; a running
+# backup's temporary directory is never touched.
+Get-ChildItem -LiteralPath $BackupRoot -Directory -Filter ".nexus-verify-*" -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 $Values = @{}
 foreach ($Line in Get-Content -LiteralPath $EnvFile) {
     if ($Line -match '^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$') {
