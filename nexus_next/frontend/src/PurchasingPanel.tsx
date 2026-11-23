@@ -75,7 +75,7 @@ const refresh = async () => {
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredReturns = returns.filter((row) => [row.return_number, row.supplier_name, row.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
-  const returnableInvoices = invoices.filter((invoice) => invoice.status === "posted" && !invoice.transaction_currency && Number(invoice.balance_due) > 0);
+  const returnableInvoices = invoices.filter((invoice) => invoice.status === "posted" && Number(invoice.balance_due) > 0);
 
   const findRate = (currencyId: string, onDate: string) => exchangeRates
     .filter(rate => rate.currency === Number(currencyId) && rate.rate_date <= onDate)
@@ -272,7 +272,7 @@ const postInvoice = async (id: number) => {
         const invoice = invoices.find((row) => row.id === Number(invoiceId));
         setReturnForm((old) => ({ ...old, invoice: invoiceId }));
         setReturnLines([{ invoice_line: String(invoice?.invoice_lines[0]?.id || ""), quantity: "1" }]);
-      }}><option value="">اختر فاتورة مورد</option>{returnableInvoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number} · {invoice.supplier_name} · متبقي {money(invoice.balance_due)}</option>)}</select></label>
+      }}><option value="">اختر فاتورة مورد</option>{returnableInvoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number} · {invoice.supplier_name} · {invoice.transaction_currency ? `${money(invoice.transaction_grand_total || "0")} ${currencies.find((currency) => currency.id === invoice.transaction_currency)?.code || "عملة أجنبية"}` : money(invoice.grand_total)} · متبقي {money(invoice.balance_due)}</option>)}</select></label>
       <label>رقم المرتجع<input required maxLength={37} value={returnForm.return_number} onChange={(e) => setReturnForm({ ...returnForm, return_number: e.target.value })} /></label>
       <label>تاريخ المرتجع<input required type="date" value={returnForm.return_date} onChange={(e) => setReturnForm({ ...returnForm, return_date: e.target.value })} /></label>
       {returnForm.invoice && <div className="inventory-wide"><div className="work-panel-head"><div><h3>الأصناف المرتجعة</h3><p>يُربط كل سطر ببند فاتورة المورد الأصلية ويُخصم من تكلفة الاستلام نفسه.</p></div><button className="subtle-button" type="button" onClick={() => setReturnLines((old) => [...old, { invoice_line: "", quantity: "1" }])}>＋ إضافة صنف</button></div></div>}
@@ -282,7 +282,7 @@ const postInvoice = async (id: number) => {
         <button className="subtle-button" type="button" disabled={returnLines.length === 1} onClick={() => setReturnLines((old) => old.filter((_, i) => i !== index))}>حذف السطر</button>
       </div>)}
       <label className="inventory-wide">ملاحظات<textarea value={returnForm.notes} onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })} /></label>
-      <div className="inventory-wide"><p className="inventory-report-note">هذه الشاشة تتيح حاليًا مرتجعات الفواتير بالعملة الأساسية فقط. الفواتير الأجنبية لا تظهر حتى استكمال تسوية فروق العملة.</p></div>
+      <div className="inventory-wide"><p className="inventory-report-note">تُرحّل المرتجعات الأجنبية بسعر الصرف التاريخي للفاتورة فقط إذا لم توجد دفعات أو إعادة تقييم سابقة عليها. عند وجود تسوية عملة سابقة يرفض الخادم الترحيل حمايةً من فروق غير محسوبة.</p></div>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy || !returnableInvoices.length}>{busy ? "جارٍ الحفظ…" : "حفظ مرتجع كمسودة"}</button></div>
     </form>}
     {showForm && tab === "orders" && <form className="inventory-form" onSubmit={(event) => void saveOrder(event)}>
