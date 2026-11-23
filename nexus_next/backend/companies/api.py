@@ -13,7 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
-from .access import accessible_branches, accessible_companies, has_company_role, is_platform_owner
+from .access import acquire_fiscal_year_lock, accessible_branches, accessible_companies, has_company_role, is_platform_owner
 from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, ExchangeRateSerializer, FiscalYearSerializer
 
@@ -565,6 +565,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         fiscal_year = self.get_object()
         if not has_company_role(request.user, fiscal_year.company_id, ("admin",)):
             raise PermissionDenied("إقفال السنة المالية متاح لمدير الشركة فقط.")
+        acquire_fiscal_year_lock(fiscal_year, shared=False)
         Company.objects.select_for_update().get(pk=fiscal_year.company_id)
         fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
         review = self._closing_review(fiscal_year)
@@ -649,6 +650,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         fiscal_year = self.get_object()
         if not has_company_role(request.user, fiscal_year.company_id, ("admin",)):
             raise PermissionDenied("إقفال الفترة الشهرية متاح لمدير الشركة فقط.")
+        acquire_fiscal_year_lock(fiscal_year, shared=False)
         Company.objects.select_for_update().get(pk=fiscal_year.company_id)
         fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
         if fiscal_year.status != FiscalYear.Status.OPEN:
@@ -695,6 +697,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         reason = str(request.data.get("reason", "")).strip()
         if len(reason) < 10:
             raise ValidationError({"reason": "اكتب سببًا واضحًا لإعادة الفتح لا يقل عن 10 أحرف."})
+        acquire_fiscal_year_lock(fiscal_year, shared=False)
         Company.objects.select_for_update().get(pk=fiscal_year.company_id)
         fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
         if fiscal_year.status != FiscalYear.Status.OPEN:
