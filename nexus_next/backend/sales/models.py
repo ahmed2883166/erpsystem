@@ -268,6 +268,9 @@ class SalesReturn(models.Model):
     net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    transaction_net_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_grand_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return")
     cost_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_cost")
     reversal_stock_movement = models.OneToOneField("inventory.StockMovement", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_reversal")
@@ -340,6 +343,9 @@ class SalesReturnLine(models.Model):
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_total_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     cost_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
 
     class Meta:
