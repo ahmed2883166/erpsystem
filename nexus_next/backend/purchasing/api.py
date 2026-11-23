@@ -45,7 +45,7 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
@@ -202,6 +202,26 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         if receipt.stock_movement.status != StockMovement.Status.DRAFT:
             raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل؛ أنشئ مستند تسوية مستقلًا بدل تغيير حركة المخزون.")
         raise ValidationError("تعديل إذن الاستلام غير متاح حاليًا؛ أنشئ إذن استلام مسودة جديدًا.")
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف إذن استلام مسودة غير مفوتر فقط مع تحرير ربط أمر الشراء بأمان."""
+        receipt = PurchaseReceipt.objects.select_for_update().select_related(
+            "company", "warehouse", "stock_movement"
+        ).get(pk=instance.pk)
+        self._check_write(receipt.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        movement = StockMovement.objects.select_for_update().get(pk=receipt.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف إذن استلام مرحّل؛ استخدم إجراء عكس أو تسوية مخزون معتمد.")
+        if PurchaseInvoice.objects.filter(receipt=receipt).exists():
+            raise ValidationError("لا يمكن حذف إذن استلام مرتبط بفاتورة مورد؛ احذف مسودة الفاتورة أولًا أو استخدم الإجراء المحاسبي المعتمد.")
+        # Draft PO links reserve received quantities; remove them before deleting
+        # movement lines so the purchase order's remaining quantity is restored.
+        PurchaseOrderReceiptLine.objects.filter(receipt_line__movement=movement).delete()
+        receipt.delete()
+        movement.delete()
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
