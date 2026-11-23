@@ -798,11 +798,6 @@ def post_supplier_return(return_id, user):
     ).get(pk=document.invoice_id)
     if invoice.status != PurchaseInvoice.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل مرتجع قبل ترحيل فاتورة المورد.")
-    if invoice.transaction_currency_id:
-        if SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists():
-            raise ValidationError("لا يمكن مرتجعة فاتورة أجنبية سبق سداد جزء منها؛ يلزم استكمال تسوية العملة على مستوى الدفعات أولًا.")
-        if FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists():
-            raise ValidationError("لا يمكن مرتجعة فاتورة أجنبية لها إعادة تقييم سابقة؛ يلزم عكس/تسوية إعادة التقييم أولًا.")
     if document.return_date < invoice.invoice_date:
         raise ValidationError("تاريخ المرتجع لا يجوز أن يسبق تاريخ فاتورة المورد.")
     if document.company_id != invoice.company_id or document.supplier_id != invoice.supplier_id:
@@ -952,11 +947,6 @@ def reverse_supplier_return(return_id, user, entry_date):
     if entry_date < document.return_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ المرتجع.")
     invoice = PurchaseInvoice.objects.select_for_update().get(pk=document.invoice_id)
-    if invoice.transaction_currency_id and (
-        SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
-        or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists()
-    ):
-        raise ValidationError("لا يمكن عكس مرتجع فاتورة أجنبية بعد وجود دفعات أو إعادة تقييم؛ راجع تسوية العملة أولًا.")
     if document.journal_entry.status != JournalEntry.Status.POSTED:
         raise ValidationError("القيد الأصلي للمرتجع ليس مرحّلًا.")
     lines = list(document.lines.select_for_update(of=("self",)).select_related(
