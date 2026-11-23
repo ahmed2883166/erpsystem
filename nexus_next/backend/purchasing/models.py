@@ -363,7 +363,7 @@ class SupplierRefund(models.Model):
             raise ValidationError({"return_document": "لا يمكن استرداد مبلغ عن مرتجع غير مرحّل أو معكوس."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status= self.Status.POSTED).exists():
+        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
             raise ValidationError("استرداد المورد المرحّل غير قابل للتعديل.")
         return super().save(*args, **kwargs)
 
