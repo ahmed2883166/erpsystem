@@ -125,6 +125,14 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(created.status_code, 201, created.data)
         draft_id = created.data["id"]
 
+        forbidden = self.client.delete(f"/api/purchasing/orders/{draft_id}/")
+        self.assertEqual(forbidden.status_code, 403, forbidden.data)
+
+        admin = get_user_model().objects.create_user(username="buyer-admin-delete", password="test-password")
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
         deleted = self.client.delete(f"/api/purchasing/orders/{draft_id}/")
         self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
         self.assertEqual(self.client.get(f"/api/purchasing/orders/{draft_id}/").status_code, 404)
@@ -153,6 +161,11 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(created.status_code, 201, created.data)
         draft_id = created.data["id"]
 
+        admin = get_user_model().objects.create_user(username="buyer-admin-invoice-delete", password="test-password")
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
         deleted = self.client.delete(f"/api/purchasing/invoices/{draft_id}/")
         self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
         self.assertEqual(self.client.get(f"/api/purchasing/invoices/{draft_id}/").status_code, 404)
