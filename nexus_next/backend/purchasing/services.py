@@ -694,6 +694,27 @@ def reverse_supplier_refund(refund_id, user, entry_date):
     if document.journal_entry.status != JournalEntry.Status.POSTED:
         raise ValidationError("القيد الأصلي لاسترداد المورد ليس مرحّلًا.")
 
+    # لا نعكس استردادًا سابقًا إذا كانت استردادات لاحقة قد استهلكت الرصيد
+    # الدائن الناتج عنه؛ كما نتحقق من كفاية الرصيد الحالي قبل إعادة القيد.
+    later_refunds = SupplierRefund.objects.filter(
+        company_id=document.company_id,
+        supplier_id=document.supplier_id,
+        status=SupplierRefund.Status.POSTED,
+        refund_date__gte=document.refund_date,
+    ).exclude(pk=document.pk)
+    if later_refunds.exists():
+        raise ValidationError(
+            "لا يمكن عكس هذا الاسترداد لوجود استردادات أخرى لاحقة للمورد؛ "
+            "اعكس المستندات اللاحقة أولًا."
+        )
+    available_credit = supplier_credit_balance(
+        document.company_id, document.supplier_id, timezone.localdate(),
+    )
+    if available_credit < document.amount:
+        raise ValidationError(
+            "لا يمكن عكس الاسترداد لأن الرصيد الدائن المتاح لا يكفي لإعادة المبلغ إلى حساب المورد."
+        )
+
     try:
         reversal_entry = reverse_operational_journal(
             document.journal_entry_id, user, entry_date, JournalEntry.Source.PURCHASES,
