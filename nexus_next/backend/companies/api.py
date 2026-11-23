@@ -410,7 +410,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
 
         pnl_lines = JournalLine.objects.filter(
             entry__fiscal_year=fiscal_year,
-            entry__status=JournalEntry.Status.POSTED,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
         )
         pnl_before_closing = pnl_lines.exclude(entry__source_type=JournalEntry.Source.CLOSING).values(
@@ -448,7 +448,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
             expected_rows = JournalLine.objects.filter(
                 entry__company_id=fiscal_year.company_id,
                 entry__entry_date__lte=fiscal_year.end_date,
-                entry__status=JournalEntry.Status.POSTED,
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
                 account__nature__in=balance_sheet_natures,
             ).values("entry__branch_id", "account_id").annotate(
                 net=Sum(F("debit") - F("credit"))
