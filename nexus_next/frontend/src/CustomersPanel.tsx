@@ -3,7 +3,7 @@
  * تشمل بيانات التعريف والاتصال والحد الائتماني وشروط السداد.
  */
 import { useEffect, useMemo, useState } from "react";
-import { api, salesApi, type Customer, type CustomerStatement } from "./api";
+import { api, inventoryApi, type Customer, type CustomerStatement, type CustomerDiscountRule, type Product, type InventoryCategory } from "./api";
 
 type Props = { companyId: number | null };
 
@@ -21,6 +21,13 @@ export default function CustomersPanel({ companyId }: Props) {
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
   const [statement, setStatement] = useState<CustomerStatement | null>(null);
   const [statementBusy, setStatementBusy] = useState(false);
+  const [discountRules, setDiscountRules] = useState<CustomerDiscountRule[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<InventoryCategory[]>([]);
+  const [showDiscountRules, setShowDiscountRules] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState<number | null>(null);
+  const [ruleSaving, setRuleSaving] = useState(false);
+  const [ruleForm, setRuleForm] = useState({customer:"",customer_type:"",product:"",category:"",min_quantity:"",min_invoice_amount:"",discount_percent:"0",priority:"100",effective_from:new Date().toISOString().slice(0,10),effective_to:"",notes:""});
   const [statementFrom, setStatementFrom] = useState(`${new Date().getFullYear()}-01-01`);
   const [statementTo, setStatementTo] = useState(new Date().toISOString().slice(0, 10));
   const [form, setForm] = useState({
@@ -43,7 +50,14 @@ const refresh = async () => {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { void refresh(); resetForm(); setShowForm(false); }, [companyId]);
+  const refreshDiscountRules = async () => {
+    if (!companyId) { setDiscountRules([]); setProducts([]); setCategories([]); return; }
+    try {
+      const [rules, productRows, categoryRows] = await Promise.all([api.discountRules(companyId), inventoryApi.products(companyId), inventoryApi.categories(companyId)]);
+      setDiscountRules(rules); setProducts(productRows); setCategories(categoryRows);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل قواعد الخصم."); }
+  };
+  useEffect(() => { void refresh(); void refreshDiscountRules(); resetForm(); setShowForm(false); setShowDiscountRules(false); setEditingRuleId(null); }, [companyId]);
 
   const filtered = useMemo(() => rows.filter((customer) =>
     [customer.code, customer.name_ar, customer.name_en, customer.tax_number, customer.phone, customer.mobile]
@@ -121,7 +135,30 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
   };
 
   // تصدير كشف الحساب الحالي بصيغة CSV متوافقة مع Excel.
-  const exportStatement = () => {
+
+  const resetRuleForm = () => {
+    setEditingRuleId(null);
+    setRuleForm({customer:"",customer_type:"",product:"",category:"",min_quantity:"",min_invoice_amount:"",discount_percent:"0",priority:"100",effective_from:new Date().toISOString().slice(0,10),effective_to:"",notes:""});
+  };
+  const editDiscountRule = (rule: CustomerDiscountRule) => {
+    setEditingRuleId(rule.id);
+    setRuleForm({customer:rule.customer?String(rule.customer):"",customer_type:rule.customer_type,product:rule.product?String(rule.product):"",category:rule.category?String(rule.category):"",min_quantity:rule.min_quantity||"",min_invoice_amount:rule.min_invoice_amount||"",discount_percent:rule.discount_percent,priority:String(rule.priority),effective_from:rule.effective_from,effective_to:rule.effective_to||"",notes:rule.notes||""});
+  };
+  const saveDiscountRule = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); if (!companyId) return;
+    setRuleSaving(true); setError("");
+    const payload = {company:companyId,customer:ruleForm.customer?Number(ruleForm.customer):null,customer_type:ruleForm.customer_type,product:ruleForm.product?Number(ruleForm.product):null,category:ruleForm.category?Number(ruleForm.category):null,min_quantity:ruleForm.min_quantity||null,min_invoice_amount:ruleForm.min_invoice_amount||null,discount_percent:ruleForm.discount_percent,priority:Number(ruleForm.priority||100),effective_from:ruleForm.effective_from,effective_to:ruleForm.effective_to||null,notes:ruleForm.notes};
+    try { if(editingRuleId) await api.updateDiscountRule(editingRuleId,payload); else await api.createDiscountRule(payload); resetRuleForm(); await refreshDiscountRules(); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ قاعدة الخصم."); }
+    finally { setRuleSaving(false); }
+  };
+  const toggleDiscountRule = async (rule: CustomerDiscountRule) => {
+    setRuleSaving(true); setError("");
+    try { await api.updateDiscountRule(rule.id,{is_active:!rule.is_active}); await refreshDiscountRules(); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحديث قاعدة الخصم."); }
+    finally { setRuleSaving(false); }
+  };
+\n  const exportStatement = () => {
     if (!statement) return;
     const values = [
       ["التاريخ", "نوع المستند", "رقم المستند", "البيان", "مدين", "دائن", "الرصيد"],
@@ -145,12 +182,12 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     <section className="work-panel customers-panel">
       <div className="work-panel-head">
         <div><h2>سجل العملاء</h2><p>بيانات العملاء وحدود الائتمان وشروط السداد للشركة المحددة.</p></div>
-        <button className="primary-button" type="button" disabled={!companyId} onClick={() => {
-          if (showForm) { setShowForm(false); resetForm(); }
-          else { resetForm(); setShowForm(true); }
-        }}>
-          <span>＋</span>{showForm ? "إغلاق النموذج" : "إضافة عميل"}
-        </button>
+        <div className="table-actions">
+          <button className="subtle-button" type="button" disabled={!companyId} onClick={() => setShowDiscountRules(value => !value)}>قواعد الخصم</button>
+          <button className="primary-button" type="button" disabled={!companyId} onClick={() => { if(showForm){setShowForm(false);resetForm();}else{resetForm();setShowForm(true);} }}>
+            <span>＋</span>{showForm ? "إغلاق النموذج" : "إضافة عميل"}
+          </button>
+        </div>
       </div>
       {error && <div className="error-banner">{error}</div>}
       {!companyId && <div className="table-empty">اختر شركة لعرض سجل العملاء.</div>}
@@ -190,6 +227,28 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
           <td><div className="table-actions"><button className="subtle-button" type="button" disabled={saving} onClick={() => editCustomer(customer)}>تعديل</button><button className="subtle-button" type="button" disabled={saving} onClick={() => void toggleCustomerActive(customer)}>{customer.is_active ? "إيقاف" : "تنشيط"}</button></div></td>
         </tr>)}</tbody>
       </table>{!loading && filtered.length === 0 && <div className="table-empty">لا توجد سجلات مطابقة. أضف أول عميل للشركة.</div>}</div>}
+
+      {showDiscountRules && companyId && <section className="customer-statement">
+        <div className="customer-statement-head"><div><h3>قواعد الخصم التجاري</h3><p>قاعدة واحدة فقط لكل بند: الأولوية الأعلى ثم الأكثر تخصيصًا. الخصم اليدوي له الأولوية.</p></div><button className="subtle-button" type="button" onClick={() => {resetRuleForm();setShowDiscountRules(false);}}>إغلاق</button></div>
+        <form className="customer-form" onSubmit={(event) => void saveDiscountRule(event)}>
+          <div className="customer-form-wide"><strong>{editingRuleId ? "تعديل قاعدة خصم" : "إضافة قاعدة خصم"}</strong></div>
+          <label>عميل محدد<select value={ruleForm.customer} onChange={event=>setRuleForm({...ruleForm,customer:event.target.value})}><option value="">كل العملاء المطابقين</option>{rows.map(x=><option key={x.id} value={x.id}>{x.code} — {x.name_ar}</option>)}</select></label>
+          <label>نوع العميل<select value={ruleForm.customer_type} onChange={event=>setRuleForm({...ruleForm,customer_type:event.target.value})}><option value="">الكل</option><option value="company">شركة</option><option value="individual">فرد</option></select></label>
+          <label>الصنف<select value={ruleForm.product} onChange={event=>setRuleForm({...ruleForm,product:event.target.value,category:""})}><option value="">كل الأصناف</option>{products.map(x=><option key={x.id} value={x.id}>{x.code} — {x.name_ar}</option>)}</select></label>
+          <label>مجموعة الأصناف<select value={ruleForm.category} onChange={event=>setRuleForm({...ruleForm,category:event.target.value,product:""})}><option value="">كل المجموعات</option>{categories.map(x=><option key={x.id} value={x.id}>{x.code} — {x.name_ar}</option>)}</select></label>
+          <label>أقل كمية<input type="number" min="0.0001" step="0.0001" value={ruleForm.min_quantity} onChange={event=>setRuleForm({...ruleForm,min_quantity:event.target.value})} /></label>
+          <label>أقل قيمة فاتورة<input type="number" min="0" step="0.01" value={ruleForm.min_invoice_amount} onChange={event=>setRuleForm({...ruleForm,min_invoice_amount:event.target.value})} /></label>
+          <label>نسبة الخصم %<input required type="number" min="0" max="100" step="0.0001" value={ruleForm.discount_percent} onChange={event=>setRuleForm({...ruleForm,discount_percent:event.target.value})} /></label>
+          <label>الأولوية<input type="number" min="0" max="32767" value={ruleForm.priority} onChange={event=>setRuleForm({...ruleForm,priority:event.target.value})} /></label>
+          <label>ساري من<input required type="date" value={ruleForm.effective_from} onChange={event=>setRuleForm({...ruleForm,effective_from:event.target.value})} /></label>
+          <label>ساري حتى<input type="date" value={ruleForm.effective_to} onChange={event=>setRuleForm({...ruleForm,effective_to:event.target.value})} /></label>
+          <label className="customer-form-wide">اسم القاعدة / ملاحظة<input maxLength={500} value={ruleForm.notes} onChange={event=>setRuleForm({...ruleForm,notes:event.target.value})} /></label>
+          <div className="customer-form-actions customer-form-wide"><button className="subtle-button" type="button" disabled={ruleSaving} onClick={resetRuleForm}>مسح</button><button className="primary-button" type="submit" disabled={ruleSaving}>{ruleSaving?"جارٍ الحفظ…":editingRuleId?"حفظ القاعدة":"إضافة القاعدة"}</button></div>
+        </form>
+        <div className="data-table-wrap"><table><thead><tr><th>القاعدة</th><th>العميل / الفئة</th><th>الصنف / المجموعة</th><th>الكمية</th><th>قيمة الفاتورة</th><th>الخصم</th><th>الأولوية</th><th>الصلاحية</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+          <tbody>{discountRules.map(rule=><tr key={rule.id}><td>{rule.notes || "قاعدة #"+rule.id}</td><td>{rule.customer_name || (rule.customer_type==="company"?"شركات":rule.customer_type==="individual"?"أفراد":"كل العملاء")}</td><td>{rule.product_name || rule.category_name || "كل الأصناف"}</td><td>{rule.min_quantity||"—"}</td><td>{rule.min_invoice_amount||"—"}</td><td>{rule.discount_percent}%</td><td>{rule.priority}</td><td>{rule.effective_from} — {rule.effective_to||"مفتوح"}</td><td>{rule.is_active?"نشطة":"موقوفة"}</td><td><div className="table-actions"><button className="subtle-button" type="button" disabled={ruleSaving} onClick={()=>editDiscountRule(rule)}>تعديل</button><button className="subtle-button" type="button" disabled={ruleSaving} onClick={()=>void toggleDiscountRule(rule)}>{rule.is_active?"إيقاف":"تنشيط"}</button></div></td></tr>)}</tbody>
+        </table>{discountRules.length===0 && <div className="table-empty">لا توجد قواعد خصم للشركة.</div>}</div>
+      </section>}
       {statementCustomer && <section className="customer-statement">
         <div className="customer-statement-head">
           <div><h3>كشف حساب: {statementCustomer.name_ar}</h3><p>الحركات المرحلة فقط، مع رصيد متحرك حسب التاريخ</p></div>
