@@ -193,3 +193,28 @@ class BankReconciliationOpeningBalanceTests(TestCase):
         line.refresh_from_db()
         self.assertEqual(line.description, "حركة خاصة")
         self.assertEqual(shared_reconciliation.lines.count(), 1)
+
+        company_wide_user = User.objects.create_user(
+            username="company_wide_bank_user", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=company_wide_user, company=self.company,
+            role="accountant", all_branches=True,
+        )
+        self.client.force_authenticate(user=company_wide_user)
+        allowed_list = self.client.get("/api/treasury/statement-lines/")
+        self.assertEqual(allowed_list.status_code, 200)
+        self.assertIn(str(line.pk), str(allowed_list.data))
+        allowed_create = self.client.post(
+            "/api/treasury/statement-lines/",
+            {
+                "reconciliation": shared_reconciliation.pk,
+                "line_number": 2,
+                "transaction_date": "2026-01-16",
+                "description": "إضافة مصرح بها",
+                "reference": "AUTHORIZED",
+                "amount": "75.0000",
+            },
+            format="json",
+        )
+        self.assertEqual(allowed_create.status_code, 201)
