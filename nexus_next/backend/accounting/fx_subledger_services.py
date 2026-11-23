@@ -80,7 +80,10 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
         returned_after_latest = active_returns.filter(
             return_date__gt=latest.revaluation_date,
         )
-        returned_current = _sum(returned_after_latest, "transaction_grand_total") * latest.rate
+        # Returns are already posted in company base currency at their own
+        # document-date rate. Repricing their foreign amount at the prior
+        # invoice revaluation rate overstates the remaining carrying balance.
+        returned_current = _sum(returned_after_latest, "grand_total")
         reversed_before_latest = Decimal("0")
         if direction == "receivable":
             reversed_before_latest = _sum(
