@@ -1,0 +1,61 @@
+name: Admrail Million Journal Benchmark
+
+on:
+  push:
+    branches:
+      - work/nexus-django-react-rebuild
+    paths:
+      - "nexus_next/backend/scripts/benchmark_million_journals.py"
+      - ".github/workflows/admrail-million-journal-benchmark.yml"
+  workflow_dispatch:
+
+jobs:
+  million-journal-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: admrail_benchmark
+          POSTGRES_USER: admrail_benchmark
+          POSTGRES_PASSWORD: benchmark_only_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U admrail_benchmark -d admrail_benchmark"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: nexus_next/backend
+    env:
+      DJANGO_SECRET_KEY: benchmark-only-secret-key
+      DJANGO_DEBUG: "False"
+      POSTGRES_DB: admrail_benchmark
+      POSTGRES_USER: admrail_benchmark
+      POSTGRES_PASSWORD: benchmark_only_password
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+      ALLOW_BENCHMARK_DATABASE: "1"
+      BENCHMARK_OUTPUT: \${{ runner.temp }}/million-journal-benchmark.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: nexus_next/backend/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: python manage.py migrate --noinput
+      - name: Load one million balanced journal entries and two million lines
+        run: python scripts/benchmark_million_journals.py --entries 1000000 --batch-size 5000
+      - name: Upload benchmark measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Admrail-Million-Journal-Benchmark
+          path: \${{ runner.temp }}/million-journal-benchmark.json
+          if-no-files-found: warn
+          retention-days: 14
