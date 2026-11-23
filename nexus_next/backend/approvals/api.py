@@ -8,7 +8,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role, is_platform_owner
+from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role, is_platform_owner, parse_company_param
 from sales.models import SalesInvoice
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval, FinancialApprovalRequest
 from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer, FinancialApprovalRequestSerializer
@@ -23,7 +23,7 @@ class DiscountApprovalPolicyViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = DiscountApprovalPolicy.objects.filter(company__in=accessible_companies(self.request.user)).select_related("company")
-        company_id = self.request.query_params.get("company")
+        company_id = parse_company_param(self.request)
         return qs.filter(company_id=company_id) if company_id else qs
 
     def _admin(self, company_id):
@@ -61,11 +61,20 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             scoped = qs
         else:
+            companies = accessible_companies(self.request.user)
+            branches = accessible_branches(self.request.user)
+            default_company_ids = []
+            for company_id in companies.values_list("id", flat=True):
+                default_branch = Branch.objects.filter(
+                    company_id=company_id, is_active=True,
+                ).order_by("-is_head_office", "code").first()
+                if default_branch and default_branch.pk in set(branches.values_list("id", flat=True)):
+                    default_company_ids.append(company_id)
             scoped = qs.filter(
-                Q(invoice__delivery__warehouse__branch__isnull=True)
-                | Q(invoice__delivery__warehouse__branch__in=accessible_branches(self.request.user))
+                Q(invoice__delivery__warehouse__branch__in=branches)
+                | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
             )
-        company_id = self.request.query_params.get("company")
+        company_id = parse_company_param(self.request)
         return scoped.filter(company_id=company_id) if company_id else scoped
 
     def _manager(self, approval):
@@ -140,20 +149,29 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             "treasury_transaction__counter_account",
         )
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            companies = accessible_companies(self.request.user)
             branches = accessible_branches(self.request.user)
+            default_company_ids = []
+            accessible_branch_ids = set(branches.values_list("id", flat=True))
+            for company_id in companies.values_list("id", flat=True):
+                default_branch = Branch.objects.filter(
+                    company_id=company_id, is_active=True,
+                ).order_by("-is_head_office", "code").first()
+                if default_branch and default_branch.pk in accessible_branch_ids:
+                    default_company_ids.append(company_id)
             qs = qs.filter(
                 Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
-                  purchase_invoice__receipt__warehouse__branch__isnull=True)
+                  purchase_invoice__receipt__warehouse__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
-                    purchase_invoice__receipt__warehouse__branch__in=branches)
-                | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
-                    supplier_payment__invoice__receipt__warehouse__branch__isnull=True)
+                    purchase_invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
                     supplier_payment__invoice__receipt__warehouse__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
+                    supplier_payment__invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
                     treasury_transaction__branch__in=branches)
             )
-        company_id = self.request.query_params.get("company")
+        company_id = parse_company_param(self.request)
         if company_id:
             qs = qs.filter(company_id=company_id)
         document_type = self.request.query_params.get("document_type")
