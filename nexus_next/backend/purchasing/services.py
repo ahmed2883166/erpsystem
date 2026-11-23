@@ -11,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
+from companies.access import resolve_warehouse_branch
 from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
@@ -25,13 +26,10 @@ def _account(company, role):
 
 def _branch_for_stock_warehouse(company, warehouse):
     """تحديد الفرع الذي يحمل قيمة المخزون أو تكلفة الصرف."""
-    branch = warehouse.branch if warehouse.branch_id else None
+    branch = resolve_warehouse_branch(company, warehouse)
     if branch and not branch.is_active:
         raise ValidationError("لا يمكن توزيع تكلفة الضريبة على فرع مخزني موقوف.")
     if not branch:
-        branch = Branch.objects.filter(company=company, is_active=True, is_head_office=True).first()
-        if not branch:
-            branch = Branch.objects.filter(company=company, is_active=True).order_by("code").first()
     if not branch:
         raise ValidationError("يجب إنشاء فرع نشط قبل توزيع تكلفة الضريبة غير القابلة للخصم.")
     return branch
@@ -171,13 +169,10 @@ def _capitalize_nonrecoverable_stock_tax(invoice_line):
 def _branch_and_year(receipt, entry_date):
     """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
     warehouse = receipt.warehouse
-    branch = warehouse.branch if warehouse.branch_id else None
+    branch = resolve_warehouse_branch(receipt.company, warehouse)
     if branch and not branch.is_active:
         raise ValidationError("فرع المخزن موقوف.")
     if not branch:
-        branch = Branch.objects.filter(company=receipt.company, is_active=True, is_head_office=True).first()
-        if not branch:
-            branch = Branch.objects.filter(company=receipt.company, is_active=True).order_by("code").first()
     if not branch:
         raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المشتريات.")
     year = FiscalYear.objects.filter(
