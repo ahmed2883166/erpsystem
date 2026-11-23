@@ -56,8 +56,19 @@ DATABASES = {"default": {
     "PASSWORD": env("POSTGRES_PASSWORD"),
     "HOST": env("POSTGRES_HOST", default="127.0.0.1"),
     "PORT": env("POSTGRES_PORT", default="5432"),
-    "CONN_MAX_AGE": 60,
-    "OPTIONS": {"connect_timeout": 5},
+    # psycopg_pool يدير الاتصالات مركزياً داخل عملية التطبيق؛ لا نحتفظ باتصال مستقل لكل Thread.
+    # شغّل Waitress كعملية واحدة على Windows، واضبط عدد العمليات عند استخدام خادم متعدد العمليات.
+    "CONN_MAX_AGE": 0,
+    "CONN_HEALTH_CHECKS": True,
+    "OPTIONS": {
+        "connect_timeout": env.int("POSTGRES_CONNECT_TIMEOUT", default=5),
+        "pool": {
+            "min_size": env.int("POSTGRES_POOL_MIN_SIZE", default=2),
+            "max_size": env.int("POSTGRES_POOL_MAX_SIZE", default=20),
+            "timeout": env.float("POSTGRES_POOL_TIMEOUT", default=30.0),
+            "max_waiting": env.int("POSTGRES_POOL_MAX_WAITING", default=100),
+        },
+    },
 }}
 
 # Axes يراقب محاولات الدخول الفاشلة ويقفل الحساب وفق الحدود المحددة أدناه.
