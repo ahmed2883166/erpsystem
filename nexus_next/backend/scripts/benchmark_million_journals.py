@@ -61,7 +61,7 @@ def main():
                 JournalLine(entry=entry, account=cash, description="Synthetic debit", debit=amount, credit=0),
                 JournalLine(entry=entry, account=sales, description="Synthetic credit", debit=0, credit=amount),
             ))
-        JournalLine.objects.bulk_create(lines, batch_size=args.batch_size * 2)
+        JournalLine.objects.bulk_create(lines, batch_size=min(args.batch_size * 2, 5_000))
         if first == 1 or (first - 1) % 100_000 == 0:
             print(f"Inserted {last - 1:,}/{args.entries:,} journal entries", flush=True)
     metrics["bulk_load_seconds"] = round(time.perf_counter() - started, 3)
