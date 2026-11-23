@@ -8,6 +8,7 @@ from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
 from accounting.models import ChartOfAccount, FxSubledgerRevaluation, TaxCode
+from companies.access import resolve_warehouse_branch
 from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
@@ -461,7 +462,8 @@ class SupplierRefundSerializer(serializers.ModelSerializer):
             treasury_account = TreasuryAccount.objects.filter(
                 company=company, account=account, kind=expected_kind, is_active=True,
             ).first()
-            branch_id = returned.invoice.receipt.warehouse.branch_id
+            branch = resolve_warehouse_branch(company, returned.invoice.receipt.warehouse)
+            branch_id = branch.pk if branch else None
             if (
                 account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                 or not account.is_active or account.is_group or not account.allow_posting
@@ -546,7 +548,8 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
             treasury_account = TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).first()
-            branch_id = invoice.receipt.warehouse.branch_id
+            branch = resolve_warehouse_branch(company, invoice.receipt.warehouse)
+            branch_id = branch.pk if branch else None
             if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                     or not account.is_active or account.is_group or not account.allow_posting
                     or not treasury_account
