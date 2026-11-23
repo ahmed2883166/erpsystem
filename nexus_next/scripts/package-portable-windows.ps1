@@ -72,6 +72,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root "setup-admrail.ps1") -Destination (Join-Path $Stage "setup-admrail.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.ps1") -Destination (Join-Path $Stage "run-admrail-lan.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.cmd") -Destination (Join-Path $Stage "run-admrail-lan.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "configure-admrail-lan.ps1") -Destination (Join-Path $Stage "configure-admrail-lan.ps1") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Configure-Admrail-LAN.cmd") -Destination (Join-Path $Stage "Configure-Admrail-LAN.cmd") -Force
   $CaddyCommand = Get-Command "caddy.exe" -ErrorAction SilentlyContinue
   if (-not $CaddyCommand) { $CaddyCommand = Get-Command "caddy" -ErrorAction SilentlyContinue }
   if ($CaddyCommand) {
@@ -175,7 +177,7 @@ Never expose ports 8000 or 5432 to employee devices.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Remove-Old-Admrail-Database.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Remove-Old-Admrail-Database.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
