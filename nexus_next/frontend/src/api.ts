@@ -53,7 +53,7 @@ export type SubledgerReconciliation = {
   posted_documents_missing_journal:{sales:number;purchasing:number;inventory:number}; posted_documents_missing_journal_count:number;
   configuration_issue_count:number; unavailable_count:number; is_reconciled:boolean; note:string;
   rows:{key:string;label:string;status:"matched"|"partial_reconciliation"|"difference"|"pending_documents"|"not_configured"|"invalid_account"|"historical_snapshot_unavailable";
-    accounts:{id:number;code:string;name:string}[];subledger_balance:string|null;gl_balance:string|null;difference:string|null;
+    accounts:{id:number;code:string;name:string}[];party_balances?:{party_id:number;code:string;name:string;balance:string}[];party_count?:number;subledger_balance:string|null;gl_balance:string|null;difference:string|null;
     source_journal_count:number;pending_documents_count:number;unmatched_entry_count:number;detail:string;
     unmatched_entries:{journal_id:number;entry_number:string;entry_date:string;description:string;account_code:string;debit:string;credit:string}[];
   }[];
