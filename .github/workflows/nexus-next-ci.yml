@@ -49,7 +49,10 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run core accounts companies accounting customers inventory suppliers purchasing sales treasury assets audit approvals hr
       - run: python manage.py migrate --noinput
-      - run: python manage.py test
+      - name: Run HR payroll and employee regression tests explicitly
+        run: python manage.py test hr --verbosity 2
+      - name: Run complete backend test suite
+        run: python manage.py test --verbosity 2
 
   frontend:
     runs-on: ubuntu-latest
