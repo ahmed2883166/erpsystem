@@ -199,9 +199,28 @@ class SubledgerReconciliationView(APIView):
             Q(status=SupplierReturn.Status.POSTED)
             | Q(status=SupplierReturn.Status.REVERSED, reversal_date__gt=as_of)
         )
-        posted_customer_receipts = customer_receipts.filter(status=CustomerReceipt.Status.POSTED)
-        posted_supplier_payments = supplier_payments.filter(status=SupplierPayment.Status.POSTED)
-        posted_supplier_refunds = supplier_refunds.filter(status=SupplierRefund.Status.POSTED)
+        reversal_journals_as_of = JournalEntry.objects.filter(
+            reversal_of_id=OuterRef("journal_entry_id"),
+            entry_date__lte=as_of, status__in=POSTED_STATUSES,
+        )
+        posted_customer_receipts = customer_receipts.annotate(
+            _reversed_by_as_of=Exists(reversal_journals_as_of)
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(status=CustomerReceipt.Status.REVERSED, _reversed_by_as_of=False)
+        )
+        posted_supplier_payments = supplier_payments.annotate(
+            _reversed_by_as_of=Exists(reversal_journals_as_of)
+        ).filter(
+            Q(status=SupplierPayment.Status.POSTED)
+            | Q(status=SupplierPayment.Status.REVERSED, _reversed_by_as_of=False)
+        )
+        posted_supplier_refunds = supplier_refunds.annotate(
+            _reversed_by_as_of=Exists(reversal_journals_as_of)
+        ).filter(
+            Q(status=SupplierRefund.Status.POSTED)
+            | Q(status=SupplierRefund.Status.REVERSED, _reversed_by_as_of=False)
+        )
 
         def grouped_amount(queryset, party_id_field, amount_field, carrying_field=None):
             if carrying_field:
@@ -302,13 +321,19 @@ class SubledgerReconciliationView(APIView):
         payroll_journal_ids = {value for row in payroll_rows for value in row if value}
         payroll_journal_ids = _with_reversals(payroll_journal_ids)
 
+        reversed_payroll_payment = JournalEntry.objects.filter(
+            reversal_of_id=OuterRef("payment_journal_entry_id"),
+            entry_date__lte=as_of, status__in=POSTED_STATUSES,
+        )
         paid_payroll_posting = PayrollPosting.objects.filter(
             cycle_id=OuterRef("cycle_id"),
             branch_id=OuterRef("employee__branch_id"),
             payment_journal_entry__isnull=False,
             payment_journal_entry__entry_date__lte=as_of,
             payment_journal_entry__status__in=POSTED_STATUSES,
-        )
+        ).annotate(
+            _payment_reversed=Exists(reversed_payroll_payment)
+        ).filter(_payment_reversed=False)
         unpaid_payroll_results = PayrollResult.objects.filter(
             cycle__company_id=company_id,
             cycle__period_end__lte=as_of,
