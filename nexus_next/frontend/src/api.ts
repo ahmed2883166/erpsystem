@@ -383,6 +383,8 @@ export const api = {
   createBranch: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Branch>("/api/setup/branches/", { method: "POST", body: JSON.stringify(payload) }); },
   // تحديث بيانات فرع قائم دون تغيير كوده أو الشركة التابعة له.
   updateBranch: async (id: number, payload: Partial<Pick<Branch, "name_ar" | "address" | "phone" | "is_active">>) => { await request<{ detail: string }>("/api/csrf/"); return request<Branch>(`/api/setup/branches/${id}/?include_inactive=true`, { method: "PATCH", body: JSON.stringify(payload) }); },
+  // نقل صفة المركز الرئيسي إلى فرع نشط داخل الشركة نفسها.
+  makeHeadOffice: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<Branch>(`/api/setup/branches/${id}/make-head-office/`, { method: "POST", body: JSON.stringify({}) }); },
   // جلب عضويات المستخدمين في الشركة.
   memberships: (companyId: number) => request<CompanyMembership[]>(`/api/setup/memberships/?company=${companyId}`),
   // جلب عضوية المستخدم الحالي بالشركة وصلاحياته.
