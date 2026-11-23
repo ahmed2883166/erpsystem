@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from companies.models import FiscalYear
+from companies.access import ensure_fiscal_period_open
 from audit.models import AuditEvent
 from .models import JournalEntry
 
@@ -60,6 +61,7 @@ def post_journal(entry_id: int) -> JournalEntry:
         raise ValidationError("لا يمكن الترحيل داخل سنة مالية مغلقة.")
     if not (fiscal_year.start_date <= entry.entry_date <= fiscal_year.end_date):
         raise ValidationError("تاريخ القيد خارج حدود السنة المالية المحددة.")
+    ensure_fiscal_period_open(fiscal_year, entry.entry_date)
     if entry.branch.company_id != entry.company_id:
         raise ValidationError("الفرع لا يتبع شركة القيد.")
 
