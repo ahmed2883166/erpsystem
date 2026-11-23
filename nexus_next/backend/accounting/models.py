@@ -43,6 +43,15 @@ class ChartOfAccount(models.Model):
                 raise ValidationError({"parent": "الحساب الأب يجب أن يتبع نفس الشركة."})
             if self.parent_id == self.pk:
                 raise ValidationError({"parent": "لا يمكن أن يكون الحساب أبًا لنفسه."})
+            visited = set()
+            node = self.parent
+            while node is not None:
+                if node.pk == self.pk:
+                    raise ValidationError({"parent": "لا يمكن أن يكون الحساب تابعًا لأحد أبنائه."})
+                if node.pk in visited:
+                    raise ValidationError({"parent": "يوجد تسلسل أبوة دائري في دليل الحسابات."})
+                visited.add(node.pk)
+                node = node.parent
             if not self.parent.is_group:
                 raise ValidationError({"parent": "يجب اختيار حساب تجميعي كحساب أب."})
         if self.is_group and self.allow_posting:
@@ -175,6 +184,16 @@ class CostCenter(models.Model):
         super().clean()
         if self.parent_id and self.parent.company_id != self.company_id:
             raise ValidationError({"parent": "مركز التكلفة الأب يجب أن يتبع نفس الشركة."})
+        if self.parent_id:
+            visited = set()
+            node = self.parent
+            while node is not None:
+                if self.pk and node.pk == self.pk:
+                    raise ValidationError({"parent": "لا يمكن أن يكون مركز التكلفة تابعًا لأحد أبنائه."})
+                if node.pk in visited:
+                    raise ValidationError({"parent": "يوجد تسلسل أبوة دائري في مراكز التكلفة."})
+                visited.add(node.pk)
+                node = node.parent
 
 
 class JournalEntry(models.Model):
