@@ -9,9 +9,11 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.services import reverse_operational_journal
 from accounting.services import get_account_for_role, post_journal
-from inventory.models import StockMovement
+from inventory.models import Product, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
+from audit.models import AuditEvent
 from .models import SalesInvoice, SalesReturn
 from .services import _branch_and_year
 
@@ -136,3 +138,88 @@ def post_sales_return(return_id, user):
         "cost_journal_entry", "status", "posted_at",
     ))
     return sales_return
+
+
+@transaction.atomic
+def reverse_sales_return(return_id, user, entry_date):
+    """عكس مردود المبيعات مع استهلاك طبقات تكلفة الاستلام الأصلي فقط."""
+    document = SalesReturn.objects.select_for_update().select_related(
+        "company", "invoice", "warehouse", "journal_entry", "stock_movement",
+    ).get(pk=return_id)
+    if document.status != SalesReturn.Status.POSTED or not document.journal_entry_id:
+        raise ValidationError("لا يمكن عكس إلا مردود مبيعات مرحّل.")
+    if document.reversal_journal_entry_id or document.reversal_stock_movement_id:
+        raise ValidationError("تم عكس مردود المبيعات من قبل.")
+    if entry_date < document.return_date:
+        raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ المردود.")
+    if document.journal_entry.status != JournalEntry.Status.POSTED:
+        raise ValidationError("قيد مردود المبيعات الأصلي ليس مرحّلًا.")
+
+    lines = list(document.lines.select_for_update(of=("self",)).select_related(
+        "movement_line__destination_location", "invoice_line__delivery_line__product",
+    ).order_by("id"))
+    if not lines:
+        raise ValidationError("لا توجد بنود مخزون مرتبطة بمردود المبيعات.")
+
+    reversal_movement = StockMovement.objects.create(
+        company=document.company,
+        movement_number=f"SRV-{document.pk}",
+        movement_type=StockMovement.MovementType.SALES_RETURN_REVERSAL,
+        movement_date=entry_date,
+        source_warehouse=document.warehouse,
+        notes=f"عكس مردود المبيعات {document.return_number}",
+        created_by=user,
+    )
+    for line in lines:
+        product = line.invoice_line.delivery_line.product
+        if product.costing_method not in (
+            Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE,
+        ):
+            raise ValidationError("عكس مردود المبيعات يتطلب استمرار تتبع تكلفة FIFO أو المتوسط المرجح.")
+        reversal_line = StockMovementLine.objects.create(
+            movement=reversal_movement,
+            product=product,
+            quantity=line.quantity,
+            source_location=line.movement_line.destination_location,
+            expiry_date=line.movement_line.expiry_date,
+            reversal_of_line=line.movement_line,
+        )
+        if reversal_line.product_id != line.movement_line.product_id:
+            raise ValidationError("بند عكس المخزون لا يطابق بند الاستلام الأصلي.")
+
+    posted_movement = post_stock_movement(reversal_movement.pk, user)
+    for line in lines:
+        reversal_line = posted_movement.lines.get(reversal_of_line=line.movement_line)
+        if abs(reversal_line.cost_amount - line.cost_amount) > Decimal("0.0001"):
+            raise ValidationError("تكلفة المخزون المتبقية من مردود المبيعات لا تطابق التكلفة الأصلية؛ تم إلغاء العكس.")
+
+    try:
+        reversal_entry = reverse_operational_journal(
+            document.journal_entry_id, user, entry_date, JournalEntry.Source.SALES,
+        )
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    document.reversal_stock_movement = posted_movement
+    document.reversal_journal_entry = reversal_entry
+    document.reversal_date = entry_date
+    document.reversed_at = timezone.now()
+    document.reversed_by = user
+    document.status = SalesReturn.Status.REVERSED
+    document.save(update_fields=(
+        "reversal_stock_movement", "reversal_journal_entry", "reversal_date",
+        "reversed_at", "reversed_by", "status",
+    ))
+    AuditEvent.objects.create(
+        actor=user, company=document.company, branch=document.warehouse.branch,
+        action=AuditEvent.Action.ACTION, resource="sales.sales_return.reversed",
+        object_id=str(document.pk), http_method="POST", status_code=200, succeeded=True,
+        metadata={
+            "return_number": document.return_number,
+            "reversal_date": entry_date.isoformat(),
+            "reversal_stock_movement_id": posted_movement.pk,
+            "reversal_journal_entry_id": reversal_entry.pk,
+        },
+    )
+    return document
