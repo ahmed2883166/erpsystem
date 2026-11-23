@@ -158,6 +158,7 @@ class TreasuryFxSnapshotTests(TestCase):
         )
         self.assertEqual(revaluation.difference, Decimal("200.0000"))
         self.assertIsNotNone(revaluation.journal_entry_id)
+        self.assertEqual(revaluation.journal_entry.source_type, JournalEntry.Source.FX_REVALUATION)
         position.refresh_from_db()
         self.assertEqual(position.carrying_base_amount, Decimal("3200.0000"))
 
