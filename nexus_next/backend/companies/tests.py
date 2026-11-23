@@ -203,3 +203,17 @@ class BranchMembershipIsolationTests(TestCase):
             is_active=False,
         )
         self.assertFalse(accessible_branches(self.user, self.company.pk).exists())
+
+
+    def test_membership_serializer_rejects_branch_from_another_company(self):
+        from .serializers import CompanyMembershipSerializer
+
+        serializer = CompanyMembershipSerializer(data={
+            "company": self.company.pk,
+            "user": self.user.pk,
+            "role": "accountant",
+            "all_branches": False,
+            "branches": [self.cairo.pk, self.other_branch.pk],
+        })
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("branches", serializer.errors)
