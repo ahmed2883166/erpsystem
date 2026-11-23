@@ -9,7 +9,7 @@ from django.db import models
 from accounting.models import ChartOfAccount, TaxCode
 from companies.models import Company, Currency, ExchangeRate
 from customers.models import Customer, CustomerDiscountRule
-from inventory.models import StockMovement, StockMovementLine, Warehouse
+from inventory.models import Product, StockMovement, StockMovementLine, Warehouse
 
 
 class SalesDelivery(models.Model):
