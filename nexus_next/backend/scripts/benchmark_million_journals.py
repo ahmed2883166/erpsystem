@@ -1,5 +1,5 @@
 """Isolated PostgreSQL benchmark for one million posted journal entries."""
-import argparse, json, os, resource, time
+import atexit, argparse, json, os, resource, secrets, time
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +15,18 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
+
+def deactivate_benchmark_user(username):
+    try:
+        user = User.objects.filter(username=username).first()
+        if user:
+            user.is_active = False
+            user.set_unusable_password()
+            user.save(update_fields=["is_active", "password"])
+            CompanyMembership.objects.filter(user=user).update(is_active=False)
+    except Exception:  # noqa: BLE001 - cleanup must not hide the benchmark's original result.
+        pass
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -43,7 +55,8 @@ def main():
         start_date=date(2026, 1, 1), end_date=date(2026, 12, 31))
     cash = ChartOfAccount.objects.create(company=company, code="1110", name_ar="الصندوق", nature=ChartOfAccount.Nature.ASSET)
     sales = ChartOfAccount.objects.create(company=company, code="4100", name_ar="المبيعات", nature=ChartOfAccount.Nature.REVENUE)
-    user = User.objects.create_user(username=f"million-benchmark-{suffix}", password="Benchmark-only-Password-123!")
+    user = User.objects.create_user(username=f"million-benchmark-{suffix}", password=secrets.token_urlsafe(32))
+    atexit.register(deactivate_benchmark_user, user.username)
     CompanyMembership.objects.create(user=user, company=company, role=CompanyMembership.Role.ACCOUNTANT, all_branches=True)
 
     started = time.perf_counter()
