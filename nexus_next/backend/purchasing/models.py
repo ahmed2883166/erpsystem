@@ -308,6 +308,7 @@ class SupplierRefund(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_refunds")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="refunds")
@@ -329,6 +330,16 @@ class SupplierRefund(models.Model):
     journal_entry = models.OneToOneField(
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
         related_name="supplier_refund",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_refund_reversal",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_supplier_refunds",
     )
     created_by = models.ForeignKey(
         "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
@@ -363,13 +374,20 @@ class SupplierRefund(models.Model):
             raise ValidationError({"return_document": "لا يمكن استرداد مبلغ عن مرتجع غير مرحّل أو معكوس."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
-            raise ValidationError("استرداد المورد المرحّل غير قابل للتعديل.")
+        if self.pk:
+            current_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if current_status == self.Status.REVERSED:
+                raise ValidationError("استرداد المورد المعكوس غير قابل للتعديل.")
+            if current_status == self.Status.POSTED:
+                reversal_fields = {"reversal_journal_entry", "reversal_date", "reversed_at", "reversed_by", "status"}
+                update_fields = set(kwargs.get("update_fields") or ())
+                if self.status != self.Status.REVERSED or not update_fields or not update_fields.issubset(reversal_fields):
+                    raise ValidationError("استرداد المورد المرحّل غير قابل للتعديل إلا من خلال إجراء العكس.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.status == self.Status.POSTED:
-            raise ValidationError("لا يمكن حذف استرداد مورد مرحّل.")
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف استرداد مورد مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
 
 
