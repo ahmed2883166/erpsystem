@@ -115,8 +115,16 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         if order.status != PurchaseOrder.Status.DRAFT:
             raise ValidationError("لا يمكن حذف أمر شراء معتمد أو ملغي؛ استخدم إجراء الإلغاء أو التسوية المناسب.")
-        if order.receipts.exists() or order.lines.filter(received_quantity__gt=0).exists():
-            raise ValidationError("لا يمكن حذف أمر شراء له إذن استلام أو كمية مستلمة.")
+        if (
+            order.receipts.exists()
+            or order.lines.filter(received_quantity__gt=0).exists()
+            or order.lines.filter(receipt_links__isnull=False).exists()
+        ):
+            raise ValidationError("لا يمكن حذف أمر شراء له إذن استلام أو كمية مستلمة أو روابط استلام.")
+        # PurchaseOrderLine uses PROTECT to preserve receipt history. Once the
+        # guards above prove that no receipt references exist, remove only the
+        # draft's own editable lines before deleting its header.
+        order.lines.all().delete()
         order.delete()
 
     @action(detail=True, methods=("post",))
