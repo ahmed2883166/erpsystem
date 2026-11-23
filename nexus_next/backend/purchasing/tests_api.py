@@ -14,6 +14,7 @@ from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
+from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount
 from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, SupplierPayment, SupplierReturn
@@ -1327,6 +1328,27 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(statement.status_code, 200, statement.data)
         self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_refund")
+
+        reversed_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_refund.status_code, 200, reversed_refund.data)
+        self.assertEqual(reversed_refund.data["status"], "reversed")
+        self.assertIsNotNone(reversed_refund.data["reversal_journal_entry"])
+        self.assertEqual(
+            JournalEntry.objects.get(pk=posted_refund.data["journal_entry"]).status,
+            JournalEntry.Status.REVERSED,
+        )
+        self.assertEqual(
+            supplier_credit_balance(self.company.pk, self.supplier.pk, date(2026, 3, 14)),
+            Decimal("114.0000"),
+        )
+        repeated = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
+            {"entry_date": "2026-03-15"}, format="json",
+        )
+        self.assertEqual(repeated.status_code, 400, repeated.data)
 
     def test_supplier_return_cannot_consume_another_receipts_cost_layers(self):
         first_receipt_id, first_receipt_line_id = self._create_and_post_receipt()
