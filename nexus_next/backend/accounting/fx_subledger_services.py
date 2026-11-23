@@ -13,7 +13,7 @@ from accounting.models import (
 from accounting.services import get_account_for_role, post_journal
 from companies.models import ExchangeRate
 from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn
-from sales.models import CustomerReceipt, SalesInvoice
+from sales.models import CustomerReceipt, SalesInvoice, SalesReturn
 
 
 def _sum(queryset, field):
@@ -53,8 +53,16 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
             Q(status=SupplierReturn.Status.POSTED)
             | Q(status=SupplierReturn.Status.REVERSED, reversal_date__gt=as_of)
         )
-        returned_foreign = _sum(active_returns, "transaction_grand_total")
-        returned_base = _sum(active_returns, "grand_total")
+    else:
+        active_returns = SalesReturn.objects.filter(
+            invoice=invoice,
+            return_date__lte=as_of,
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
+        )
+    returned_foreign = _sum(active_returns, "transaction_grand_total")
+    returned_base = _sum(active_returns, "grand_total")
     remaining_foreign = (invoice.transaction_grand_total or Decimal("0")) - foreign_used - returned_foreign
     historical_remaining = invoice.grand_total - historical_used - returned_base
 
@@ -62,7 +70,26 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
         date_field = "receipt_date" if direction == "receivable" else "payment_date"
         after_latest = settlements.filter(**{f"{date_field}__gt": latest.revaluation_date})
         current_used_after = _sum(after_latest, "carrying_base_amount")
-        current_remaining = latest.new_carrying_amount - current_used_after
+        returned_after_latest = active_returns.filter(
+            return_date__gt=latest.revaluation_date,
+        )
+        returned_current = _sum(returned_after_latest, "transaction_grand_total") * latest.rate
+        reversed_before_latest = Decimal("0")
+        if direction == "receivable":
+            reversed_before_latest = _sum(
+                SalesReturn.objects.filter(
+                    invoice=invoice,
+                    status=SalesReturn.Status.REVERSED,
+                    return_date__lte=latest.revaluation_date,
+                    reversal_date__gt=latest.revaluation_date,
+                    reversal_date__lte=as_of,
+                ),
+                "transaction_grand_total",
+            ) * latest.rate
+        current_remaining = (
+            latest.new_carrying_amount - current_used_after
+            - returned_current + reversed_before_latest
+        )
     else:
         current_remaining = invoice.grand_total - _sum(settlements, "carrying_base_amount") - returned_base
 
