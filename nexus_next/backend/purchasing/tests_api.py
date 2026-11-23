@@ -1326,3 +1326,70 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(returned.data["grand_total"], "114.0000")
         invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data
         self.assertEqual(invoice_after["balance_due"], "114.0000")
+
+
+    def test_reversing_supplier_return_restores_original_cost_layers_and_vat(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-RETURN-REV-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        draft = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-REV-001", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(draft.status_code, 201, draft.data)
+        posted_return = self.client.post(f"/api/purchasing/returns/{draft.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        before_reverse = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(before_reverse.quantity, Decimal("1.0000"))
+        self.assertEqual(before_reverse.inventory_value, Decimal("100.0000"))
+
+        reversed_return = self.client.post(
+            f"/api/purchasing/returns/{draft.data['id']}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+        self.assertEqual(reversed_return.data["reversal_movement_status"], "posted")
+        self.assertTrue(reversed_return.data["reversal_journal_number"])
+
+        after_reverse = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(after_reverse.quantity, Decimal("2.0000"))
+        self.assertEqual(after_reverse.inventory_value, Decimal("200.0000"))
+        invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data
+        self.assertEqual(invoice_after["balance_due"], "228.0000")
+
+        return_doc = SupplierReturn.objects.get(pk=draft.data["id"])
+        self.assertEqual(return_doc.reversal_stock_movement.status, StockMovement.Status.POSTED)
+        self.assertEqual(
+            JournalLine.objects.get(entry=return_doc.reversal_journal_entry, account__code="2200").credit,
+            Decimal("114.0000"),
+        )
+        self.assertEqual(
+            JournalLine.objects.get(entry=return_doc.reversal_journal_entry, account__code="1000").debit,
+            Decimal("100.0000"),
+        )
+        self.assertEqual(
+            JournalLine.objects.get(entry=return_doc.reversal_journal_entry, account__code="1300").debit,
+            Decimal("14.0000"),
+        )
+        statement = self.client.get(
+            f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["closing_balance"], "228.0000")
+        self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_return_reversal")
+        vat = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(vat.status_code, 200, vat.data)
+        self.assertEqual(vat.data["purchases"]["tax_amount"], "14.0000")
+        self.assertEqual(vat.data["input_tax"], "14.0000")
+        self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
