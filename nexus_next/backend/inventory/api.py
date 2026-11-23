@@ -284,8 +284,11 @@ class StorageLocationViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
-        """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
-        warehouse = serializer.validated_data.get("warehouse", serializer.instance.warehouse)
+        """حفظ التعديلات مع منع نقل موقع التخزين إلى شركة أخرى."""
+        current = serializer.instance
+        warehouse = serializer.validated_data.get("warehouse", current.warehouse)
+        if warehouse.company_id != current.warehouse.company_id:
+            raise ValidationError({"warehouse": "لا يمكن نقل موقع تخزين قائم إلى مخزن تابع لشركة أخرى."})
         self._check_write(warehouse)
         serializer.save()
 
