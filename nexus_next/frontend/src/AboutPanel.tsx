@@ -3,10 +3,10 @@ import type { ReactNode } from "react";
 type Props = { onClose?: () => void };
 
 const details = [
-  { label: "اسم البرنامج", value: "Admrail ERP" },
-  { label: "الإصدار الرئيسي", value: "الإصدار الثاني · V2" },
-  { label: "رقم البناء", value: "0.1.0" },
-  { label: "سنة الإصدار", value: "2026" },
+  { label: "Product", value: "Admrail ERP" },
+  { label: "Major Version", value: "Version 2 · V2" },
+  { label: "Build", value: "0.1.0" },
+  { label: "Year", value: "2026" },
 ];
 
 function InfoCard({ title, children }: { title: string; children: ReactNode }) {
@@ -16,41 +16,28 @@ function InfoCard({ title, children }: { title: string; children: ReactNode }) {
 export default function AboutPanel({ onClose }: Props) {
   return <section className="work-panel about-program-panel" aria-labelledby="about-program-title">
     <div className="work-panel-head">
-      <div><p className="eyebrow">ADMRAIL ERP · PRODUCT INFORMATION</p><h2 id="about-program-title">حول البرنامج وحقوق الملكية</h2><p>البيانات التعريفية الرسمية للمنتج وإصدار البرنامج وحقوقه.</p></div>
-      {onClose && <button type="button" className="subtle-button" onClick={onClose}>إغلاق</button>}
+      <div><p className="eyebrow">ADMRAIL ERP · PRODUCT INFORMATION</p><h2 id="about-program-title">About & Copyright</h2><p>Official product information, version details, and ownership.</p></div>
+      {onClose && <button type="button" className="subtle-button" onClick={onClose}>Close</button>}
     </div>
     <div className="metrics-grid about-info-grid">
       {details.map(item => <InfoCard key={item.label} title={item.label}><strong className="metric-value about-info-value">{item.value}</strong></InfoCard>)}
     </div>
     <div className="about-ownership-grid">
       <section className="about-detail-card">
-        <span className="about-detail-kicker">PRODUCT OWNER & COPYRIGHT</span>
-        <h3>مالك البرنامج وصاحب الحقوق</h3>
-        <strong>أحمد مصطفى الشاعر</strong>
-        <p>جميع حقوق الملكية الفكرية للمنتج واسم Admrail ERP والنسخة البرمجية محفوظة لصاحب الحقوق، ولا يجوز نسخ البرنامج أو إعادة توزيعه أو استغلاله تجارياً دون إذن كتابي.</p>
-      </section>
-      <section className="about-detail-card">
-        <span className="about-detail-kicker">PRODUCT DESIGN</span>
-        <h3>تصميم المنتج والإشراف</h3>
-        <strong>أحمد مصطفى الشاعر</strong>
-        <p>تصميم فكرة المنتج، وتحديد المتطلبات الوظيفية والمحاسبية، والإشراف على تجربة الاستخدام وتطوير الوحدات.</p>
-      </section>
-      <section className="about-detail-card">
-        <span className="about-detail-kicker">SOFTWARE DEVELOPMENT</span>
-        <h3>التطوير البرمجي</h3>
-        <strong>أحمد مصطفى الشاعر</strong>
-        <p>المبرمج والمشرف على تطوير Admrail ERP، بما يشمل بناء الواجهة والخدمات الخلفية وقاعدة البيانات ومراجعة الاختبارات.</p>
+        <span className="about-detail-kicker">PROGRAMMING & DESIGN</span>
+        <h3>Programming & Design</h3>
+        <strong>Ahmed elshaer</strong>
       </section>
       <section className="about-detail-card">
         <span className="about-detail-kicker">TECHNOLOGY</span>
-        <h3>التقنيات الأساسية</h3>
+        <h3>Core Technologies</h3>
         <strong>Django · React · TypeScript · PostgreSQL</strong>
-        <p>تطبيق ويب داخلي مصمم للتشغيل على شبكة الشركة المحلية، مع فصل واجهة الاستخدام عن الخدمات الخلفية وقاعدة البيانات.</p>
+        <p>An internal business application designed to run on the company's local network, with a separate user interface, backend services, and database.</p>
       </section>
     </div>
     <div className="about-copyright">
-      <strong>© 2026 أحمد مصطفى الشاعر — Admrail ERP. جميع الحقوق محفوظة.</strong>
-      <span>هذه بيانات ملكية البرنامج، وهي مستقلة عن بيانات الشركة المحاسبية التي يتم إعدادها داخل النظام.</span>
+      <strong>© 2026 Ahmed elshaer — Admrail ERP. All rights reserved.</strong>
+      <span>Product ownership information is independent of the accounting company data managed within the system.</span>
     </div>
   </section>;
 }
