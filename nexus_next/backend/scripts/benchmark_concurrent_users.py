@@ -77,7 +77,7 @@ def main():
         raise SystemExit("The million-entry benchmark company/account was not found.")
     suffix = str(int(time.time()))
     usernames = []
-    for i in range(30):
+    for i in range(50):
         username = f"loadtest-{suffix}-{i+1:02d}"
         user = User.objects.create_user(username=username, password=PASSWORD)
         CompanyMembership.objects.create(
@@ -102,7 +102,7 @@ def main():
         "stages": [],
     }
 
-    for count in (10, 20, 30):
+    for count in (10, 20, 30, 50):
         barrier = threading.Barrier(count)
         samples, errors = [], []
         lock = threading.Lock()
@@ -199,7 +199,7 @@ def main():
     output = Path("concurrent-load-test.json")
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"LOAD_TEST_RESULT={output.resolve()}", flush=True)
-    if report.get("failed") or len(report["stages"]) != 3:
+    if report.get("failed") or len(report["stages"]) != 4:
         raise SystemExit("Concurrent load test failed; see the JSON artifact.")
 
 
