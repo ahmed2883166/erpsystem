@@ -88,7 +88,7 @@ const modules = [
   { title: "الضرائب والإقرارات", detail: "تسوية ضريبة المدخلات والمخرجات وتجهيز الإقرار", icon: "%", tone: "cyan", section: "tax" as Section },
 ];
 const statusNames: Record<string, string> = { draft: "مسودة", posted: "مرحّل", reversed: "معكوس" };
-const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", opening: "افتتاحي", closing: "إقفال" };
+const sourceNames: Record<string, string> = { manual: "يدوي", sales: "مبيعات", purchases: "مشتريات", payroll: "مرتبات", inventory: "مخزون", assets: "أصول", fx_revaluation: "إعادة تقييم عملة", opening: "افتتاحي", closing: "إقفال" };
 
 // شاشة إعداد أكواد الضرائب: تحميل الأكواد وإضافة كود أو تعطيله للشركة.
 function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null; country: "EG" | "SA" | undefined }) {
