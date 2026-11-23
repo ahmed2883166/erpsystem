@@ -32,7 +32,9 @@
 
 ## تشغيل الإنتاج على الشبكة
 
-افتح PowerShell كمسؤول داخل مجلد المشروع، ثم:
+**إذا كنت تستخدم حزمة Windows المحمولة** بعد التهيئة الأولية، استخدم `run-admrail-lan.cmd` من مجلد الحزمة. ضع `caddy.exe` داخل `tools\\caddy.exe` أو أضفه إلى PATH. هذا المشغل يستخدم Python المدمج، ويتأكد من إعدادات الإنتاج وعدم وجود migrations معلقة، ويترك Waitress على localhost.
+
+**إذا كنت تستخدم نسخة المصدر** افتح PowerShell كمسؤول داخل مجلد المشروع، ثم:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
