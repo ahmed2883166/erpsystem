@@ -1578,3 +1578,42 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(Decimal(customers["difference"]), Decimal("0"))
         self.assertEqual(result.data["partial_reconciliation_count"], 0)
         self.assertFalse(result.data["is_reconciled"])
+
+    def test_unpaid_payroll_net_pay_is_listed_by_employee(self):
+        from hr.models import Employee, PayrollCycle, PayrollResult
+
+        payroll_account = ChartOfAccount.objects.create(
+            company=self.company, code="2100", name_ar="مرتبات مستحقة", nature="liability",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.PAYROLL_PAYABLE, account=payroll_account,
+        )
+        employee = Employee.objects.create(
+            company=self.company, branch=self.branch, code="EMP-001",
+            full_name_ar="موظف اختبار", hire_date=date(2025, 1, 1),
+            currency=self.company.base_currency,
+        )
+        cycle = PayrollCycle.objects.create(
+            company=self.company, period_start=date(2026, 3, 1),
+            period_end=date(2026, 3, 31), payment_date=date(2026, 4, 1),
+            status=PayrollCycle.Status.POSTED,
+        )
+        PayrollResult.objects.create(
+            cycle=cycle, employee=employee,
+            basic_salary_snapshot=Decimal("10000"),
+            earnings_total=Decimal("10000"),
+            employee_deductions_total=Decimal("1000"),
+            employer_share_total=Decimal("1500"),
+            employer_share_display_addition=Decimal("1500"),
+            employer_share_display_offset=Decimal("1500"),
+            net_pay=Decimal("9000"), company_cost=Decimal("11500"),
+        )
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        payroll = next(item for item in result.data["rows"] if item["key"] == "payroll")
+        self.assertEqual(payroll["status"], "partial_reconciliation")
+        self.assertEqual(payroll["party_count"], 1)
+        self.assertEqual(payroll["party_balances"][0]["code"], "EMP-001")
+        self.assertEqual(Decimal(payroll["party_balances"][0]["balance"]), Decimal("9000"))
