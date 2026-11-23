@@ -212,6 +212,29 @@ if ($ProductionEnv["ADMRAIL_WEB_THREADS"]) {
   }
   $WebThreads = $ParsedThreads
 }
+
+# Every Waitress request worker may need a database connection concurrently.
+# Fail closed instead of silently configuring a smaller psycopg pool than the
+# HTTP worker count, which would turn pool wait time into avoidable request stalls.
+$PoolMaxSize = 32
+if ($ProductionEnv["POSTGRES_POOL_MAX_SIZE"]) {
+  $ParsedPoolSize = 0
+  if (-not [int]::TryParse($ProductionEnv["POSTGRES_POOL_MAX_SIZE"], [ref]$ParsedPoolSize) -or $ParsedPoolSize -lt 8 -or $ParsedPoolSize -gt 64) {
+    throw "POSTGRES_POOL_MAX_SIZE must be an integer from 8 to 64."
+  }
+  $PoolMaxSize = $ParsedPoolSize
+}
+if ($PoolMaxSize -ne $WebThreads) {
+  throw "POSTGRES_POOL_MAX_SIZE ($PoolMaxSize) must equal ADMRAIL_WEB_THREADS ($WebThreads) for this single-process Waitress deployment."
+}
+$PoolMinSize = 2
+if ($ProductionEnv["POSTGRES_POOL_MIN_SIZE"]) {
+  $ParsedPoolMin = 0
+  if (-not [int]::TryParse($ProductionEnv["POSTGRES_POOL_MIN_SIZE"], [ref]$ParsedPoolMin) -or $ParsedPoolMin -lt 1 -or $ParsedPoolMin -gt $PoolMaxSize) {
+    throw "POSTGRES_POOL_MIN_SIZE must be an integer from 1 to POSTGRES_POOL_MAX_SIZE."
+  }
+  $PoolMinSize = $ParsedPoolMin
+}
 $Bind = "127.0.0.1:8000"
 if ($EnableLan) {
   $LanHost = $ProductionEnv["ADMRAIL_LAN_HOST"]
