@@ -25,6 +25,12 @@ class FixedAsset(models.Model):
     acquisition_date = models.DateField()
     depreciation_start_date = models.DateField()
     original_cost = models.DecimalField(max_digits=20, decimal_places=4)
+    acquisition_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    nonrecoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    acquisition_tax_code = models.ForeignKey(
+        "accounting.TaxCode", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="fixed_asset_acquisitions",
+    )
     salvage_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     useful_life_months = models.PositiveIntegerField()
     depreciation_method = models.CharField(max_length=20, choices=Method.choices, default=Method.STRAIGHT_LINE)
@@ -58,6 +64,13 @@ class FixedAsset(models.Model):
             raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية لا يمكن أن تتجاوز التكلفة."})
+        if self.nonrecoverable_tax_amount < 0:
+            raise ValidationError({"nonrecoverable_tax_amount": "قيمة الضريبة غير القابلة للخصم لا يمكن أن تكون سالبة."})
+        if self.acquisition_net_amount is not None:
+            if self.acquisition_net_amount < 0 or self.acquisition_net_amount + self.nonrecoverable_tax_amount != self.original_cost:
+                raise ValidationError({"original_cost": "تكلفة الأصل يجب أن تساوي صافي الاقتناء مضافًا إليه الضريبة غير القابلة للخصم."})
+        elif self.nonrecoverable_tax_amount:
+            raise ValidationError({"acquisition_net_amount": "أدخل صافي تكلفة الاقتناء لتوثيق الضريبة غير القابلة للخصم."})
         for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account"):
             account = getattr(self, field, None)
             if account and account.company_id != self.company_id:
