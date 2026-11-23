@@ -142,6 +142,34 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertEqual(self.client.get(f"/api/purchasing/orders/{confirmed_id}/").status_code, 200)
 
+    def test_draft_purchase_invoice_can_be_deleted_only_without_financial_dependencies(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        payload = {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-DELETE", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }
+        created = self.client.post("/api/purchasing/invoices/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        draft_id = created.data["id"]
+
+        deleted = self.client.delete(f"/api/purchasing/invoices/{draft_id}/")
+        self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
+        self.assertEqual(self.client.get(f"/api/purchasing/invoices/{draft_id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/purchasing/receipts/{receipt_id}/").status_code, 200)
+
+        payload["invoice_number"] = "INV-POSTED-KEEP"
+        posted_draft = self.client.post("/api/purchasing/invoices/", payload, format="json")
+        self.assertEqual(posted_draft.status_code, 201, posted_draft.data)
+        posted_id = posted_draft.data["id"]
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{posted_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        rejected = self.client.delete(f"/api/purchasing/invoices/{posted_id}/")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(self.client.get(f"/api/purchasing/invoices/{posted_id}/").status_code, 200)
+
     def test_receipt_posting_rejects_inactive_supplier_and_preserves_stock(self):
         created = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
