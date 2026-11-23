@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -16,7 +16,7 @@ from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
 
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn
 
 
 def _account(company, role):
@@ -229,11 +229,18 @@ def post_customer_receipt(receipt_id, user):
         )):
             raise ValidationError("لا يمكن استخدام بيانات عملة أجنبية مع فاتورة بالعملة الأساسية.")
         paid = CustomerReceipt.objects.filter(
-            invoice=invoice, status=CustomerReceipt.Status.POSTED
+            invoice=invoice, status=CustomerReceipt.Status.POSTED,
+            receipt_date__lte=receipt.receipt_date,
         ).exclude(pk=receipt.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        if paid + receipt.amount > invoice.grand_total:
-            remaining = max(Decimal("0"), invoice.grand_total - paid)
-            raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
+        returned = SalesReturn.objects.filter(
+            invoice=invoice, return_date__lte=receipt.receipt_date,
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=receipt.receipt_date)
+        ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+        remaining = max(Decimal("0"), invoice.grand_total - paid - returned)
+        if receipt.amount > remaining:
+            raise ValidationError(f"قيمة السند تتجاوز المتبقي بعد خصم مردودات المبيعات ({remaining}).")
         carrying_amount = receipt.amount
         historical_carrying = receipt.amount
         unrealized_adjustment = Decimal("0")
