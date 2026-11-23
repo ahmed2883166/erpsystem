@@ -10,7 +10,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from customers.models import Customer
+from customers.models import Customer, CustomerDiscountRule
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -1262,3 +1262,45 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(JournalEntry.objects.filter(
             source_type=JournalEntry.Source.SALES, status=JournalEntry.Status.POSTED
         ).count(), 0)
+
+    def test_discount_rules_apply_one_highest_priority_rule_and_keep_manual_override(self):
+        CustomerDiscountRule.objects.create(
+            company=self.company, customer=self.customer, product=self.product,
+            min_quantity=Decimal("2"), min_invoice_amount=Decimal("150"),
+            discount_percent=Decimal("12"), priority=10,
+            effective_from=date(2026, 1, 1), notes="خصم عميل وصنف",
+        )
+        CustomerDiscountRule.objects.create(
+            company=self.company, customer_type=Customer.CustomerType.COMPANY,
+            discount_percent=Decimal("7"), priority=5,
+            effective_from=date(2026, 1, 1), notes="خصم فئة العملاء",
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-RULE")
+        response = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-DISCOUNT-RULE",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["invoice_lines"][0]["discount_percent"], "12.0000")
+        self.assertEqual(response.data["invoice_lines"][0]["discount_rule"], 1)
+        self.assertEqual(response.data["discount_total"], "24.0000")
+
+    def test_explicit_invoice_discount_overrides_rules_without_stacking(self):
+        CustomerDiscountRule.objects.create(
+            company=self.company, customer=self.customer,
+            discount_percent=Decimal("15"), priority=100,
+            effective_from=date(2026, 1, 1), notes="قاعدة العميل",
+        )
+        delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-OVERRIDE")
+        response = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-DISCOUNT-OVERRIDE",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0", "discount_percent": "2"}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["invoice_lines"][0]["discount_percent"], "2.0000")
+        self.assertIsNone(response.data["invoice_lines"][0]["discount_rule"])
+        self.assertEqual(response.data["discount_total"], "4.0000")
