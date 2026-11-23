@@ -1566,3 +1566,14 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(stock["status"], "matched")
         self.assertEqual(Decimal(stock["difference"]), Decimal("0"))
         self.assertFalse(result.data["is_reconciled"])
+
+    def test_zero_difference_linked_journal_comparison_is_not_claimed_as_full_subledger_reconciliation(self):
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        customers = next(item for item in result.data["rows"] if item["key"] == "customers")
+        self.assertEqual(customers["status"], "partial_reconciliation")
+        self.assertEqual(customers["difference"], "0")
+        self.assertEqual(result.data["partial_reconciliation_count"], 1)
+        self.assertFalse(result.data["is_reconciled"])
