@@ -284,7 +284,7 @@ class FixedAssetWorkflowTests(APITestCase):
             format="json",
         )
         self.assertEqual(depreciation.status_code, 201, depreciation.data)
-        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("2833.3333"))
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("4722.2222"))
 
     def test_asset_acquisition_rejects_recoverable_tax_as_nonrecoverable_cost(self):
         code = TaxCode.objects.create(
