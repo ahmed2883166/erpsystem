@@ -551,7 +551,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         if not entry_date:
             raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
         cash_account_id = receipt.payment_account_id or receipt.journal_entry.lines.filter(
-            debit__gt=0,
+            description="استلام نقدية/تحويل من العميل",
         ).values_list("account_id", flat=True).first()
         cash_totals = JournalLine.objects.filter(
             account_id=cash_account_id,
