@@ -231,7 +231,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
                         debit=0, credit=amount),
         ])
         try:
-            journal = post_journal(journal.pk)
+            journal = post_journal(journal.pk, actor=user)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
