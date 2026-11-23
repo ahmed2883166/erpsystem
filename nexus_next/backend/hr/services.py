@@ -473,7 +473,7 @@ def post_payroll_cycle(cycle_id, actor=None):
             raise ValidationError(
                 f"قيد مرتبات فرع {branch.name_ar} غير متوازن: مدين {debit_total} ودائن {credit_total}."
             )
-        posted_entry = post_journal(entry.pk)
+        posted_entry = post_journal(entry.pk, actor=actor)
         PayrollPosting.objects.create(cycle=cycle, branch=branch, journal_entry=posted_entry)
         posted.append({"branch_id": branch.pk, "branch_name": branch.name_ar, "journal_entry_id": posted_entry.pk, "entry_number": posted_entry.entry_number})
 
