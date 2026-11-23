@@ -1,6 +1,7 @@
 """خدمات دورة المشتريات وترحيل الاستلام وفواتير الموردين ومدفوعاتهم."""
 
-from decimal import Decimal
+from collections import defaultdict
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -11,15 +12,161 @@ from rest_framework.exceptions import ValidationError
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.models import Branch, ExchangeRate, FiscalYear
-from inventory.models import StockMovement
+from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt
+from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt
 
 
 def _account(company, role):
     """استخراج الحساب التفصيلي المرتبط بدور المشتريات المطلوب."""
     return get_account_for_role(company, role)
+
+
+def _branch_for_stock_warehouse(company, warehouse):
+    """تحديد الفرع الذي يحمل قيمة المخزون أو تكلفة الصرف."""
+    branch = warehouse.branch if warehouse.branch_id else None
+    if branch and not branch.is_active:
+        raise ValidationError("لا يمكن توزيع تكلفة الضريبة على فرع مخزني موقوف.")
+    if not branch:
+        branch = Branch.objects.filter(company=company, is_active=True, is_head_office=True).first()
+        if not branch:
+            branch = Branch.objects.filter(company=company, is_active=True).order_by("code").first()
+    if not branch:
+        raise ValidationError("يجب إنشاء فرع نشط قبل توزيع تكلفة الضريبة غير القابلة للخصم.")
+    return branch
+
+
+def _capitalize_nonrecoverable_stock_tax(invoice_line):
+    """يوزع الضريبة غير القابلة للخصم على المخزون المتبقي والتكلفة المستهلكة مع حفظ الأثر حسب الفرع."""
+    receipt_line = invoice_line.receipt_line
+    tax_amount = invoice_line.tax_amount
+    quantity = receipt_line.quantity
+    if tax_amount <= 0:
+        return {}
+    if quantity <= 0:
+        raise ValidationError("لا يمكن توزيع ضريبة بند استلام كميته غير موجبة.")
+
+    layers = list(StockCostLayer.objects.select_for_update().filter(
+        root_source_line=receipt_line,
+    ).select_related("warehouse", "warehouse__branch"))
+    if not layers:
+        raise ValidationError(
+            f"لا يمكن رسملة الضريبة للصنف {receipt_line.product.code}: "
+            "لا توجد طبقات تكلفة مرتبطة باستلامه الأصلي. يلزم استلام جديد بعد تحديث تتبع التكلفة."
+        )
+
+    remaining_by_balance = defaultdict(Decimal)
+    remaining_quantity = Decimal("0")
+    for layer in layers:
+        if layer.quantity_remaining <= 0:
+            continue
+        key = (layer.warehouse_id, layer.location_id, layer.expiry_date)
+        remaining_by_balance[key] += layer.quantity_remaining
+        remaining_quantity += layer.quantity_remaining
+
+    consumed_by_branch = defaultdict(lambda: {"cogs": Decimal("0"), "loss": Decimal("0")})
+    consumed_quantity = Decimal("0")
+    consumptions = StockCostConsumption.objects.filter(
+        source_layer__root_source_line=receipt_line,
+        movement_line__movement__status=StockMovement.Status.POSTED,
+    ).select_related(
+        "movement_line__movement__source_warehouse",
+        "movement_line__movement__source_warehouse__branch",
+    )
+    for consumption in consumptions:
+        movement_line = consumption.movement_line
+        movement = movement_line.movement
+        if movement.movement_type == StockMovement.MovementType.ISSUE:
+            category = "cogs"
+        elif (
+            movement.movement_type == StockMovement.MovementType.ADJUSTMENT
+            and movement_line.adjustment_direction == "out"
+        ):
+            category = "loss"
+        else:
+            # التحويل يستهلك طبقة المصدر لكنه ينشئ طبقة ابنة؛ لذلك لا يعد استهلاكًا نهائيًا.
+            continue
+        branch = _branch_for_stock_warehouse(invoice_line.invoice.company, movement.source_warehouse)
+        consumed_by_branch[branch.pk][category] += consumption.quantity
+        consumed_quantity += consumption.quantity
+
+    traced_quantity = remaining_quantity + consumed_quantity
+    if abs(traced_quantity - quantity) > Decimal("0.0001"):
+        raise ValidationError(
+            f"تعذر مطابقة تتبع تكلفة الصنف {receipt_line.product.code}: "
+            f"كمية الاستلام {quantity}، والمتبقي والمستهلك النهائي {traced_quantity}. "
+            "لن يتم ترحيل ضريبة غير قابلة للخصم قبل اكتمال تتبع الكمية."
+        )
+
+    tax_per_unit = (tax_amount / quantity).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+    buckets = []
+    for (warehouse_id, location_id, expiry_date), remaining in remaining_by_balance.items():
+        balance = StockBalance.objects.select_for_update().get(
+            product_id=receipt_line.product_id,
+            warehouse_id=warehouse_id,
+            location_id=location_id,
+            expiry_date=expiry_date,
+        )
+        branch = _branch_for_stock_warehouse(invoice_line.invoice.company, balance.warehouse)
+        buckets.append({
+            "kind": "inventory", "branch_id": branch.pk,
+            "balance": balance, "raw": remaining * tax_per_unit,
+        })
+
+    for branch_id, categories in consumed_by_branch.items():
+        for category, consumed in categories.items():
+            if consumed > 0:
+                buckets.append({
+                    "kind": category, "branch_id": branch_id,
+                    "balance": None, "raw": consumed * tax_per_unit,
+                })
+
+    if not buckets:
+        raise ValidationError("لا توجد كميات متبقية أو مستهلكة يمكن توزيع الضريبة عليها.")
+
+    rounded = [
+        bucket["raw"].quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        for bucket in buckets
+    ]
+    rounding_residual = tax_amount - sum(rounded, Decimal("0"))
+    if rounding_residual:
+        largest = max(range(len(buckets)), key=lambda index: buckets[index]["raw"])
+        rounded[largest] += rounding_residual
+
+    allocations = defaultdict(lambda: {
+        "inventory": Decimal("0"), "cogs": Decimal("0"), "loss": Decimal("0"),
+    })
+    for bucket, amount in zip(buckets, rounded):
+        if amount < 0:
+            raise ValidationError("نتج توزيع ضريبي سالب؛ أوقف الترحيل لمراجعة تكلفة المخزون.")
+        allocations[bucket["branch_id"]][bucket["kind"]] += amount
+        if bucket["kind"] == "inventory" and amount:
+            balance = bucket["balance"]
+            balance.inventory_value += amount
+            if balance.quantity > 0:
+                balance.average_cost = (balance.inventory_value / balance.quantity).quantize(Decimal("0.000001"))
+            balance.save(update_fields=("inventory_value", "average_cost", "updated_at"))
+
+    for layer in layers:
+        if layer.quantity_remaining > 0:
+            layer.unit_cost = (layer.unit_cost + tax_per_unit).quantize(Decimal("0.00000001"))
+            layer.save(update_fields=("unit_cost",))
+
+    result = {}
+    for branch_id, amounts in allocations.items():
+        result[branch_id] = {
+            "inventory": amounts["inventory"],
+            "cogs": amounts["cogs"],
+            "loss": amounts["loss"],
+        }
+    if sum(
+        (a["inventory"] + a["cogs"] + a["loss"] for a in result.values()),
+        Decimal("0"),
+    ) != tax_amount:
+        raise ValidationError("توزيع الضريبة غير متوازن؛ أوقف الترحيل لمراجعة الكميات.")
+    return result
+
 
 def _branch_and_year(receipt, entry_date):
     """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
@@ -91,8 +238,10 @@ def post_purchase_receipt(receipt_id, user):
 
 @transaction.atomic
 def post_purchase_invoice(invoice_id, user):
-    """ترحيل فاتورة المورد وتسوية حساب الاستلامات وضريبة المدخلات والدائنين."""
-    invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice_id)
+    """ترحيل فاتورة المورد وتسوية GRNI والضريبة القابلة للاسترداد ورسملة الضريبة غير القابلة للخصم."""
+    invoice = PurchaseInvoice.objects.select_for_update().select_related(
+        "company", "supplier", "receipt", "receipt__warehouse", "receipt__warehouse__branch",
+    ).get(pk=invoice_id)
     if invoice.status != PurchaseInvoice.Status.DRAFT:
         raise ValidationError("فاتورة المورد مرحلة بالفعل.")
     from approvals.models import FinancialApprovalRequest
@@ -111,6 +260,11 @@ def post_purchase_invoice(invoice_id, user):
     grni_amount = sum((line.cost_amount for line in expected), Decimal("0")).quantize(Decimal("0.0001"))
     net_amount = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     tax_amount = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
+    recoverable_tax = sum(
+        (line.tax_amount for line in lines if not line.tax_code_id or line.tax_code.input_tax_recoverable),
+        Decimal("0"),
+    ).quantize(Decimal("0.0001"))
+    nonrecoverable_tax = (tax_amount - recoverable_tax).quantize(Decimal("0.0001"))
     if net_amount != grni_amount:
         raise ValidationError(
             f"صافي الفاتورة ({net_amount}) لا يساوي قيمة الاستلام ({grni_amount}); راجع أسعار الفاتورة قبل الترحيل."
@@ -146,11 +300,36 @@ def post_purchase_invoice(invoice_id, user):
     elif any(line.transaction_unit_price is not None for line in lines):
         raise ValidationError("توجد أسعار أجنبية دون تحديد عملة فاتورة المورد.")
 
+    allocations_by_branch = defaultdict(lambda: {
+        "inventory": Decimal("0"), "cogs": Decimal("0"), "loss": Decimal("0"),
+    })
+    if nonrecoverable_tax:
+        for line in lines:
+            if line.tax_code_id and not line.tax_code.input_tax_recoverable and line.tax_amount:
+                line_allocations = _capitalize_nonrecoverable_stock_tax(line)
+                for branch_id, amounts in line_allocations.items():
+                    for category, amount in amounts.items():
+                        allocations_by_branch[branch_id][category] += amount
+
     payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if tax_amount > 0 else None
-    if len({account.pk for account in (payable, grni, *([vat_input] if vat_input else []))}) != (3 if vat_input else 2):
-        raise ValidationError("يجب ربط حسابات الموردين والبضاعة غير المفوترة وضريبة المدخلات بحسابات مختلفة.")
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_tax > 0 else None
+    clearing = _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING) if nonrecoverable_tax > 0 else None
+    account_list = [payable, grni]
+    account_list.extend(account for account in (vat_input, clearing) if account)
+    if len({account.pk for account in account_list}) != len(account_list):
+        raise ValidationError("يجب فصل حسابات الموردين وGRNI وضريبة المدخلات وتسوية الفروع.")
+
+    allocation_accounts = {}
+    if allocations_by_branch:
+        allocation_accounts = {
+            "inventory": _account(invoice.company, AccountRole.Role.INVENTORY),
+            "cogs": _account(invoice.company, AccountRole.Role.COGS),
+            "loss": _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS),
+        }
+        used = {account.pk for account in [*account_list, *allocation_accounts.values()]}
+        if len(used) != len(account_list) + len(allocation_accounts):
+            raise ValidationError("يجب فصل حسابات المخزون والتكلفة وخسائر الجرد عن حسابات التسوية.")
 
     branch, year = _branch_and_year(receipt, invoice.invoice_date)
     entry = JournalEntry.objects.create(
@@ -163,14 +342,76 @@ def post_purchase_invoice(invoice_id, user):
         JournalLine(entry=entry, account=grni, description="تسوية بضاعة مستلمة غير مفوترة", debit=grni_amount, credit=0),
         JournalLine(entry=entry, account=payable, description="إثبات مستحقات المورد", debit=0, credit=net_amount + tax_amount),
     ]
-    if vat_input and tax_amount:
-        journal_lines.append(JournalLine(entry=entry, account=vat_input, description="ضريبة قيمة مضافة مدخلات", debit=tax_amount, credit=0))
+    if vat_input and recoverable_tax:
+        journal_lines.append(JournalLine(
+            entry=entry, account=vat_input, description="ضريبة مدخلات قابلة للاسترداد",
+            debit=recoverable_tax, credit=0,
+        ))
+    if clearing and nonrecoverable_tax:
+        journal_lines.append(JournalLine(
+            entry=entry, account=clearing, description="تسوية رسملة ضريبة مدخلات غير قابلة للخصم",
+            debit=nonrecoverable_tax, credit=0,
+        ))
     JournalLine.objects.bulk_create(journal_lines)
     try:
         posted_entry = post_journal(entry.pk)
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
+
+    for branch_id, amounts in sorted(allocations_by_branch.items()):
+        inventory_amount = amounts["inventory"]
+        cogs_amount = amounts["cogs"]
+        loss_amount = amounts["loss"]
+        allocation_total = inventory_amount + cogs_amount + loss_amount
+        if allocation_total <= 0:
+            continue
+        allocation_branch = Branch.objects.get(pk=branch_id, company=invoice.company, is_active=True)
+        allocation_year = FiscalYear.objects.filter(
+            company=invoice.company, status=FiscalYear.Status.OPEN,
+            start_date__lte=invoice.invoice_date, end_date__gte=invoice.invoice_date,
+        ).order_by("-start_date").first()
+        if not allocation_year:
+            raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ رسملة الضريبة.")
+        allocation_entry = JournalEntry.objects.create(
+            company=invoice.company, branch=allocation_branch, fiscal_year=allocation_year,
+            entry_number=f"PUR-INV-TAX-{invoice.pk}-{branch_id}",
+            entry_date=invoice.invoice_date,
+            description=f"توزيع ضريبة غير قابلة للخصم لفاتورة {invoice.invoice_number}"[:500],
+            source_type=JournalEntry.Source.PURCHASES, created_by=user,
+        )
+        allocation_lines = []
+        if inventory_amount:
+            allocation_lines.append(JournalLine(
+                entry=allocation_entry, account=allocation_accounts["inventory"],
+                description="رسملة الضريبة على المخزون المتبقي", debit=inventory_amount, credit=0,
+            ))
+        if cogs_amount:
+            allocation_lines.append(JournalLine(
+                entry=allocation_entry, account=allocation_accounts["cogs"],
+                description="تحميل الضريبة على تكلفة البضاعة المستهلكة", debit=cogs_amount, credit=0,
+            ))
+        if loss_amount:
+            allocation_lines.append(JournalLine(
+                entry=allocation_entry, account=allocation_accounts["loss"],
+                description="تحميل الضريبة على عجز وتسويات المخزون", debit=loss_amount, credit=0,
+            ))
+        allocation_lines.append(JournalLine(
+            entry=allocation_entry, account=clearing,
+            description="مقابل توزيع الضريبة غير القابلة للخصم",
+            debit=0, credit=allocation_total,
+        ))
+        JournalLine.objects.bulk_create(allocation_lines)
+        try:
+            allocation_entry = post_journal(allocation_entry.pk)
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            raise ValidationError(detail) from exc
+        PurchaseInvoiceTaxAllocation.objects.create(
+            invoice=invoice, branch=allocation_branch, journal_entry=allocation_entry,
+            inventory_amount=inventory_amount, cogs_amount=cogs_amount,
+            adjustment_loss_amount=loss_amount,
+        )
 
     invoice.net_total = net_amount
     invoice.tax_total = tax_amount
@@ -180,7 +421,6 @@ def post_purchase_invoice(invoice_id, user):
     invoice.posted_at = timezone.now()
     invoice.save(update_fields=("net_total", "tax_total", "grand_total", "journal_entry", "status", "posted_at"))
     return invoice
-
 
 @transaction.atomic
 def post_supplier_payment(payment_id, user):
