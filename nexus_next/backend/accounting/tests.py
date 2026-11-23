@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from audit.models import AuditEvent
+from treasury.models import TreasuryAccount, TreasuryTransaction
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 from .services import post_journal
 
@@ -119,6 +120,37 @@ class PostingEngineTests(TestCase):
         self.assertEqual(second.status_code, 400, second.data)
         self.assertEqual(reverse_of_reverse.status_code, 400, reverse_of_reverse.data)
         self.assertEqual(JournalEntry.objects.filter(reversal_of=original).count(), 1)
+
+    def test_general_reversal_api_rejects_linked_treasury_document(self):
+        user = User.objects.create_user(username="treasury-reversal-guard", password="test-password")
+        CompanyMembership.objects.create(user=user, company=self.company, role="accountant", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user)
+        original = self.make_entry()
+        post_journal(original.pk)
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=self.cash,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-GUARD", name_ar="خزينة الاختبار",
+        )
+        TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=treasury_account, counter_account=self.capital,
+            kind=TreasuryTransaction.Kind.RECEIPT,
+            status=TreasuryTransaction.Status.POSTED,
+            document_number="TR-GUARD-001", transaction_date=date(2026, 1, 2),
+            amount=Decimal("100.0000"), description="حركة خزينة مرتبطة بالقيد",
+            journal_entry=original,
+        )
+
+        response = client.post(
+            f"/api/accounting/journal-entries/{original.pk}/reverse/",
+            {"entry_date": "2026-01-03"}, format="json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        original.refresh_from_db()
+        self.assertEqual(original.status, JournalEntry.Status.POSTED)
+        self.assertFalse(JournalEntry.objects.filter(reversal_of=original).exists())
 
     def test_unbalanced_entry_is_rejected(self):
         entry = self.make_entry(credit="90.00")
