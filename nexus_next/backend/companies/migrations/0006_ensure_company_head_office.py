@@ -1,0 +1,40 @@
+from django.db import migrations
+
+
+def ensure_head_offices(apps, schema_editor):
+    Company = apps.get_model("companies", "Company")
+    Branch = apps.get_model("companies", "Branch")
+    db_alias = schema_editor.connection.alias
+
+    for company in Company.objects.using(db_alias).all().iterator():
+        if Branch.objects.using(db_alias).filter(
+            company_id=company.pk, is_head_office=True
+        ).exists():
+            continue
+
+        base_code = "MAIN"
+        code = base_code
+        suffix = 1
+        while Branch.objects.using(db_alias).filter(
+            company_id=company.pk, code=code
+        ).exists():
+            suffix += 1
+            code = f"{base_code}-{suffix}"
+
+        Branch.objects.using(db_alias).create(
+            company_id=company.pk,
+            code=code,
+            name_ar="الفرع الرئيسي",
+            is_head_office=True,
+            is_active=True,
+        )
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("companies", "0005_fiscal_periods"),
+    ]
+
+    operations = [
+        migrations.RunPython(ensure_head_offices, migrations.RunPython.noop),
+    ]
