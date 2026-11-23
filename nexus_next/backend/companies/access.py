@@ -87,3 +87,19 @@ def resolve_warehouse_branch(company, warehouse):
             company=company, is_active=True,
         ).order_by("code", "pk").first()
     return branch
+
+
+def ensure_fiscal_period_open(fiscal_year, target_date):
+    """منع التعديل أو الترحيل داخل فترة شهرية مغلقة مع الحفاظ على السنوات القديمة غير المولدة."""
+    from django.core.exceptions import ValidationError
+    from .models import FiscalPeriod
+
+    periods = FiscalPeriod.objects.filter(fiscal_year_id=fiscal_year.pk)
+    if not periods.exists():
+        return None
+    period = periods.filter(start_date__lte=target_date, end_date__gte=target_date).first()
+    if not period:
+        raise ValidationError("لا توجد فترة شهرية معتمدة تغطي تاريخ المستند داخل هذه السنة المالية.")
+    if period.status != FiscalPeriod.Status.OPEN:
+        raise ValidationError(f"الفترة المالية {period.name} مغلقة؛ لا يمكن التعديل أو الترحيل بأثر رجعي.")
+    return period
