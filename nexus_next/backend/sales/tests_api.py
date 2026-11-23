@@ -129,6 +129,34 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(StockMovement.objects.filter(pk=movement_id).exists())
 
+    def test_draft_sales_invoice_can_be_deleted_only_without_financial_dependencies(self):
+        delivery_id, line_id = self._create_delivery("DEL-INVOICE-DELETE")
+        payload = {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DRAFT-DELETE", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }
+        created = self.client.post("/api/sales-documents/invoices/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        draft_id = created.data["id"]
+
+        deleted = self.client.delete(f"/api/sales-documents/invoices/{draft_id}/")
+        self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
+        self.assertEqual(self.client.get(f"/api/sales-documents/invoices/{draft_id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/sales-documents/deliveries/{delivery_id}/").status_code, 200)
+
+        payload["invoice_number"] = "INV-POSTED-KEEP"
+        posted_draft = self.client.post("/api/sales-documents/invoices/", payload, format="json")
+        self.assertEqual(posted_draft.status_code, 201, posted_draft.data)
+        posted_id = posted_draft.data["id"]
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{posted_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        rejected = self.client.delete(f"/api/sales-documents/invoices/{posted_id}/")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(self.client.get(f"/api/sales-documents/invoices/{posted_id}/").status_code, 200)
+
     def test_delivery_invoice_and_customer_receipt_post_once(self):
         delivery_id, line_id = self._create_delivery()
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
