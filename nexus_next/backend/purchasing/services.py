@@ -614,7 +614,7 @@ def post_supplier_return(return_id, user):
         raise ValidationError("تاريخ المرتجع لا يجوز أن يسبق تاريخ فاتورة المورد.")
     if document.company_id != invoice.company_id or document.supplier_id != invoice.supplier_id:
         raise ValidationError("بيانات المرتجع لا تطابق فاتورة المورد.")
-    lines = list(document.lines.select_for_update().select_related(
+    lines = list(document.lines.select_for_update(of=("self",)).select_related(
         "invoice_line", "invoice_line__receipt_line", "invoice_line__receipt_line__product",
         "invoice_line__tax_code", "movement_line",
     ))
