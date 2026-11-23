@@ -5,6 +5,7 @@ on:
       - work/nexus-django-react-rebuild
     paths:
       - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
+      - "nexus_next/backend/scripts/explain_accounting_reports.py"
       - "nexus_next/backend/config/settings.py"
       - "nexus_next/backend/requirements.txt"
       - "nexus_next/backend/accounting/api.py"
@@ -62,6 +63,8 @@ jobs:
       - name: Refresh PostgreSQL planner statistics
         run: |
           python manage.py shell -c "from django.db import connection; c=connection.cursor(); c.execute(\"ANALYZE accounting_journalentry\"); c.execute(\"ANALYZE accounting_journalline\"); c.execute(\"ANALYZE accounting_chartofaccount\"); print(\"ANALYZE completed\")"
+      - name: Capture EXPLAIN ANALYZE plans for trial balance and general ledger
+        run: python scripts/explain_accounting_reports.py
       - name: Start production-like Windows-compatible WSGI server
         run: |
           waitress-serve --listen=127.0.0.1:8000 --threads=32 config.wsgi:application > /tmp/admrail-http.log 2>&1 &
@@ -80,6 +83,7 @@ jobs:
           name: Admrail-Concurrent-Users-Benchmark
           path: |
             nexus_next/backend/concurrent-load-test.json
+            nexus_next/backend/accounting-report-explain.json
             /tmp/admrail-http.log
           if-no-files-found: warn
           retention-days: 14
