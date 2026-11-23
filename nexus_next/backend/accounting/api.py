@@ -990,13 +990,13 @@ class JournalEntryViewSet(AccountingViewSet):
         balance_sign = Decimal("1") if debit_nature else Decimal("-1")
         opening_balance = ((opening_totals["debit"] or Decimal("0")) - (opening_totals["credit"] or Decimal("0"))) * balance_sign
         page_raw = request.query_params.get("page", "1")
-        page_size_raw = request.query_params.get("page_size", "100")
+        page_size_raw = request.query_params.get("page_size", "50")
         if not page_raw.isdigit() or int(page_raw) < 1:
             raise ValidationError({"page": "رقم الصفحة يجب أن يكون عددًا صحيحًا موجبًا."})
         if not page_size_raw.isdigit() or int(page_size_raw) < 1:
             raise ValidationError({"page_size": "حجم الصفحة يجب أن يكون عددًا صحيحًا موجبًا."})
         page = int(page_raw)
-        page_size = min(int(page_size_raw), 500)
+        page_size = min(int(page_size_raw), 100)
 
         period_scope = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
             entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
