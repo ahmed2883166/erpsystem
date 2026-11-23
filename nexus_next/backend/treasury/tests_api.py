@@ -201,6 +201,8 @@ class TreasuryWorkflowTests(APITestCase):
             company=self.company, branch=None, account=shared_gl, kind="bank",
             code="BANK-COMPANY-WIDE", name_ar="بنك عام",
         )
+        # A second active branch makes this membership genuinely branch-limited.
+        Branch.objects.create(company=self.company, code="OTHER-SHARED", name_ar="فرع آخر")
         limited = get_user_model().objects.create_user(
             username="treasury-shared-bank-limited", password="test-password"
         )
