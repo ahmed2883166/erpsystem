@@ -1,7 +1,7 @@
 """Read-only subledger/control-account reconciliation with pending-document warnings."""
 from decimal import Decimal
 
-from django.db.models import Exists, OuterRef, Q, Sum
+from django.db.models import Exists, F, OuterRef, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -397,6 +397,7 @@ class SubledgerReconciliationView(APIView):
         for key, method, kind, display_only, role, label in statutory_specs:
             source_lines = PayrollResultLine.objects.filter(
                 result__cycle__postings__in=active_payroll_postings,
+                result__cycle__postings__branch_id=F("result__employee__branch_id"),
                 result__employee__branch_id__in=branch_ids,
                 result__cycle__period_end__lte=as_of,
                 component__method=method, kind_snapshot=kind,
