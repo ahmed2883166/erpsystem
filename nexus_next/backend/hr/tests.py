@@ -80,6 +80,40 @@ class PayrollCalculationTests(SimpleTestCase):
         amount = calculate_component(component, None, Decimal("8000"), Decimal("30"), Decimal("0"), Decimal("30"), Decimal("0"), config, Decimal("8000"), Decimal("8000"))
         self.assertEqual(amount, Decimal("600.00"))
 
+    def test_egypt_2026_tax_base_is_reduced_by_employee_insurance(self):
+        insurance_component = PayrollComponent(method=PayrollComponent.Method.EMPLOYEE_INSURANCE)
+        tax_component = PayrollComponent(method=PayrollComponent.Method.PROGRESSIVE_TAX)
+        from hr.services import EGYPT_2026_TAX_BRACKET_GROUPS
+        config = {
+            "insurance": {
+                "min_base": "2700", "max_base": "16700",
+                "employee_rate": "11", "employer_rate": "18.75",
+            },
+            "tax": {
+                "annual_personal_exemption": "20000",
+                "annual_bracket_groups": EGYPT_2026_TAX_BRACKET_GROUPS,
+            },
+        }
+        gross_monthly_base = Decimal("50000")
+        employee_insurance = calculate_component(
+            insurance_component, None, gross_monthly_base, Decimal("30"),
+            Decimal("0"), Decimal("30"), Decimal("0"), config,
+            gross_monthly_base, gross_monthly_base,
+        )
+        self.assertEqual(employee_insurance, Decimal("1837.00"))
+        taxable_after_insurance = gross_monthly_base - employee_insurance
+        tax_after_insurance = calculate_component(
+            tax_component, None, gross_monthly_base, Decimal("30"),
+            Decimal("0"), Decimal("30"), Decimal("0"), config,
+            taxable_after_insurance, gross_monthly_base,
+        )
+        tax_without_deduction = calculate_component(
+            tax_component, None, gross_monthly_base, Decimal("30"),
+            Decimal("0"), Decimal("30"), Decimal("0"), config,
+            gross_monthly_base, gross_monthly_base,
+        )
+        self.assertLess(tax_after_insurance, tax_without_deduction)
+
     def test_egypt_2026_tax_selects_the_high_income_statutory_column(self):
         component = PayrollComponent(method=PayrollComponent.Method.PROGRESSIVE_TAX)
         from hr.services import EGYPT_2026_TAX_BRACKET_GROUPS
