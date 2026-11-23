@@ -1,7 +1,7 @@
 """Read-only subledger/control-account reconciliation with pending-document warnings."""
 from decimal import Decimal
 
-from django.db.models import Q, Sum
+from django.db.models import Exists, OuterRef, Q, Sum
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -135,7 +135,7 @@ class SubledgerReconciliationView(APIView):
         from suppliers.models import Supplier
         from accounting.models import FxSubledgerRevaluation
         from inventory.models import StockBalance, StockMovementJournalLink
-        from hr.models import PayrollCycle, PayrollPosting
+        from hr.models import Employee, PayrollCycle, PayrollPosting, PayrollResult
 
         # The warehouse branch is the source of truth for operational-document branch scope.
         sales_invoice_scope = Q(delivery__warehouse__branch_id__in=branch_ids)
@@ -302,6 +302,38 @@ class SubledgerReconciliationView(APIView):
         payroll_journal_ids = {value for row in payroll_rows for value in row if value}
         payroll_journal_ids = _with_reversals(payroll_journal_ids)
 
+        paid_payroll_posting = PayrollPosting.objects.filter(
+            cycle_id=OuterRef("cycle_id"),
+            branch_id=OuterRef("employee__branch_id"),
+            payment_journal_entry__isnull=False,
+            payment_journal_entry__entry_date__lte=as_of,
+            payment_journal_entry__status__in=POSTED_STATUSES,
+        )
+        unpaid_payroll_results = PayrollResult.objects.filter(
+            cycle__company_id=company_id,
+            cycle__period_end__lte=as_of,
+            cycle__status__in=(PayrollCycle.Status.POSTED, PayrollCycle.Status.PAYMENT_PENDING, PayrollCycle.Status.PAID),
+            employee__branch_id__in=branch_ids,
+        ).annotate(_has_posted_payment=Exists(paid_payroll_posting)).filter(
+            _has_posted_payment=False
+        )
+        payroll_employee_totals = grouped_amount(
+            unpaid_payroll_results, "employee_id", "net_pay"
+        )
+        payroll_employee_ids = set(payroll_employee_totals)
+        payroll_employee_rows = {
+            item["id"]: item for item in Employee.objects.filter(
+                company_id=company_id, pk__in=payroll_employee_ids
+            ).values("id", "code", "full_name_ar")
+        }
+        payroll_employee_balances = [{
+            "party_id": employee_id,
+            "code": payroll_employee_rows[employee_id]["code"],
+            "name": payroll_employee_rows[employee_id]["full_name_ar"],
+            "balance": str(balance),
+        } for employee_id, balance in payroll_employee_totals.items() if employee_id in payroll_employee_rows]
+        payroll_employee_balances.sort(key=lambda item: abs(Decimal(item["balance"])), reverse=True)
+
         stock_links = StockMovementJournalLink.objects.filter(
             movement__company_id=company_id, movement__movement_date__lte=as_of
         ).filter(
@@ -429,7 +461,8 @@ class SubledgerReconciliationView(APIView):
             make_row("payroll", "التزامات المرتبات والتأمينات والضرائب", (
                 AccountRole.Role.PAYROLL_PAYABLE, AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE,
                 AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE, AccountRole.Role.PAYROLL_TAX_PAYABLE,
-            ), "liability", payroll_journal_ids, pending["payroll"], require_partial=True),
+            ), "liability", payroll_journal_ids, pending["payroll"],
+            party_balances=payroll_employee_balances, require_partial=True),
         ]
 
         inventory_account = role_rows.get(AccountRole.Role.INVENTORY)
