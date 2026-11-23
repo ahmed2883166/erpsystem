@@ -1,5 +1,9 @@
+from calendar import monthrange
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.utils import timezone
 from decimal import Decimal
 
 from django.db.models import Count, F, Q, Sum, Value, DecimalField
@@ -9,7 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .access import accessible_branches, accessible_companies, has_company_role, is_platform_owner
-from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
+from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from .serializers import BranchSerializer, CompanyMembershipSerializer, CompanySerializer, CurrencySerializer, ExchangeRateSerializer, FiscalYearSerializer
 
 
@@ -546,3 +550,130 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
             },
         )
         return Response({"detail": "تم إقفال السنة المالية بعد اجتياز المراجعة.", "review": self._closing_review(fiscal_year)})
+
+
+    @action(detail=True, methods=("get",), url_path="periods")
+    def periods(self, request, pk=None):
+        """عرض الفترات الشهرية للسنة المالية وحالات إقفالها."""
+        fiscal_year = self.get_object()
+        rows = FiscalPeriod.objects.filter(fiscal_year=fiscal_year).select_related(
+            "closed_by", "reopened_by",
+        ).order_by("start_date", "id")
+        return Response([{
+            "id": row.pk, "name": row.name, "start_date": row.start_date,
+            "end_date": row.end_date, "status": row.status,
+            "closed_at": row.closed_at, "closed_by": row.closed_by_id,
+            "reopened_at": row.reopened_at, "reopened_by": row.reopened_by_id,
+            "reopen_reason": row.reopen_reason,
+        } for row in rows])
+
+    @action(detail=True, methods=("post",), url_path="generate-periods")
+    @transaction.atomic
+    def generate_periods(self, request, pk=None):
+        """إنشاء الفترات الشهرية الناقصة بحدود السنة المالية دون تكرار الفترات القائمة."""
+        fiscal_year = self.get_object()
+        if not has_company_role(request.user, fiscal_year.company_id, ("admin",)):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("إنشاء الفترات الشهرية متاح لمدير الشركة فقط.")
+        Company.objects.select_for_update().get(pk=fiscal_year.company_id)
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
+        if fiscal_year.status != FiscalYear.Status.OPEN:
+            raise ValidationError("لا يمكن إنشاء فترات شهرية داخل سنة مالية مغلقة.")
+        cursor = fiscal_year.start_date
+        created = 0
+        while cursor <= fiscal_year.end_date:
+            month_end = date(cursor.year, cursor.month, monthrange(cursor.year, cursor.month)[1])
+            period_end = min(month_end, fiscal_year.end_date)
+            period_name = f"{cursor.year:04d}-{cursor.month:02d}"
+            _, was_created = FiscalPeriod.objects.get_or_create(
+                fiscal_year=fiscal_year, name=period_name,
+                defaults={"start_date": cursor, "end_date": period_end},
+            )
+            created += int(was_created)
+            cursor = period_end + timedelta(days=1)
+        return Response({
+            "detail": "تم تجهيز الفترات الشهرية دون تكرار الفترات الموجودة.",
+            "created": created,
+            "periods": FiscalPeriod.objects.filter(fiscal_year=fiscal_year).count(),
+        }, status=201 if created else 200)
+
+    @action(detail=True, methods=("post",), url_path="close-period")
+    @transaction.atomic
+    def close_period(self, request, pk=None):
+        """إقفال فترة شهرية بعد التأكد من عدم وجود قيود يومية مسودة داخلها."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        from accounting.models import JournalEntry
+        fiscal_year = self.get_object()
+        if not has_company_role(request.user, fiscal_year.company_id, ("admin",)):
+            raise PermissionDenied("إقفال الفترة الشهرية متاح لمدير الشركة فقط.")
+        Company.objects.select_for_update().get(pk=fiscal_year.company_id)
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
+        if fiscal_year.status != FiscalYear.Status.OPEN:
+            raise ValidationError("السنة المالية مغلقة؛ لا يمكن تعديل حالة فتراتها.")
+        try:
+            period = FiscalPeriod.objects.select_for_update().get(
+                pk=request.data.get("period_id"), fiscal_year=fiscal_year,
+            )
+        except (FiscalPeriod.DoesNotExist, TypeError, ValueError):
+            raise ValidationError({"period_id": "الفترة الشهرية غير موجودة ضمن السنة المالية."})
+        if period.status == FiscalPeriod.Status.CLOSED:
+            raise ValidationError("الفترة الشهرية مغلقة بالفعل.")
+        drafts = JournalEntry.objects.filter(
+            fiscal_year=fiscal_year, status=JournalEntry.Status.DRAFT,
+            entry_date__range=(period.start_date, period.end_date),
+        ).count()
+        if drafts:
+            raise ValidationError({
+                "detail": "لا يمكن إقفال الفترة مع وجود قيود يومية مسودة.",
+                "draft_entries": drafts,
+            })
+        period.status = FiscalPeriod.Status.CLOSED
+        period.closed_at = timezone.now()
+        period.closed_by = request.user
+        period.save(update_fields=("status", "closed_at", "closed_by"))
+        from audit.models import AuditEvent
+        AuditEvent.objects.create(
+            actor=request.user, company_id=fiscal_year.company_id,
+            action=AuditEvent.Action.ACTION, resource="companies.fiscal_period.closed",
+            object_id=str(period.pk), http_method="POST", status_code=200, succeeded=True,
+            metadata={"fiscal_year_id": fiscal_year.pk, "name": period.name,
+                      "start_date": period.start_date.isoformat(), "end_date": period.end_date.isoformat()},
+        )
+        return Response({"detail": f"تم إقفال الفترة {period.name}.", "period_id": period.pk})
+
+    @action(detail=True, methods=("post",), url_path="reopen-period")
+    @transaction.atomic
+    def reopen_period(self, request, pk=None):
+        """إعادة فتح فترة مغلقة بموافقة مدير الشركة وسبب موثق."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        fiscal_year = self.get_object()
+        if not has_company_role(request.user, fiscal_year.company_id, ("admin",)):
+            raise PermissionDenied("إعادة فتح الفترة الشهرية متاحة لمدير الشركة فقط.")
+        reason = str(request.data.get("reason", "")).strip()
+        if len(reason) < 10:
+            raise ValidationError({"reason": "اكتب سببًا واضحًا لإعادة الفتح لا يقل عن 10 أحرف."})
+        Company.objects.select_for_update().get(pk=fiscal_year.company_id)
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=fiscal_year.pk)
+        if fiscal_year.status != FiscalYear.Status.OPEN:
+            raise ValidationError("يجب إعادة فتح السنة المالية أولًا قبل إعادة فتح إحدى فتراتها.")
+        try:
+            period = FiscalPeriod.objects.select_for_update().get(
+                pk=request.data.get("period_id"), fiscal_year=fiscal_year,
+            )
+        except (FiscalPeriod.DoesNotExist, TypeError, ValueError):
+            raise ValidationError({"period_id": "الفترة الشهرية غير موجودة ضمن السنة المالية."})
+        if period.status != FiscalPeriod.Status.CLOSED:
+            raise ValidationError("الفترة الشهرية مفتوحة بالفعل.")
+        period.status = FiscalPeriod.Status.OPEN
+        period.reopened_at = timezone.now()
+        period.reopened_by = request.user
+        period.reopen_reason = reason
+        period.save(update_fields=("status", "reopened_at", "reopened_by", "reopen_reason"))
+        from audit.models import AuditEvent
+        AuditEvent.objects.create(
+            actor=request.user, company_id=fiscal_year.company_id,
+            action=AuditEvent.Action.ACTION, resource="companies.fiscal_period.reopened",
+            object_id=str(period.pk), http_method="POST", status_code=200, succeeded=True,
+            metadata={"fiscal_year_id": fiscal_year.pk, "name": period.name, "reason": reason},
+        )
+        return Response({"detail": f"تمت إعادة فتح الفترة {period.name} مع تسجيل السبب.", "period_id": period.pk})
