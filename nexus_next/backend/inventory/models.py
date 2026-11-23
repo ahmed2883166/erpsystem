@@ -191,6 +191,7 @@ class StockMovement(models.Model):
         RECEIPT = "receipt", "استلام"
         ISSUE = "issue", "صرف"
         SUPPLIER_RETURN = "sup_return", "مرتجع مورد"
+        SUPPLIER_RETURN_REVERSAL = "sup_rev", "عكس مرتجع مورد"
         TRANSFER = "transfer", "تحويل"
         ADJUSTMENT = "adjustment", "تسوية جرد"
 
