@@ -1467,7 +1467,7 @@ class JournalEntryViewSet(AccountingViewSet):
         }
         ledger_lines = JournalLine.objects.filter(
             entry__company_id=company.pk,
-            entry__status=JournalEntry.Status.POSTED,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry__entry_date__gte=date_from,
             entry__entry_date__lte=date_to,
             entry__branch_id__in=branch_ids,
