@@ -49,10 +49,15 @@ if (-not $PgRestore -or -not $Createdb -or -not $Psql) {
     $PsqlPath = $Psql.Source
 }
 
-$env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
 $DecryptedTemp = $null
 $RestoreSource = $BackupFile
+$AdminPassword = $null
+$AdminPasswordPtr = [IntPtr]::Zero
 try {
+    $AdminSecure = Read-Host "Enter PostgreSQL administrator (postgres) password to create the restore database" -AsSecureString
+    $AdminPasswordPtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($AdminSecure)
+    $AdminPassword = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($AdminPasswordPtr)
+    if ([string]::IsNullOrWhiteSpace($AdminPassword)) { throw "The PostgreSQL administrator password cannot be empty." }
     if ($BackupFile.EndsWith(".nexusenc", [System.StringComparison]::OrdinalIgnoreCase)) {
         $DecryptedTemp = Join-Path $env:TEMP ("nexus-restore-" + [guid]::NewGuid().ToString("N") + ".dump")
         Push-Location $Backend
@@ -65,8 +70,14 @@ try {
     & $PgRestorePath --list $RestoreSource | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Backup archive is invalid or unreadable." }
 
-    & $CreatedbPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --owner=$Values["POSTGRES_USER"] --template=template0 $TargetDatabase
-    if ($LASTEXITCODE -ne 0) { throw "Target database could not be created. It may already exist; no existing database was overwritten." }
+    # The application role intentionally has no CREATEDB privilege. Create only
+    # the new, separately named target as postgres, then restore as the app role.
+    $env:PGPASSWORD = $AdminPassword
+    & $CreatedbPath --host=$PgHost --port=$PgPort --username=postgres --no-password --owner=$Values["POSTGRES_USER"] --template=template0 $TargetDatabase
+    if ($LASTEXITCODE -ne 0) {
+        throw "Target database could not be created by PostgreSQL administrator. Check the postgres password and confirm the target name is unused; no existing database was overwritten."
+    }
+    $env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
 
     & $PgRestorePath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --exit-on-error --no-owner --dbname=$TargetDatabase $RestoreSource
     if ($LASTEXITCODE -ne 0) { throw "Restore failed. The incomplete database '$TargetDatabase' was left separate; the active database was not changed." }
@@ -89,4 +100,8 @@ try {
         Remove-Item -LiteralPath $DecryptedTemp -Force -ErrorAction SilentlyContinue
     }
     Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+    if ($AdminPasswordPtr -ne [IntPtr]::Zero) {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($AdminPasswordPtr)
+    }
+    $AdminPassword = $null
 }
