@@ -8,6 +8,7 @@ export type Branch = { id: number; company: number; company_code?: string; code:
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
 export type FiscalYear = { id: number; company: number; name: string; start_date: string; end_date: string; status: string };
+export type FiscalPeriod = { id:number; name:string; start_date:string; end_date:string; status:"open"|"closed"; closed_at:string|null; closed_by:number|null; reopened_at:string|null; reopened_by:number|null; reopen_reason:string };
 export type FiscalYearClosingReview = {
   fiscal_year: number;
   status: string;
@@ -406,6 +407,14 @@ export const api = {
   fiscalYearClosingReview: (id: number) => request<FiscalYearClosingReview>(`/api/setup/fiscal-years/${id}/closing_review/`),
   // تنفيذ الإقفال بعد اجتياز ضوابط الخادم.
   closeFiscalYear: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<{ detail: string; review: FiscalYearClosingReview }>(`/api/setup/fiscal-years/${id}/close/`, { method: "POST", body: JSON.stringify({}) }); },
+  // جلب الفترات الشهرية التابعة للسنة المالية.
+  fiscalPeriods: (id:number) => request<FiscalPeriod[]>(`/api/setup/fiscal-years/${id}/periods/`),
+  // إنشاء الفترات الشهرية الناقصة وفق حدود السنة المالية.
+  generateFiscalPeriods: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<{detail:string;created:number;periods:number}>(`/api/setup/fiscal-years/${id}/generate-periods/`, {method:"POST",body:JSON.stringify({})}); },
+  // إقفال فترة شهرية بعد التحقق من عدم وجود قيود مسودة.
+  closeFiscalPeriod: async (id:number, period_id:number) => { await request<{detail:string}>("/api/csrf/"); return request<{detail:string;period_id:number}>(`/api/setup/fiscal-years/${id}/close-period/`, {method:"POST",body:JSON.stringify({period_id})}); },
+  // إعادة فتح فترة شهرية مع تسجيل سبب إلزامي.
+  reopenFiscalPeriod: async (id:number, period_id:number, reason:string) => { await request<{detail:string}>("/api/csrf/"); return request<{detail:string;period_id:number}>(`/api/setup/fiscal-years/${id}/reopen-period/`, {method:"POST",body:JSON.stringify({period_id,reason})}); },
   // إنشاء قيد يومية جديد بحالته الأولية.
   createJournal: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<Journal>("/api/accounting/journal-entries/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل قيد اليومية المحدد.
