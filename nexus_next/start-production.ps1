@@ -41,6 +41,33 @@ foreach ($Line in Get-Content -LiteralPath $EnvFile) {
     $ProductionEnv[$Matches[1]] = $Matches[2].Trim().Trim('"').Trim("'")
   }
 }
+if ($ProductionEnv["DJANGO_ENV"] -ne "production") {
+  throw "اضبط DJANGO_ENV=production داخل backend/.env قبل تشغيل وضع الإنتاج."
+}
+$env:DJANGO_ENV = "production"
+if ($EnableLan) {
+  $PreflightLanHost = $ProductionEnv["ADMRAIL_LAN_HOST"]
+  if (-not $PreflightLanHost -or $PreflightLanHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$") {
+    throw "اضبط ADMRAIL_LAN_HOST باسم DNS داخلي ثابت قبل أي ترحيل لقاعدة البيانات."
+  }
+  $PreflightAllowedHosts = @()
+  if ($ProductionEnv["DJANGO_ALLOWED_HOSTS"]) {
+    $PreflightAllowedHosts = $ProductionEnv["DJANGO_ALLOWED_HOSTS"].Split(",") | ForEach-Object { $_.Trim() }
+  }
+  if ($PreflightAllowedHosts -notcontains $PreflightLanHost) {
+    throw "أضف $PreflightLanHost إلى DJANGO_ALLOWED_HOSTS قبل تشغيل LAN."
+  }
+  $PreflightOrigins = @()
+  if ($ProductionEnv["CSRF_TRUSTED_ORIGINS"]) {
+    $PreflightOrigins = $ProductionEnv["CSRF_TRUSTED_ORIGINS"].Split(",") | ForEach-Object { $_.Trim().TrimEnd("/") }
+  }
+  if ($PreflightOrigins -notcontains "https://$PreflightLanHost") {
+    throw "أضف https://$PreflightLanHost إلى CSRF_TRUSTED_ORIGINS قبل تشغيل LAN."
+  }
+  if (-not (Get-Command "caddy.exe" -ErrorAction SilentlyContinue) -and -not (Get-Command "caddy" -ErrorAction SilentlyContinue)) {
+    throw "وضع LAN الآمن يحتاج Caddy مثبتًا على جهاز الخادم قبل بدء ترحيلات قاعدة البيانات."
+  }
+}
 foreach ($SecureKey in @("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT", "DJANGO_HTTPS_TERMINATED_BY_PROXY", "SECURE_HSTS_INCLUDE_SUBDOMAINS")) {
   if ($ProductionEnv[$SecureKey] -notin @("True", "true", "1", "yes", "on")) {
     throw "إعداد الإنتاج $SecureKey يجب أن يكون مفعّلًا. لم يتم تشغيل التطبيق أو ترحيل قاعدة البيانات."
