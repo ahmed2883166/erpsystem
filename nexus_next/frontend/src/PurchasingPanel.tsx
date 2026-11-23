@@ -3,7 +3,7 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -11,7 +11,7 @@ const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { ma
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "returns" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -23,6 +23,9 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
+  const [returns, setReturns] = useState<SupplierReturn[]>([]);
+  const [returnForm, setReturnForm] = useState({ invoice: "", return_number: "", return_date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [returnLines, setReturnLines] = useState<{ invoice_line: string; quantity: string }[]>([{ invoice_line: "", quantity: "1" }]);
   const [statementSupplier, setStatementSupplier] = useState("");
   const [statementFrom, setStatementFrom] = useState("");
   const [statementTo, setStatementTo] = useState("");
@@ -48,12 +51,12 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, t, ta, cur, fx] = await Promise.all([
+      const [s, p, w, o, r, i, pay, ret, t, ta, cur, fx] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -71,6 +74,8 @@ const refresh = async () => {
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
+  const filteredReturns = returns.filter((row) => [row.return_number, row.supplier_name, row.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
+  const returnableInvoices = invoices.filter((invoice) => invoice.status === "posted" && !invoice.transaction_currency && Number(invoice.balance_due) > 0);
 
   const findRate = (currencyId: string, onDate: string) => exchangeRates
     .filter(rate => rate.currency === Number(currencyId) && rate.rate_date <= onDate)
@@ -216,6 +221,41 @@ const postInvoice = async (id: number) => {
     finally { setBusy(false); }
   };
 
+
+  // إنشاء مسودة مرتجع مرتبطة بفاتورة المورد وبنودها الأصلية.
+  const saveReturn = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!companyId) return;
+    const invoice = invoices.find((row) => row.id === Number(returnForm.invoice));
+    if (!invoice) { setError("اختر فاتورة مورد مرحلة وغير أجنبية."); return; }
+    if (!returnForm.return_number.trim() || !returnLines.length || returnLines.some((line) => !line.invoice_line || Number(line.quantity) <= 0)) {
+      setError("أدخل رقم المرتجع وبند الفاتورة وكمية صحيحة."); return;
+    }
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createReturn({
+        company: companyId, supplier: invoice.supplier, invoice: invoice.id,
+        return_number: returnForm.return_number.trim(), return_date: returnForm.return_date,
+        notes: returnForm.notes,
+        lines: returnLines.map((line) => ({ invoice_line: Number(line.invoice_line), quantity: line.quantity })),
+      });
+      setShowForm(false);
+      setReturnForm((old) => ({ ...old, invoice: "", return_number: "", notes: "" }));
+      setReturnLines([{ invoice_line: "", quantity: "1" }]);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء مرتجع المورد."); }
+    finally { setBusy(false); }
+  };
+
+  // ترحيل المرتجع بعد إعادة تحقق الخادم من الكمية والتكلفة والضريبة.
+  const postReturn = async (id: number) => {
+    if (!window.confirm("سيتم إخراج الكمية من مخزون الاستلام الأصلي وإنشاء قيد تخفيض المورد والضريبة. هل تريد الترحيل؟")) return;
+    setBusy(true); setError("");
+    try { await purchasingApi.postReturn(id); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل مرتجع المورد."); }
+    finally { setBusy(false); }
+  };
+
   const beginFxRevaluation = async (invoice:PurchaseInvoice) => { setFxInvoice(invoice); setError(""); const today=new Date().toISOString().slice(0,10); const approved=findRate(String(invoice.transaction_currency),today); setFxForm({revaluation_date:today,rate_date:approved?.rate_date||today,rate:approved?.rate||""}); try { setFxHistory(await purchasingApi.fxRevaluations(invoice.id)); } catch(reason) { setFxHistory([]); setError(reason instanceof Error?reason.message:"تعذر تحميل سجل إعادة التقييم."); } };
   const submitFxRevaluation = async (event:FormEvent) => { event.preventDefault(); if(!fxInvoice)return; setBusy(true);setError(""); try { await purchasingApi.revalueInvoice(fxInvoice.id,fxForm);setFxHistory(await purchasingApi.fxRevaluations(fxInvoice.id));await refresh();setFxInvoice(null); } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إعادة تقييم فاتورة المورد."); } finally { setBusy(false); } };
 
@@ -224,8 +264,27 @@ const postInvoice = async (id: number) => {
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
       <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
+    <div className="inventory-tabs"><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
+    {showForm && tab === "returns" && <form className="inventory-form" onSubmit={(event) => void saveReturn(event)}>
+      <label className="inventory-wide">فاتورة المورد المرحّلة<select required value={returnForm.invoice} onChange={(e) => {
+        const invoiceId = e.target.value;
+        const invoice = invoices.find((row) => row.id === Number(invoiceId));
+        setReturnForm((old) => ({ ...old, invoice: invoiceId }));
+        setReturnLines([{ invoice_line: String(invoice?.invoice_lines[0]?.id || ""), quantity: "1" }]);
+      }}><option value="">اختر فاتورة مورد</option>{returnableInvoices.map((invoice) => <option key={invoice.id} value={invoice.id}>{invoice.invoice_number} · {invoice.supplier_name} · متبقي {money(invoice.balance_due)}</option>)}</select></label>
+      <label>رقم المرتجع<input required maxLength={37} value={returnForm.return_number} onChange={(e) => setReturnForm({ ...returnForm, return_number: e.target.value })} /></label>
+      <label>تاريخ المرتجع<input required type="date" value={returnForm.return_date} onChange={(e) => setReturnForm({ ...returnForm, return_date: e.target.value })} /></label>
+      {returnForm.invoice && <div className="inventory-wide"><div className="work-panel-head"><div><h3>الأصناف المرتجعة</h3><p>يُربط كل سطر ببند فاتورة المورد الأصلية ويُخصم من تكلفة الاستلام نفسه.</p></div><button className="subtle-button" type="button" onClick={() => setReturnLines((old) => [...old, { invoice_line: "", quantity: "1" }])}>＋ إضافة صنف</button></div></div>}
+      {returnLines.map((line, index) => <div className="inventory-form-row inventory-wide" key={index}>
+        <label>بند الفاتورة<select required value={line.invoice_line} onChange={(e) => setReturnLines((old) => old.map((item, i) => i === index ? { ...item, invoice_line: e.target.value } : item))}><option value="">اختر الصنف</option>{invoices.find((invoice) => invoice.id === Number(returnForm.invoice))?.invoice_lines.map((item) => <option key={item.id} value={item.id}>{item.product_code} · {item.product_name} · الكمية {item.quantity}</option>)}</select></label>
+        <label>كمية المرتجع<input required type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={(e) => setReturnLines((old) => old.map((item, i) => i === index ? { ...item, quantity: e.target.value } : item))} /></label>
+        <button className="subtle-button" type="button" disabled={returnLines.length === 1} onClick={() => setReturnLines((old) => old.filter((_, i) => i !== index))}>حذف السطر</button>
+      </div>)}
+      <label className="inventory-wide">ملاحظات<textarea value={returnForm.notes} onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })} /></label>
+      <div className="inventory-wide"><p className="inventory-report-note">هذه الشاشة تتيح حاليًا مرتجعات الفواتير بالعملة الأساسية فقط. الفواتير الأجنبية لا تظهر حتى استكمال تسوية فروق العملة.</p></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy || !returnableInvoices.length}>{busy ? "جارٍ الحفظ…" : "حفظ مرتجع كمسودة"}</button></div>
+    </form>}
     {showForm && tab === "orders" && <form className="inventory-form" onSubmit={(event) => void saveOrder(event)}>
       <label>المورد<select required value={orderForm.supplier} onChange={(e) => setOrderForm({ ...orderForm, supplier: e.target.value })}><option value="">اختر المورد</option>{suppliers.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
       <label>مخزن الاستلام<select required value={orderForm.warehouse} onChange={(e) => setOrderForm({ ...orderForm, warehouse: e.target.value })}><option value="">اختر المخزن</option>{warehouses.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
@@ -333,6 +392,7 @@ const postInvoice = async (id: number) => {
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!fxForm.rate}>{busy?"جارٍ التقييم…":"حفظ وإثبات فرق العملة"}</button><button className="subtle-button" type="button" onClick={()=>setFxInvoice(null)}>إغلاق</button></div>
       {fxHistory.length>0&&<div className="data-table-wrap inventory-wide"><table><thead><tr><th>تاريخ التقييم</th><th>سعر الصرف</th><th>الرصيد الأجنبي</th><th>الفرق</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{fxHistory.map(row=><tr key={row.id}><td>{row.revaluation_date}</td><td>{row.rate}</td><td>{money(row.foreign_balance)}</td><td>{money(row.difference)}</td><td>{row.journal_number||"—"}</td><td>{row.status==="reversed"?"معكوس":row.status==="no_difference"?"دون فرق":"مرحّل"}</td></tr>)}</tbody></table></div>}
     </form>}
+    {tab === "returns" && <div className="data-table-wrap"><table><thead><tr><th>رقم المرتجع</th><th>المورد</th><th>فاتورة المورد</th><th>التاريخ</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredReturns.map((row) => <tr key={row.id}><td className="code-cell">{row.return_number}</td><td>{row.supplier_name}</td><td>{row.invoice_number}</td><td>{row.return_date}</td><td>{money(row.net_amount)}</td><td>{money(row.tax_amount)}</td><td>{money(row.grand_total)}</td><td>{row.status === "posted" ? "مرحّل" : "مسودة"}</td><td>{row.journal_number || "—"}</td><td>{row.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postReturn(row.id)}>ترحيل المرتجع</button> : "تم الترحيل"}</td></tr>)}</tbody></table>{!busy && filteredReturns.length === 0 && <div className="table-empty">لا توجد مرتجعات موردين مطابقة.</div>}</div>}
     {tab === "payments" && <div className="data-table-wrap"><table><thead><tr><th>رقم السند</th><th>المورد</th><th>الفاتورة</th><th>التاريخ</th><th>الطريقة</th><th>حساب الصرف</th><th>المبلغ</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredPayments.map((x) => <tr key={x.id}><td className="code-cell">{x.payment_number}</td><td>{x.supplier_name}</td><td>{x.invoice_number}</td><td>{x.payment_date}</td><td>{x.method === "cash" ? "نقدي" : "تحويل بنكي"}</td><td>{x.payment_account_name || "الحساب الافتراضي"}</td><td>{money(x.amount)}</td><td>{x.status === "posted" ? "مرحّل" : x.status === "reversed" ? "معكوس" : "مسودة"}</td><td>{x.journal_number || "—"}</td><td>{x.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postPayment(x.id)}>ترحيل السند</button> : x.status === "reversed" ? "تم العكس" : <button className="subtle-button" type="button" disabled={busy} onClick={() => { if (window.confirm("سيتم إنشاء قيد عكسي وإلغاء أثر سند الصرف على رصيد المورد. يجب عكس أحدث سند أولًا. هل تريد المتابعة؟")) void reversePayment(x.id); }}>عكس السند</button>}</td></tr>)}</tbody></table>{!busy && filteredPayments.length === 0 && <div className="table-empty">لا توجد سندات صرف مطابقة.</div>}</div>}
   </section>;
 }
