@@ -333,14 +333,23 @@ class BranchViewSet(viewsets.ModelViewSet):
         serializer.instance = branch
         serializer.save()
 
+    @transaction.atomic
     def perform_destroy(self, instance):
-        """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
+        """حماية المركز الرئيسي وآخر فرع نشط من الحذف العرضي."""
         from rest_framework.exceptions import PermissionDenied, ValidationError
         if not has_company_role(self.request.user, instance.company_id, ("admin",)):
             raise PermissionDenied("حذف الفروع متاح لمدير الشركة فقط.")
-        if instance.audit_events.exists():
+        Company.objects.select_for_update().get(pk=instance.company_id)
+        branch = Branch.objects.select_for_update().get(pk=instance.pk)
+        if branch.is_head_office:
+            raise ValidationError("لا يمكن حذف المركز الرئيسي؛ انقل صفة المركز الرئيسي إلى فرع آخر أولًا.")
+        if branch.is_active and Branch.objects.filter(
+            company_id=branch.company_id, is_active=True
+        ).count() <= 1:
+            raise ValidationError("لا يمكن حذف آخر فرع نشط بالشركة.")
+        if branch.audit_events.exists():
             raise ValidationError("لا يمكن حذف فرع له سجل تدقيق؛ عطّل الفرع بدل حذفه.")
-        instance.delete()
+        branch.delete()
 
 
 class FiscalYearViewSet(viewsets.ModelViewSet):
