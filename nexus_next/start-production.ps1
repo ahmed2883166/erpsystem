@@ -177,12 +177,12 @@ if ($EnableLan) {
   New-Item -ItemType Directory -Force -Path $CaddyDirectory | Out-Null
   $CaddyFile = Join-Path $CaddyDirectory "Caddyfile"
   $CaddyConfig = @("https://$LanHost {", "    tls internal", "    encode zstd gzip", "    reverse_proxy 127.0.0.1:8000", "}") -join [Environment]::NewLine
-  Set-Content -LiteralPath $CaddyFile -Value $CaddyConfig -Encoding UTF8
+  Set-Content -LiteralPath $CaddyFile -Value $CaddyConfig -Encoding ASCII
   $ExistingCaddy = Get-CimInstance Win32_Process | Where-Object {
     $_.Name -match "^caddy(\.exe)?$" -and $_.CommandLine -like "*$CaddyFile*"
   } | Select-Object -First 1
   if (-not $ExistingCaddy) {
-    $CaddyProcess = Start-Process -FilePath $CaddyCommand.Path -WorkingDirectory $CaddyDirectory -ArgumentList @("run", "--config", $CaddyFile, "--adapter", "caddyfile") -PassThru -WindowStyle Minimized
+    $CaddyProcess = Start-Process -FilePath $CaddyCommand.Path -WorkingDirectory $CaddyDirectory -ArgumentList @("run", "--config", "`"$CaddyFile`"", "--adapter", "caddyfile") -PassThru -WindowStyle Minimized
     Start-Sleep -Seconds 2
     if ($CaddyProcess.HasExited) { throw "تعذر تشغيل Caddy. راجع تعارض المنفذ 443 أو سجل Caddy." }
   }
