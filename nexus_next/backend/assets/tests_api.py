@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from accounting.models import ChartOfAccount, JournalEntry
+from accounting.models import ChartOfAccount, JournalEntry, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction
@@ -253,6 +253,55 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(response.data["cost_accounts"][0]["expected"], "120000.0000")
         self.assertEqual(response.data["accumulated_depreciation_accounts"][0]["expected"], "5000.0000")
         self.assertEqual(response.data["depreciation_expense_accounts"][0]["expected"], "5000.0000")
+
+    def test_nonrecoverable_acquisition_tax_is_capitalized_into_asset_and_depreciation_basis(self):
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="ASSET-NR-14",
+            name_ar="ضريبة مدخلات غير قابلة للخصم", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+            input_tax_recoverable=False,
+        )
+        payload = self._payload()
+        payload.update({
+            "code": "FA-TAX-001",
+            "original_cost": "114000.0000",
+            "acquisition_net_amount": "100000.0000",
+            "nonrecoverable_tax_amount": "14000.0000",
+            "acquisition_tax_code": code.pk,
+        })
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["original_cost"], "114000.0000")
+        self.assertEqual(created.data["nonrecoverable_tax_amount"], "14000.0000")
+        acquisition = JournalEntry.objects.get(source_type=JournalEntry.Source.ASSETS)
+        self.assertEqual(acquisition.lines.get(account=self.asset_gl).debit, Decimal("114000.0000"))
+        transaction = TreasuryTransaction.objects.get(pk=created.data["acquisition_treasury_transaction"])
+        self.assertEqual(transaction.amount, Decimal("114000.0000"))
+        depreciation = self.client.post(
+            f"/api/assets/fixed-assets/{created.data['id']}/depreciate/",
+            {"period_date": "2026-02-28", "fiscal_year": self.year.pk},
+            format="json",
+        )
+        self.assertEqual(depreciation.status_code, 201, depreciation.data)
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("2833.3333"))
+
+    def test_asset_acquisition_rejects_recoverable_tax_as_nonrecoverable_cost(self):
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="ASSET-REC-14",
+            name_ar="ضريبة مدخلات قابلة للخصم", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+            input_tax_recoverable=True,
+        )
+        payload = self._payload()
+        payload.update({
+            "original_cost": "114000.0000",
+            "acquisition_net_amount": "100000.0000",
+            "nonrecoverable_tax_amount": "14000.0000",
+            "acquisition_tax_code": code.pk,
+        })
+        rejected = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertFalse(FixedAsset.objects.filter(code=payload["code"]).exists())
 
     def test_asset_accounts_must_separate_cost_accumulated_and_valid_acquisition_counter(self):
         from assets.models import FixedAsset
