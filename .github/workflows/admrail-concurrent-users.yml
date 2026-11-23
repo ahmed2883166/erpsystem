@@ -60,9 +60,9 @@ jobs:
       - name: Refresh PostgreSQL planner statistics
         run: |
           python manage.py shell -c "from django.db import connection; c=connection.cursor(); c.execute(\"ANALYZE accounting_journalentry\"); c.execute(\"ANALYZE accounting_journalline\"); c.execute(\"ANALYZE accounting_chartofaccount\"); print(\"ANALYZE completed\")"
-      - name: Start HTTP server
+      - name: Start production-like Windows-compatible WSGI server
         run: |
-          python manage.py runserver 127.0.0.1:8000 --noreload > /tmp/admrail-http.log 2>&1 &
+          waitress-serve --listen=127.0.0.1:8000 --threads=32 config.wsgi:application > /tmp/admrail-http.log 2>&1 &
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8000/api/health/ > /dev/null; then exit 0; fi
             sleep 2
