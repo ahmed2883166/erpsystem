@@ -31,7 +31,7 @@ def post_stock_movement(movement_id, user):
         destination_key = (movement.destination_warehouse_id, line.destination_location_id, line.expiry_date)
         if movement.movement_type in (StockMovement.MovementType.RECEIPT, StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL):
             balance_keys = [destination_key]
-        elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN):
+        elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN, StockMovement.MovementType.SALES_RETURN_REVERSAL):
             balance_keys = [source_key]
         elif movement.movement_type == StockMovement.MovementType.TRANSFER:
             balance_keys = [source_key, destination_key]
@@ -134,11 +134,12 @@ def post_stock_movement(movement_id, user):
                         continue
                     layer.quantity_remaining -= consumed
                     layer.save(update_fields=("quantity_remaining",))
+                    unit_cost = layer.unit_cost if source_root_line_id is not None else balance.average_cost
                     StockCostConsumption.objects.create(
                         movement_line=movement_line, source_layer=layer,
-                        quantity=consumed, unit_cost=balance.average_cost,
+                        quantity=consumed, unit_cost=unit_cost,
                     )
-                    cost_parts.append((consumed, balance.average_cost, layer))
+                    cost_parts.append((consumed, unit_cost, layer))
                     remaining_tracked -= consumed
                 untracked_quantity = quantity - tracked_to_consume
                 if untracked_quantity > 0:
@@ -190,6 +191,12 @@ def post_stock_movement(movement_id, user):
                 source_root_line_id = line.supplier_return_line.invoice_line.receipt_line_id
                 if product.costing_method not in (Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE):
                     raise ValidationError("مرتجع المورد يتطلب تتبع تكلفة FIFO أو المتوسط المرجح.")
+            elif movement.movement_type == StockMovement.MovementType.SALES_RETURN_REVERSAL:
+                if not line.reversal_of_line_id:
+                    raise ValidationError("عكس مردود المبيعات يجب أن يرتبط ببند الاستلام الأصلي.")
+                if product.costing_method not in (Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE):
+                    raise ValidationError("عكس مردود المبيعات يتطلب استمرار تتبع تكلفة FIFO أو المتوسط المرجح.")
+                source_root_line_id = line.reversal_of_line_id
             cost_parts = issue(
                 balances[source_key], line.quantity, line,
                 source_root_line_id=source_root_line_id,
