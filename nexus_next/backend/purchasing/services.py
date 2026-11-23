@@ -15,7 +15,7 @@ from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 def _account(company, role):
@@ -600,6 +600,90 @@ def post_supplier_payment(payment_id, user):
 
 
 @transaction.atomic
+
+
+def supplier_credit_balance(company_id, supplier_id, as_of):
+    """رصيد المورد الدائن المتاح للاسترداد بعد احتساب الفواتير والسداد والمرتجعات السابقة."""
+    invoice_total = PurchaseInvoice.objects.filter(
+        company_id=company_id, supplier_id=supplier_id,
+        status=PurchaseInvoice.Status.POSTED, invoice_date__lte=as_of,
+    ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    payments = SupplierPayment.objects.filter(
+        company_id=company_id, supplier_id=supplier_id,
+        status=SupplierPayment.Status.POSTED, payment_date__lte=as_of,
+    )
+    payment_total = sum((
+        payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount
+        for payment in payments
+    ), Decimal("0"))
+    active_returns = SupplierReturn.objects.filter(
+        company_id=company_id, supplier_id=supplier_id, return_date__lte=as_of,
+    ).filter(
+        Q(status=SupplierReturn.Status.POSTED)
+        | Q(status=SupplierReturn.Status.REVERSED, reversal_date__gt=as_of)
+    )
+    return_total = active_returns.aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    refund_total = SupplierRefund.objects.filter(
+        company_id=company_id, supplier_id=supplier_id,
+        status=SupplierRefund.Status.POSTED, refund_date__lte=as_of,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    supplier_balance = invoice_total - payment_total - return_total + refund_total
+    return max(Decimal("0"), -supplier_balance).quantize(Decimal("0.0001"))
+
+
+@transaction.atomic
+def post_supplier_refund(refund_id, user):
+    """ترحيل استرداد نقدي من المورد ضمن الرصيد الدائن المتاح."""
+    document = SupplierRefund.objects.select_for_update(of=("self",)).select_related(
+        "company", "supplier", "return_document", "return_document__invoice__receipt",
+        "return_document__invoice__receipt__warehouse", "payment_account",
+    ).get(pk=refund_id)
+    if document.status != SupplierRefund.Status.DRAFT:
+        raise ValidationError("استرداد المورد مرحّل بالفعل.")
+    return_document = SupplierReturn.objects.select_for_update().get(pk=document.return_document_id)
+    if return_document.status != SupplierReturn.Status.POSTED:
+        raise ValidationError("لا يمكن استرداد مبلغ عن مرتجع غير مرحّل أو معكوس.")
+    if document.refund_date < return_document.return_date:
+        raise ValidationError("تاريخ الاسترداد لا يجوز أن يسبق تاريخ المرتجع.")
+    available_credit = supplier_credit_balance(
+        document.company_id, document.supplier_id, document.refund_date,
+    )
+    if document.amount > available_credit:
+        raise ValidationError(
+            f"قيمة الاسترداد تتجاوز الرصيد الدائن المتاح للمورد ({available_credit})."
+        )
+    payable = _account(document.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    if document.payment_account_id == payable.pk:
+        raise ValidationError("حساب الاسترداد يجب أن يختلف عن حساب الموردين.")
+    branch, year = _branch_and_year(return_document.invoice.receipt, document.refund_date)
+    entry = JournalEntry.objects.create(
+        company=document.company, branch=branch, fiscal_year=year,
+        entry_number=f"PUR-REF-{document.pk}", entry_date=document.refund_date,
+        description=f"استرداد نقدي من المورد {document.supplier.name_ar} عن المرتجع {return_document.return_number}"[:500],
+        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    )
+    JournalLine.objects.bulk_create([
+        JournalLine(
+            entry=entry, account=document.payment_account,
+            description="المبلغ المسترد من المورد", debit=document.amount, credit=0,
+        ),
+        JournalLine(
+            entry=entry, account=payable,
+            description="تخفيض الرصيد الدائن للمورد", debit=0, credit=document.amount,
+        ),
+    ])
+    try:
+        posted_entry = post_journal(entry.pk)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+    document.journal_entry = posted_entry
+    document.status = SupplierRefund.Status.POSTED
+    document.posted_at = timezone.now()
+    document.save(update_fields=("journal_entry", "status", "posted_at"))
+    return document
+
+
 def post_supplier_return(return_id, user):
     """ترحيل مرتجع المورد من مصدر الاستلام الأصلي مع تسوية المورد والضريبة والمخزون."""
     document = SupplierReturn.objects.select_for_update(of=("self",)).select_related(
@@ -699,18 +783,6 @@ def post_supplier_return(return_id, user):
         inventory_credit += actual_cost
 
     grand_total = net_total + tax_total
-    paid_total = SupplierPayment.objects.filter(
-        invoice=invoice, status=SupplierPayment.Status.POSTED,
-    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-    prior_returns = SupplierReturn.objects.filter(
-        invoice=invoice, status=SupplierReturn.Status.POSTED,
-    ).exclude(pk=document.pk).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
-    open_payable = invoice.grand_total - paid_total - prior_returns
-    if grand_total > open_payable:
-        raise ValidationError(
-            f"قيمة المرتجع تتجاوز الرصيد المفتوح للمورد ({max(open_payable, Decimal('0'))}). "
-            "لا توجد معالجة مردودات نقدية/أرصدة دائنة زائدة في هذا الإصدار."
-        )
     if inventory_credit != net_total + (tax_total - recoverable_total):
         raise ValidationError("قيمة تكلفة المخزون المرتجع لا تتطابق مع صافي المرتجع والضريبة غير القابلة للخصم.")
 
@@ -770,6 +842,10 @@ def reverse_supplier_return(return_id, user, entry_date):
         raise ValidationError("لا يمكن عكس إلا مرتجع مورد مرحّل.")
     if document.reversal_journal_entry_id or document.reversal_stock_movement_id:
         raise ValidationError("تم عكس مرتجع المورد من قبل.")
+    if SupplierRefund.objects.filter(
+        return_document=document, status=SupplierRefund.Status.POSTED,
+    ).exists():
+        raise ValidationError("يجب عكس استردادات المورد المرتبطة قبل عكس المرتجع.")
     if entry_date < document.return_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ المرتجع.")
     invoice = PurchaseInvoice.objects.select_for_update().get(pk=document.invoice_id)
