@@ -188,7 +188,7 @@ class EmployeeLoanSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmployeeLoan
         fields = "__all__"
-        read_only_fields = ("status", "outstanding_balance")
+        read_only_fields = ("status", "outstanding_balance", "disbursement_transaction", "disbursed_at", "disbursed_by")
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
