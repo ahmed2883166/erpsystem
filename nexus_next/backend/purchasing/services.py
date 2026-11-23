@@ -47,7 +47,7 @@ def _capitalize_nonrecoverable_stock_tax(invoice_line):
     if quantity <= 0:
         raise ValidationError("لا يمكن توزيع ضريبة بند استلام كميته غير موجبة.")
 
-    layers = list(StockCostLayer.objects.select_for_update().filter(
+    layers = list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
         root_source_line=receipt_line,
     ).select_related("warehouse", "warehouse__branch"))
     if not layers:
@@ -239,7 +239,7 @@ def post_purchase_receipt(receipt_id, user):
 @transaction.atomic
 def post_purchase_invoice(invoice_id, user):
     """ترحيل فاتورة المورد وتسوية GRNI والضريبة القابلة للاسترداد ورسملة الضريبة غير القابلة للخصم."""
-    invoice = PurchaseInvoice.objects.select_for_update().select_related(
+    invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
         "company", "supplier", "receipt", "receipt__warehouse", "receipt__warehouse__branch",
     ).get(pk=invoice_id)
     if invoice.status != PurchaseInvoice.Status.DRAFT:
