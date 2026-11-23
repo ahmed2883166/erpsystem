@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 from companies.access import accessible_branches, can_access_branch, can_access_company, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 from inventory.models import StockMovement, StockMovementLine
-from .models import AccountRole, JournalEntry, JournalLine
+from .models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 
 
 POSTED_STATUSES = (JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED)
@@ -135,7 +135,7 @@ class SubledgerReconciliationView(APIView):
         from suppliers.models import Supplier
         from accounting.models import FxSubledgerRevaluation
         from inventory.models import StockBalance, StockMovementJournalLink
-        from hr.models import Employee, PayrollCycle, PayrollPosting, PayrollResult
+        from hr.models import Employee, PayrollComponent, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
         # The warehouse branch is the source of truth for operational-document branch scope.
         sales_invoice_scope = Q(delivery__warehouse__branch_id__in=branch_ids)
@@ -359,6 +359,65 @@ class SubledgerReconciliationView(APIView):
         } for employee_id, balance in payroll_employee_totals.items() if employee_id in payroll_employee_rows]
         payroll_employee_balances.sort(key=lambda item: abs(Decimal(item["balance"])), reverse=True)
 
+        # Statutory payroll liabilities are rebuilt from immutable payroll result
+        # lines belonging to payroll journals still posted at the requested date.
+        payroll_reversal_as_of = JournalEntry.objects.filter(
+            reversal_of_id=OuterRef("journal_entry_id"),
+            entry_date__lte=as_of, status__in=POSTED_STATUSES,
+        )
+        active_payroll_postings = PayrollPosting.objects.filter(
+            cycle__company_id=company_id, cycle__period_end__lte=as_of,
+            branch_id__in=branch_ids, journal_entry__entry_date__lte=as_of,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).annotate(_reversed_as_of=Exists(payroll_reversal_as_of)).filter(
+            _reversed_as_of=False
+        )
+
+        statutory_specs = (
+            ("employee_insurance", PayrollComponent.Method.EMPLOYEE_INSURANCE,
+             "deduction", False, AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE,
+             "التأمينات المستقطعة من الموظفين"),
+            ("payroll_tax", PayrollComponent.Method.PROGRESSIVE_TAX,
+             "deduction", False, AccountRole.Role.PAYROLL_TAX_PAYABLE,
+             "ضريبة المرتبات المستقطعة"),
+            ("employer_insurance", PayrollComponent.Method.EMPLOYER_INSURANCE,
+             "employer_share", True, AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE,
+             "حصة صاحب العمل في التأمينات"),
+        )
+        statutory_balances = {}
+        statutory_extra_accounts = {}
+        statutory_unassigned = {}
+        for key, method, kind, display_only, role, label in statutory_specs:
+            source_lines = PayrollResultLine.objects.filter(
+                result__cycle__postings__in=active_payroll_postings,
+                result__employee__branch_id__in=branch_ids,
+                result__cycle__period_end__lte=as_of,
+                component__method=method, kind_snapshot=kind,
+                display_only=display_only,
+            )
+            grouped = source_lines.values("component__payable_account_id").annotate(
+                total=Sum("amount")
+            )
+            fallback_account = role_rows.get(role)
+            totals_by_account = {}
+            unassigned_total = Decimal("0")
+            for item in grouped:
+                account_id = item["component__payable_account_id"] or (
+                    fallback_account.pk if fallback_account else None
+                )
+                amount = item["total"] or Decimal("0")
+                if account_id is None:
+                    unassigned_total += amount
+                else:
+                    totals_by_account[account_id] = totals_by_account.get(
+                        account_id, Decimal("0")
+                    ) + amount
+            statutory_balances[key] = sum(totals_by_account.values(), Decimal("0")) + unassigned_total
+            statutory_extra_accounts[key] = set(totals_by_account) - (
+                {fallback_account.pk} if fallback_account else set()
+            )
+            statutory_unassigned[key] = unassigned_total
+
         stock_links = StockMovementJournalLink.objects.filter(
             movement__company_id=company_id, movement__movement_date__lte=as_of
         ).filter(
@@ -417,8 +476,15 @@ class SubledgerReconciliationView(APIView):
         missing_links_total = sum(missing_links.values())
 
         def make_row(key, label, roles, nature, linked_ids, pending_count=0,
-                     document_balance=None, party_balances=None, require_partial=False):
+                     document_balance=None, party_balances=None, require_partial=False,
+                     extra_account_ids=()):
             accounts = [role_rows[role] for role in roles if role in role_rows]
+            if extra_account_ids:
+                extra_accounts = ChartOfAccount.objects.filter(
+                    company_id=company_id, pk__in=extra_account_ids
+                )
+                known_ids = {account.pk for account in accounts}
+                accounts.extend(account for account in extra_accounts if account.pk not in known_ids)
             if not accounts:
                 return {
                     "key": key, "label": label, "status": "not_configured",
@@ -491,12 +557,32 @@ class SubledgerReconciliationView(APIView):
         rows = [
             make_row("customers", "حسابات العملاء", (AccountRole.Role.ACCOUNTS_RECEIVABLE,), "asset", sales_journal_ids, pending["sales"], customer_subledger_total, customer_party_balances),
             make_row("suppliers", "حسابات الموردين", (AccountRole.Role.ACCOUNTS_PAYABLE,), "liability", purchase_journal_ids, pending["purchasing"], supplier_subledger_total, supplier_party_balances),
-            make_row("payroll", "التزامات المرتبات والتأمينات والضرائب", (
-                AccountRole.Role.PAYROLL_PAYABLE, AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE,
-                AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE, AccountRole.Role.PAYROLL_TAX_PAYABLE,
+            make_row("payroll", "صافي مستحقات الموظفين", (
+                AccountRole.Role.PAYROLL_PAYABLE,
             ), "liability", payroll_journal_ids, pending["payroll"],
-            party_balances=payroll_employee_balances, require_partial=True),
+            document_balance=sum((Decimal(item["balance"]) for item in payroll_employee_balances), Decimal("0")),
+            party_balances=payroll_employee_balances),
         ]
+        for key, method, kind, display_only, role, label in statutory_specs:
+            row = make_row(
+                f"payroll_{key}", label, (role,), "liability", payroll_journal_ids,
+                document_balance=statutory_balances[key], require_partial=True,
+                extra_account_ids=statutory_extra_accounts[key],
+            )
+            if statutory_unassigned[key]:
+                row["status"] = "not_configured"
+                row["detail"] = (
+                    "توجد مبالغ مستحقة من تفاصيل المرتبات دون حساب التزام محدد؛ "
+                    "لم يتم إنشاء أو تعديل أي قيد."
+                )
+                row["unassigned_amount"] = str(statutory_unassigned[key])
+            else:
+                row["detail"] = (
+                    "الرصيد محسوب من تفاصيل بنود المرتبات المرحلة حسب الموظف والحساب الدائن "
+                    "المستخدم فعليًا. لا تتم تسوية أو سداد هذه الالتزامات من هذا التقرير؛ "
+                    "وتظل المطابقة جزئية لحين وجود مستندات سداد مستقلة."
+                )
+            rows.append(row)
 
         inventory_account = role_rows.get(AccountRole.Role.INVENTORY)
         if inventory_account and inventory_account.is_active and not inventory_account.is_group and inventory_account.allow_posting and inventory_account.nature == "asset":
@@ -555,5 +641,5 @@ class SubledgerReconciliationView(APIView):
             "configuration_issue_count": sum(row["status"] in ("not_configured", "invalid_account") for row in rows),
             "unavailable_count": sum(row["status"] == "historical_snapshot_unavailable" for row in rows),
             "is_reconciled": all(row["status"] == "matched" for row in rows) and pending_total == 0 and missing_links_total == 0,
-            "note": "تقرير قراءة فقط. أرصدة العملاء والموردين محسوبة من المستندات المرحلة ومجمعة حسب الطرف، مع استخدام القيمة الدفترية الفعلية للتحصيلات والمدفوعات الأجنبية. يعرض قسم المرتبات صافي مستحقات الموظفين غير المصروفة حسب الموظف، بينما تظل التزامات التأمينات والضرائب وحصة صاحب العمل مقارنة على مستوى القيود لعدم وجود دفتر فرعي مستقل للجهات المستحقة؛ لذلك تظل المطابقة جزئية. المستندات المرحلة بلا قيود تُعرض كتحذير. المخزون يُعاد بناؤه تاريخيًا من سجل تكاليف الحركات فقط إذا تطابقت إعادة البناء حتى اليوم مع الرصيد الحالي.",
+            "note": "تقرير قراءة فقط ولا ينشئ أو يعدل قيودًا. أرصدة العملاء والموردين محسوبة من المستندات المرحلة ومجمعة حسب الطرف، مع استخدام القيمة الدفترية الفعلية للتحصيلات والمدفوعات الأجنبية. يفصل قسم المرتبات صافي مستحقات الموظفين عن تأمينات الموظف وضريبة المرتبات وحصة صاحب العمل، وتُحسب الالتزامات النظامية من تفاصيل بنود دورات المرتبات ذات القيود المرحلة غير المعكوسة حتى تاريخ التقرير. تظل مطابقة الالتزامات النظامية جزئية لعدم وجود مستندات سداد مستقلة لها داخل النظام. المستندات المرحلة بلا قيود تُعرض كتحذير. المخزون يُعاد بناؤه تاريخيًا من سجل تكاليف الحركات فقط إذا تطابقت إعادة البناء حتى اليوم مع الرصيد الحالي.",
         })
