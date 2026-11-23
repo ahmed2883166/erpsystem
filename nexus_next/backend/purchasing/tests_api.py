@@ -599,6 +599,70 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(clearing_credit, Decimal("28.0000"))
 
 
+    def test_nonrecoverable_purchase_tax_revalues_fifo_layers_and_remaining_inventory(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="FIFO-INPUT-NR",
+            name_ar="ضريبة غير قابلة للخصم - FIFO",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-FIFO-NR-01", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        layer = self.product.cost_layers.get(root_source_line_id=receipt_line_id)
+        self.assertEqual(balance.inventory_value, Decimal("228.0000"))
+        self.assertEqual(balance.average_cost, Decimal("114.000000"))
+        self.assertEqual(layer.unit_cost, Decimal("114.00000000"))
+        allocation = PurchaseInvoiceTaxAllocation.objects.get(invoice_id=created.data["id"])
+        self.assertEqual(allocation.inventory_amount, Decimal("28.0000"))
+        self.assertEqual(allocation.cogs_amount, Decimal("0.0000"))
+
+    def test_nonrecoverable_purchase_tax_on_adjusted_stock_is_allocated_to_inventory_loss(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        adjustment = StockMovement.objects.create(
+            company=self.company, movement_number="TAX-ADJ-OUT-01",
+            movement_type=StockMovement.MovementType.ADJUSTMENT, movement_date=date(2026, 3, 11),
+            source_warehouse=self.warehouse, created_by=self.user,
+        )
+        StockMovementLine.objects.create(
+            movement=adjustment, product=self.product, quantity=Decimal("1"),
+            adjustment_direction=StockMovementLine.AdjustmentDirection.OUT,
+        )
+        post_stock_movement(adjustment.pk, self.user)
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="ADJ-INPUT-NR",
+            name_ar="ضريبة غير قابلة للخصم - تسوية مخزون",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-ADJ-NR-01", "invoice_date": "2026-03-12",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        allocation = PurchaseInvoiceTaxAllocation.objects.get(invoice_id=created.data["id"])
+        self.assertEqual(allocation.inventory_amount, Decimal("14.0000"))
+        self.assertEqual(allocation.adjustment_loss_amount, Decimal("14.0000"))
+        loss_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS,
+        ).account
+        self.assertEqual(
+            allocation.journal_entry.lines.get(account=loss_account).debit,
+            Decimal("14.0000"),
+        )
+
     def test_purchase_invoice_over_limit_requires_manager_approval_of_exact_snapshot(self):
         DiscountApprovalPolicy.objects.create(
             company=self.company, max_purchase_invoice_amount=Decimal("200"),
