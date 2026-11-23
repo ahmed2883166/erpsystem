@@ -173,6 +173,28 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف فاتورة مسودة بلا تحصيل أو اعتماد أو مردود أو أثر إعادة تقييم."""
+        invoice = SalesInvoice.objects.select_for_update().select_related(
+            "company", "delivery__warehouse"
+        ).get(pk=instance.pk)
+        self._check_write(invoice.company_id)
+        if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        if invoice.status != SalesInvoice.Status.DRAFT or invoice.journal_entry_id:
+            raise ValidationError("لا يمكن حذف فاتورة مبيعات مرحلة أو مرتبطة بقيد.")
+        if (
+            invoice.receipts.exists()
+            or invoice.returns.exists()
+            or invoice.approval_requests.exists()
+            or invoice.fx_revaluations.exists()
+        ):
+            raise ValidationError("لا يمكن حذف فاتورة لها تحصيل أو مردود أو طلب اعتماد أو إعادة تقييم.")
+        for line in invoice.lines.select_for_update():
+            line.delete()
+        invoice.delete()
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
