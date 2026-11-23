@@ -631,17 +631,23 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    transaction_currency_code = serializers.CharField(source="invoice.transaction_currency.code", read_only=True, allow_null=True)
+    transaction_exchange_rate = serializers.DecimalField(source="invoice.exchange_rate", max_digits=20, decimal_places=10, read_only=True, allow_null=True)
 
     class Meta:
         model = SupplierReturn
         fields = (
             "id", "company", "supplier", "supplier_name", "invoice", "invoice_number",
             "return_number", "return_date", "status", "net_amount", "tax_amount",
-            "grand_total", "movement_status", "journal_entry", "journal_number",
+            "grand_total", "transaction_currency_code", "transaction_exchange_rate",
+            "transaction_net_amount", "transaction_tax_amount", "transaction_grand_total",
+            "movement_status", "journal_entry", "journal_number",
             "notes", "lines", "return_lines", "created_at", "posted_at",
         )
         read_only_fields = (
-            "status", "net_amount", "tax_amount", "grand_total", "movement_status",
+            "status", "net_amount", "tax_amount", "grand_total", "transaction_net_amount",
+            "transaction_tax_amount", "transaction_grand_total", "transaction_currency_code",
+            "transaction_exchange_rate", "movement_status",
             "journal_entry", "journal_number", "return_lines", "created_at", "posted_at",
         )
 
@@ -653,8 +659,6 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
         lines = attrs.get("lines", [])
         if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
-        if invoice.transaction_currency_id:
-            raise serializers.ValidationError({"invoice": "مرتجعات الفواتير الأجنبية غير متاحة حاليًا."})
         if company and invoice.company_id != company.pk:
             raise serializers.ValidationError({"company": "الشركة لا تطابق فاتورة المورد."})
         if supplier and invoice.supplier_id != supplier.pk:
