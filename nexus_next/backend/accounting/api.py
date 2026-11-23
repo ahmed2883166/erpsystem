@@ -1320,7 +1320,7 @@ class JournalEntryViewSet(AccountingViewSet):
             return_document__status__in=("posted", "reversed"),
             return_document__return_date__gte=date_from,
             return_document__return_date__lte=date_to,
-            return_document__journal_entry__status=JournalEntry.Status.POSTED,
+            return_document__journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             return_document__journal_entry__branch_id__in=branch_ids,
         ).values(
             "invoice_line__tax_rate", "invoice_line__tax_code_id",
