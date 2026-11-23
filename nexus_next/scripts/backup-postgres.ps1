@@ -1,4 +1,26 @@
 $ErrorActionPreference = "Stop"
+
+# Share the same host-wide lock used by the Django backup API. This prevents
+# Task Scheduler and a manual/API backup from running against the same files.
+$BackupLockPath = Join-Path ([System.IO.Path]::GetTempPath()) "admrail-backup-operation.lock"
+$BackupLockStream = [System.IO.File]::Open(
+    $BackupLockPath,
+    [System.IO.FileMode]::OpenOrCreate,
+    [System.IO.FileAccess]::ReadWrite,
+    [System.IO.FileShare]::ReadWrite
+)
+try {
+    if ($BackupLockStream.Length -eq 0) {
+        $BackupLockStream.WriteByte(0)
+        $BackupLockStream.Flush()
+    }
+    $BackupLockStream.Lock(0, 1)
+} catch {
+    $BackupLockStream.Dispose()
+    throw "توجد عملية نسخ احتياطي أخرى قيد التنفيذ؛ لن تبدأ مهمة النسخ المجدولة بالتوازي."
+}
+
+try {
 $Root = Split-Path -Parent $PSScriptRoot
 $Backend = Join-Path $Root "backend"
 $EnvFile = Join-Path $Backend ".env"
@@ -127,4 +149,8 @@ try {
     if (Test-Path -LiteralPath $DailyFile -PathType Leaf) {
         Remove-Item -LiteralPath $DailyFile -Force -ErrorAction Stop
     }
+}
+ } finally {
+    try { $BackupLockStream.Unlock(0, 1) } catch { }
+    $BackupLockStream.Dispose()
 }
