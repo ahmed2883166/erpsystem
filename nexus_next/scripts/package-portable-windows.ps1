@@ -124,12 +124,10 @@ reuse existing admrail_app / admrail_db names. Keep backend\.env private. If set
 after creating the new database, do not rerun blindly; inspect the displayed error first.
 
 OPTIONAL PRIVATE LAN MODE
-1. Install Caddy once on the server, or copy caddy.exe to the package's tools\\caddy.exe.
-2. Choose a stable internal DNS name such as erp.company.lan and map it to the server's reserved LAN IP.
-3. In backend\\.env set DJANGO_ENV=production, ADMRAIL_LAN_HOST, add the host to
-   DJANGO_ALLOWED_HOSTS, add https://<host> to CSRF_TRUSTED_ORIGINS, and enable
-   SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE, SECURE_SSL_REDIRECT,
-   DJANGO_HTTPS_TERMINATED_BY_PROXY. Set SECURE_HSTS_SECONDS=31536000.
+1. Double-click Configure-Admrail-LAN.cmd and enter a stable internal DNS name such as erp.company.lan.
+   The wizard backs up backend\\.env and configures the required HTTPS, host, CSRF, and secure-cookie settings.
+2. Reserve a fixed LAN IP for the server and create an internal DNS A-record mapping the chosen name to that IP.
+3. Install Caddy once on the server, or copy caddy.exe to the package's tools\\caddy.exe.
 4. Run run-admrail-lan.cmd from an elevated PowerShell/Command Prompt if you want it to
    configure the Private-profile firewall rule; otherwise open TCP 443 on Private manually.
    Waitress remains bound to 127.0.0.1:8000 and Caddy serves HTTPS on 443.
