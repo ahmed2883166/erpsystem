@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, transaction
 from django.http import HttpResponse
 from openpyxl import Workbook
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Q, Sum, F, Window, ExpressionWrapper, DecimalField
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
@@ -974,13 +974,33 @@ class JournalEntryViewSet(AccountingViewSet):
         debit_nature = account.nature in (ChartOfAccount.Nature.ASSET, ChartOfAccount.Nature.EXPENSE)
         balance_sign = Decimal("1") if debit_nature else Decimal("-1")
         opening_balance = ((opening_totals["debit"] or Decimal("0")) - (opening_totals["credit"] or Decimal("0"))) * balance_sign
+        page_raw = request.query_params.get("page", "1")
+        page_size_raw = request.query_params.get("page_size", "100")
+        if not page_raw.isdigit() or int(page_raw) < 1:
+            raise ValidationError({"page": "رقم الصفحة يجب أن يكون عددًا صحيحًا موجبًا."})
+        if not page_size_raw.isdigit() or int(page_size_raw) < 1:
+            raise ValidationError({"page_size": "حجم الصفحة يجب أن يكون عددًا صحيحًا موجبًا."})
+        page = int(page_raw)
+        page_size = min(int(page_size_raw), 500)
+
         period_lines = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
             entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
+        ).annotate(
+            movement_balance=Window(
+                expression=Sum(ExpressionWrapper(
+                    F("debit") - F("credit"),
+                    output_field=DecimalField(max_digits=20, decimal_places=4),
+                )),
+                order_by=(F("entry__entry_date").asc(), F("entry_id").asc(), F("id").asc()),
+            )
         ).select_related("entry", "entry__branch").order_by("entry__entry_date", "entry_id", "id")
-        running = opening_balance
+
+        total_rows = period_lines.count()
+        offset = (page - 1) * page_size
+        page_lines = period_lines[offset:offset + page_size]
         rows = []
-        for line in period_lines:
-            running += (line.debit - line.credit) * balance_sign
+        for line in page_lines:
+            running = opening_balance + (line.movement_balance or Decimal("0")) * balance_sign
             rows.append({
                 "line_id": line.pk, "date": line.entry.entry_date, "entry_id": line.entry_id,
                 "entry_number": line.entry.entry_number, "description": line.description or line.entry.description,
@@ -990,7 +1010,18 @@ class JournalEntryViewSet(AccountingViewSet):
         return response.Response({
             "company": company_id, "account": account_id, "account_code": account.code,
             "account_name": account.name_ar, "date_from": date_from, "date_to": date_to,
-            "opening_balance": opening_balance, "rows": rows, "closing_balance": running,
+            "opening_balance": opening_balance, "rows": rows,
+            "closing_balance": (
+                opening_balance + (period_lines.aggregate(total=Sum(
+                    ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
+                ))["total"] or Decimal("0")) * balance_sign
+            ),
+            "pagination": {
+                "page": page, "page_size": page_size, "total_rows": total_rows,
+                "total_pages": (total_rows + page_size - 1) // page_size,
+                "has_next": offset + page_size < total_rows,
+                "has_previous": page > 1,
+            },
         })
 
     @decorators.action(detail=False, methods=("get",), url_path="changes-in-equity")
