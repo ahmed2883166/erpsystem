@@ -107,13 +107,39 @@ def main():
             result["summary"] = data
         if name == "trial_balance":
             result["keys"] = sorted(data.keys()) if isinstance(data, dict) else []
+        if name.startswith("general_ledger"):
+            result["pagination"] = data.get("pagination", {}) if isinstance(data, dict) else {}
         metrics[name] = result
         print(f"{name}: {json.dumps(result, ensure_ascii=False)}", flush=True)
         return data
     request_metric("journal_list", f"/api/accounting/journal-entries/?company={company.pk}&page=1&page_size=100")
     request_metric("journal_summary", f"/api/accounting/journal-entries/summary/?company={company.pk}")
     request_metric("trial_balance", f"/api/accounting/journal-entries/trial-balance/?{query}")
-    request_metric("general_ledger", f"/api/accounting/journal-entries/general-ledger/?{query}&account={cash.pk}", row_key="rows")
+    ledger_page_1 = request_metric(
+        "general_ledger",
+        f"/api/accounting/journal-entries/general-ledger/?{query}&account={cash.pk}&page=1&page_size=100",
+        row_key="rows",
+    )
+    ledger_page_2 = request_metric(
+        "general_ledger_page_2",
+        f"/api/accounting/journal-entries/general-ledger/?{query}&account={cash.pk}&page=2&page_size=100",
+        row_key="rows",
+    )
+    if ledger_page_1.get("pagination", {}).get("total_rows") != args.entries:
+        raise RuntimeError("General ledger pagination total does not match the million journal-line target.")
+    first_page_rows = ledger_page_1.get("rows", [])
+    second_page_rows = ledger_page_2.get("rows", [])
+    if len(first_page_rows) != 100 or len(second_page_rows) != 100:
+        raise RuntimeError("General ledger page size is not respected.")
+    if first_page_rows and second_page_rows:
+        expected_next_balance = (
+            Decimal(str(first_page_rows[-1]["running_balance"]))
+            + Decimal(str(second_page_rows[0]["debit"]))
+            - Decimal(str(second_page_rows[0]["credit"]))
+        )
+        if expected_next_balance != Decimal(str(second_page_rows[0]["running_balance"])):
+            raise RuntimeError("General ledger running balance is discontinuous between pages.")
+    metrics["general_ledger_pagination_continuity"] = True
     metrics["rss_after_mb"] = round(process.memory_info().rss / 1024 / 1024, 1)
     metrics["max_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
     if metrics["journal_entry_count"] != args.entries or metrics["journal_line_count"] != args.entries * 2 or not metrics["balanced"]:
