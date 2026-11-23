@@ -290,8 +290,18 @@ class SalesReturn(models.Model):
         return self.company_id
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)).exists():
-            raise ValidationError("مردود المبيعات المرحّل أو المعكوس غير قابل للتعديل.")
+        if self.pk:
+            current_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if current_status == self.Status.REVERSED:
+                raise ValidationError("مردود المبيعات المعكوس غير قابل للتعديل.")
+            if current_status == self.Status.POSTED:
+                reversal_fields = {
+                    "reversal_stock_movement", "reversal_journal_entry", "reversal_date",
+                    "reversed_at", "reversed_by", "status",
+                }
+                update_fields = set(kwargs.get("update_fields") or ())
+                if self.status != self.Status.REVERSED or not update_fields or not update_fields.issubset(reversal_fields):
+                    raise ValidationError("مردود المبيعات المرحّل غير قابل للتعديل إلا من خلال إجراء العكس.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
