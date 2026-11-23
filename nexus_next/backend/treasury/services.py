@@ -345,7 +345,7 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
                             description="انخفاض قيمة مركز العملة الأجنبية"),
             ]
         JournalLine.objects.bulk_create(lines)
-        journal = post_journal(entry.pk)
+        journal = post_journal(entry.pk, actor=user)
     position.carrying_base_amount = new_value
     position.save(update_fields=("carrying_base_amount", "updated_at"))
     return TreasuryFxRevaluation.objects.create(
