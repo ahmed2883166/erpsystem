@@ -194,18 +194,29 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
+    tax_allocations = serializers.SerializerMethodField()
+
+    def get_tax_allocations(self, obj):
+        return [{
+            "branch": allocation.branch_id,
+            "branch_name": allocation.branch.name_ar,
+            "journal_entry": allocation.journal_entry_id,
+            "inventory_amount": str(allocation.inventory_amount),
+            "cogs_amount": str(allocation.cogs_amount),
+            "adjustment_loss_amount": str(allocation.adjustment_loss_amount),
+        } for allocation in obj.tax_allocations.select_related("branch", "journal_entry").all()]
 
     class Meta:
         model = PurchaseInvoice
         fields = (
             "id", "company", "supplier", "supplier_name", "receipt", "receipt_number",
             "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "tax_total",
-            "grand_total", "paid_total", "balance_due", "notes", "journal_entry", "journal_number", "invoice_lines",
+            "grand_total", "paid_total", "balance_due", "tax_allocations", "notes", "journal_entry", "journal_number", "invoice_lines",
             "lines", "created_at", "posted_at",
         )
         read_only_fields = (
             "status", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "net_total", "tax_total", "grand_total", "journal_entry",
-            "journal_number", "paid_total", "balance_due", "created_at", "posted_at", "invoice_lines",
+            "journal_number", "paid_total", "balance_due", "tax_allocations", "created_at", "posted_at", "invoice_lines",
         )
 
     def get_paid_total(self, obj):
