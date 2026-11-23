@@ -652,9 +652,11 @@ def cancel_payroll_payment_preparation(cycle_id, actor=None):
         for approval in approvals:
             approval.status = FinancialApprovalRequest.Status.SUPERSEDED
             approval.save(update_fields=("status", "decided_at"))
+        # The treasury model intentionally freezes reference and financial fields
+        # once linked to a payroll posting. VOID is the only allowed lifecycle
+        # transition here; the payroll posting is detached immediately below.
         document.status = TreasuryTransaction.Status.VOID
-        document.reference = ((document.reference + " | " if document.reference else "") + f"إلغاء إعداد صرف دورة المرتبات {cycle.pk}")[:120]
-        document.save(update_fields=("status", "reference"))
+        document.save(update_fields=("status",))
         posting.payment_treasury_transaction = None
         posting.payment_journal_entry = None
         posting.save(update_fields=("payment_treasury_transaction", "payment_journal_entry"))
