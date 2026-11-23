@@ -497,8 +497,7 @@ class PurchasingWorkflowTests(APITestCase):
             f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
         )
         self.assertEqual(report.status_code, 200, report.data)
-        self.assertEqual(report.data["input_tax"], "28.0000")
-        self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
+        self.assertEqual(report.data["input_tax"], "28.0000")        self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
@@ -997,7 +996,6 @@ class PurchasingWorkflowTests(APITestCase):
             entry_id=revalued.data["journal_entry"], account__code="6160",
             debit=Decimal("12.0000"),
         ).exists())
-
         first = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-AP-FX-1", "payment_date": "2026-04-01", "method": "cash",
@@ -1425,8 +1423,4 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(vat.status_code, 200, vat.data)
         self.assertEqual(vat.data["purchases"]["tax_amount"], "28.0000", vat.data)
         self.assertEqual(vat.data["input_tax"], "28.0000")
-        self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0")).values("entry__entry_number", "entry__status", "entry__reversal_of_id", "debit", "credit"))
-        self.assertEqual(
-            Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"),
-            {"vat": vat.data["ledger_reconciliation"], "ledger_rows": ledger_rows},
-        )
+        self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
