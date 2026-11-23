@@ -312,6 +312,37 @@ class BranchViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("إنشاء الفروع متاح لمدير الشركة فقط.")
         serializer.save()
 
+    @action(detail=True, methods=("post",), url_path="make-head-office")
+    @transaction.atomic
+    def make_head_office(self, request, pk=None):
+        """نقل صفة المركز الرئيسي إلى فرع نشط داخل الشركة نفسها بصورة ذرية."""
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+
+        branch = self.get_object()
+        company_id = branch.company_id
+        Company.objects.select_for_update().get(pk=company_id)
+        if not has_company_role(request.user, company_id, ("admin",)):
+            raise PermissionDenied("تغيير المركز الرئيسي متاح لمدير الشركة فقط.")
+
+        target = Branch.objects.select_for_update().filter(
+            pk=branch.pk, company_id=company_id, is_active=True
+        ).first()
+        if target is None:
+            raise ValidationError("يجب اختيار فرع نشط من الشركة نفسها ليكون المركز الرئيسي.")
+
+        current = Branch.objects.select_for_update().filter(
+            company_id=company_id, is_head_office=True
+        ).first()
+        if current and current.pk == target.pk:
+            return Response(self.get_serializer(target).data)
+
+        # إلغاء الصفة القديمة أولًا لتفادي قيد التفرد الجزئي في قاعدة البيانات.
+        if current:
+            Branch.objects.filter(pk=current.pk).update(is_head_office=False)
+        Branch.objects.filter(pk=target.pk).update(is_head_office=True)
+        target.refresh_from_db()
+        return Response(self.get_serializer(target).data)
+
     @transaction.atomic
     def perform_update(self, serializer):
         """حفظ تعديلات الفرع بقفل الشركة لمنع إيقاف آخر فرع عبر طلبات متزامنة."""
