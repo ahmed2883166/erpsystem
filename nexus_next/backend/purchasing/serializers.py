@@ -430,6 +430,7 @@ class SupplierRefundSerializer(serializers.ModelSerializer):
     return_number = serializers.CharField(source="return_document.return_number", read_only=True)
     payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, allow_null=True)
 
     class Meta:
         model = SupplierRefund
@@ -437,9 +438,10 @@ class SupplierRefundSerializer(serializers.ModelSerializer):
             "id", "company", "supplier", "supplier_name", "return_document", "return_number",
             "refund_number", "refund_date", "method", "payment_account", "payment_account_name",
             "amount", "reference", "notes", "status", "journal_entry", "journal_number",
+            "reversal_journal_entry", "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
             "created_at", "posted_at",
         )
-        read_only_fields = ("status", "journal_entry", "journal_number", "created_at", "posted_at")
+        read_only_fields = ("status", "journal_entry", "journal_number", "reversal_journal_entry", "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by", "created_at", "posted_at")
 
     def validate(self, attrs):
         company = attrs.get("company")
