@@ -126,6 +126,7 @@ class SalesQuotationLine(models.Model):
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
     tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_quotation_lines")
     discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    discount_rule = models.ForeignKey(CustomerDiscountRule, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_quotation_lines")
     discount_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
