@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.db import connection, DatabaseError, transaction
@@ -7,6 +8,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
+from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
@@ -66,6 +68,19 @@ class SalesWorkflowTests(APITestCase):
         posted = self.client.post(f"/api/sales-documents/deliveries/{delivery_id}/post/", {}, format="json")
         self.assertEqual(posted.status_code, 200, posted.data)
         return delivery_id, line_id
+
+    def test_unassigned_sales_warehouse_uses_same_branch_for_validation_and_posting(self):
+        from sales.services import _branch_and_year
+
+        warehouse = Warehouse.objects.create(
+            company=self.company, branch=None, code="WH-NO-BRANCH", name_ar="مخزن بلا فرع",
+        )
+        resolved = resolve_warehouse_branch(self.company, warehouse)
+        posting_branch, _ = _branch_and_year(
+            SimpleNamespace(company=self.company, warehouse=warehouse), date(2026, 3, 10),
+        )
+        self.assertEqual(resolved.pk, self.branch.pk)
+        self.assertEqual(posting_branch.pk, resolved.pk)
 
     def test_branch_limited_user_cannot_use_unassigned_sales_warehouse_outside_default_branch(self):
         restricted_branch = Branch.objects.create(
