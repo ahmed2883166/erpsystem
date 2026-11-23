@@ -193,6 +193,25 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(set(entry.lines.values_list("account_id", flat=True)), {self.cash_gl.pk, self.bank_gl.pk})
 
 
+    def test_limited_branch_user_cannot_view_company_wide_treasury_account(self):
+        shared_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1125", name_ar="بنك عام", nature=ChartOfAccount.Nature.ASSET,
+        )
+        shared = TreasuryAccount.objects.create(
+            company=self.company, branch=None, account=shared_gl, kind="bank",
+            code="BANK-COMPANY-WIDE", name_ar="بنك عام",
+        )
+        limited = get_user_model().objects.create_user(
+            username="treasury-shared-bank-limited", password="test-password"
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+        response = self.client.get(f"/api/treasury/accounts/{shared.pk}/")
+        self.assertEqual(response.status_code, 404, response.data)
+
     def test_limited_branch_user_cannot_reassign_treasury_account_to_another_branch(self):
         other_branch = Branch.objects.create(company=self.company, code="OTHER", name_ar="فرع آخر")
         limited = get_user_model().objects.create_user(username="treasury-branch-limited", password="test-password")
