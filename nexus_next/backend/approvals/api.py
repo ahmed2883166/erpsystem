@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_company, has_company_role, is_platform_owner, parse_company_param
+from companies.models import Branch
 from sales.models import SalesInvoice
 from .models import DiscountApprovalPolicy, SalesInvoiceApproval, FinancialApprovalRequest
 from .serializers import DiscountApprovalPolicySerializer, SalesInvoiceApprovalSerializer, FinancialApprovalRequestSerializer
