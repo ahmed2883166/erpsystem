@@ -1298,6 +1298,18 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(filtered.status_code, 200, filtered.data)
         self.assertEqual(filtered.data["total"], Decimal("120.0000"))
 
+        reversed_response = client.post(
+            f"/api/accounting/journal-entries/{entry.pk}/reverse/",
+            {"entry_date": "2026-02-20"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 201, reversed_response.data)
+        after_reversal = client.get(
+            f"/api/accounting/journal-entries/expense-analysis/?company={company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+        self.assertEqual(after_reversal.status_code, 200, after_reversal.data)
+        self.assertEqual(after_reversal.data["total"], Decimal("0.0000"))
+
     def test_vat_return_reports_ledger_reconciliation_and_unclassified_inputs(self):
         Branch.objects.create(company=self.company, code="VAT-HQ", name_ar="الرئيسي", is_head_office=True)
         user = User.objects.create_user(username="vat_reconcile_viewer", password="test-password")
