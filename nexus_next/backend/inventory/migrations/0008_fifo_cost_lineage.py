@@ -29,6 +29,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="stockcostconsumption",
-            index=models.Index(fields=["movement_line", "source_layer"], name="inv_cost_consume_line_layer_idx"),
+            index=models.Index(fields=["movement_line", "source_layer"], name="inv_cost_consume_idx"),
         ),
     ]
