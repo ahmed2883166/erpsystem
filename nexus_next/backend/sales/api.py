@@ -18,7 +18,7 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
@@ -291,6 +291,24 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "description": f"سند قبض عن فاتورة {receipt.invoice.invoice_number}",
                 "debit": Decimal("0"), "credit": receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount, "sort": 1,
             })
+        returns = SalesReturn.objects.filter(
+            invoice__in=invoices,
+            status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
+        ).select_related("invoice")
+        for sales_return in returns:
+            events.append({
+                "date": sales_return.return_date, "kind": "sales_return",
+                "number": sales_return.return_number,
+                "description": f"مردود مبيعات عن الفاتورة {sales_return.invoice.invoice_number}",
+                "debit": Decimal("0"), "credit": sales_return.grand_total, "sort": 2,
+            })
+            if sales_return.status == SalesReturn.Status.REVERSED and sales_return.reversal_date:
+                events.append({
+                    "date": sales_return.reversal_date, "kind": "sales_return_reversal",
+                    "number": f"REV-{sales_return.return_number}",
+                    "description": f"عكس مردود المبيعات {sales_return.return_number}",
+                    "debit": sales_return.grand_total, "credit": Decimal("0"), "sort": 3,
+                })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
         opening = sum(
@@ -378,7 +396,13 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                  and receipt.receipt_date <= as_of),
                 Decimal("0"),
             )
-            balance_due = max(invoice.grand_total - paid_as_of, Decimal("0"))
+            returned_as_of = SalesReturn.objects.filter(
+                invoice=invoice, return_date__lte=as_of,
+            ).filter(
+                Q(status=SalesReturn.Status.POSTED)
+                | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
+            ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+            balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
             if balance_due <= 0:
                 continue
             due_date = invoice.invoice_date + timedelta(days=invoice.customer.payment_terms_days)
@@ -409,6 +433,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "bucket": bucket,
                 "grand_total": str(invoice.grand_total),
                 "paid_as_of": str(paid_as_of),
+                "returned_as_of": str(returned_as_of),
                 "balance_due": str(balance_due),
             })
             totals[bucket] += balance_due
