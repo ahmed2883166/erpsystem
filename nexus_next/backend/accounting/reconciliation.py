@@ -458,10 +458,12 @@ class SubledgerReconciliationView(APIView):
             unmatched = unmatched_qs[:50]
             if difference != 0:
                 status = "difference"
+            elif require_partial:
+                # Keep the accounting limitation visible even when draft payroll
+                # documents also exist; pending_count remains available separately.
+                status = "partial_reconciliation"
             elif pending_count:
                 status = "pending_documents"
-            elif require_partial:
-                status = "partial_reconciliation"
             else:
                 status = "matched"
             return {
