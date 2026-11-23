@@ -3,7 +3,7 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -24,6 +24,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
   const [returns, setReturns] = useState<SupplierReturn[]>([]);
+  const [refunds, setRefunds] = useState<SupplierRefund[]>([]);
+  const [refundForm, setRefundForm] = useState({ return_document: "", refund_number: "", refund_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "", notes: "" });
   const [returnForm, setReturnForm] = useState({ invoice: "", return_number: "", return_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [returnLines, setReturnLines] = useState<{ invoice_line: string; quantity: string }[]>([{ invoice_line: "", quantity: "1" }]);
   const [statementSupplier, setStatementSupplier] = useState("");
@@ -51,12 +53,12 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, ret, t, ta, cur, fx] = await Promise.all([
+      const [s, p, w, o, r, i, pay, ret, ref, t, ta, cur, fx] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -75,6 +77,8 @@ const refresh = async () => {
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredReturns = returns.filter((row) => [row.return_number, row.supplier_name, row.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
+  const filteredRefunds = refunds.filter((row) => [row.refund_number, row.supplier_name, row.return_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
+  const refundableReturns = returns.filter((row) => row.status === "posted");
   const returnableInvoices = invoices.filter((invoice) => invoice.status === "posted" && Number(invoice.balance_due) > 0 && (!invoice.transaction_currency || !payments.some((payment) => payment.invoice === invoice.id && payment.status === "posted")));
 
   const findRate = (currencyId: string, onDate: string) => exchangeRates
@@ -247,6 +251,27 @@ const postInvoice = async (id: number) => {
     finally { setBusy(false); }
   };
 
+  const saveRefund = async (event: FormEvent) => {
+    event.preventDefault();
+    const returned = returns.find((row) => row.id === Number(refundForm.return_document));
+    if (!companyId || !returned) { setError("اختر مرتجعًا مرحّلًا."); return; }
+    if (!refundForm.refund_number.trim() || Number(refundForm.amount) <= 0 || !refundForm.payment_account) { setError("أكمل رقم الاسترداد والمبلغ وحساب الخزينة."); return; }
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createRefund({ company: companyId, supplier: returned.supplier, return_document: returned.id, refund_number: refundForm.refund_number.trim(), refund_date: refundForm.refund_date, method: refundForm.method, payment_account: Number(refundForm.payment_account), amount: refundForm.amount, reference: refundForm.reference, notes: refundForm.notes });
+      setShowForm(false); setRefundForm((old) => ({ ...old, return_document: "", refund_number: "", amount: "", reference: "", notes: "" })); await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء استرداد المورد."); }
+    finally { setBusy(false); }
+  };
+
+  const postRefund = async (id: number) => {
+    if (!window.confirm("سيتم إثبات استلام مبلغ الاسترداد في الخزينة أو البنك وتخفيض الرصيد الدائن للمورد. هل تريد الترحيل؟")) return;
+    setBusy(true); setError("");
+    try { await purchasingApi.postRefund(id); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل استرداد المورد."); }
+    finally { setBusy(false); }
+  };
+
   // ترحيل المرتجع بعد إعادة تحقق الخادم من الكمية والتكلفة والضريبة.
   const postReturn = async (id: number) => {
     if (!window.confirm("سيتم إخراج الكمية من مخزون الاستلام الأصلي وإنشاء قيد تخفيض المورد والضريبة. هل تريد الترحيل؟")) return;
@@ -271,9 +296,9 @@ const postInvoice = async (id: number) => {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
+    <div className="inventory-tabs"><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
     {showForm && tab === "returns" && <form className="inventory-form" onSubmit={(event) => void saveReturn(event)}>
       <label className="inventory-wide">فاتورة المورد المرحّلة<select required value={returnForm.invoice} onChange={(e) => {
@@ -293,6 +318,18 @@ const postInvoice = async (id: number) => {
       <label className="inventory-wide">ملاحظات<textarea value={returnForm.notes} onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })} /></label>
       <div className="inventory-wide"><p className="inventory-report-note">تُرحّل المرتجعات الأجنبية بسعر الصرف التاريخي للفاتورة فقط إذا لم توجد دفعات أو إعادة تقييم سابقة عليها. عند وجود تسوية عملة سابقة يرفض الخادم الترحيل حمايةً من فروق غير محسوبة.</p></div>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy || !returnableInvoices.length}>{busy ? "جارٍ الحفظ…" : "حفظ مرتجع كمسودة"}</button></div>
+    </form>}
+    {showForm && tab === "refunds" && <form className="inventory-form" onSubmit={(event) => void saveRefund(event)}>
+      <label className="inventory-wide">المرتجع المرحّل<select required value={refundForm.return_document} onChange={(e) => { const id=e.target.value; const row=returns.find((x)=>x.id===Number(id)); setRefundForm((old)=>({...old,return_document:id,amount:row?.grand_total||""})); }}><option value="">اختر مرتجع مورد مرحّل</option>{refundableReturns.map((row)=><option key={row.id} value={row.id}>{row.return_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
+      <label>رقم سند الاسترداد<input required maxLength={37} value={refundForm.refund_number} onChange={(e)=>setRefundForm({...refundForm,refund_number:e.target.value})}/></label>
+      <label>تاريخ الاسترداد<input required type="date" value={refundForm.refund_date} onChange={(e)=>setRefundForm({...refundForm,refund_date:e.target.value})}/></label>
+      <label>طريقة الاسترداد<select value={refundForm.method} onChange={(e)=>{const method=e.target.value as "cash"|"bank";setRefundForm((old)=>({...old,method,payment_account:String(treasuryAccounts.find((x)=>x.is_active&&x.kind===method)?.account||"")}));}}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
+      <label>حساب الخزينة / البنك<select required value={refundForm.payment_account} onChange={(e)=>setRefundForm({...refundForm,payment_account:e.target.value})}><option value="">اختر الحساب</option>{treasuryAccounts.filter((x)=>x.is_active&&x.kind===refundForm.method).map((x)=><option key={x.id} value={x.account}>{x.code} · {x.name_ar}</option>)}</select></label>
+      <label>المبلغ المسترد<input required type="number" min="0.0001" step="0.0001" value={refundForm.amount} onChange={(e)=>setRefundForm({...refundForm,amount:e.target.value})}/></label>
+      <label>مرجع التحويل<input value={refundForm.reference} onChange={(e)=>setRefundForm({...refundForm,reference:e.target.value})}/></label>
+      <label className="inventory-wide">ملاحظات<textarea value={refundForm.notes} onChange={(e)=>setRefundForm({...refundForm,notes:e.target.value})}/></label>
+      <div className="inventory-wide"><p className="inventory-report-note">لا يجوز أن يتجاوز الاسترداد الرصيد الدائن المتاح للمورد. يجب أن يكون الحساب بعملة الشركة ومن نفس فرع المرتجع.</p></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy?"جارٍ الحفظ…":"حفظ سند الاسترداد كمسودة"}</button></div>
     </form>}
     {showForm && tab === "orders" && <form className="inventory-form" onSubmit={(event) => void saveOrder(event)}>
       <label>المورد<select required value={orderForm.supplier} onChange={(e) => setOrderForm({ ...orderForm, supplier: e.target.value })}><option value="">اختر المورد</option>{suppliers.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
@@ -402,6 +439,7 @@ const postInvoice = async (id: number) => {
       {fxHistory.length>0&&<div className="data-table-wrap inventory-wide"><table><thead><tr><th>تاريخ التقييم</th><th>سعر الصرف</th><th>الرصيد الأجنبي</th><th>الفرق</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{fxHistory.map(row=><tr key={row.id}><td>{row.revaluation_date}</td><td>{row.rate}</td><td>{money(row.foreign_balance)}</td><td>{money(row.difference)}</td><td>{row.journal_number||"—"}</td><td>{row.status==="reversed"?"معكوس":row.status==="no_difference"?"دون فرق":"مرحّل"}</td></tr>)}</tbody></table></div>}
     </form>}
     {tab === "returns" && <div className="data-table-wrap"><table><thead><tr><th>رقم المرتجع</th><th>المورد</th><th>فاتورة المورد</th><th>التاريخ</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>بالعملة الأجنبية</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredReturns.map((row) => <tr key={row.id}><td className="code-cell">{row.return_number}</td><td>{row.supplier_name}</td><td>{row.invoice_number}</td><td>{row.return_date}</td><td>{money(row.net_amount)}</td><td>{money(row.tax_amount)}</td><td>{money(row.grand_total)}</td><td>{row.transaction_currency_code ? `${money(row.transaction_grand_total || "0")} ${row.transaction_currency_code}` : "—"}</td><td>{row.status === "posted" ? "مرحّل" : row.status === "reversed" ? "معكوس" : "مسودة"}</td><td>{row.status === "reversed" ? row.reversal_journal_number || "—" : row.journal_number || "—"}</td><td>{row.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postReturn(row.id)}>ترحيل المرتجع</button> : row.status === "posted" ? <button className="subtle-button" type="button" disabled={busy} onClick={() => void reverseReturn(row.id)}>عكس المرتجع</button> : "تم العكس"}</td></tr>)}</tbody></table>{!busy && filteredReturns.length === 0 && <div className="table-empty">لا توجد مرتجعات موردين مطابقة.</div>}</div>}
+    {tab === "refunds" && <div className="data-table-wrap"><table><thead><tr><th>رقم الاسترداد</th><th>المرتجع</th><th>المورد</th><th>التاريخ</th><th>الطريقة</th><th>حساب الاستلام</th><th>المبلغ</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredRefunds.map((row)=><tr key={row.id}><td className="code-cell">{row.refund_number}</td><td>{row.return_number}</td><td>{row.supplier_name}</td><td>{row.refund_date}</td><td>{row.method==="cash"?"نقدي":"تحويل بنكي"}</td><td>{row.payment_account_name}</td><td>{money(row.amount)}</td><td>{row.status==="posted"?"مرحّل":"مسودة"}</td><td>{row.journal_number||"—"}</td><td>{row.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void postRefund(row.id)}>ترحيل الاسترداد</button>:"تم الترحيل"}</td></tr>)}</tbody></table>{!busy&&filteredRefunds.length===0&&<div className="table-empty">لا توجد استردادات موردين مطابقة.</div>}</div>}
     {tab === "payments" && <div className="data-table-wrap"><table><thead><tr><th>رقم السند</th><th>المورد</th><th>الفاتورة</th><th>التاريخ</th><th>الطريقة</th><th>حساب الصرف</th><th>المبلغ</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredPayments.map((x) => <tr key={x.id}><td className="code-cell">{x.payment_number}</td><td>{x.supplier_name}</td><td>{x.invoice_number}</td><td>{x.payment_date}</td><td>{x.method === "cash" ? "نقدي" : "تحويل بنكي"}</td><td>{x.payment_account_name || "الحساب الافتراضي"}</td><td>{money(x.amount)}</td><td>{x.status === "posted" ? "مرحّل" : x.status === "reversed" ? "معكوس" : "مسودة"}</td><td>{x.journal_number || "—"}</td><td>{x.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postPayment(x.id)}>ترحيل السند</button> : x.status === "reversed" ? "تم العكس" : <button className="subtle-button" type="button" disabled={busy} onClick={() => { if (window.confirm("سيتم إنشاء قيد عكسي وإلغاء أثر سند الصرف على رصيد المورد. يجب عكس أحدث سند أولًا. هل تريد المتابعة؟")) void reversePayment(x.id); }}>عكس السند</button>}</td></tr>)}</tbody></table>{!busy && filteredPayments.length === 0 && <div className="table-empty">لا توجد سندات صرف مطابقة.</div>}</div>}
   </section>;
 }
