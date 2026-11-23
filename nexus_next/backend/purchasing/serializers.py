@@ -11,7 +11,7 @@ from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn, SupplierReturnLine
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -597,3 +597,117 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             order.lines.all().delete()
             PurchaseOrderLine.objects.bulk_create([PurchaseOrderLine(order=order, **line) for line in lines])
         return order
+
+
+class SupplierReturnLineInputSerializer(serializers.Serializer):
+    invoice_line = serializers.PrimaryKeyRelatedField(queryset=PurchaseInvoiceLine.objects.select_related(
+        "invoice", "receipt_line", "receipt_line__product"
+    ))
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+
+
+class SupplierReturnLineSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="invoice_line.receipt_line.product.code", read_only=True)
+    product_name = serializers.CharField(source="invoice_line.receipt_line.product.name_ar", read_only=True)
+
+    class Meta:
+        model = SupplierReturnLine
+        fields = (
+            "id", "invoice_line", "product_code", "product_name", "quantity",
+            "net_amount", "tax_amount", "recoverable_tax_amount", "nonrecoverable_tax_amount",
+        )
+        read_only_fields = fields
+
+
+class SupplierReturnSerializer(serializers.ModelSerializer):
+    lines = SupplierReturnLineInputSerializer(many=True, write_only=True)
+    return_lines = SupplierReturnLineSerializer(source="lines", many=True, read_only=True)
+    supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
+    journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+
+    class Meta:
+        model = SupplierReturn
+        fields = (
+            "id", "company", "supplier", "supplier_name", "invoice", "invoice_number",
+            "return_number", "return_date", "status", "net_amount", "tax_amount",
+            "grand_total", "movement_status", "journal_entry", "journal_number",
+            "notes", "lines", "return_lines", "created_at", "posted_at",
+        )
+        read_only_fields = (
+            "status", "net_amount", "tax_amount", "grand_total", "movement_status",
+            "journal_entry", "journal_number", "return_lines", "created_at", "posted_at",
+        )
+
+    def validate(self, attrs):
+        company = attrs.get("company")
+        supplier = attrs.get("supplier")
+        invoice = attrs.get("invoice")
+        return_date = attrs.get("return_date")
+        lines = attrs.get("lines", [])
+        if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
+            raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
+        if invoice.transaction_currency_id:
+            raise serializers.ValidationError({"invoice": "مرتجعات الفواتير الأجنبية غير متاحة حاليًا."})
+        if company and invoice.company_id != company.pk:
+            raise serializers.ValidationError({"company": "الشركة لا تطابق فاتورة المورد."})
+        if supplier and invoice.supplier_id != supplier.pk:
+            raise serializers.ValidationError({"supplier": "المورد لا يطابق فاتورة المورد."})
+        if return_date and return_date < invoice.invoice_date:
+            raise serializers.ValidationError({"return_date": "تاريخ المرتجع لا يجوز أن يسبق الفاتورة."})
+        if not lines:
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        seen = set()
+        for line in lines:
+            invoice_line = line["invoice_line"]
+            if invoice_line.invoice_id != invoice.pk:
+                raise serializers.ValidationError({"lines": "كل البنود يجب أن تتبع فاتورة المورد المحددة."})
+            if invoice_line.pk in seen:
+                raise serializers.ValidationError({"lines": "لا تكرر بند الفاتورة في نفس المرتجع."})
+            seen.add(invoice_line.pk)
+            returned = SupplierReturnLine.objects.filter(
+                invoice_line=invoice_line,
+                return_document__status=SupplierReturn.Status.POSTED,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if returned + line["quantity"] > invoice_line.receipt_line.quantity:
+                raise serializers.ValidationError({
+                    "lines": f"كمية المرتجع تتجاوز المتبقي للصنف {invoice_line.receipt_line.product.code}."
+                })
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lines = validated_data.pop("lines")
+        invoice = validated_data["invoice"]
+        user = self.context["request"].user
+        movement = StockMovement.objects.create(
+            company=invoice.company,
+            movement_number=f"SR-{validated_data['return_number']}",
+            movement_type=StockMovement.MovementType.SUPPLIER_RETURN,
+            movement_date=validated_data["return_date"],
+            source_warehouse=invoice.receipt.warehouse,
+            notes=validated_data.get("notes", ""),
+            created_by=user,
+        )
+        movement_lines = StockMovementLine.objects.bulk_create([
+            StockMovementLine(
+                movement=movement,
+                product=line["invoice_line"].receipt_line.product,
+                quantity=line["quantity"],
+                source_location=line["invoice_line"].receipt_line.destination_location,
+                expiry_date=line["invoice_line"].receipt_line.expiry_date,
+            ) for line in lines
+        ])
+        document = SupplierReturn.objects.create(
+            **validated_data, stock_movement=movement, created_by=user,
+        )
+        SupplierReturnLine.objects.bulk_create([
+            SupplierReturnLine(
+                return_document=document,
+                invoice_line=line["invoice_line"],
+                movement_line=movement_line,
+                quantity=line["quantity"],
+            ) for movement_line, line in zip(movement_lines, lines)
+        ])
+        return document
