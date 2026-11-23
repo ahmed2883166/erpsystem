@@ -302,6 +302,8 @@ class StockCostLayer(models.Model):
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="cost_layers")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="cost_layers")
     source_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="created_cost_layers")
+    root_source_line = models.ForeignKey(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="root_cost_layers")
+    parent_layer = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="transferred_layers")
     location = models.ForeignKey(StorageLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="fifo_cost_layers")
     expiry_date = models.DateField(null=True, blank=True)
     quantity_remaining = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(0)])
@@ -313,6 +315,18 @@ class StockCostLayer(models.Model):
         indexes = [models.Index(fields=("product", "warehouse", "location", "created_at"), name="inv_fifo_layer_order_idx")]
         constraints = [models.CheckConstraint(condition=Q(quantity_remaining__gte=0), name="ck_fifo_layer_nonnegative")]
 
+
+class StockCostConsumption(models.Model):
+    """يسجل استهلاك كمية من طبقة تكلفة بعينها مع الاحتفاظ بمصدرها الأصلي."""
+    movement_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="cost_consumptions")
+    source_layer = models.ForeignKey(StockCostLayer, on_delete=models.PROTECT, related_name="consumptions")
+    quantity = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(0.0001)])
+    unit_cost = models.DecimalField(max_digits=20, decimal_places=6, validators=[MinValueValidator(0)])
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("id",)
+        indexes = [models.Index(fields=("movement_line", "source_layer"), name="inv_cost_consume_line_layer_idx")]
 
 
 class StockMovementJournalLink(models.Model):
