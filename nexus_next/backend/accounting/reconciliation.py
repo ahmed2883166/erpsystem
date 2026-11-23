@@ -2,6 +2,7 @@
 from decimal import Decimal
 
 from django.db.models import Q, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -130,6 +131,8 @@ class SubledgerReconciliationView(APIView):
 
         from sales.models import SalesInvoice, CustomerReceipt, SalesReturn
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn, SupplierRefund
+        from customers.models import Customer
+        from suppliers.models import Supplier
         from accounting.models import FxSubledgerRevaluation
         from inventory.models import StockBalance, StockMovementJournalLink
         from hr.models import PayrollCycle, PayrollPosting
@@ -185,6 +188,104 @@ class SubledgerReconciliationView(APIView):
         purchase_fx = FxSubledgerRevaluation.objects.filter(
             company_id=company_id, purchase_invoice__isnull=False, revaluation_date__lte=as_of
         ).filter(Q(purchase_invoice__receipt__warehouse__branch_id__in=branch_ids) | (Q(purchase_invoice__receipt__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[])))
+
+        # Rebuild AR/AP from posted source documents grouped by the actual party.
+        # Receipt/payment carrying amounts are used for foreign-currency settlements.
+        active_sales_returns = sales_returns.filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
+        )
+        active_supplier_returns = supplier_returns.filter(
+            Q(status=SupplierReturn.Status.POSTED)
+            | Q(status=SupplierReturn.Status.REVERSED, reversal_date__gt=as_of)
+        )
+        posted_customer_receipts = customer_receipts.filter(status=CustomerReceipt.Status.POSTED)
+        posted_supplier_payments = supplier_payments.filter(status=SupplierPayment.Status.POSTED)
+        posted_supplier_refunds = supplier_refunds.filter(status=SupplierRefund.Status.POSTED)
+
+        def grouped_amount(queryset, party_id_field, amount_field, carrying_field=None):
+            if carrying_field:
+                queryset = queryset.annotate(_base_amount=Coalesce(carrying_field, amount_field))
+                amount_field = "_base_amount"
+            return {
+                item[party_id_field]: item["total"] or Decimal("0")
+                for item in queryset.values(party_id_field).annotate(total=Sum(amount_field))
+            }
+
+        customer_invoice_totals = grouped_amount(sales_invoices, "customer_id", "grand_total")
+        customer_receipt_totals = grouped_amount(
+            posted_customer_receipts, "customer_id", "amount", "carrying_base_amount"
+        )
+        customer_return_totals = grouped_amount(active_sales_returns, "invoice__customer_id", "grand_total")
+        customer_fx_totals = grouped_amount(
+            sales_fx.filter(journal_entry__status=JournalEntry.Status.POSTED),
+            "sales_invoice__customer_id", "difference",
+        )
+        customer_ids = set().union(
+            customer_invoice_totals, customer_receipt_totals, customer_return_totals, customer_fx_totals
+        )
+        customer_rows = {
+            item["id"]: item for item in Customer.objects.filter(
+                company_id=company_id, pk__in=customer_ids
+            ).values("id", "code", "name_ar")
+        }
+        customer_party_balances = []
+        for party_id in customer_ids:
+            balance = (
+                customer_invoice_totals.get(party_id, Decimal("0"))
+                - customer_receipt_totals.get(party_id, Decimal("0"))
+                - customer_return_totals.get(party_id, Decimal("0"))
+                + customer_fx_totals.get(party_id, Decimal("0"))
+            )
+            party = customer_rows.get(party_id)
+            if party:
+                customer_party_balances.append({
+                    "party_id": party_id, "code": party["code"], "name": party["name_ar"],
+                    "balance": str(balance),
+                })
+        customer_party_balances.sort(key=lambda item: abs(Decimal(item["balance"])), reverse=True)
+        customer_subledger_total = sum(
+            (Decimal(item["balance"]) for item in customer_party_balances), Decimal("0")
+        )
+
+        supplier_invoice_totals = grouped_amount(purchase_invoices, "supplier_id", "grand_total")
+        supplier_payment_totals = grouped_amount(
+            posted_supplier_payments, "supplier_id", "amount", "carrying_base_amount"
+        )
+        supplier_return_totals = grouped_amount(active_supplier_returns, "supplier_id", "grand_total")
+        supplier_refund_totals = grouped_amount(posted_supplier_refunds, "supplier_id", "amount")
+        supplier_fx_totals = grouped_amount(
+            purchase_fx.filter(journal_entry__status=JournalEntry.Status.POSTED),
+            "purchase_invoice__supplier_id", "difference",
+        )
+        supplier_ids = set().union(
+            supplier_invoice_totals, supplier_payment_totals, supplier_return_totals,
+            supplier_refund_totals, supplier_fx_totals,
+        )
+        supplier_rows = {
+            item["id"]: item for item in Supplier.objects.filter(
+                company_id=company_id, pk__in=supplier_ids
+            ).values("id", "code", "name_ar")
+        }
+        supplier_party_balances = []
+        for party_id in supplier_ids:
+            balance = (
+                supplier_invoice_totals.get(party_id, Decimal("0"))
+                - supplier_payment_totals.get(party_id, Decimal("0"))
+                - supplier_return_totals.get(party_id, Decimal("0"))
+                + supplier_refund_totals.get(party_id, Decimal("0"))
+                + supplier_fx_totals.get(party_id, Decimal("0"))
+            )
+            party = supplier_rows.get(party_id)
+            if party:
+                supplier_party_balances.append({
+                    "party_id": party_id, "code": party["code"], "name": party["name_ar"],
+                    "balance": str(balance),
+                })
+        supplier_party_balances.sort(key=lambda item: abs(Decimal(item["balance"])), reverse=True)
+        supplier_subledger_total = sum(
+            (Decimal(item["balance"]) for item in supplier_party_balances), Decimal("0")
+        )
 
         sales_journal_ids = _with_reversals(_collect_ids(
             [sales_invoices, customer_receipts, sales_returns, sales_fx],
@@ -254,7 +355,8 @@ class SubledgerReconciliationView(APIView):
         }
         missing_links_total = sum(missing_links.values())
 
-        def make_row(key, label, roles, nature, linked_ids, pending_count=0):
+        def make_row(key, label, roles, nature, linked_ids, pending_count=0,
+                     document_balance=None, party_balances=None, require_partial=False):
             accounts = [role_rows[role] for role in roles if role in role_rows]
             if not accounts:
                 return {
@@ -281,9 +383,10 @@ class SubledgerReconciliationView(APIView):
             sub_debit, sub_credit, source_count = _journal_balance(account_ids, company_id, branch_ids, as_of, linked_ids)
             gl_debit, gl_credit, _ = _journal_balance(account_ids, company_id, branch_ids, as_of)
             if nature == "liability":
-                subledger_balance, gl_balance = sub_credit - sub_debit, gl_credit - gl_debit
+                linked_journal_balance, gl_balance = sub_credit - sub_debit, gl_credit - gl_debit
             else:
-                subledger_balance, gl_balance = sub_debit - sub_credit, gl_debit - gl_credit
+                linked_journal_balance, gl_balance = sub_debit - sub_credit, gl_debit - gl_credit
+            subledger_balance = document_balance if document_balance is not None else linked_journal_balance
             difference = gl_balance - subledger_balance
             unmatched_qs = JournalLine.objects.filter(
                 account_id__in=account_ids, entry__company_id=company_id,
@@ -296,10 +399,14 @@ class SubledgerReconciliationView(APIView):
                 status = "difference"
             elif pending_count:
                 status = "pending_documents"
+            elif require_partial:
+                status = "partial_reconciliation"
             else:
                 status = "matched"
             return {
                 "key": key, "label": label, "status": status,
+                "party_balances": (party_balances or [])[:100],
+                "party_count": len(party_balances or []),
                 "accounts": [{"id": a.pk, "code": a.code, "name": a.name_ar} for a in accounts],
                 "subledger_balance": str(subledger_balance), "gl_balance": str(gl_balance),
                 "difference": str(difference), "source_journal_count": source_count,
@@ -309,16 +416,16 @@ class SubledgerReconciliationView(APIView):
                     "entry_date": line.entry.entry_date.isoformat(), "description": line.entry.description,
                     "account_code": line.account.code, "debit": str(line.debit), "credit": str(line.credit),
                 } for line in unmatched],
-                "detail": "المقارنة مبنية على القيود المرحلة المرتبطة بمستندات الوحدة مقابل كامل حركة الحساب. المستندات المسودة تظهر كتنبيه ولا تدخل في الرصيد المرحّل.",
+                "detail": ("الرصيد محسوب من الفواتير والتحصيلات/المدفوعات والمرتجعات وإعادة تقييم العملة، ومجمع حسب الطرف. تعرض الشاشة أعلى 100 طرف حسب قيمة الرصيد." if document_balance is not None else "المقارنة مبنية على القيود المرحلة المرتبطة بمستندات الوحدة مقابل كامل حركة الحساب؛ هذه مقارنة جزئية وليست رصيدًا تفصيليًا على مستوى الطرف."),
             }
 
         rows = [
-            make_row("customers", "حسابات العملاء", (AccountRole.Role.ACCOUNTS_RECEIVABLE,), "asset", sales_journal_ids, pending["sales"]),
-            make_row("suppliers", "حسابات الموردين", (AccountRole.Role.ACCOUNTS_PAYABLE,), "liability", purchase_journal_ids, pending["purchasing"]),
+            make_row("customers", "حسابات العملاء", (AccountRole.Role.ACCOUNTS_RECEIVABLE,), "asset", sales_journal_ids, pending["sales"], customer_subledger_total, customer_party_balances),
+            make_row("suppliers", "حسابات الموردين", (AccountRole.Role.ACCOUNTS_PAYABLE,), "liability", purchase_journal_ids, pending["purchasing"], supplier_subledger_total, supplier_party_balances),
             make_row("payroll", "التزامات المرتبات والتأمينات والضرائب", (
                 AccountRole.Role.PAYROLL_PAYABLE, AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE,
                 AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE, AccountRole.Role.PAYROLL_TAX_PAYABLE,
-            ), "liability", payroll_journal_ids, pending["payroll"]),
+            ), "liability", payroll_journal_ids, pending["payroll"], require_partial=True),
         ]
 
         inventory_account = role_rows.get(AccountRole.Role.INVENTORY)
