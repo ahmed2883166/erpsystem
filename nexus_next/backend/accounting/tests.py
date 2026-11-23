@@ -587,13 +587,19 @@ class IndirectCashFlowApiTests(TestCase):
         payable = ChartOfAccount.objects.create(company=company, code="2100", name_ar="الموردون", nature="liability")
         payroll_payable = ChartOfAccount.objects.create(company=company, code="2110", name_ar="مرتبات مستحقة", nature="liability")
         grni = ChartOfAccount.objects.create(company=company, code="2120", name_ar="بضاعة مستلمة غير مفوترة", nature="liability")
+        payroll_tax = ChartOfAccount.objects.create(company=company, code="2130", name_ar="ضريبة مرتبات مستحقة", nature="liability")
+        fx_gain = ChartOfAccount.objects.create(company=company, code="4100", name_ar="أرباح فروق عملة غير محققة", nature="revenue")
+        fx_loss = ChartOfAccount.objects.create(company=company, code="5101", name_ar="خسائر فروق عملة غير محققة", nature="expense")
         capital = ChartOfAccount.objects.create(company=company, code="3000", name_ar="رأس المال", nature="equity")
         revenue = ChartOfAccount.objects.create(company=company, code="4000", name_ar="المبيعات", nature="revenue")
         expense = ChartOfAccount.objects.create(company=company, code="5000", name_ar="مصروفات", nature="expense")
         AccountRole.objects.create(company=company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE, account=receivable)
         AccountRole.objects.create(company=company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
         AccountRole.objects.create(company=company, role=AccountRole.Role.PAYROLL_PAYABLE, account=payroll_payable)
+        AccountRole.objects.create(company=company, role=AccountRole.Role.PAYROLL_TAX_PAYABLE, account=payroll_tax)
         AccountRole.objects.create(company=company, role=AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, account=grni)
+        AccountRole.objects.create(company=company, role=AccountRole.Role.UNREALIZED_FX_GAIN, account=fx_gain)
+        AccountRole.objects.create(company=company, role=AccountRole.Role.UNREALIZED_FX_LOSS, account=fx_loss)
         from treasury.models import TreasuryAccount
         TreasuryAccount.objects.create(company=company, account=cash, kind="cash", code="CASH",
             name_ar="الخزينة الرئيسية")
@@ -632,6 +638,24 @@ class IndirectCashFlowApiTests(TestCase):
         JournalLine.objects.create(entry=grni_accrual, account=grni, credit=Decimal("20"))
         post_journal(grni_accrual.pk)
 
+        payroll_tax_accrual = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="PAYROLL-TAX-1", entry_date=date(2026, 1, 6), description="استحقاق ضريبة مرتبات")
+        JournalLine.objects.create(entry=payroll_tax_accrual, account=expense, debit=Decimal("30"))
+        JournalLine.objects.create(entry=payroll_tax_accrual, account=payroll_tax, credit=Decimal("30"))
+        post_journal(payroll_tax_accrual.pk)
+
+        fx_gain_entry = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="FX-GAIN-1", entry_date=date(2026, 1, 7), description="فرق عملة غير محقق - ربح")
+        JournalLine.objects.create(entry=fx_gain_entry, account=receivable, debit=Decimal("40"))
+        JournalLine.objects.create(entry=fx_gain_entry, account=fx_gain, credit=Decimal("40"))
+        post_journal(fx_gain_entry.pk)
+
+        fx_loss_entry = JournalEntry.objects.create(company=company, branch=branch, fiscal_year=year,
+            entry_number="FX-LOSS-1", entry_date=date(2026, 1, 8), description="فرق عملة غير محقق - خسارة")
+        JournalLine.objects.create(entry=fx_loss_entry, account=fx_loss, debit=Decimal("25"))
+        JournalLine.objects.create(entry=fx_loss_entry, account=payable, credit=Decimal("25"))
+        post_journal(fx_loss_entry.pk)
+
         user = User.objects.create_user(username="cashflow_reader", password="test-password")
         user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
         CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
@@ -642,8 +666,11 @@ class IndirectCashFlowApiTests(TestCase):
             "&date_from=2026-01-01&date_to=2026-12-31"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["net_profit"], Decimal("480.0000"))
-        self.assertEqual(response.data["operating_adjustments"], Decimal("120.0000"))
+        self.assertEqual(response.data["net_profit"], Decimal("465.0000"))
+        self.assertEqual(response.data["operating_adjustments"], Decimal("150.0000"))
+        self.assertEqual(response.data["non_cash_adjustments"]["unrealized_fx_gain"], Decimal("40.0000"))
+        self.assertEqual(response.data["non_cash_adjustments"]["unrealized_fx_loss"], Decimal("25.0000"))
+        self.assertEqual(response.data["non_cash_adjustments"]["unrealized_fx_net_adjustment"], Decimal("-15.0000"))
         self.assertEqual(response.data["operating_cash_flow"], Decimal("600.0000"))
         self.assertEqual(response.data["ledger_cash_change"], Decimal("600.0000"))
         self.assertEqual(response.data["reconciliation_difference"], Decimal("0.0000"))
