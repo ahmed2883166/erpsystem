@@ -120,19 +120,22 @@ class BackupConfigurationView(APIView):
     permission_classes = (IsAuthenticated,)
 
     def get(self, request):
-        """عرض إعدادات النسخ الاحتياطي وسجل التشغيل للمستخدمين المصرح لهم."""
-        if not request.user.is_superuser or is_platform_owner(request.user):
-            raise PermissionDenied("عرض إعدادات وسجل النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
+        """عرض حالة النسخ بصورة منقحة؛ تفاصيل المسارات والسجل لمدير النظام فقط."""
+        can_manage = request.user.is_superuser and not is_platform_owner(request.user)
         config = _config()
-        payload = _serialize(config, (request.user.is_superuser and not is_platform_owner(request.user)))
-        payload["history"] = [{
-            "id": run.pk,
-            "status": run.status,
-            "backup_file": run.backup_file,
-            "size_bytes": run.size_bytes,
-            "details": run.details,
-            "created_at": run.created_at,
-        } for run in BackupRun.objects.select_related("started_by")[:50]]
+        payload = _serialize(config, can_manage)
+        if can_manage:
+            payload["history"] = [{
+                "id": run.pk,
+                "status": run.status,
+                "backup_file": run.backup_file,
+                "size_bytes": run.size_bytes,
+                "details": run.details,
+                "created_at": run.created_at,
+            } for run in BackupRun.objects.select_related("started_by")[:50]]
+        else:
+            # Do not disclose server filesystem paths or backup execution details.
+            payload["backup_path"] = ""
         return Response(payload)
 
     def post(self, request):
