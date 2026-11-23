@@ -804,8 +804,7 @@ def reverse_supplier_return(return_id, user, entry_date):
             destination_location=line.movement_line.source_location,
             expiry_date=line.movement_line.expiry_date,
         )
-        line.reversal_movement_line = reversal_line
-        line.save(update_fields=("reversal_movement_line",))
+        SupplierReturnLine.objects.filter(pk=line.pk).update(reversal_movement_line=reversal_line)
 
     posted_movement = post_stock_movement(reversal_movement.pk, user)
     for line in lines:
