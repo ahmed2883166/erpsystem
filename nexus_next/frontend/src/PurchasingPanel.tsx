@@ -11,7 +11,7 @@ const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { ma
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "returns" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
