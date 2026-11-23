@@ -86,10 +86,12 @@ def post_movement_journals(movement, user):
         entry = _create_posted_entry(movement, user, year, branch, "R", inventory, grni, total, f"استلام مخزني {movement.movement_number}")
         return [entry] if entry else []
 
-    if movement.movement_type == StockMovement.MovementType.ISSUE:
+    if movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SALES_RETURN_REVERSAL):
         cogs = _role_account(movement.company, AccountRole.Role.COGS)
         branch = _branch_for(movement.source_warehouse, movement.company)
-        entry = _create_posted_entry(movement, user, year, branch, "I", cogs, inventory, total, f"صرف مخزني {movement.movement_number}")
+        suffix = "SR" if movement.movement_type == StockMovement.MovementType.SALES_RETURN_REVERSAL else "I"
+        description = f"عكس مردود مبيعات {movement.movement_number}" if suffix == "SR" else f"صرف مخزني {movement.movement_number}"
+        entry = _create_posted_entry(movement, user, year, branch, suffix, cogs, inventory, total, description)
         return [entry] if entry else []
 
     if movement.movement_type == StockMovement.MovementType.ADJUSTMENT:
