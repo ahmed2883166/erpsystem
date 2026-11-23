@@ -852,6 +852,8 @@ export const hrApi = {
   createEmployeeLoan: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeLoan>("/api/hr/employee-loans/", {method:"POST",body:JSON.stringify(payload)}); },
   // تسجيل سلفة موظف مع إنشاء جدول الأقساط.
   createEmployeeLoanWithSchedule: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeLoan>("/api/hr/employee-loans/create-with-schedule/", {method:"POST",body:JSON.stringify(payload)}); },
+  // تجهيز صرف السلفة أو إعادة محاولة ترحيلها بعد اعتماد طلب الصرف.
+  disburseEmployeeLoan: async (id:number, treasury_account:number) => { await request<{detail:string}>("/api/csrf/"); return request<HrEmployeeLoan>(`/api/hr/employee-loans/${id}/disburse/`, {method:"POST",body:JSON.stringify({treasury_account})}); },
   // تسجيل قسط من أقساط سلفة موظف.
   createLoanInstallment: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<Record<string,unknown>>("/api/hr/loan-installments/", {method:"POST",body:JSON.stringify(payload)}); },
   // جلب سجل تغييرات راتب الموظف.
@@ -898,4 +900,4 @@ export type HrPayrollComponent = {id:number;company:number;code:string;name_ar:s
 export type HrEmployeeComponent = {id:number;employee:number;component:number;component_name:string;value:string|null;effective_from:string;effective_to:string|null;is_active:boolean};
 export type HrAttendance = {id:number;employee:number;employee_code:string;employee_name:string;work_date:string;status:"present"|"absent"|"leave"|"unpaid_leave"|"holiday";worked_hours:string;overtime_hours:string;friday_worked:boolean;late_minutes:number;notes:string};
 export type HrLeaveRequest = {id:number;employee:number;employee_name:string;kind:"annual"|"sick"|"emergency"|"unpaid";start_date:string;end_date:string;days:string;reason:string;status:"pending"|"approved"|"rejected"};
-export type HrEmployeeLoan = {id:number;employee:number;employee_name:string;reference:string;issue_date:string;principal:string;installment_count:number;installment_amount:string;receivable_account:number|null;outstanding_balance:string;status:"active"|"settled"|"suspended";notes:string};
+export type HrEmployeeLoan = {id:number;employee:number;employee_name:string;reference:string;issue_date:string;principal:string;installment_count:number;installment_amount:string;receivable_account:number|null;outstanding_balance:string;status:"draft"|"pending"|"active"|"settled"|"suspended";disbursement_transaction:number|null;disbursed_at:string|null;approval_pending?:boolean;detail?:string;notes:string};
