@@ -383,3 +383,121 @@ class PurchaseOrderReceiptLine(models.Model):
 
     class Meta:
         ordering = ("id",)
+
+
+class SupplierReturn(models.Model):
+    """إشعار مرتجع مورد مرتبط بفاتورة الشراء وحركة مخزون مصدرية."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_returns")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="returns")
+    invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="returns")
+    stock_movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT, related_name="supplier_return"
+    )
+    return_number = models.CharField(max_length=40)
+    return_date = models.DateField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return",
+    )
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_supplier_returns",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-return_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "return_number"), name="uq_supplier_return_company_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "return_date"), name="pur_return_co_status_date_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.invoice_id and (
+            self.invoice.company_id != self.company_id or self.invoice.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"invoice": "فاتورة المورد لا تطابق الشركة أو المورد."})
+        if self.stock_movement_id and (
+            self.stock_movement.company_id != self.company_id
+            or self.stock_movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN
+        ):
+            raise ValidationError({"stock_movement": "حركة المخزون ليست مرتجع مورد تابعًا للشركة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
+            raise ValidationError("مرتجع المورد المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.POSTED:
+            raise ValidationError("لا يمكن حذف مرتجع مورد مرحّل.")
+        return super().delete(*args, **kwargs)
+
+
+class SupplierReturnLine(models.Model):
+    """يربط كمية المرتجع ببند فاتورة المورد وسطر حركة المخزون."""
+
+    return_document = models.ForeignKey(
+        SupplierReturn, on_delete=models.PROTECT, related_name="lines"
+    )
+    invoice_line = models.ForeignKey(
+        PurchaseInvoiceLine, on_delete=models.PROTECT, related_name="supplier_return_lines"
+    )
+    movement_line = models.OneToOneField(
+        StockMovementLine, on_delete=models.PROTECT, related_name="supplier_return_line"
+    )
+    quantity = models.DecimalField(
+        max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))]
+    )
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    recoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    nonrecoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("return_document", "invoice_line"),
+                name="uq_supplier_return_invoice_line",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.return_document_id and self.invoice_line_id:
+            if self.invoice_line.invoice_id != self.return_document.invoice_id:
+                raise ValidationError({"invoice_line": "بند الفاتورة لا يتبع فاتورة المرتجع."})
+        if self.return_document_id and self.movement_line_id:
+            if self.movement_line.movement_id != self.return_document.stock_movement_id:
+                raise ValidationError({"movement_line": "سطر المخزون لا يتبع حركة المرتجع."})
+
+    def save(self, *args, **kwargs):
+        if self.return_document_id and self.return_document.status == SupplierReturn.Status.POSTED:
+            raise ValidationError("لا يمكن تعديل بند مرتجع مورد مرحّل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.return_document.status == SupplierReturn.Status.POSTED:
+            raise ValidationError("لا يمكن حذف بند مرتجع مورد مرحّل.")
+        return super().delete(*args, **kwargs)
