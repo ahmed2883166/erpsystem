@@ -11,6 +11,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
+from sales.models import SalesQuotation
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -1304,3 +1305,61 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(response.data["invoice_lines"][0]["discount_percent"], "2.0000")
         self.assertIsNone(response.data["invoice_lines"][0]["discount_rule"])
         self.assertEqual(response.data["discount_total"], "4.0000")
+
+    def test_accepted_quotation_converts_once_to_draft_delivery_without_stock_or_ledger_effects(self):
+        opening_movements = StockMovement.objects.count()
+        opening_journals = JournalEntry.objects.count()
+        created = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "quotation_number": "Q-2026-001",
+            "quotation_date": "2026-03-10",
+            "valid_until": "2026-03-20",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        quote_id = created.data["id"]
+        self.assertEqual(created.data["status"], "draft")
+        self.assertEqual(created.data["grand_total"], "228.0000")
+        self.assertEqual(StockMovement.objects.count(), opening_movements)
+        self.assertEqual(JournalEntry.objects.count(), opening_journals)
+
+        sent = self.client.post(f"/api/sales-documents/quotations/{quote_id}/send/", {}, format="json")
+        self.assertEqual(sent.status_code, 200, sent.data)
+        accepted = self.client.post(f"/api/sales-documents/quotations/{quote_id}/accept/", {}, format="json")
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+
+        converted = self.client.post(f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/", {
+            "warehouse": self.warehouse.pk,
+            "delivery_number": "DEL-FROM-Q-001",
+            "delivery_date": "2026-03-11",
+        }, format="json")
+        self.assertEqual(converted.status_code, 201, converted.data)
+        self.assertEqual(converted.data["movement_status"], "draft")
+        self.assertEqual(converted.data["quotation_snapshot"]["quotation_number"], "Q-2026-001")
+        self.assertEqual(converted.data["quotation_snapshot"]["lines"][0]["discount_percent"], "0.0000")
+        self.assertEqual(StockMovement.objects.count(), opening_movements + 1)
+        self.assertEqual(JournalEntry.objects.count(), opening_journals)
+
+        repeated = self.client.post(f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/", {
+            "warehouse": self.warehouse.pk, "delivery_number": "DEL-DUPLICATE",
+            "delivery_date": "2026-03-11",
+        }, format="json")
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertEqual(repeated.data["delivery"]["id"], converted.data["id"])
+        self.assertEqual(StockMovement.objects.count(), opening_movements + 1)
+        quote = SalesQuotation.objects.get(pk=quote_id)
+        self.assertEqual(quote.status, SalesQuotation.Status.CONVERTED)
+        self.assertEqual(quote.converted_delivery_id, converted.data["id"])
+
+    def test_expired_quotation_cannot_be_sent_or_converted(self):
+        created = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "quotation_number": "Q-EXPIRED", "quotation_date": "2026-01-01",
+            "valid_until": "2026-01-02",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.post(f"/api/sales-documents/quotations/{created.data['id']}/send/", {}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(SalesQuotation.objects.get(pk=created.data["id"]).status, SalesQuotation.Status.EXPIRED)
