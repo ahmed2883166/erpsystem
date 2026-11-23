@@ -1298,7 +1298,13 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(filtered.status_code, 200, filtered.data)
         self.assertEqual(filtered.data["total"], Decimal("120.0000"))
 
-        reversed_response = client.post(
+        reversal_user = User.objects.create_user(username="expense_reverser", password="test-password")
+        CompanyMembership.objects.create(
+            user=reversal_user, company=company, role="accountant", all_branches=True,
+        )
+        reversal_client = APIClient()
+        reversal_client.force_authenticate(user=reversal_user)
+        reversed_response = reversal_client.post(
             f"/api/accounting/journal-entries/{entry.pk}/reverse/",
             {"entry_date": "2026-02-20"}, format="json",
         )
