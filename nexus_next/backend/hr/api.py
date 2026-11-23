@@ -375,9 +375,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
             post_treasury_transaction(treasury_doc.pk, request.user)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
-            messages = detail.values() if isinstance(detail, dict) else detail
-            flattened = " ".join(str(item) for value in messages for item in (value if isinstance(value, (list, tuple)) else [value]))
-            if "تجاوز المستند حد الاعتماد المالي" in flattened:
+            if getattr(exc, "code", None) == "approval_required":
                 return response.Response({
                     **self.get_serializer(loan).data,
                     "approval_pending": True,
