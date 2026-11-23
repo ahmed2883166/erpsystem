@@ -570,6 +570,15 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(by_branch[self.branch.pk].cogs_amount, Decimal("0.0000"))
         self.assertEqual(by_branch[second_branch.pk].inventory_amount, Decimal("0.0000"))
         self.assertEqual(by_branch[second_branch.pk].cogs_amount, Decimal("14.0000"))
+        self.assertEqual(len(posted.data["tax_allocations"]), 2)
+        self.assertEqual(
+            {row["branch"]: row["inventory_amount"] for row in posted.data["tax_allocations"]},
+            {self.branch.pk: "14.0000", second_branch.pk: "0.0000"},
+        )
+        self.assertEqual(
+            {row["branch"]: row["cogs_amount"] for row in posted.data["tax_allocations"]},
+            {self.branch.pk: "0.0000", second_branch.pk: "14.0000"},
+        )
         self.assertEqual(
             by_branch[second_branch.pk].journal_entry.lines.get(
                 account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.COGS).account
