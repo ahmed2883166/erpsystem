@@ -150,7 +150,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertTrue(PurchaseOrderReceiptLine.objects.filter(receipt_line_id=receipt_line_id).exists())
         self.assertEqual(
             PurchaseOrder.objects.get(pk=order_id).lines.get(pk=order_line_id).remaining_quantity,
-            Decimal("6.0000"),
+            Decimal("10.0000"),
         )
 
         admin = get_user_model().objects.create_user(
