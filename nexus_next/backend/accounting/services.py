@@ -3,7 +3,7 @@
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from companies.models import FiscalYear
@@ -54,10 +54,14 @@ def post_journal(entry_id: int) -> JournalEntry:
     # Shared transaction lock allows independent postings to proceed together,
     # while fiscal-year/period closure takes the matching exclusive lock.
     fiscal_year = FiscalYear.objects.get(pk=entry.fiscal_year_id)
-    acquire_fiscal_year_lock(fiscal_year, shared=True)
-    # The lock may have waited for a concurrent close; refresh the status only
-    # after acquiring it so a stale pre-lock OPEN value cannot authorize posting.
-    fiscal_year.refresh_from_db(fields=("status", "start_date", "end_date"))
+    has_advisory_lock = acquire_fiscal_year_lock(fiscal_year, shared=True)
+    if has_advisory_lock:
+        # The lock may have waited for a concurrent close; refresh only after
+        # acquiring it so a stale pre-lock OPEN value cannot authorize posting.
+        fiscal_year.refresh_from_db(fields=("status", "start_date", "end_date"))
+    else:
+        # Preserve the previous row-lock behavior on non-PostgreSQL backends.
+        fiscal_year = FiscalYear.objects.select_for_update().get(pk=entry.fiscal_year_id)
 
     if entry.status != JournalEntry.Status.DRAFT:
         raise ValidationError("لا يمكن ترحيل إلا القيود المسجلة كمسودة.")
