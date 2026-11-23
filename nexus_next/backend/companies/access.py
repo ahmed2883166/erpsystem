@@ -1,6 +1,21 @@
 from django.db.models import F, Q
+from rest_framework.exceptions import ValidationError
 
 from .models import Branch, Company, CompanyMembership
+
+
+def parse_company_param(request):
+    """قراءة مرشح الشركة من الاستعلام وإرجاع 400 عند تمرير معرّف غير صالح."""
+    raw = request.query_params.get("company")
+    if raw in (None, ""):
+        return None
+    try:
+        company_id = int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError({"company": "معرّف الشركة غير صالح."})
+    if company_id <= 0:
+        raise ValidationError({"company": "معرّف الشركة غير صالح."})
+    return company_id
 
 
 def accessible_companies(user):
