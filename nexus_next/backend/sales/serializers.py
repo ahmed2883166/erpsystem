@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
@@ -9,9 +10,32 @@ from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
+from customers.models import CustomerDiscountRule
 from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine
 from approvals.snapshots import invoice_discount_snapshot
 
+
+def _customer_discount_for_line(*, customer, delivery_line, gross_invoice_amount, rules):
+    """اختر قاعدة واحدة فقط؛ الأولوية ثم التخصيص الأعلى، دون تراكم خصومات."""
+    product = delivery_line.product
+    quantity = delivery_line.quantity
+    matches = []
+    for rule in rules:
+        if rule.customer_id and rule.customer_id != customer.pk:
+            continue
+        if rule.customer_type and rule.customer_type != customer.customer_type:
+            continue
+        if rule.product_id and rule.product_id != product.pk:
+            continue
+        if rule.category_id and rule.category_id != product.category_id:
+            continue
+        if rule.min_quantity is not None and quantity < rule.min_quantity:
+            continue
+        if rule.min_invoice_amount is not None and gross_invoice_amount < rule.min_invoice_amount:
+            continue
+        specificity = sum((bool(rule.customer_id), bool(rule.customer_type), bool(rule.product_id), bool(rule.category_id), rule.min_quantity is not None, rule.min_invoice_amount is not None))
+        matches.append((rule.priority, specificity, -rule.pk, rule))
+    return max(matches, default=(0, 0, 0, None))[3]
 
 class DeliveryLineInputSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
@@ -143,18 +167,19 @@ class SalesInvoiceLineInputSerializer(serializers.Serializer):
     tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"),
                                         max_value=Decimal("100"), required=False)
     tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
-    discount_percent = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False, default=Decimal("0"))
+    discount_percent = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False)
 
 
 class SalesInvoiceLineSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source="delivery_line.product.code", read_only=True)
     product_name = serializers.CharField(source="delivery_line.product.name_ar", read_only=True)
     quantity = serializers.DecimalField(source="delivery_line.quantity", max_digits=18, decimal_places=4, read_only=True)
+    discount_rule_name = serializers.CharField(source="discount_rule.notes", read_only=True, allow_null=True)
 
     class Meta:
         model = SalesInvoiceLine
         fields = ("id", "delivery_line", "product_code", "product_name", "quantity",
-                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_amount", "net_amount", "tax_amount", "total_amount")
+                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_rule", "discount_rule_name", "discount_amount", "net_amount", "tax_amount", "total_amount")
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
@@ -359,15 +384,40 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         if policy:
             invoice.invoice_approval_limit = policy.max_sales_invoice_amount
         invoice.save(update_fields=("discount_approval_limit", "invoice_approval_limit"))
+        gross_invoice_amount = Decimal("0")
         for line in lines:
+            base_unit_price = line.get("unit_price")
+            if base_unit_price is None and line.get("transaction_unit_price") is not None and invoice.exchange_rate:
+                base_unit_price = line["transaction_unit_price"] * invoice.exchange_rate
+            gross_invoice_amount += line["delivery_line"].quantity * (base_unit_price or Decimal("0"))
+        discount_rules = list(
+            CustomerDiscountRule.objects.filter(company=invoice.company, is_active=True, effective_from__lte=invoice.invoice_date)
+            .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=invoice.invoice_date))
+            .filter(Q(customer__isnull=True) | Q(customer=invoice.customer))
+            .filter(Q(customer_type="") | Q(customer_type=invoice.customer.customer_type))
+            .filter(Q(min_invoice_amount__isnull=True) | Q(min_invoice_amount__lte=gross_invoice_amount))
+            .order_by("-priority", "id")
+        )
+        for line in lines:
+            delivery_line = line["delivery_line"]
+            selected_rule = None
+            if "discount_percent" in line:
+                discount_percent = line["discount_percent"]
+            else:
+                selected_rule = _customer_discount_for_line(
+                    customer=invoice.customer, delivery_line=delivery_line,
+                    gross_invoice_amount=gross_invoice_amount, rules=discount_rules,
+                )
+                discount_percent = selected_rule.discount_percent if selected_rule else invoice.customer.default_discount_percent
             SalesInvoiceLine.objects.create(
                 invoice=invoice,
                 unit_price=line.get("unit_price", Decimal("0")),
                 transaction_unit_price=line.get("transaction_unit_price"),
-                delivery_line=line["delivery_line"],
+                delivery_line=delivery_line,
                 tax_rate=line.get("tax_rate", Decimal("0")),
                 tax_code=line.get("tax_code"),
-                discount_percent=line.get("discount_percent", invoice.customer.default_discount_percent),
+                discount_percent=discount_percent,
+                discount_rule=selected_rule,
             )
         self._recalculate_invoice(invoice, lines_changed=True)
         return invoice
