@@ -30,7 +30,6 @@ def _branch_for_stock_warehouse(company, warehouse):
     if branch and not branch.is_active:
         raise ValidationError("لا يمكن توزيع تكلفة الضريبة على فرع مخزني موقوف.")
     if not branch:
-    if not branch:
         raise ValidationError("يجب إنشاء فرع نشط قبل توزيع تكلفة الضريبة غير القابلة للخصم.")
     return branch
 
