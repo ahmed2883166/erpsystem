@@ -125,8 +125,9 @@ def main():
         report["stages"].append(stage)
         print(json.dumps(stage, ensure_ascii=False), flush=True)
         if errors:
+            # Keep running later concurrency stages so one transient failure at
+            # 10/20 users does not suppress the 20/30-user measurements.
             report["failed"] = True
-            break
 
     output = Path("concurrent-load-test.json")
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
