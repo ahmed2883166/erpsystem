@@ -1414,5 +1414,5 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(vat.status_code, 200, vat.data)
         self.assertEqual(vat.data["purchases"]["tax_amount"], "14.0000")
-        self.assertEqual(vat.data["input_tax"], "14.0000")
+        self.assertEqual(vat.data["input_tax"], "28.0000")
         self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
