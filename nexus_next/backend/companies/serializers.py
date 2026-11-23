@@ -63,7 +63,7 @@ class BranchSerializer(serializers.ModelSerializer):
     class Meta:
         model = Branch
         fields = ("id", "company", "company_code", "code", "name_ar", "address", "phone", "is_head_office", "is_active", "created_at")
-        read_only_fields = ("created_at",)
+        read_only_fields = ("created_at", "is_head_office")
 
     def validate(self, attrs):
         """منع تغيير هوية الفرع والتحقق من تفرد الكود والفرع الرئيسي قبل الحفظ."""
