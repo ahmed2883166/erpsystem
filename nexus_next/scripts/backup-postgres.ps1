@@ -33,6 +33,10 @@ if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) { throw "Conf
 Get-ChildItem -LiteralPath $BackupRoot -Directory -Filter ".nexus-verify-*" -Recurse -ErrorAction SilentlyContinue |
     Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath $BackupRoot -File -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like ".nexus-decrypt-*" -or $_.Name -like ".nexus-encrypt-*" } |
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 
 $Values = @{}
 foreach ($Line in Get-Content -LiteralPath $EnvFile) {
