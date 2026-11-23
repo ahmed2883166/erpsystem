@@ -103,7 +103,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const load = async (page = 1) => {
+  const load = async () => {
     if (!companyId) { setItems([]); return; }
     try { setItems(await api.taxCodes(companyId)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أكواد الضرائب."); }
@@ -471,7 +471,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
     api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
       .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
   }, [companyId]);
-  const load = async () => {
+  const load = async (page = 1) => {
     if (!companyId || !accountId) return;
     setBusy(true); setError("");
     try {
