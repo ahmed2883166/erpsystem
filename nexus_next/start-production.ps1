@@ -46,6 +46,10 @@ if ($ProductionEnv["DJANGO_ENV"] -ne "production") {
 }
 $env:DJANGO_ENV = "production"
 if ($EnableLan) {
+  if ($ConfigureFirewall) {
+    $PreflightAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $PreflightAdmin) { throw "Run PowerShell as Administrator when using -ConfigureFirewall." }
+  }
   $PreflightLanHost = $ProductionEnv["ADMRAIL_LAN_HOST"]
   if (-not $PreflightLanHost -or $PreflightLanHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$") {
     throw "اضبط ADMRAIL_LAN_HOST باسم DNS داخلي ثابت قبل أي ترحيل لقاعدة البيانات."
@@ -214,8 +218,6 @@ if ($EnableLan) {
     if ($CaddyProcess.HasExited) { throw "تعذر تشغيل Caddy. راجع تعارض المنفذ 443 أو سجل Caddy." }
   }
   if ($ConfigureFirewall) {
-    $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if (-not $IsAdmin) { throw "شغّل PowerShell كمسؤول لاستخدام -ConfigureFirewall." }
     New-NetFirewallRule -DisplayName "Admrail ERP HTTPS LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private -ErrorAction SilentlyContinue | Out-Null
   } else {
     Write-Host "إذا لم يكن المنفذ 443 مسموحًا على ملف تعريف Private، افتح PowerShell كمسؤول ونفّذ: New-NetFirewallRule -DisplayName 'Admrail ERP HTTPS LAN' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private" -ForegroundColor Yellow
