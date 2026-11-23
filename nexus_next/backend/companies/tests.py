@@ -181,7 +181,7 @@ class BranchMembershipIsolationTests(TestCase):
     def test_all_branches_membership_includes_only_that_company(self):
         from .models import CompanyMembership
 
-        membership = CompanyMembership.objects.create(
+        CompanyMembership.objects.create(
             user=self.user,
             company=self.company,
             role=CompanyMembership.Role.ACCOUNTANT,
