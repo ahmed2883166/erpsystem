@@ -17,7 +17,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, ensure_fiscal_period_open, has_company_role, is_platform_owner
 from companies.models import Company, FiscalYear
 from purchasing.models import PurchaseInvoiceLine
 from sales.models import SalesInvoiceLine
@@ -439,7 +439,8 @@ class JournalEntryViewSet(AccountingViewSet):
         return response.Response(totals)
 
     def perform_create(self, serializer):
-        """حصر إنشاء القيود الافتتاحية والختامية في مدير الشركة."""
+        """حصر إنشاء القيود الافتتاحية والختامية في مدير الشركة ومنع إنشاء قيد في فترة مغلقة."""
+        ensure_fiscal_period_open(serializer.validated_data["fiscal_year"], serializer.validated_data["entry_date"])
         company_id = serializer.validated_data["company"].pk
         source_type = serializer.validated_data.get("source_type", JournalEntry.Source.MANUAL)
         if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and not has_company_role(
@@ -452,12 +453,22 @@ class JournalEntryViewSet(AccountingViewSet):
         """حفظ التعديلات مع إعادة التحقق من ثبات الشركة والفرع وصلاحيات الكتابة."""
         if serializer.instance.status != JournalEntry.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل قيد مرحّل أو معكوس.")
+        ensure_fiscal_period_open(
+            serializer.validated_data.get("fiscal_year", serializer.instance.fiscal_year),
+            serializer.validated_data.get("entry_date", serializer.instance.entry_date),
+        )
         source_type = serializer.validated_data.get("source_type", serializer.instance.source_type)
         if source_type in (JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING) and not has_company_role(
             self.request.user, serializer.instance.company_id, ("admin",)
         ):
             raise PermissionDenied("تعديل القيود الافتتاحية والختامية متاح لمدير الشركة فقط.")
         super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        if instance.status != JournalEntry.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف قيد مرحّل أو معكوس.")
+        ensure_fiscal_period_open(instance.fiscal_year, instance.entry_date)
+        super().perform_destroy(instance)
 
     @decorators.action(detail=True, methods=("post",))
     def post(self, request, pk=None):
