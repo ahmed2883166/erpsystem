@@ -67,3 +67,14 @@ backup/restore on a dedicated Windows trial database.
 
 Never test on or migrate the user's existing company database without a
 verified backup and explicit approval.
+
+## Currency precision policy
+
+The accepted accounting policy is:
+
+- Keep exchange rates and intermediate FX calculations at high Decimal precision; do not round an exchange rate or an intermediate multiplication merely for display.
+- Use the currency's configured `decimal_places` as the minor-unit precision at the document-posting and presentation boundaries. EGP and SAR use two decimal places; other currencies follow their configured precision.
+- Preserve historical posted amounts and balances exactly as stored. A policy change must not rewrite old journals, settlements, or opening balances.
+- Round document components and totals deterministically before creating the final journal, then validate that the journal balances in the company base currency. Any rounding difference must be handled explicitly within the document/posting rules; it must never be hidden by weakening the journal-balance check.
+
+**Implementation status:** the current accounting amount columns and FX conversion helpers still retain four decimal places. This is useful internal precision, but it is not yet the complete minor-unit posting policy above. Do not change only `to_base_amount` to two decimals: invoice line totals, tax, receipts/payments, settlement carrying values, and journal construction must adopt the same boundary together. Until that coordinated change is tested end-to-end, retain the existing four-decimal behavior and do not retroactively round historical balances.
