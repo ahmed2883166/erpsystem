@@ -4,6 +4,7 @@ from django.db import transaction
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
+from companies.access import resolve_warehouse_branch
 from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
@@ -447,7 +448,8 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == CustomerReceipt.Method.CASH else TreasuryAccount.Kind.BANK
             treasury_account = TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).first()
-            branch_id = invoice.delivery.warehouse.branch_id
+            branch = resolve_warehouse_branch(company, invoice.delivery.warehouse)
+            branch_id = branch.pk if branch else None
             if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                     or not account.is_active or account.is_group or not account.allow_posting
                     or not treasury_account
