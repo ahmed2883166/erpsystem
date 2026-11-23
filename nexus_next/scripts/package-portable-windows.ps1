@@ -108,10 +108,11 @@ FIRST RUN
 1. Install PostgreSQL 16 for Windows yourself and make sure its Windows service is running.
    Include Command Line Tools (psql) during installation.
 2. Extract this ZIP to a permanent folder, for example C:\Admrail.
-3. Double-click Setup-Admrail.cmd.
-4. Enter the PostgreSQL administrator (postgres) password when prompted.
+3. If an older installation exists, run Remove-Old-Admrail-Database.cmd first. It lists user databases; select the old one by number and confirm by typing its exact name. System databases are protected. Related roles are shown but never removed automatically; optional role removal has a separate safety check and confirmation. Back up first if records may be needed.
+4. Double-click Setup-Admrail.cmd.
+5. Enter the PostgreSQL administrator (postgres) password when prompted.
    The wizard creates a dedicated admrail_app login and a new empty admrail_db database.
-5. Choose the first Admrail administrator username, email, and password when prompted.
+6. Choose the first Admrail administrator username, email, and password when prompted.
    The wizard generates the Django secret, writes backend\.env, applies migrations,
    creates the administrator, and registers the platform owner.
 7. After the success message, double-click run-admrail.cmd and open http://127.0.0.1:8000.
