@@ -621,6 +621,16 @@ export const accountRoleApi = {
 export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; quotation_snapshot?: { quotation_id:number; quotation_number:string; quotation_date:string; valid_until:string; lines:{quotation_line_id:number;product:number;quantity:string;unit_price:string;tax_rate:string;tax_code:number|null;discount_percent:string;discount_rule:number|null}[] }; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null }[]; created_at: string };
 export type SalesInvoice = { id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; discount_total: string; discount_approval_limit: string | null; invoice_approval_limit: string | null; approval_status: "not_required" | "pending" | "approved" | "rejected" | "superseded"; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; tax_code: number | null; discount_percent: string; discount_amount: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 
+export type SalesQuotation = {
+  id:number; company:number; customer:number; customer_name:string; quotation_number:string;
+  quotation_date:string; valid_until:string; status:"draft"|"sent"|"accepted"|"rejected"|"expired"|"converted";
+  net_total:string; discount_total:string; tax_total:string; grand_total:string; notes:string;
+  converted_delivery:number|null; converted_delivery_number:string|null; created_at:string; updated_at:string;
+  sent_at:string|null; accepted_at:string|null; converted_at:string|null;
+  quotation_lines:{id:number;product:number;product_code:string;product_name:string;quantity:string;unit_price:string;
+    tax_rate:string;tax_code:number|null;discount_percent:string;discount_rule:number|null;
+    discount_amount:string;net_amount:string;tax_amount:string;total_amount:string}[];
+};
 export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; movement_status:string; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;cost_amount:string}[]; created_at:string; posted_at:string|null };
 
 export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
@@ -697,6 +707,13 @@ export type CustomerAging = {
 export const salesApi = {
   // جلب كشف حساب العميل مع رصيد أول وآخر المدة والحركات المرحلة.
   customerStatement: (companyId:number, customerId:number, dateFrom="", dateTo="") => request<CustomerStatement>(`/api/sales-documents/invoices/customer-statement/?company=${companyId}&customer=${customerId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
+  quotations: (companyId:number) => request<SalesQuotation[]>(`/api/sales-documents/quotations/?company=${companyId}&ordering=-quotation_date`),
+  createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>("/api/sales-documents/quotations/",{method:"POST",body:JSON.stringify(payload)}); },
+  updateQuotation: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/`,{method:"PATCH",body:JSON.stringify(payload)}); },
+  sendQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/send/`,{method:"POST",body:"{}"}); },
+  acceptQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/accept/`,{method:"POST",body:"{}"}); },
+  rejectQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/reject/`,{method:"POST",body:"{}"}); },
+  convertQuotation: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesDelivery>(`/api/sales-documents/quotations/${id}/convert-to-delivery/`,{method:"POST",body:JSON.stringify(payload)}); },
   // جلب مستندات تسليم المبيعات للشركة.
   deliveries: (companyId: number) => request<SalesDelivery[]>(`/api/sales-documents/deliveries/?company=${companyId}&ordering=-delivery_date`),
   // جلب فواتير الموردين للشركة.
