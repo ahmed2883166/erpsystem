@@ -113,6 +113,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 export type SupplierPayment = { id: number; company: number; supplier: number; supplier_name: string; invoice: number; invoice_number: string; payment_number: string; payment_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; historical_carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
+export type SupplierReturn = {
+  id: number; company: number; supplier: number; supplier_name: string; invoice: number; invoice_number: string;
+  return_number: string; return_date: string; status: "draft" | "posted"; net_amount: string; tax_amount: string;
+  grand_total: string; movement_status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null;
+  notes: string; return_lines: { id: number; invoice_line: number; product_code: string; product_name: string;
+    quantity: string; net_amount: string; tax_amount: string; recoverable_tax_amount: string; nonrecoverable_tax_amount: string }[];
+  created_at: string; posted_at: string | null;
+};
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
   opening_balance: string; closing_balance: string;
@@ -146,6 +154,12 @@ export const purchasingApi = {
   invoices: (companyId: number) => request<PurchaseInvoice[]>(`/api/purchasing/invoices/?company=${companyId}&ordering=-invoice_date`),
   // جلب دفعات الموردين للشركة.
   payments: (companyId: number) => request<SupplierPayment[]>(`/api/purchasing/payments/?company=${companyId}&ordering=-payment_date`),
+  // جلب مرتجعات الموردين للشركة.
+  returns: (companyId: number) => request<SupplierReturn[]>(`/api/purchasing/returns/?company=${companyId}&ordering=-return_date`),
+  // إنشاء مسودة مرتجع مورد مرتبطة ببنود فاتورة المورد الأصلية.
+  createReturn: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierReturn>("/api/purchasing/returns/", { method: "POST", body: JSON.stringify(payload) }); },
+  // ترحيل المرتجع وتحديث المخزون والمورد والضريبة.
+  postReturn: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierReturn>(`/api/purchasing/returns/${id}/post/`, { method: "POST" }); },
   // إنشاء مستند استلام مشتريات جديد.
   createReceipt: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseReceipt>("/api/purchasing/receipts/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل سند القبض وتحديث رصيد العميل والخزينة.
