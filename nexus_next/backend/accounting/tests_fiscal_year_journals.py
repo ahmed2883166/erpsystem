@@ -3,6 +3,7 @@ from rest_framework.test import APITestCase
 
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import ChartOfAccount, JournalEntry
+from audit.models import AuditEvent
 
 
 class FiscalYearJournalSafetyTests(APITestCase):
@@ -247,3 +248,32 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.assertEqual(review.status_code, 200, review.content)
         self.assertEqual(review.data["opening_balance_mismatches"], 2)
         self.assertFalse(review.data["can_close"])
+
+
+    def test_journal_post_audit_records_the_actual_poster_not_the_draft_creator(self):
+        created = self.client.post(
+            "/api/accounting/journal-entries/",
+            self.payload(JournalEntry.Source.MANUAL, "2026-06-15"),
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        entry_id = created.data["id"]
+
+        poster = get_user_model().objects.create_user(
+            username="fiscal-journal-poster", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=poster, company=self.company, role="accountant", all_branches=True,
+        )
+        self.client.force_authenticate(poster)
+        posted = self.client.post(
+            f"/api/accounting/journal-entries/{entry_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        event = AuditEvent.objects.get(
+            resource="accounting.journal_entry.posted",
+            object_id=str(entry_id),
+        )
+        self.assertEqual(event.actor_id, poster.pk)
+        self.assertNotEqual(event.actor_id, self.admin.pk)
