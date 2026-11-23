@@ -2,6 +2,7 @@
 تُطبق صلاحيات الشركة والفرع وتُمرر عمليات الترحيل إلى خدمات المحاسبة.
 """
 
+from contextlib import contextmanager
 from io import BytesIO
 from decimal import Decimal
 
