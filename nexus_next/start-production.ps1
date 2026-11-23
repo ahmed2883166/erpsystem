@@ -140,10 +140,14 @@ try {
       throw "توجد migrations معلقة، لكن pg_dump.exe غير موجود. أضف PostgreSQL bin إلى PATH؛ لم يتم تعديل قاعدة البيانات."
     }
 
-    $BackupDirectory = Join-Path $Root "backups"
+    $BackupDirectory = Join-Path $env:ProgramData "Admrail\\upgrade-backups"
     New-Item -ItemType Directory -Force -Path $BackupDirectory | Out-Null
-    $BackupName = "admrail-before-migration-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".dump"
+    $BackupIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    & icacls.exe $BackupDirectory /inheritance:r /grant:r "$($BackupIdentity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "تعذر تقييد صلاحيات مجلد النسخ الاحتياطية قبل الترقية." }
+    $BackupName = "admrail-before-migration-" + (Get-Date -Format "yyyyMMdd-HHmmssfff") + ".dump"
     $BackupPath = Join-Path $BackupDirectory $BackupName
+    $EncryptedBackupPath = "$BackupPath.nexusenc"
     $env:PGPASSWORD = $EnvValues["POSTGRES_PASSWORD"]
     try {
       $PgHost = if ($EnvValues["POSTGRES_HOST"]) { $EnvValues["POSTGRES_HOST"] } else { "127.0.0.1" }
@@ -152,10 +156,17 @@ try {
       if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $BackupPath) -or (Get-Item $BackupPath).Length -eq 0) {
         throw "فشل إنشاء النسخة الاحتياطية قبل الترقية؛ لم يتم تطبيق migrations."
       }
+      & $Python (Join-Path $Backend "manage.py") encrypt_backup_file --input $BackupPath --output $EncryptedBackupPath --delete-source
+      if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $EncryptedBackupPath) -or (Get-Item $EncryptedBackupPath).Length -eq 0) {
+        throw "فشل تشفير أو التحقق من نسخة ما قبل الترقية؛ لم يتم تطبيق migrations."
+      }
     } finally {
       Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
+      if (Test-Path -LiteralPath $BackupPath -PathType Leaf) {
+        Remove-Item -LiteralPath $BackupPath -Force -ErrorAction Stop
+      }
     }
-    Write-Host "تم إنشاء نسخة احتياطية قبل الترقية: $BackupPath" -ForegroundColor Green
+    Write-Host "تم إنشاء نسخة احتياطية مشفرة والتحقق منها قبل الترقية: $EncryptedBackupPath" -ForegroundColor Green
   }
 
   & $Python manage.py migrate --noinput
