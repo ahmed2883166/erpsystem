@@ -284,6 +284,8 @@ class LeaveRequest(models.Model):
 class EmployeeLoan(models.Model):
     """يمثل سلفة أو قرض موظف وجدول استرداده."""
     class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        PENDING = "pending", "بانتظار اعتماد الصرف"
         ACTIVE = "active", "سارية"
         SETTLED = "settled", "مسددة"
         SUSPENDED = "suspended", "موقوفة"
@@ -295,6 +297,9 @@ class EmployeeLoan(models.Model):
     installment_count = models.PositiveSmallIntegerField()
     installment_amount = models.DecimalField(max_digits=18, decimal_places=4)
     receivable_account = models.ForeignKey("accounting.ChartOfAccount", null=True, blank=True, on_delete=models.PROTECT)
+    disbursement_transaction = models.OneToOneField("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="employee_loan")
+    disbursed_at = models.DateTimeField(null=True, blank=True)
+    disbursed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="disbursed_employee_loans")
     outstanding_balance = models.DecimalField(max_digits=18, decimal_places=4)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
     notes = models.TextField(blank=True)
