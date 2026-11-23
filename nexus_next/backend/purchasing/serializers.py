@@ -624,6 +624,7 @@ class SupplierReturnLineSerializer(serializers.ModelSerializer):
 
 
 class SupplierReturnSerializer(serializers.ModelSerializer):
+    return_number = serializers.CharField(max_length=37)
     lines = SupplierReturnLineInputSerializer(many=True, write_only=True)
     return_lines = SupplierReturnLineSerializer(source="lines", many=True, read_only=True)
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
