@@ -320,13 +320,18 @@ def post_purchase_invoice(invoice_id, user):
     if len({account.pk for account in account_list}) != len(account_list):
         raise ValidationError("يجب فصل حسابات الموردين وGRNI وضريبة المدخلات وتسوية الفروع.")
 
+    allocation_totals = {
+        category: sum((amounts[category] for amounts in allocations_by_branch.values()), Decimal("0"))
+        for category in ("inventory", "cogs", "loss")
+    }
     allocation_accounts = {}
-    if allocations_by_branch:
-        allocation_accounts = {
-            "inventory": _account(invoice.company, AccountRole.Role.INVENTORY),
-            "cogs": _account(invoice.company, AccountRole.Role.COGS),
-            "loss": _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS),
-        }
+    if allocation_totals["inventory"]:
+        allocation_accounts["inventory"] = _account(invoice.company, AccountRole.Role.INVENTORY)
+    if allocation_totals["cogs"]:
+        allocation_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS)
+    if allocation_totals["loss"]:
+        allocation_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS)
+    if allocation_accounts:
         used = {account.pk for account in [*account_list, *allocation_accounts.values()]}
         if len(used) != len(account_list) + len(allocation_accounts):
             raise ValidationError("يجب فصل حسابات المخزون والتكلفة وخسائر الجرد عن حسابات التسوية.")
