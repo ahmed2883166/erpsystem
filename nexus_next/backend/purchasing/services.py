@@ -15,7 +15,7 @@ from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt
+from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierReturn, SupplierReturnLine
 
 
 def _account(company, role):
@@ -590,3 +590,144 @@ def post_supplier_payment(payment_id, user):
     payment.posted_at = timezone.now()
     payment.save(update_fields=("carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "status", "posted_at"))
     return payment
+
+
+@transaction.atomic
+def post_supplier_return(return_id, user):
+    """ترحيل مرتجع المورد من مصدر الاستلام الأصلي مع تسوية المورد والضريبة والمخزون."""
+    document = SupplierReturn.objects.select_for_update(of=("self",)).select_related(
+        "company", "supplier", "invoice", "invoice__receipt", "invoice__receipt__warehouse",
+    ).get(pk=return_id)
+    if document.status != SupplierReturn.Status.DRAFT:
+        raise ValidationError("مرتجع المورد مرحّل بالفعل.")
+    invoice = PurchaseInvoice.objects.select_for_update().select_related(
+        "company", "supplier", "receipt", "receipt__warehouse",
+    ).get(pk=document.invoice_id)
+    if invoice.status != PurchaseInvoice.Status.POSTED:
+        raise ValidationError("لا يمكن ترحيل مرتجع قبل ترحيل فاتورة المورد.")
+    if invoice.transaction_currency_id:
+        raise ValidationError("مرتجعات الفواتير الأجنبية موقوفة مؤقتًا حتى استكمال معالجة فروق العملة.")
+    if document.return_date < invoice.invoice_date:
+        raise ValidationError("تاريخ المرتجع لا يجوز أن يسبق تاريخ فاتورة المورد.")
+    if document.company_id != invoice.company_id or document.supplier_id != invoice.supplier_id:
+        raise ValidationError("بيانات المرتجع لا تطابق فاتورة المورد.")
+    lines = list(document.lines.select_for_update().select_related(
+        "invoice_line", "invoice_line__receipt_line", "invoice_line__receipt_line__product",
+        "invoice_line__tax_code", "movement_line",
+    ))
+    if not lines:
+        raise ValidationError("أضف بندًا واحدًا على الأقل للمرتجع.")
+
+    posted_returns = SupplierReturnLine.objects.filter(
+        invoice_line_id__in=[line.invoice_line_id for line in lines],
+        return_document__status=SupplierReturn.Status.POSTED,
+    ).values("invoice_line_id").annotate(quantity=Sum("quantity"))
+    returned_by_invoice_line = {row["invoice_line_id"]: row["quantity"] for row in posted_returns}
+    net_total = Decimal("0")
+    tax_total = Decimal("0")
+    recoverable_total = Decimal("0")
+    inventory_credit = Decimal("0")
+    movement = document.stock_movement
+    if movement.status != StockMovement.Status.DRAFT or movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN:
+        raise ValidationError("حركة المخزون المرتبطة بالمرتجع غير صالحة أو سبق ترحيلها.")
+    if movement.source_warehouse_id != invoice.receipt.warehouse_id:
+        raise ValidationError("مخزن المرتجع يجب أن يطابق مخزن إذن الاستلام الأصلي في هذه المرحلة.")
+
+    for line in lines:
+        invoice_line = line.invoice_line
+        receipt_line = invoice_line.receipt_line
+        already_returned = returned_by_invoice_line.get(invoice_line.pk, Decimal("0"))
+        if already_returned + line.quantity > receipt_line.quantity:
+            raise ValidationError(f"كمية المرتجع تتجاوز الكمية المفوترة للصنف {receipt_line.product.code}.")
+        if line.movement_line.product_id != receipt_line.product_id or line.movement_line.quantity != line.quantity:
+            raise ValidationError("كمية أو صنف حركة المرتجع لا يطابق بند فاتورة المورد.")
+        if line.movement_line.source_location_id != receipt_line.destination_location_id:
+            raise ValidationError("موقع الصرف يجب أن يطابق موقع استلام الصنف الأصلي.")
+        if line.movement_line.expiry_date != receipt_line.expiry_date:
+            raise ValidationError("تاريخ صلاحية المرتجع يجب أن يطابق دفعة الاستلام الأصلية.")
+
+        ratio = line.quantity / receipt_line.quantity
+        line_net = (invoice_line.net_amount * ratio).quantize(Decimal("0.0001"))
+        line_tax = (invoice_line.tax_amount * ratio).quantize(Decimal("0.0001"))
+        recoverable = line_tax if (
+            not invoice_line.tax_code_id or invoice_line.tax_code.input_tax_recoverable
+        ) else Decimal("0")
+        nonrecoverable = line_tax - recoverable
+        line.net_amount = line_net
+        line.tax_amount = line_tax
+        line.recoverable_tax_amount = recoverable
+        line.nonrecoverable_tax_amount = nonrecoverable
+        line.save(update_fields=(
+            "net_amount", "tax_amount", "recoverable_tax_amount", "nonrecoverable_tax_amount",
+        ))
+        net_total += line_net
+        tax_total += line_tax
+        recoverable_total += recoverable
+
+    # The stock service consumes only layers whose root is the exact receipt line.
+    movement = post_stock_movement(movement.pk, user)
+    for line in lines:
+        expected_inventory_credit = line.net_amount + line.nonrecoverable_tax_amount
+        actual_cost = line.movement_line.cost_amount
+        if abs(actual_cost - expected_inventory_credit) > Decimal("0.0001"):
+            raise ValidationError(
+                f"تكلفة الصنف المرتجع ({actual_cost}) لا تطابق قيمة المخزون الدفترية "
+                f"({expected_inventory_credit}); تم إلغاء الترحيل دون إنشاء قيد."
+            )
+        inventory_credit += actual_cost
+
+    grand_total = net_total + tax_total
+    paid_total = SupplierPayment.objects.filter(
+        invoice=invoice, status=SupplierPayment.Status.POSTED,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    prior_returns = SupplierReturn.objects.filter(
+        invoice=invoice, status=SupplierReturn.Status.POSTED,
+    ).exclude(pk=document.pk).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    open_payable = invoice.grand_total - paid_total - prior_returns
+    if grand_total > open_payable:
+        raise ValidationError(
+            f"قيمة المرتجع تتجاوز الرصيد المفتوح للمورد ({max(open_payable, Decimal('0'))}). "
+            "لا توجد معالجة مردودات نقدية/أرصدة دائنة زائدة في هذا الإصدار."
+        )
+    if inventory_credit != net_total + (tax_total - recoverable_total):
+        raise ValidationError("قيمة تكلفة المخزون المرتجع لا تتطابق مع صافي المرتجع والضريبة غير القابلة للخصم.")
+
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    inventory = _account(invoice.company, AccountRole.Role.INVENTORY)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_total else None
+    if len({account.pk for account in (payable, inventory, *([vat_input] if vat_input else []))}) != (3 if vat_input else 2):
+        raise ValidationError("يجب فصل حساب الموردين والمخزون وضريبة المدخلات.")
+
+    branch, year = _branch_and_year(invoice.receipt, document.return_date)
+    entry = JournalEntry.objects.create(
+        company=invoice.company, branch=branch, fiscal_year=year,
+        entry_number=f"PUR-RET-{document.pk}", entry_date=document.return_date,
+        description=f"مرتجع مورد {invoice.supplier.name_ar} عن الفاتورة {invoice.invoice_number}"[:500],
+        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    )
+    journal_lines = [
+        JournalLine(entry=entry, account=payable, description="تخفيض مستحقات المورد بالمرتجع", debit=grand_total, credit=0),
+        JournalLine(entry=entry, account=inventory, description="إخراج تكلفة البضاعة المرتجعة", debit=0, credit=inventory_credit),
+    ]
+    if recoverable_total:
+        journal_lines.append(JournalLine(
+            entry=entry, account=vat_input, description="عكس ضريبة المدخلات القابلة للاسترداد",
+            debit=0, credit=recoverable_total,
+        ))
+    JournalLine.objects.bulk_create(journal_lines)
+    try:
+        posted_entry = post_journal(entry.pk)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    document.net_amount = net_total
+    document.tax_amount = tax_total
+    document.grand_total = grand_total
+    document.journal_entry = posted_entry
+    document.status = SupplierReturn.Status.POSTED
+    document.posted_at = timezone.now()
+    document.save(update_fields=(
+        "net_amount", "tax_amount", "grand_total", "journal_entry", "status", "posted_at",
+    ))
+    return document
