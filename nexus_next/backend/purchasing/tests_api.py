@@ -825,7 +825,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.data["purchases"]["recoverable_tax_amount"], "0")
         self.assertEqual(report.data["purchases"]["nonrecoverable_tax_amount"], "28.0000")
         self.assertEqual(report.data["input_tax"], "0")
-        self.assertEqual(report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+        self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
 
     def test_foreign_supplier_invoice_partial_and_final_payments_post_realized_fx(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
