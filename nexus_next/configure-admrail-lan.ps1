@@ -16,8 +16,15 @@ if ($LanHost -notmatch "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$" -or $LanHost.Contain
 }
 
 $Content = [IO.File]::ReadAllText($EnvFile)
-$Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$Backup = "$EnvFile.before-lan-$Timestamp.bak"
+$Timestamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
+$BackupRoot = Join-Path $env:ProgramData "Admrail\\config-backups"
+New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+$CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+& icacls.exe $BackupRoot /inheritance:r /grant:r "$($CurrentIdentity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "Could not restrict access to the Admrail configuration backup directory."
+}
+$Backup = Join-Path $BackupRoot "admrail-env-before-lan-$Timestamp.bak"
 [IO.File]::Copy($EnvFile, $Backup, $false)
 
 function Get-EnvValue([string]$Text, [string]$Key) {
