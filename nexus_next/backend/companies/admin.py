@@ -46,7 +46,7 @@ class CompanyAdmin(TenantModelAdmin):
 
 
 @admin.register(CompanyMembership)
-class CompanyMembershipAdmin(admin.ModelAdmin):
+class CompanyMembershipAdmin(TenantModelAdmin):
     list_display = ("user", "company", "role", "all_branches", "is_active")
     list_filter = ("company", "role", "all_branches", "is_active")
     search_fields = ("user__username", "user__display_name", "company__code", "company__name_ar")
