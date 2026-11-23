@@ -89,6 +89,7 @@ def main():
                 )
                 plan = cursor.fetchone()[0]
             plans.append({
+                "sql_shape": " ".join(sql.split())[:3000],
                 "execution_ms": round((perf_counter() - started) * 1000, 2),
                 "plan": plan,
             })
