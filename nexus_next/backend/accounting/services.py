@@ -46,7 +46,7 @@ def get_account_for_role(company, role):
 
 
 @transaction.atomic
-def post_journal(entry_id: int) -> JournalEntry:
+def post_journal(entry_id: int, actor=None) -> JournalEntry:
     """ترحيل القيد اليومي بعد التحقق من توازنه وصلاحية حساباته."""
     entry = JournalEntry.objects.select_for_update().select_related(
         "company", "company__base_currency", "branch", "fiscal_year"
@@ -125,7 +125,7 @@ def post_journal(entry_id: int) -> JournalEntry:
             raise ValidationError("القيد العكسي يجب أن يعكس حسابات ومبالغ القيد الأصلي بالكامل.")
         JournalEntry.objects.filter(pk=original.pk).update(status=JournalEntry.Status.REVERSED)
         AuditEvent.objects.create(
-            actor=entry.created_by,
+            actor=actor or entry.created_by,
             company=original.company,
             branch=original.branch,
             action=AuditEvent.Action.ACTION,
@@ -217,4 +217,4 @@ def reverse_operational_journal(entry_id: int, user, entry_date, expected_source
         )
         for line in original_lines
     ])
-    return post_journal(reversal.pk)
+    return post_journal(reversal.pk, actor=user)
