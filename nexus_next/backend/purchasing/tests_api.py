@@ -827,6 +827,40 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.data["input_tax"], "0")
         self.assertEqual(Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
 
+    def test_editing_draft_foreign_purchase_invoice_recalculates_both_currency_totals(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 10), rate=Decimal("50"),
+        )
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-FX-DRAFT-EDIT", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "transaction_unit_price": "2",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        updated = self.client.patch(
+            f"/api/purchasing/invoices/{created.data['id']}/",
+            {"lines": [{
+                "receipt_line": receipt_line_id, "transaction_unit_price": "3",
+                "tax_rate": "14",
+            }]},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["transaction_net_total"], "6.0000")
+        self.assertEqual(updated.data["transaction_tax_total"], "0.8400")
+        self.assertEqual(updated.data["transaction_grand_total"], "6.8400")
+        self.assertEqual(updated.data["net_total"], "300.0000")
+        self.assertEqual(updated.data["tax_total"], "42.0000")
+        self.assertEqual(updated.data["grand_total"], "342.0000")
+
     def test_foreign_supplier_invoice_partial_and_final_payments_post_realized_fx(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
