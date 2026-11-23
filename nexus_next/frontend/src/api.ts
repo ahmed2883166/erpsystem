@@ -250,12 +250,6 @@ export type IndirectCashFlowReport = {
 };
 // واجهات الخزينة والتدفقات النقدية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const treasuryApi = {
-  // جلب تقرير مطابقة دفاتر العملاء والموردين والمرتبات والمخزون مع الأستاذ العام.
-  subledgerReconciliation: (companyId:number, asOf:string, branch?:number) => {
-    const q = new URLSearchParams({company:String(companyId),as_of:asOf});
-    if (branch) q.set("branch",String(branch));
-    return request<SubledgerReconciliation>(`/api/accounting/subledger-reconciliation/?${q.toString()}`);
-  },
   // جلب حسابات الخزينة والبنوك للشركة.
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
   // جلب حركات الخزينة مرتبة من الأحدث.
@@ -363,6 +357,12 @@ export type AuditEventResponse = { count: number; results: AuditEvent[] };
 
 // واجهات الإعدادات والمحاسبة والعملاء والموردون: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const api = {
+  // جلب تقرير مطابقة دفاتر العملاء والموردين والمرتبات والمخزون مع الأستاذ العام.
+  subledgerReconciliation: (companyId:number, asOf:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId),as_of:asOf});
+    if (branch) q.set("branch",String(branch));
+    return request<SubledgerReconciliation>(`/api/accounting/subledger-reconciliation/?${q.toString()}`);
+  },
   // جلب سجل التدقيق مع فلاتر الشركة والفترة ونوع الإجراء.
   auditEvents: (companyId: number, dateFrom: string, dateTo: string, action = "", limit = 50, offset = 0) => {
     const q = new URLSearchParams({ company: String(companyId), date_from: dateFrom, date_to: dateTo, limit: String(limit), offset: String(offset) });
