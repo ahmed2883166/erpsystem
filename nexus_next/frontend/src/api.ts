@@ -116,7 +116,9 @@ export type SupplierPayment = { id: number; company: number; supplier: number; s
 export type SupplierReturn = {
   id: number; company: number; supplier: number; supplier_name: string; invoice: number; invoice_number: string;
   return_number: string; return_date: string; status: "draft" | "posted"; net_amount: string; tax_amount: string;
-  grand_total: string; movement_status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null;
+  grand_total: string; transaction_currency_code: string | null; transaction_exchange_rate: string | null;
+  transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_grand_total: string | null;
+  movement_status: "draft" | "posted"; journal_entry: number | null; journal_number: string | null;
   notes: string; return_lines: { id: number; invoice_line: number; product_code: string; product_name: string;
     quantity: string; net_amount: string; tax_amount: string; recoverable_tax_amount: string; nonrecoverable_tax_amount: string }[];
   created_at: string; posted_at: string | null;
