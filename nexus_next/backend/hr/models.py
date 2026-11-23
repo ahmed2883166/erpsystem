@@ -27,14 +27,6 @@ class Department(CompanyScopedModel):
         ordering = ("code",)
         constraints = [models.UniqueConstraint(fields=("company", "code"), name="uq_hr_department_code")]
 
-    def save(self, *args, **kwargs):
-        if self.pk:
-            previous_salary = type(self).objects.filter(pk=self.pk).values_list("basic_salary", flat=True).first()
-            if (previous_salary is not None and previous_salary != self.basic_salary
-                    and not getattr(self, "_salary_history_update", False)):
-                raise ValidationError({"basic_salary": "لا تعدّل الراتب الأساسي مباشرة؛ سجّل التغيير من شاشة تاريخ الرواتب لضمان حفظ الأثر التاريخي."})
-        return super().save(*args, **kwargs)
-
     def clean(self):
         super().clean()
         if self.branch_id and self.branch.company_id != self.company_id:
@@ -114,6 +106,14 @@ class Employee(CompanyScopedModel):
             models.Index(fields=("company", "status", "branch"), name="hr_employee_scope_idx"),
             models.Index(fields=("company", "department", "status"), name="hr_employee_dept_idx"),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous_salary = type(self).objects.filter(pk=self.pk).values_list("basic_salary", flat=True).first()
+            if (previous_salary is not None and previous_salary != self.basic_salary
+                    and not getattr(self, "_salary_history_update", False)):
+                raise ValidationError({"basic_salary": "لا تعدّل الراتب الأساسي مباشرة؛ سجّل التغيير من شاشة تاريخ الرواتب لضمان حفظ الأثر التاريخي."})
+        return super().save(*args, **kwargs)
 
     def clean(self):
         super().clean()
