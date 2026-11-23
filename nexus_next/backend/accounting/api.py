@@ -1344,6 +1344,65 @@ class JournalEntryViewSet(AccountingViewSet):
             gross_amount=Sum("total_amount"), line_count=Count("id"),
         ).order_by("tax_code__code", "tax_rate"))
 
+        # Sales returns reduce output tax in their return period; a later
+        # reversal restores the original taxable base and output tax.
+        from sales.models import SalesReturnLine
+        sales_return_groups = SalesReturnLine.objects.filter(
+            sales_return__company_id=company.pk,
+            sales_return__status__in=("posted", "reversed"),
+            sales_return__return_date__gte=date_from,
+            sales_return__return_date__lte=date_to,
+            sales_return__journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            sales_return__journal_entry__branch_id__in=branch_ids,
+        ).values(
+            "invoice_line__tax_rate", "invoice_line__tax_code_id",
+            "invoice_line__tax_code__code", "invoice_line__tax_code__name_ar",
+            "invoice_line__tax_code__category",
+        ).annotate(
+            taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
+            gross_amount=Sum("total_amount"), line_count=Count("id"),
+        )
+        for returned in sales_return_groups:
+            sales_rows.append({
+                "tax_rate": returned["invoice_line__tax_rate"],
+                "tax_code_id": returned["invoice_line__tax_code_id"],
+                "tax_code__code": returned["invoice_line__tax_code__code"],
+                "tax_code__name_ar": returned["invoice_line__tax_code__name_ar"],
+                "tax_code__category": returned["invoice_line__tax_code__category"],
+                "taxable_base": -returned["taxable_base"],
+                "tax_amount": -returned["tax_amount"],
+                "gross_amount": -returned["gross_amount"],
+                "line_count": returned["line_count"],
+            })
+
+        sales_reversal_groups = SalesReturnLine.objects.filter(
+            sales_return__company_id=company.pk,
+            sales_return__status="reversed",
+            sales_return__reversal_date__gte=date_from,
+            sales_return__reversal_date__lte=date_to,
+            sales_return__reversal_journal_entry__status=JournalEntry.Status.POSTED,
+            sales_return__reversal_journal_entry__branch_id__in=branch_ids,
+        ).values(
+            "invoice_line__tax_rate", "invoice_line__tax_code_id",
+            "invoice_line__tax_code__code", "invoice_line__tax_code__name_ar",
+            "invoice_line__tax_code__category",
+        ).annotate(
+            taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
+            gross_amount=Sum("total_amount"), line_count=Count("id"),
+        )
+        for reversed_return in sales_reversal_groups:
+            sales_rows.append({
+                "tax_rate": reversed_return["invoice_line__tax_rate"],
+                "tax_code_id": reversed_return["invoice_line__tax_code_id"],
+                "tax_code__code": reversed_return["invoice_line__tax_code__code"],
+                "tax_code__name_ar": reversed_return["invoice_line__tax_code__name_ar"],
+                "tax_code__category": reversed_return["invoice_line__tax_code__category"],
+                "taxable_base": reversed_return["taxable_base"],
+                "tax_amount": reversed_return["tax_amount"],
+                "gross_amount": reversed_return["gross_amount"],
+                "line_count": reversed_return["line_count"],
+            })
+
         purchase_rows = list(PurchaseInvoiceLine.objects.filter(
             invoice__company_id=company.pk,
             invoice__status="posted",
