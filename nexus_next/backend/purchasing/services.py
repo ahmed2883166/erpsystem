@@ -750,7 +750,12 @@ def reverse_supplier_refund(refund_id, user, entry_date):
     ).aggregate(
         debit=Sum("debit"), credit=Sum("credit"),
     )
-    cash_balance = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+    from treasury.models import TreasuryAccount
+    opening_balance = TreasuryAccount.objects.filter(
+        company_id=document.company_id, account_id=document.payment_account_id,
+        opening_journal_entry__isnull=True,
+    ).aggregate(total=Sum("opening_balance"))["total"] or Decimal("0")
+    cash_balance = opening_balance + (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
     if cash_balance < document.amount:
         raise ValidationError(
             f"لا يمكن عكس الاسترداد: رصيد حساب الخزينة/البنك في تاريخ العكس ({cash_balance}) أقل من المبلغ ({document.amount})."
