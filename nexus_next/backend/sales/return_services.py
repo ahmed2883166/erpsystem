@@ -8,7 +8,7 @@ from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import reverse_operational_journal
 from accounting.services import get_account_for_role, post_journal
 from inventory.models import Product, StockMovement, StockMovementLine
@@ -41,6 +41,10 @@ def post_sales_return(return_id, user):
     invoice = SalesInvoice.objects.select_for_update().get(pk=sales_return.invoice_id)
     if invoice.status != SalesInvoice.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل مردود لفاتورة غير مرحلة.")
+    if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
+        sales_invoice=invoice,
+    ).exists():
+        raise ValidationError("لا يمكن ترحيل مردود فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if sales_return.stock_movement.status != StockMovement.Status.DRAFT:
         raise ValidationError("حركة استلام المردود ليست مسودة.")
     lines = list(sales_return.lines.select_related(
@@ -179,6 +183,10 @@ def reverse_sales_return(return_id, user, entry_date):
         raise ValidationError("لا يمكن عكس إلا مردود مبيعات مرحّل.")
     if document.reversal_journal_entry_id or document.reversal_stock_movement_id:
         raise ValidationError("تم عكس مردود المبيعات من قبل.")
+    if document.invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
+        sales_invoice=document.invoice,
+    ).exists():
+        raise ValidationError("لا يمكن عكس مردود فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if entry_date < document.return_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ المردود.")
     if document.journal_entry.status != JournalEntry.Status.POSTED:
