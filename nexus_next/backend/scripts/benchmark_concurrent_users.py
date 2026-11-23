@@ -112,11 +112,11 @@ def main():
     for i in range(50):
         username = f"loadtest-{suffix}-{i+1:02d}"
         user = User.objects.create_user(username=username, password=PASSWORD)
+        usernames.append(username)
         CompanyMembership.objects.create(
             user=user, company=company,
             role=CompanyMembership.Role.ACCOUNTANT, all_branches=True,
         )
-        usernames.append(username)
 
     date_query = f"company={company.pk}&date_from=2026-01-01&date_to=2026-12-31"
     endpoints = [
