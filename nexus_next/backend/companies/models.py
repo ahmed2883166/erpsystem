@@ -226,6 +226,8 @@ class CompanyMembership(models.Model):
 
     def clean(self):
         super().clean()
+        if self.role == self.Role.ADMIN and not self.all_branches:
+            raise ValidationError({"all_branches": "مدير الشركة يجب أن يمتلك نطاق الوصول إلى جميع الفروع."})
         if self.pk and self.branches.exclude(company_id=self.company_id).exists():
             raise ValidationError({"branches": "كل الفروع المحددة يجب أن تتبع نفس الشركة."})
 
