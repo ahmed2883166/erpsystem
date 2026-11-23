@@ -360,7 +360,7 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(EmployeeComponent.objects.filter(employee=self.employee, component=component).count(), 1)
 
     def test_employee_loan_disbursement_posts_treasury_payment_and_activates_installments(self):
-        year = FiscalYear.objects.create(
+        FiscalYear.objects.create(
             company=self.company, name="2026",
             start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
         )
