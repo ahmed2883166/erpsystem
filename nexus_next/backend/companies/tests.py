@@ -184,8 +184,6 @@ class BranchMembershipIsolationTests(TestCase):
             role=CompanyMembership.Role.ACCOUNTANT,
             all_branches=True,
         )
-        membership.branches.add(self.other_branch)
-
         visible_ids = set(
             accessible_branches(self.user, self.company.pk).values_list("pk", flat=True)
         )
