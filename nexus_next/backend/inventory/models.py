@@ -307,7 +307,7 @@ class StockCostLayer(models.Model):
     location = models.ForeignKey(StorageLocation, null=True, blank=True, on_delete=models.PROTECT, related_name="fifo_cost_layers")
     expiry_date = models.DateField(null=True, blank=True)
     quantity_remaining = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(0)])
-    unit_cost = models.DecimalField(max_digits=20, decimal_places=6, validators=[MinValueValidator(0)])
+    unit_cost = models.DecimalField(max_digits=20, decimal_places=8, validators=[MinValueValidator(0)])
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
