@@ -183,6 +183,12 @@ class EmployeeComponentViewSet(EmployeeScopedViewSet):
     queryset = EmployeeComponent.objects.select_related("employee", "component", "employee__company").all()
     serializer_class = EmployeeComponentSerializer
 
+    def perform_create(self, serializer):
+        """حفظ تكليف عنصر المرتب دون تمرير حقول غير موجودة في الموديل."""
+        employee = serializer.validated_data["employee"]
+        self.check_employee_write(employee)
+        serializer.save()
+
 
 class AttendanceViewSet(EmployeeScopedViewSet):
     queryset = AttendanceRecord.objects.select_related("employee", "employee__company").all()
