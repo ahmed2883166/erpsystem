@@ -66,6 +66,8 @@ try {
   Get-ChildItem -LiteralPath $PSScriptRoot -File -Force | Copy-Item -Destination $ScriptsTarget -Force
   Copy-Item -LiteralPath (Join-Path $Root "backend\.env.example") -Destination (Join-Path $BackendTarget ".env.example") -Force
   Copy-Item -LiteralPath (Join-Path $Root "initialize-admrail.cmd") -Destination (Join-Path $Stage "initialize-admrail.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Setup-Admrail.cmd") -Destination (Join-Path $Stage "Setup-Admrail.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "setup-admrail.ps1") -Destination (Join-Path $Stage "setup-admrail.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.ps1") -Destination (Join-Path $Stage "run-admrail-lan.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.cmd") -Destination (Join-Path $Stage "run-admrail-lan.cmd") -Force
   $CaddyCommand = Get-Command "caddy.exe" -ErrorAction SilentlyContinue
@@ -97,23 +99,24 @@ Admrail ERP v2 — Portable Windows Trial Runtime
 Included: embedded Python 3.12, Django backend dependencies, and the prebuilt React
 frontend. Python and Node.js do not need to be installed on the target Windows computer.
 
-Required external service: PostgreSQL 16 for Windows. This is a trial runtime, not the
-final guided installer. It does not create PostgreSQL roles/databases or open network access.
+Required external service: PostgreSQL 16 for Windows. You install PostgreSQL yourself;
+the wizard does not download, install, or configure the Windows service.
 
 FIRST RUN
-1. Install/start PostgreSQL 16.
-2. Create a dedicated empty trial database and login. Example in psql as a PostgreSQL administrator
-   (choose your own strong password):
-     CREATE ROLE nexus_app LOGIN PASSWORD 'your-strong-password';
-     CREATE DATABASE nexus_dev OWNER nexus_app ENCODING 'UTF8';
-   Do not run these commands against an existing production database.
-3. Copy backend\.env.example to backend\.env. Set a unique DJANGO_SECRET_KEY and the
-   PostgreSQL values. Keep DJANGO_DEBUG=False and do not share backend\.env.
-   Generate a secret with:
-     runtime\python.exe -c "import secrets; print(secrets.token_urlsafe(64))"
-4. Run initialize-admrail.cmd. It checks the project, applies migrations, creates the
-   initial administrator if needed, and registers that user as the platform owner.
-5. Run run-admrail.cmd and open http://127.0.0.1:8000.
+1. Install PostgreSQL 16 for Windows yourself and make sure its Windows service is running.
+   Include Command Line Tools (psql) during installation.
+2. Extract this ZIP to a permanent folder, for example C:\Admrail.
+3. Double-click Setup-Admrail.cmd.
+4. Enter the PostgreSQL administrator (postgres) password when prompted.
+   The wizard creates a dedicated admrail_app login and a new empty admrail_db database.
+5. Choose the first Admrail administrator username, email, and password when prompted.
+   The wizard generates the Django secret, writes backend\.env, applies migrations,
+   creates the administrator, and registers the platform owner.
+6. After the success message, double-click run-admrail.cmd and open http://127.0.0.1:8000.
+
+The wizard never installs PostgreSQL, never drops an existing database, and refuses to
+reuse existing admrail_app / admrail_db names. Keep backend\.env private. If setup stops
+after creating the new database, do not rerun blindly; inspect the displayed error first.
 
 OPTIONAL PRIVATE LAN MODE
 1. Install Caddy once on the server, or copy caddy.exe to the package's tools\\caddy.exe.
@@ -169,7 +172,7 @@ Never expose ports 8000 or 5432 to employee devices.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
