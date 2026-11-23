@@ -36,7 +36,7 @@ export default function OperationalReconciliationPanel({ companyId, currency, br
       stockApi.valuationIntegrity(companyId, branchId ? Number(branchId) : undefined),
       treasuryApi.accounts(companyId),
       bankReconciliationApi.list(companyId),
-    ]).then(([stock, controlReport, checks, accounts, bankRows]) => {
+    ]).then(([stock, checks, controlReport, accounts, bankRows]) => {
       if (!active || id !== sequence.current) return;
       setInventory(stock); setIntegrity(checks); setSubledger(controlReport);
       setBankAccounts(accounts.filter((item) => item.kind === "bank"));
@@ -65,8 +65,8 @@ export default function OperationalReconciliationPanel({ companyId, currency, br
   const accountName = (id: number) => bankAccounts.find((item) => item.id === id)?.name_ar || "حساب بنكي";
   const exportCsv = () => {
     const rows: (string | number)[][] = [["التقرير", "البند", "القيمة"]];
-    subledger?.rows.forEach((row) => rows.push(["مطابقة الأستاذ المساعد", row.label, row.difference ?? row.status]));
-    subledger?.rows.forEach((row) => rows.push(["مطابقة الأستاذ المساعد", row.label, row.difference ?? row.status]));
+    subledger?.rows.forEach((row) => rows.push(["مطابقة الأستاذ المساعد", row.label, row.difference ?? row.status], ["مستندات معلقة", row.label, row.pending_documents_count]));
+    if (subledger) { rows.push(["مستندات معلقة", "الإجمالي", subledger.pending_documents_count], ["مستندات مرحلة بلا قيد", "الإجمالي", subledger.posted_documents_missing_journal_count], ["حالة المطابقة", "مكتملة", subledger.is_reconciled ? "نعم" : "لا"]); }
     if (inventory) {
       rows.push(["مطابقة المخزون", "قيمة المخزون", inventory.stock_value], ["مطابقة المخزون", "رصيد دفتر الأستاذ", inventory.gl_balance], ["مطابقة المخزون", "الفرق", inventory.difference]);
     }
@@ -83,24 +83,23 @@ export default function OperationalReconciliationPanel({ companyId, currency, br
   };
 
   return <section className="work-panel print-active">
-    <div className="work-panel-head"><div><h2>مطابقات المخزون والبنوك</h2><p>مراجعة الفروق والحركات المعلقة — دون ترحيل أو تعديل</p></div><div className="report-actions"><button type="button" className="subtle-button" onClick={exportCsv} disabled={!inventory && !integrity && !subledger && !summary}>تصدير CSV</button><button type="button" className="subtle-button" onClick={() => window.print()}>طباعة / PDF</button><span className="coming-soon">{busy ? "جارٍ التحديث…" : "قراءة فقط"}</span></div></div>
+    <div className="work-panel-head"><div><h2>مطابقات المخزون والبنوك</h2><p>مراجعة الفروق والحركات المعلقة — دون ترحيل أو تعديل</p></div><div className="report-actions"><button type="button" className="subtle-button" onClick={exportCsv} disabled={!subledger && !inventory && !integrity && !summary}>تصدير CSV</button><button type="button" className="subtle-button" onClick={() => window.print()}>طباعة / PDF</button><span className="coming-soon">{busy ? "جارٍ التحديث…" : "قراءة فقط"}</span></div></div>
     <div className="asset-report-filters"><label>الفرع<select value={branchId} onChange={(event) => setBranchId(event.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map((item) => <option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label><span>{selectedBranch ? selectedBranch.name_ar : "النطاق المجمع حسب صلاحيات المستخدم"}</span></div>
     {error && <div className="error-banner">{error}</div>}
     <div className="activity-panel">
-      <div className="activity-title"><div><h3>مطابقة الأستاذ المساعد مع الأستاذ العام</h3><p>العملاء والموردون والمرتبات والتزاماتها — قيود المستندات المرتبطة مقابل كامل حساب الرقابة</p></div><span className={subledger && !subledger.difference_count && !subledger.configuration_issue_count && !subledger.unavailable_count ? "status-pill posted" : "status-pill draft"}>{subledger ? (subledger.difference_count ? "توجد فروق" : subledger.configuration_issue_count ? "إعدادات ناقصة" : subledger.unavailable_count ? "بيانات غير مكتملة" : "متطابق") : "—"}</span></div>
+      <div className="activity-title"><div><h3>مطابقة الأستاذ المساعد مع الأستاذ العام</h3><p>العملاء والموردون والمرتبات والتزاماتها — قيود المستندات المرتبطة مقابل كامل حساب الرقابة</p></div><span className={subledger?.is_reconciled ? "status-pill posted" : "status-pill draft"}>{subledger ? (subledger.is_reconciled ? "مطابقة مكتملة" : subledger.difference_count ? "توجد فروق" : subledger.posted_documents_missing_journal_count ? "مستندات بلا قيود" : subledger.pending_documents_count ? "مستندات معلقة" : subledger.configuration_issue_count ? "إعدادات ناقصة" : "بيانات غير مكتملة") : "—"}</span></div>
       <div className="asset-report-filters"><label>حتى تاريخ<input type="date" value={asOf} onChange={(event) => setAsOf(event.target.value)} /></label><span>{subledger?.currency || currency} · {subledger?.branch_name || "كل الفروع المسموح بها"}</span></div>
       {subledger ? <>
         <div className="metrics-grid report-metrics">
           <article className="metric-card"><div className="metric-top">مطابق</div><strong className="metric-value">{subledger.matched_count.toLocaleString("ar-EG")}</strong></article>
           <article className="metric-card"><div className="metric-top">فروق</div><strong className="metric-value">{subledger.difference_count.toLocaleString("ar-EG")}</strong></article>
           <article className="metric-card"><div className="metric-top">حسابات غير مربوطة / غير صالحة</div><strong className="metric-value">{subledger.configuration_issue_count.toLocaleString("ar-EG")}</strong></article>
-          <article className="metric-card"><div className="metric-top">بيانات تاريخية غير متاحة</div><strong className="metric-value">{subledger.unavailable_count.toLocaleString("ar-EG")}</strong></article>
         </div>
-        <div className="data-table-wrap"><table><thead><tr><th>دفتر الأستاذ المساعد</th><th>رصيد المستندات المرتبطة</th><th>رصيد الأستاذ العام</th><th>الفرق</th><th>الحالة</th></tr></thead><tbody>
-          {subledger.rows.map((row) => <tr key={row.key}><td><strong>{row.label}</strong><div className="table-secondary-text">{row.accounts.map((account) => account.code + " · " + account.name).join("، ") || row.detail}</div></td><td>{money(row.subledger_balance, subledger.currency)}</td><td>{money(row.gl_balance, subledger.currency)}</td><td>{money(row.difference, subledger.currency)}</td><td><span className={`status-pill ${row.status === "matched" ? "posted" : "draft"}`}>{row.status === "matched" ? "متطابق" : row.status === "difference" ? "يوجد فرق" : row.status === "historical_snapshot_unavailable" ? "لا توجد لقطة تاريخية" : row.status === "invalid_account" ? "حساب غير صالح" : "غير مربوط"}</span></td></tr>)}
+        <div className="data-table-wrap"><table><thead><tr><th>دفتر الأستاذ المساعد</th><th>رصيد المستندات المرتبطة</th><th>رصيد الأستاذ العام</th><th>الفرق</th><th>مستندات معلقة</th><th>الحالة</th></tr></thead><tbody>
+          {subledger.rows.map((row) => <tr key={row.key}><td><strong>{row.label}</strong><div className="table-secondary-text">{row.accounts.map((account) => account.code + " · " + account.name).join("، ") || row.detail}</div></td><td>{money(row.subledger_balance, subledger.currency)}</td><td>{money(row.gl_balance, subledger.currency)}</td><td>{money(row.difference, subledger.currency)}</td><td>{row.pending_documents_count.toLocaleString("ar-EG")}</td><td><span className={`status-pill ${row.status === "matched" ? "posted" : "draft"}`}>{row.status === "matched" ? "متطابق" : row.status === "difference" ? "يوجد فرق" : row.status === "pending_documents" ? "مستندات معلقة" : row.status === "historical_snapshot_unavailable" ? "لا توجد لقطة تاريخية" : row.status === "invalid_account" ? "حساب غير صالح" : "غير مربوط"}</span></td></tr>)}
         </tbody></table></div>
         {subledger.rows.filter((row) => row.unmatched_entries.length).map((row) => <div key={row.key} className="data-table-wrap"><h4>{row.label} — قيود غير مرتبطة بمستندات الوحدة</h4><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الحساب</th><th>مدين</th><th>دائن</th></tr></thead><tbody>{row.unmatched_entries.map((entry) => <tr key={entry.journal_id + "-" + entry.account_code + "-" + entry.debit + "-" + entry.credit}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.account_code}</td><td>{money(entry.debit, subledger.currency)}</td><td>{money(entry.credit, subledger.currency)}</td></tr>)}</tbody></table></div>)}
-        <p className="asset-report-note">{subledger.note}</p>
+        <p className="asset-report-note">المستندات المعلقة: مبيعات {subledger.pending_documents.sales}، مشتريات {subledger.pending_documents.purchasing}، مرتبات {subledger.pending_documents.payroll}، مخزون {subledger.pending_documents.inventory}. المستندات المرحلة بلا قيد: {subledger.posted_documents_missing_journal.sales + subledger.posted_documents_missing_journal.purchasing + subledger.posted_documents_missing_journal.inventory}.</p><p className="asset-report-note">{subledger.note}</p>
       </> : <div className="table-empty">لا توجد بيانات مطابقة محملة.</div>}
     </div>
     <div className="activity-panel">

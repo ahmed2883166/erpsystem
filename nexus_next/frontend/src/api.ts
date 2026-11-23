@@ -49,10 +49,12 @@ export type TrialBalance = { company_id: number; debit_total: string; credit_tot
 export type SubledgerReconciliation = {
   company:number; as_of:string; branch:number|null; branch_name:string; scope_branch_ids:number[];
   currency:string; currency_decimal_places:number; matched_count:number; difference_count:number;
-  configuration_issue_count:number; unavailable_count:number; note:string;
-  rows:{key:string;label:string;status:"matched"|"difference"|"not_configured"|"invalid_account"|"historical_snapshot_unavailable";
+  pending_count:number; pending_documents_count:number; pending_documents:{sales:number;purchasing:number;payroll:number;inventory:number};
+  posted_documents_missing_journal:{sales:number;purchasing:number;inventory:number}; posted_documents_missing_journal_count:number;
+  configuration_issue_count:number; unavailable_count:number; is_reconciled:boolean; note:string;
+  rows:{key:string;label:string;status:"matched"|"difference"|"pending_documents"|"not_configured"|"invalid_account"|"historical_snapshot_unavailable";
     accounts:{id:number;code:string;name:string}[];subledger_balance:string|null;gl_balance:string|null;difference:string|null;
-    source_journal_count:number;detail:string;
+    source_journal_count:number;pending_documents_count:number;unmatched_entry_count:number;detail:string;
     unmatched_entries:{journal_id:number;entry_number:string;entry_date:string;description:string;account_code:string;debit:string;credit:string}[];
   }[];
 };

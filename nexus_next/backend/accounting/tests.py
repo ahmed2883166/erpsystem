@@ -1466,6 +1466,8 @@ from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from accounting.services import post_journal
+from inventory.models import StockMovement
+from django.utils import timezone
 
 
 class SubledgerReconciliationApiTests(APITestCase):
@@ -1526,3 +1528,41 @@ class SubledgerReconciliationApiTests(APITestCase):
         suppliers = next(item for item in result.data["rows"] if item["key"] == "suppliers")
         self.assertEqual(suppliers["status"], "not_configured")
         self.assertIsNone(suppliers["gl_balance"])
+
+
+    def test_draft_inventory_movement_blocks_a_clean_reconciliation_status(self):
+        inventory = ChartOfAccount.objects.create(
+            company=self.company, code="1200", name_ar="المخزون", nature="asset",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.INVENTORY, account=inventory,
+        )
+        StockMovement.objects.create(
+            company=self.company, movement_number="DRAFT-STOCK-001",
+            movement_type=StockMovement.MovementType.ADJUSTMENT,
+            movement_date=timezone.localdate(),
+        )
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        stock = next(item for item in result.data["rows"] if item["key"] == "inventory")
+        self.assertEqual(stock["status"], "pending_documents")
+        self.assertEqual(stock["pending_documents_count"], 1)
+        self.assertFalse(result.data["is_reconciled"])
+
+    def test_historical_inventory_date_is_not_claimed_as_reconciled_without_a_snapshot(self):
+        inventory = ChartOfAccount.objects.create(
+            company=self.company, code="1200", name_ar="المخزون", nature="asset",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.INVENTORY, account=inventory,
+        )
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        stock = next(item for item in result.data["rows"] if item["key"] == "inventory")
+        self.assertEqual(stock["status"], "historical_snapshot_unavailable")
+        self.assertIsNone(stock["difference"])
+        self.assertFalse(result.data["is_reconciled"])
