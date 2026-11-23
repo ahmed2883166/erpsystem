@@ -67,6 +67,11 @@ class BranchSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """منع تغيير هوية الفرع والتحقق من تفرد الكود والفرع الرئيسي قبل الحفظ."""
+        requested_head_office = self.initial_data.get("is_head_office")
+        if str(requested_head_office).strip().lower() in {"true", "1", "yes", "on"}:
+            raise serializers.ValidationError({
+                "is_head_office": "تحديد الفرع الرئيسي يتم تلقائيًا عند تأسيس الشركة ولا يمكن تعيينه من شاشة الفروع."
+            })
         company = attrs.get("company", self.instance.company if self.instance else None)
         code = attrs.get("code", self.instance.code if self.instance else None)
         if self.instance:
