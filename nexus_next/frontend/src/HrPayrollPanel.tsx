@@ -74,7 +74,7 @@ const load = async () => {
       ]);
       setEmployees(employeeRows); setCycles(cycleRows); setComponents(componentRows); setAttendance(attendanceRows); setRuleSets(ruleRows);
       setEmployeeComponents(assignmentRows); setLeaveRequests(leaveRows); setLoans(loanRows); setAccounts(accountRows); setTreasuryAccounts(treasuryRows.filter(x=>x.is_active));
-      setLoanDisbursementAccount(old=>old || String(treasuryRows.find(x=>x.is_active)?.id || ""));
+      setLoanDisbursementAccount(String(treasuryRows.find(x=>x.is_active)?.id || ""));
       setBranches(branchRows.filter(x=>x.is_active && x.company===companyId));
       setCurrencies(currencyRows.filter(x=>x.is_active));
       setEmployeeDraft(old=>({...old,branch:old.branch || String(branchRows.find(x=>x.is_active&&x.company===companyId)?.id||""),currency:old.currency||String(baseCurrencyId||currencyRows[0]?.id||"")}));
