@@ -497,7 +497,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
-    def test_nonrecoverable_purchase_tax_posts_to_expense_not_recoverable_input_tax(self):
+    def test_purchase_invoice_rejects_nonrecoverable_tax_until_stock_costing_support_exists(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         code = TaxCode.objects.create(
             company=self.company, country="EG", code="INPUT-NR", name_ar="ضريبة غير قابلة للخصم",
@@ -509,28 +509,7 @@ class PurchasingWorkflowTests(APITestCase):
             "invoice_number": "INV-TAX-IN-2", "invoice_date": "2026-03-10",
             "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
-        self.assertEqual(response.status_code, 201, response.data)
-        invoice_id = response.data["id"]
-        posted = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
-        self.assertEqual(posted.status_code, 200, posted.data)
-        entry = JournalEntry.objects.get(pk=posted.data["journal_entry"])
-        lines = list(JournalLine.objects.filter(entry=entry).select_related("account"))
-        by_code = {line.account.code: line for line in lines}
-        self.assertEqual(by_code["2100"].debit, Decimal("200.0000"))
-        self.assertEqual(by_code["2200"].credit, Decimal("228.0000"))
-        self.assertEqual(by_code["6000"].debit, Decimal("28.0000"))
-        self.assertNotIn("1300", by_code)
-        self.assertEqual(sum((line.debit for line in lines), Decimal("0")),
-                         sum((line.credit for line in lines), Decimal("0")))
-
-        report = self.client.get(
-            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
-        )
-        self.assertEqual(report.status_code, 200, report.data)
-        self.assertEqual(report.data["input_tax"], "0.0000")
-        self.assertEqual(report.data["purchases"]["recoverable_tax_amount"], "0.0000")
-        self.assertEqual(report.data["purchases"]["tax_amount"], "28.0000")
-        self.assertEqual(report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+        self.assertEqual(response.status_code, 400)
 
 
     def test_purchase_invoice_over_limit_requires_manager_approval_of_exact_snapshot(self):
