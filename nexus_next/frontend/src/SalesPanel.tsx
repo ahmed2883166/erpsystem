@@ -3,7 +3,7 @@
  * تربط مستندات البيع بالمخزون والإيراد والضريبة والذمم والتحصيلات.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
+import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
@@ -12,7 +12,7 @@ const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { ma
 
 // شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"deliveries" | "invoices" | "receipts" | "aging">("deliveries");
+  const [tab, setTab] = useState<"deliveries" | "invoices" | "receipts" | "returns" | "aging">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -23,6 +23,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [deliveries, setDeliveries] = useState<SalesDelivery[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
+  const [returns, setReturns] = useState<SalesReturn[]>([]);
   const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
   const [aging, setAging] = useState<CustomerAging | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,17 +39,18 @@ export default function SalesPanel({ companyId }: Props) {
   const [fxHistory, setFxHistory] = useState<FxSubledgerRevaluation[]>([]);
   const [fxForm, setFxForm] = useState({ revaluation_date: new Date().toISOString().slice(0, 10), rate_date: new Date().toISOString().slice(0, 10), rate: "" });
   const [receiptForm, setReceiptForm] = useState({ invoice: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
+  const [returnForm, setReturnForm] = useState({invoice:"",invoice_line:"",return_number:"",return_date:new Date().toISOString().slice(0,10),quantity:"1",notes:""});
 
   // تحديث قوائم العملاء والأصناف والمخازن ومستندات البيع للشركة الحالية.
 const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, d, i, r, t, ta, cur, fx] = await Promise.all([
+      const [c, p, w, d, i, r, sr, t, ta, cur, fx] = await Promise.all([
         api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
+        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
+      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r); setReturns(sr); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
       setReceiptForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
@@ -60,6 +62,7 @@ const refresh = async () => {
   const filteredDeliveries = deliveries.filter(x => [x.delivery_number, x.customer_name, x.warehouse_name].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter(x => [x.invoice_number, x.customer_name, x.delivery_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredReceipts = receipts.filter(x => [x.receipt_number, x.customer_name, x.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
+  const filteredReturns = returns.filter(x => [x.return_number,x.customer_name,x.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
 
   const findRate = (currencyId: string, onDate: string) => exchangeRates
     .filter(rate => rate.currency === Number(currencyId) && rate.rate_date <= onDate)
@@ -141,6 +144,25 @@ const beginEditInvoice = (invoice: SalesInvoice) => {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند القبض."); }
     finally { setBusy(false); }
   };
+  const createReturn = async (event:FormEvent) => {
+    event.preventDefault();
+    if(!companyId)return;
+    const invoice=invoices.find(row=>row.id===Number(returnForm.invoice));
+    if(!invoice || invoice.status!=="posted"){setError("اختر فاتورة مبيعات مرحلة.");return;}
+    if(!returnForm.invoice_line){setError("اختر بند الفاتورة المراد إرجاعه.");return;}
+    setBusy(true);setError("");
+    try {
+      await salesApi.createReturn({
+        company:companyId, invoice:invoice.id, return_number:returnForm.return_number,
+        return_date:returnForm.return_date, notes:returnForm.notes,
+        lines:[{invoice_line:Number(returnForm.invoice_line),quantity:returnForm.quantity}],
+      });
+      setShowForm(false);setReturnForm(old=>({...old,invoice:"",invoice_line:"",return_number:"",quantity:"1",notes:""}));
+      await refresh();
+    } catch(reason){setError(reason instanceof Error?reason.message:"تعذر إنشاء مردود المبيعات.");}
+    finally{setBusy(false);}
+  };
+
   // تحميل تقرير أعمار مديونيات العملاء للشركة.
 const loadAging = async () => {
     if (!companyId) return;
@@ -169,6 +191,7 @@ const post = async (action: () => Promise<unknown>) => {
       <button type="button" className={tab === "deliveries" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("deliveries"); setShowForm(false); setEditingInvoiceId(null); }}>أذون التسليم <b>{deliveries.length}</b></button>
       <button type="button" className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setEditingInvoiceId(null); }}>فواتير المبيعات <b>{invoices.length}</b></button>
       <button type="button" className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setEditingInvoiceId(null); }}>سندات القبض <b>{receipts.length}</b></button>
+      <button type="button" className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setEditingInvoiceId(null); }}>مردودات المبيعات <b>{returns.length}</b></button>
       <button type="button" className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setEditingInvoiceId(null); setAging(null); }}>أعمار مديونية العملاء</button>
     </div>
     {tab === "aging" && <div className="inventory-form">
@@ -189,7 +212,7 @@ const post = async (action: () => Promise<unknown>) => {
         <p className="inventory-report-note">يعتمد التقرير على الفواتير المرحلة فقط، ويخصم سندات القبض المرحلة حتى تاريخ التقرير. تاريخ الاستحقاق = تاريخ الفاتورة + أجل السداد المسجل للعميل.</p>
       </div>}
     </div>}
-    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : receipts).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : "التقرير"}</button></div>
+    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : "التقرير"}</button></div>
     {showForm && tab === "deliveries" && <form className="inventory-form" onSubmit={createDelivery}>
       <label>العميل<select required value={deliveryForm.customer} onChange={e => setDeliveryForm({...deliveryForm, customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(c => c.is_active).map(c => <option key={c.id} value={c.id}>{c.code} · {c.name_ar}</option>)}</select></label>
       <label>مخزن الصرف<select required value={deliveryForm.warehouse} onChange={e => setDeliveryForm({...deliveryForm, warehouse:e.target.value})}><option value="">اختر المخزن</option>{warehouses.filter(w => w.is_active).map(w => <option key={w.id} value={w.id}>{w.code} · {w.name_ar}</option>)}</select></label>
@@ -224,6 +247,15 @@ const post = async (action: () => Promise<unknown>) => {
       </div>)}
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceForm.delivery || !invoiceLines.length}>{busy ? "جارٍ الحفظ…" : editingInvoiceId ? "حفظ تعديلات المسودة" : "حفظ الفاتورة كمسودة"}</button>{editingInvoiceId && <button type="button" className="subtle-button" onClick={() => { setEditingInvoiceId(null); setShowForm(false); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); }}>إلغاء التعديل</button>}</div>
     </form>}
+    {showForm && tab === "returns" && <form className="inventory-form" onSubmit={createReturn}>
+      <label>فاتورة المبيعات<select required value={returnForm.invoice} onChange={e=>setReturnForm({...returnForm,invoice:e.target.value,invoice_line:""})}><option value="">اختر فاتورة مرحلة</option>{invoices.filter(row=>row.status==="posted").map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.customer_name}</option>)}</select></label>
+      <label>بند الفاتورة<select required value={returnForm.invoice_line} onChange={e=>setReturnForm({...returnForm,invoice_line:e.target.value})}><option value="">اختر الصنف</option>{(invoices.find(row=>row.id===Number(returnForm.invoice))?.invoice_lines || []).map(line=><option key={line.id} value={line.id}>{line.product_code} · {line.product_name} · الكمية {line.quantity}</option>)}</select></label>
+      <label>رقم المردود<input required maxLength={37} value={returnForm.return_number} onChange={e=>setReturnForm({...returnForm,return_number:e.target.value})}/></label>
+      <label>تاريخ المردود<input required type="date" value={returnForm.return_date} onChange={e=>setReturnForm({...returnForm,return_date:e.target.value})}/></label>
+      <label>كمية المرتجع<input required type="number" min="0.0001" step="0.0001" value={returnForm.quantity} onChange={e=>setReturnForm({...returnForm,quantity:e.target.value})}/></label>
+      <label>ملاحظات<input value={returnForm.notes} onChange={e=>setReturnForm({...returnForm,notes:e.target.value})}/></label>
+      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy||!returnForm.invoice_line}>{busy?"جارٍ الحفظ…":"حفظ المردود كمسودة"}</button></div>
+    </form>}
     {showForm && tab === "receipts" && <form className="inventory-form" onSubmit={createReceipt}>
       <label>الفاتورة<select required value={receiptForm.invoice} onChange={e => { const invoice=invoices.find(x=>x.id===Number(e.target.value)); const rate=invoice?.transaction_currency ? findRate(String(invoice.transaction_currency), receiptForm.receipt_date) : null; const paidForeign=invoice?.transaction_currency ? receipts.filter(row=>row.invoice===invoice.id && row.status==="posted").reduce((sum,row)=>sum+Number(row.transaction_amount || 0),0) : 0; setReceiptForm({...receiptForm, invoice:e.target.value, amount:invoice?.balance_due || "", transaction_currency:invoice?.transaction_currency ? String(invoice.transaction_currency) : "", transaction_amount:invoice?.transaction_currency ? String(Math.max(Number(invoice.transaction_grand_total || 0)-paidForeign,0)) : "", exchange_rate:rate?.rate || "", exchange_rate_date:rate?.rate_date || receiptForm.receipt_date}); }}><option value="">اختر فاتورة مستحقة</option>{payable.map(i => <option key={i.id} value={i.id}>{i.invoice_number} · {i.customer_name} · متبقي {money(i.balance_due)}</option>)}</select></label>
       <label>رقم السند<input required value={receiptForm.receipt_number} onChange={e => setReceiptForm({...receiptForm, receipt_number:e.target.value})} /></label>
@@ -250,6 +282,7 @@ const post = async (action: () => Promise<unknown>) => {
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!fxForm.rate}>{busy?"جارٍ التقييم…":"حفظ وإثبات فرق العملة"}</button><button className="subtle-button" type="button" onClick={()=>setFxInvoice(null)}>إغلاق</button></div>
       {fxHistory.length>0&&<div className="data-table-wrap inventory-wide"><table><thead><tr><th>تاريخ التقييم</th><th>سعر الصرف</th><th>الرصيد الأجنبي</th><th>الفرق</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{fxHistory.map(row=><tr key={row.id}><td>{row.revaluation_date}</td><td>{row.rate}</td><td>{money(row.foreign_balance)}</td><td>{money(row.difference)}</td><td>{row.journal_number||"—"}</td><td>{row.status==="reversed"?"معكوس":row.status==="no_difference"?"دون فرق":"مرحّل"}</td></tr>)}</tbody></table></div>}
     </form>}
+    {tab === "returns" && <div className="data-table-wrap"><table><thead><tr><th>رقم المردود</th><th>العميل</th><th>الفاتورة</th><th>التاريخ</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredReturns.map(row=><tr key={row.id}><td className="code-cell">{row.return_number}</td><td>{row.customer_name}</td><td>{row.invoice_number}</td><td>{row.return_date}</td><td>{money(row.net_total)}</td><td>{money(row.tax_total)}</td><td>{money(row.grand_total)}</td><td>{row.journal_number||"—"}</td><td>{row.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void post(()=>salesApi.postReturn(row.id))}>ترحيل المردود</button>:row.status==="reversed"?<span>معكوس</span>:<button className="subtle-button" type="button" disabled={busy} onClick={()=>{if(window.confirm("سيتم صرف الأصناف المرتجعة من نفس طبقات التكلفة الأصلية وإنشاء قيد عكسي للمردود. إذا تم بيع أو نقل الكمية قد يرفض النظام العكس. هل تريد المتابعة؟")) void post(()=>salesApi.reverseReturn(row.id));}}>عكس المردود</button>}</td></tr>)}</tbody></table>{!busy&&!filteredReturns.length&&<div className="table-empty">لا توجد مردودات مبيعات.</div>}</div>}
     {tab === "receipts" && <div className="data-table-wrap"><table><thead><tr><th>رقم السند</th><th>العميل</th><th>الفاتورة</th><th>التاريخ</th><th>الطريقة</th><th>حساب التحصيل</th><th>المبلغ</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredReceipts.map(r=><tr key={r.id}><td className="code-cell">{r.receipt_number}</td><td>{r.customer_name}</td><td>{r.invoice_number}</td><td>{r.receipt_date}</td><td>{r.method === "cash" ? "نقدي" : "بنكي"}</td><td>{r.payment_account_name || "الحساب الافتراضي"}</td><td>{money(r.amount)}</td><td>{r.journal_number || "—"}</td><td>{r.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postReceipt(r.id))}>ترحيل سند القبض</button> : r.status === "reversed" ? <span>معكوس</span> : <div className="table-actions"><span>مرحّل</span><button className="subtle-button" type="button" disabled={busy} onClick={() => { if (window.confirm("سيتم إنشاء قيد عكسي وإلغاء أثر سند القبض على رصيد العميل. يجب عكس أحدث سند أولًا. هل تريد المتابعة؟")) void post(() => salesApi.reverseReceipt(r.id)); }}>عكس السند</button></div>}</td></tr>)}</tbody></table>{!busy && !filteredReceipts.length && <div className="table-empty">لا توجد سندات قبض.</div>}</div>}
   </section>;
 }
