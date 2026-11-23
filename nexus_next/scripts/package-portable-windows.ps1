@@ -66,6 +66,15 @@ try {
   Get-ChildItem -LiteralPath $PSScriptRoot -File -Force | Copy-Item -Destination $ScriptsTarget -Force
   Copy-Item -LiteralPath (Join-Path $Root "backend\.env.example") -Destination (Join-Path $BackendTarget ".env.example") -Force
   Copy-Item -LiteralPath (Join-Path $Root "initialize-admrail.cmd") -Destination (Join-Path $Stage "initialize-admrail.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.ps1") -Destination (Join-Path $Stage "run-admrail-lan.ps1") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.cmd") -Destination (Join-Path $Stage "run-admrail-lan.cmd") -Force
+  $CaddyCommand = Get-Command "caddy.exe" -ErrorAction SilentlyContinue
+  if (-not $CaddyCommand) { $CaddyCommand = Get-Command "caddy" -ErrorAction SilentlyContinue }
+  if ($CaddyCommand) {
+    $ToolsTarget = Join-Path $Stage "tools"
+    New-Item -ItemType Directory -Force -Path $ToolsTarget | Out-Null
+    Copy-Item -LiteralPath $CaddyCommand.Path -Destination (Join-Path $ToolsTarget "caddy.exe") -Force
+  }
 
   @'
 @echo off
@@ -106,6 +115,24 @@ FIRST RUN
    initial administrator if needed, and registers that user as the platform owner.
 5. Run run-admrail.cmd and open http://127.0.0.1:8000.
 
+OPTIONAL PRIVATE LAN MODE
+1. Install Caddy once on the server, or copy caddy.exe to the package's tools\\caddy.exe.
+2. Choose a stable internal DNS name such as erp.company.lan and map it to the server's reserved LAN IP.
+3. In backend\\.env set DJANGO_ENV=production, ADMRAIL_LAN_HOST, add the host to
+   DJANGO_ALLOWED_HOSTS, add https://<host> to CSRF_TRUSTED_ORIGINS, and enable
+   SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE, SECURE_SSL_REDIRECT,
+   DJANGO_HTTPS_TERMINATED_BY_PROXY. Set SECURE_HSTS_SECONDS=31536000.
+4. Run run-admrail-lan.cmd from an elevated PowerShell/Command Prompt if you want it to
+   configure the Private-profile firewall rule; otherwise open TCP 443 on Private manually.
+   Waitress remains bound to 127.0.0.1:8000 and Caddy serves HTTPS on 443.
+5. Copy only the public root.crt from %APPDATA%\\Caddy\\pki\\authorities\\local\\root.crt
+   to each client and import it into Trusted Root Certification Authorities. Never share root.key.
+6. Open https://<host> from client PCs. Do not expose ports 8000 or 5432 to the LAN.
+
+The LAN launcher checks production security settings, refuses pending migrations, and
+uses Caddy's internal TLS CA. DNS/hosts records and client certificate trust are managed
+by the company network administrator. It does not enable internet access.
+
 The initializer never creates or deletes a database and never deletes existing records.
 Use a new empty trial database. For upgrades, create and verify a PostgreSQL backup first.
 Do not use this package against the legacy Flask/SQLite database. The service binds to
@@ -137,7 +164,7 @@ Do not use this package against the legacy Flask/SQLite database. The service bi
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "run-admrail.cmd", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
