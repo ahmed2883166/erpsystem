@@ -1408,6 +1408,16 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(statement.status_code, 200, statement.data)
         self.assertEqual(statement.data["closing_balance"], "228.0000")
         self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_return_reversal")
+        aging_before_reverse = self.client.get(
+            f"/api/purchasing/invoices/supplier-aging/?company={self.company.pk}&as_of=2026-03-12"
+        )
+        self.assertEqual(aging_before_reverse.status_code, 200, aging_before_reverse.data)
+        self.assertEqual(aging_before_reverse.data["totals"]["total_due"], "114.0000")
+        aging_after_reverse = self.client.get(
+            f"/api/purchasing/invoices/supplier-aging/?company={self.company.pk}&as_of=2026-03-13"
+        )
+        self.assertEqual(aging_after_reverse.status_code, 200, aging_after_reverse.data)
+        self.assertEqual(aging_after_reverse.data["totals"]["total_due"], "228.0000")
         vat = self.client.get(
             f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
             "&date_from=2026-03-01&date_to=2026-03-31"
