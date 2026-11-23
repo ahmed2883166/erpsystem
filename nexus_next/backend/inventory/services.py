@@ -29,7 +29,7 @@ def post_stock_movement(movement_id, user):
 
         source_key = (movement.source_warehouse_id, line.source_location_id, line.expiry_date)
         destination_key = (movement.destination_warehouse_id, line.destination_location_id, line.expiry_date)
-        if movement.movement_type == StockMovement.MovementType.RECEIPT:
+        if movement.movement_type in (StockMovement.MovementType.RECEIPT, StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL):
             balance_keys = [destination_key]
         elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN):
             balance_keys = [source_key]
@@ -162,6 +162,28 @@ def post_stock_movement(movement_id, user):
             line.cost_amount = (line.quantity * line.unit_cost).quantize(Decimal("0.0001"))
             line.save(update_fields=("cost_amount",))
             receive(balances[destination_key], line.quantity, line.unit_cost, line)
+        elif movement.movement_type == StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL:
+            return_line = getattr(line, "supplier_return_reversal_line", None)
+            if return_line is None:
+                raise ValidationError("حركة عكس المرتجع غير مرتبطة ببند مرتجع مورد أصلي.")
+            if product.costing_method not in (Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE):
+                raise ValidationError("عكس مرتجع المورد يتطلب استمرار تتبع تكلفة FIFO أو المتوسط المرجح.")
+            consumptions = list(StockCostConsumption.objects.filter(
+                movement_line=return_line.movement_line,
+            ).select_related("source_layer").order_by("id"))
+            restored_quantity = sum((item.quantity for item in consumptions), Decimal("0"))
+            if restored_quantity != line.quantity or not consumptions:
+                raise ValidationError("سجل استهلاك طبقات تكلفة المرتجع الأصلي غير مكتمل؛ أوقفنا العكس لحماية المخزون.")
+            for item in consumptions:
+                receive(
+                    balances[destination_key], item.quantity, item.unit_cost, line,
+                    parent_layer=item.source_layer,
+                )
+            line.cost_amount = sum(
+                (item.quantity * item.unit_cost).quantize(Decimal("0.0001")) for item in consumptions
+            )
+            line.unit_cost = line.cost_amount / line.quantity
+            line.save(update_fields=("unit_cost", "cost_amount"))
         elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN):
             source_root_line_id = None
             if movement.movement_type == StockMovement.MovementType.SUPPLIER_RETURN:
@@ -193,7 +215,7 @@ def post_stock_movement(movement_id, user):
                 line.unit_cost = line.cost_amount / line.quantity
                 line.save(update_fields=("unit_cost", "cost_amount"))
 
-    if movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN:
+    if movement.movement_type not in (StockMovement.MovementType.SUPPLIER_RETURN, StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL):
         from .posting import post_movement_journals
         post_movement_journals(movement, user)
 
