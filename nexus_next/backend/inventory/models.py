@@ -26,8 +26,16 @@ class ProductCategory(models.Model):
         super().clean()
         if self.parent_id and self.parent.company_id != self.company_id:
             raise ValidationError({"parent": "المجموعة الأب يجب أن تتبع نفس الشركة."})
-        if self.parent_id == self.pk and self.pk:
-            raise ValidationError({"parent": "لا يمكن أن تكون المجموعة أبًا لنفسها."})
+        if self.parent_id:
+            visited = set()
+            node = self.parent
+            while node is not None:
+                if self.pk and node.pk == self.pk:
+                    raise ValidationError({"parent": "لا يمكن أن تكون المجموعة تابعة لأحد أبنائها."})
+                if node.pk in visited:
+                    raise ValidationError({"parent": "يوجد تسلسل أبوة دائري في التصنيفات."})
+                visited.add(node.pk)
+                node = node.parent
 
 
 class UnitOfMeasure(models.Model):
@@ -180,8 +188,16 @@ class StorageLocation(models.Model):
         super().clean()
         if self.parent_id and self.parent.warehouse_id != self.warehouse_id:
             raise ValidationError({"parent": "الموقع الأب يجب أن يتبع نفس المخزن."})
-        if self.parent_id == self.pk and self.pk:
-            raise ValidationError({"parent": "لا يمكن أن يكون الموقع أبًا لنفسه."})
+        if self.parent_id:
+            visited = set()
+            node = self.parent
+            while node is not None:
+                if self.pk and node.pk == self.pk:
+                    raise ValidationError({"parent": "لا يمكن أن يكون الموقع تابعًا لأحد أبنائه."})
+                if node.pk in visited:
+                    raise ValidationError({"parent": "يوجد تسلسل أبوة دائري في مواقع التخزين."})
+                visited.add(node.pk)
+                node = node.parent
 
 
 
