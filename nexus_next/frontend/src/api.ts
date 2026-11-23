@@ -124,7 +124,7 @@ export type SupplierReturn = {
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
   opening_balance: string; closing_balance: string;
-  rows: { date: string; document_type: "invoice" | "payment"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
+  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
 };
 export type SupplierAging = {
   company: number; as_of: string;
