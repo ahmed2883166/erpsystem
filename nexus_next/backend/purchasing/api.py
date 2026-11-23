@@ -106,6 +106,19 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف أمر شراء مسودة فقط قبل أي استلام أو أثر مخزني."""
+        order = PurchaseOrder.objects.select_for_update().get(pk=instance.pk)
+        self._check_write(order.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, order.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if order.status != PurchaseOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر شراء معتمد أو ملغي؛ استخدم إجراء الإلغاء أو التسوية المناسب.")
+        if order.receipts.exists() or order.lines.filter(received_quantity__gt=0).exists():
+            raise ValidationError("لا يمكن حذف أمر شراء له إذن استلام أو كمية مستلمة.")
+        order.delete()
+
     @action(detail=True, methods=("post",))
     def confirm(self, request, pk=None):
         """اعتماد المستند ونقله إلى الحالة التالية وفق دورة العمل."""
