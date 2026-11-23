@@ -8,7 +8,7 @@ from django.db import models
 
 from accounting.models import ChartOfAccount, TaxCode
 from companies.models import Company, Currency, ExchangeRate
-from customers.models import Customer
+from customers.models import Customer, CustomerDiscountRule
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 
 
@@ -135,6 +135,7 @@ class SalesInvoiceLine(models.Model):
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
     tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_lines")
     discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    discount_rule = models.ForeignKey(CustomerDiscountRule, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_lines")
     discount_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
