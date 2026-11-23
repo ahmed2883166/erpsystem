@@ -1,6 +1,6 @@
 """نموذج العملاء وبيانات الاتصال والائتمان الخاصة بكل شركة."""
 
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 from companies.models import Company
@@ -29,6 +29,15 @@ class Customer(models.Model):
         validators=[MinValueValidator(0)],
     )
     payment_terms_days = models.PositiveSmallIntegerField(default=0)
+    default_discount_percent = models.DecimalField(
+        max_digits=7, decimal_places=4, default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    discount_approval_limit = models.DecimalField(
+        max_digits=7, decimal_places=4, null=True, blank=True,
+        validators=[MinValueValidator(0), __import__("django.core.validators", fromlist=["MaxValueValidator"]).MaxValueValidator(100)],
+        help_text="Maximum customer discount allowed without manager approval.",
+    )
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
