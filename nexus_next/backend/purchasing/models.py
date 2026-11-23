@@ -404,6 +404,9 @@ class SupplierReturn(models.Model):
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_grand_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     journal_entry = models.OneToOneField(
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
         related_name="supplier_return",
