@@ -391,6 +391,7 @@ class SupplierReturn(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_returns")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="returns")
@@ -411,6 +412,15 @@ class SupplierReturn(models.Model):
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
         related_name="supplier_return",
     )
+    reversal_stock_movement = models.OneToOneField(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return_reversal",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return_reversal",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(
         "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
@@ -418,6 +428,7 @@ class SupplierReturn(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     posted_at = models.DateTimeField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("-return_date", "-id")
@@ -445,15 +456,24 @@ class SupplierReturn(models.Model):
             or self.stock_movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN
         ):
             raise ValidationError({"stock_movement": "حركة المخزون ليست مرتجع مورد تابعًا للشركة."})
+        if self.reversal_stock_movement_id and (
+            self.reversal_stock_movement.company_id != self.company_id
+            or self.reversal_stock_movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL
+        ):
+            raise ValidationError({"reversal_stock_movement": "حركة عكس المخزون غير صالحة."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
-            raise ValidationError("مرتجع المورد المرحّل غير قابل للتعديل.")
+        if self.pk:
+            old_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if old_status == self.Status.POSTED and self.status != self.Status.REVERSED:
+                raise ValidationError("مرتجع المورد المرحّل غير قابل للتعديل إلا من خلال إجراء العكس.")
+            if old_status == self.Status.REVERSED:
+                raise ValidationError("مرتجع المورد المعكوس غير قابل للتعديل.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.status == self.Status.POSTED:
-            raise ValidationError("لا يمكن حذف مرتجع مورد مرحّل.")
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف مرتجع مورد مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
 
 
@@ -468,6 +488,10 @@ class SupplierReturnLine(models.Model):
     )
     movement_line = models.OneToOneField(
         StockMovementLine, on_delete=models.PROTECT, related_name="supplier_return_line"
+    )
+    reversal_movement_line = models.OneToOneField(
+        StockMovementLine, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return_reversal_line",
     )
     quantity = models.DecimalField(
         max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))]
@@ -496,11 +520,11 @@ class SupplierReturnLine(models.Model):
                 raise ValidationError({"movement_line": "سطر المخزون لا يتبع حركة المرتجع."})
 
     def save(self, *args, **kwargs):
-        if self.return_document_id and self.return_document.status == SupplierReturn.Status.POSTED:
-            raise ValidationError("لا يمكن تعديل بند مرتجع مورد مرحّل.")
+        if self.return_document_id and self.return_document.status in (SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED):
+            raise ValidationError("لا يمكن تعديل بند مرتجع مورد مرحّل أو معكوس.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.return_document.status == SupplierReturn.Status.POSTED:
-            raise ValidationError("لا يمكن حذف بند مرتجع مورد مرحّل.")
+        if self.return_document.status in (SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف بند مرتجع مورد مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
