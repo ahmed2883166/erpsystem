@@ -1,6 +1,7 @@
 import csv
 import io
 from datetime import date, datetime
+from django.http import Http404
 from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.db.models import Sum
@@ -354,8 +355,46 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     ordering_fields = ("statement_date", "created_at", "statement_number")
 
     def get_queryset(self):
-        """عرض التسويات داخل الشركات المصرح بها؛ وتُحرس العمليات بحسب نطاق الفروع."""
-        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            from django.db.models import Q
+            branches = accessible_branches(self.request.user)
+            company_wide_ids = [
+                company_id for company_id in qs.values_list("company_id", flat=True).distinct()
+                if has_company_wide_branch_access(self.request.user, company_id)
+            ]
+            qs = qs.filter(
+                Q(bank_account__branch__in=branches)
+                | Q(bank_account__branch__isnull=True, company_id__in=company_wide_ids)
+            )
+        return qs
+
+    def get_object(self):
+        """إخفاء السجلات غير المصرح بها مع توضيح منع الوصول داخل الشركة."""
+        try:
+            return super().get_object()
+        except Http404:
+            lookup = self.kwargs.get(self.lookup_url_kwarg or self.lookup_field)
+            hidden = self.queryset.filter(
+                company__in=accessible_companies(self.request.user),
+                **{self.lookup_field: lookup},
+            ).first()
+            if hidden:
+                bank = hidden.bank_account
+                if (
+                    (bank.branch_id and not can_access_branch(
+                        self.request.user, bank.branch_id, hidden.company_id
+                    ))
+                    or (
+                        not bank.branch_id
+                        and not has_company_wide_branch_access(
+                            self.request.user, hidden.company_id
+                        )
+                    )
+                ):
+                    raise PermissionDenied("لا تملك صلاحية الوصول إلى تسوية هذا الحساب البنكي.")
+            raise
 
     def perform_create(self, serializer):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
