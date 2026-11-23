@@ -161,12 +161,24 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
     quantity = serializers.DecimalField(
         source="receipt_line.quantity", max_digits=18, decimal_places=4, read_only=True
     )
+    recoverable_tax_amount = serializers.SerializerMethodField()
+    nonrecoverable_tax_amount = serializers.SerializerMethodField()
+
+    def get_recoverable_tax_amount(self, obj):
+        if obj.tax_code_id and not obj.tax_code.input_tax_recoverable:
+            return "0.0000"
+        return str(obj.tax_amount)
+
+    def get_nonrecoverable_tax_amount(self, obj):
+        if obj.tax_code_id and not obj.tax_code.input_tax_recoverable:
+            return str(obj.tax_amount)
+        return "0.0000"
 
     class Meta:
         model = PurchaseInvoiceLine
         fields = (
             "id", "receipt_line", "product_code", "product_name", "quantity",
-            "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "net_amount", "tax_amount", "total_amount",
+            "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "net_amount", "tax_amount", "recoverable_tax_amount", "nonrecoverable_tax_amount", "total_amount",
         )
         read_only_fields = (
             "id", "product_code", "product_name", "quantity",
@@ -299,7 +311,6 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأساسية مطلوب لكل بند."})
             code = line.get("tax_code")
             if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
-                         or (not code.input_tax_recoverable and code.rate > 0)
                          or code.category == TaxCode.Category.REVERSE_CHARGE
                          or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
                 raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو غير قابل للخصم للشركة أو تاريخ الفاتورة."})
