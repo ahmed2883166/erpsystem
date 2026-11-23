@@ -136,6 +136,7 @@ class BackupConfigurationView(APIView):
         else:
             # Do not disclose server filesystem paths or backup execution details.
             payload["backup_path"] = ""
+            payload["history"] = []
         return Response(payload)
 
     def post(self, request):
