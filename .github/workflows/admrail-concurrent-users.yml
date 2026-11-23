@@ -5,6 +5,7 @@ on:
       - work/nexus-django-react-rebuild
     paths:
       - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
+      - "nexus_next/backend/accounting/api.py"
       - ".github/workflows/admrail-concurrent-users.yml"
   workflow_dispatch:
 jobs:
