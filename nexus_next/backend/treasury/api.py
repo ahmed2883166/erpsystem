@@ -72,7 +72,15 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             from django.db.models import Q
-            qs = qs.filter(Q(branch__isnull=True) | Q(branch__in=accessible_branches(self.request.user)))
+            branches = accessible_branches(self.request.user)
+            company_wide_ids = [
+                company_id for company_id in qs.values_list("company_id", flat=True).distinct()
+                if has_company_wide_branch_access(self.request.user, company_id)
+            ]
+            qs = qs.filter(
+                Q(branch__in=branches)
+                | Q(branch__isnull=True, company_id__in=company_wide_ids)
+            )
         return qs
 
     @transaction.atomic
