@@ -111,6 +111,15 @@ try {
         $env:DJANGO_SUPERUSER_USERNAME = $Username
         $env:DJANGO_SUPERUSER_EMAIL = $Email
         $env:DJANGO_SUPERUSER_PASSWORD = $AdminAppPassword
+        $ValidationCode = @'
+import os
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+candidate = get_user_model()(username=os.environ["DJANGO_SUPERUSER_USERNAME"], email=os.environ["DJANGO_SUPERUSER_EMAIL"])
+validate_password(os.environ["DJANGO_SUPERUSER_PASSWORD"], candidate)
+'@
+        & $Python manage.py shell -c $ValidationCode
+        if ($LASTEXITCODE -ne 0) { throw "Administrator password did not pass the configured Django password validators." }
         & $Python manage.py createsuperuser --noinput
         if ($LASTEXITCODE -ne 0) { throw "Could not create the administrator account." }
         Remove-Item Env:DJANGO_SUPERUSER_PASSWORD -ErrorAction SilentlyContinue
@@ -121,7 +130,13 @@ try {
         & $Python manage.py bootstrap_platform_owner --username $Username
         if ($LASTEXITCODE -ne 0) { throw "Could not register the administrator as the platform owner." }
     }
-    finally { Pop-Location }
+    finally {
+        Remove-Item Env:DJANGO_SUPERUSER_PASSWORD -ErrorAction SilentlyContinue
+        Remove-Item Env:DJANGO_SUPERUSER_USERNAME -ErrorAction SilentlyContinue
+        Remove-Item Env:DJANGO_SUPERUSER_EMAIL -ErrorAction SilentlyContinue
+        $AdminAppPassword = $null
+        Pop-Location
+    }
 
     Write-Host ""
     Write-Host "Admrail first-time setup completed successfully." -ForegroundColor Green
