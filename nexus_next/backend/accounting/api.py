@@ -1329,10 +1329,11 @@ class JournalEntryViewSet(AccountingViewSet):
                 gross = row["gross_amount"] or Decimal("0")
                 category = row.get("tax_code__category") or "legacy_unclassified"
                 code = row.get("tax_code__code")
-                recoverable = (not purchases or (
-                    row.get("tax_code_id") is not None
-                    and row.get("tax_code__input_tax_recoverable", False)
-                ))
+                # Legacy invoice lines without a TaxCode were posted to VAT Input
+                # by post_purchase_invoice; preserve that historical classification
+                # so invoice totals reconcile to the GL while flagging them below.
+                recoverable = (not purchases or row.get("tax_code_id") is None
+                               or row.get("tax_code__input_tax_recoverable", False))
                 recoverable_amount = tax if recoverable else Decimal("0")
                 nonrecoverable_amount = tax - recoverable_amount if purchases else Decimal("0")
                 normalized.append({
@@ -1425,6 +1426,10 @@ class JournalEntryViewSet(AccountingViewSet):
 
         unclassified_sales = [row for row in sales["by_code"] if row["category"] == "legacy_unclassified" and Decimal(row["tax_amount"]) != 0]
         unclassified_purchases = [row for row in purchases["by_code"] if row["category"] == "legacy_unclassified" and Decimal(row["tax_amount"]) != 0]
+        unclassified_purchase_recoverable = sum(
+            (Decimal(row["recoverable_tax_amount"]) for row in unclassified_purchases),
+            Decimal("0"),
+        )
         return response.Response({
             "company": company.pk,
             "country": company.country,
@@ -1456,10 +1461,10 @@ class JournalEntryViewSet(AccountingViewSet):
                 "sales_groups": len(unclassified_sales),
                 "purchase_amount": str(sum((Decimal(row["tax_amount"]) for row in unclassified_purchases), Decimal("0"))),
                 "purchase_groups": len(unclassified_purchases),
-                "purchase_recoverable_amount": "0",
+                "purchase_recoverable_amount": str(unclassified_purchase_recoverable),
             },
             "report_kind": "internal_vat_reconciliation",
-            "note": "تقرير داخلي للمراجعة والتجهيز؛ ضريبة المدخلات التي لا تحمل كودًا ضريبيًا مصنفًا لا تُعتبر قابلة للخصم تلقائيًا. راجع فروق دفتر الأستاذ والأكواد غير المصنفة قبل تجهيز الإقرار. لا يرسل التقرير بيانات إلى مصلحة الضرائب المصرية أو هيئة الزكاة والضريبة والجمارك.",
+            "note": "تقرير داخلي للمراجعة والتجهيز؛ ضريبة فواتير المشتريات القديمة غير المرتبطة بكود ضريبي تظهر ضمن ضريبة المدخلات وفق قيدها التاريخي، لكنها تظل غير مصنفة وتحتاج مراجعة مستندات المورد قبل الإقرار. راجع فروق دفتر الأستاذ والأكواد غير المصنفة. لا يرسل التقرير بيانات إلى مصلحة الضرائب المصرية أو هيئة الزكاة والضريبة والجمارك.",
         })
 
     @decorators.action(detail=True, methods=("get",))
