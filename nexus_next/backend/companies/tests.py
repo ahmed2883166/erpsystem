@@ -332,3 +332,27 @@ class HeadOfficeTransferApiTests(APITestCase):
         self.main.refresh_from_db()
         self.assertTrue(self.main.is_head_office)
 
+
+class PlatformOwnerTenantAdminIsolationTests(TestCase):
+    def test_platform_owner_cannot_view_or_manage_company_memberships_in_django_admin(self):
+        from django.contrib import admin
+        from django.test import RequestFactory
+        from companies.admin import CompanyMembershipAdmin
+        from .models import CompanyMembership, PlatformOwner
+
+        user = get_user_model().objects.create_superuser(
+            username="platform-owner-admin-check",
+            email="platform-owner-admin@example.test",
+            password="long-test-password",
+        )
+        PlatformOwner.objects.create(user=user)
+        request = RequestFactory().get("/admin/companies/companymembership/")
+        request.user = user
+        model_admin = CompanyMembershipAdmin(CompanyMembership, admin.site)
+
+        self.assertFalse(model_admin.has_module_permission(request))
+        self.assertFalse(model_admin.has_view_permission(request))
+        self.assertFalse(model_admin.has_add_permission(request))
+        self.assertFalse(model_admin.has_change_permission(request))
+        self.assertFalse(model_admin.has_delete_permission(request))
+
