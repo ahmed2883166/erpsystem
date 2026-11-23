@@ -15,6 +15,7 @@ from django.utils.dateparse import parse_date
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
+from rest_framework.pagination import PageNumberPagination
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Company, FiscalYear
@@ -402,7 +403,15 @@ class TaxCodeViewSet(AccountingViewSet):
         instance.delete()
 
 
+class JournalEntryPagination(PageNumberPagination):
+    """تقسيم سجل القيود إلى صفحات صغيرة لحماية الذاكرة وزمن الاستجابة."""
+    page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 200
+
+
 class JournalEntryViewSet(AccountingViewSet):
+    pagination_class = JournalEntryPagination
     serializer_class = JournalEntrySerializer
     queryset = JournalEntry.objects.select_related(
         "company", "branch", "fiscal_year", "created_by"
@@ -417,6 +426,17 @@ class JournalEntryViewSet(AccountingViewSet):
         if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         return qs.filter(branch__in=accessible_branches(self.request.user))
+
+    @decorators.action(detail=False, methods=("get",), url_path="summary")
+    def summary(self, request):
+        """إرجاع إجماليات القيود دون تحميل تفاصيلها أو سطورها إلى الواجهة."""
+        queryset = self.filter_queryset(self.get_queryset())
+        totals = queryset.order_by().aggregate(
+            total=Count("id"),
+            drafts=Count("id", filter=Q(status=JournalEntry.Status.DRAFT)),
+            posted=Count("id", filter=Q(status=JournalEntry.Status.POSTED)),
+        )
+        return response.Response(totals)
 
     def perform_create(self, serializer):
         """حصر إنشاء القيود الافتتاحية والختامية في مدير الشركة."""
