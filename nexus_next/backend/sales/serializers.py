@@ -141,7 +141,7 @@ class SalesInvoiceLineInputSerializer(serializers.Serializer):
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     transaction_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"),
-                                        max_value=Decimal("100"), required=False, default=Decimal("0"))
+                                        max_value=Decimal("100"), required=False)
     tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
     discount_percent = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False, default=Decimal("0"))
 
@@ -349,10 +349,16 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         lines = validated_data.pop("lines")
         invoice = SalesInvoice.objects.create(**validated_data, created_by=self.context["request"].user)
         policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
+        discount_limits = [
+            value for value in (
+                policy.max_discount_percent if policy else None,
+                invoice.customer.discount_approval_limit,
+            ) if value is not None
+        ]
+        invoice.discount_approval_limit = min(discount_limits) if discount_limits else None
         if policy:
-            invoice.discount_approval_limit = policy.max_discount_percent
             invoice.invoice_approval_limit = policy.max_sales_invoice_amount
-            invoice.save(update_fields=("discount_approval_limit", "invoice_approval_limit"))
+        invoice.save(update_fields=("discount_approval_limit", "invoice_approval_limit"))
         for line in lines:
             SalesInvoiceLine.objects.create(
                 invoice=invoice,
@@ -361,7 +367,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 delivery_line=line["delivery_line"],
                 tax_rate=line.get("tax_rate", Decimal("0")),
                 tax_code=line.get("tax_code"),
-                discount_percent=line.get("discount_percent", Decimal("0")),
+                discount_percent=line.get("discount_percent", invoice.customer.default_discount_percent),
             )
         self._recalculate_invoice(invoice, lines_changed=True)
         return invoice
