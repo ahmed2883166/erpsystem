@@ -191,7 +191,7 @@ def reverse_sales_return(return_id, user, entry_date):
     for line in lines:
         reversal_line = posted_movement.lines.get(reversal_of_line=line.movement_line)
         if abs(reversal_line.cost_amount - line.cost_amount) > Decimal("0.0001"):
-            raise ValidationError("تكلفة المخزون المتبقية من مردود المبيعات لا تطابق التكلفة الأصلية؛ تم إلغاء العكس.")
+            raise ValidationError(f"تكلفة عكس مردود المبيعات لا تطابق الأصل؛ الأصل {line.cost_amount} والعكس {reversal_line.cost_amount}. تم إلغاء العكس.")
 
     try:
         reversal_entry = reverse_operational_journal(
