@@ -1219,3 +1219,19 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(statement.status_code, 200, statement.data)
         self.assertEqual(statement.data["closing_balance"], "114.0000")
         self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_return")
+
+        aging = self.client.get(
+            f"/api/purchasing/invoices/supplier-aging/?company={self.company.pk}&as_of=2026-03-12"
+        )
+        self.assertEqual(aging.status_code, 200, aging.data)
+        self.assertEqual(aging.data["totals"]["total_due"], "114.0000")
+
+        vat = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(vat.status_code, 200, vat.data)
+        self.assertEqual(vat.data["purchases"]["tax_amount"], "14.0000")
+        self.assertEqual(vat.data["purchases"]["recoverable_tax_amount"], "14.0000")
+        self.assertEqual(vat.data["input_tax"], "14.0000")
+        self.assertEqual(vat.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
