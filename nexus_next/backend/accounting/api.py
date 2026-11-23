@@ -745,18 +745,29 @@ class JournalEntryViewSet(AccountingViewSet):
         if date_to:
             date_filter &= Q(entry__entry_date__lte=date_to)
 
-        scoped_lines = JournalLine.objects.filter(entry__company_id=company_id).filter(
-            date_filter | opening_filter
-        )
+        # Keep period movements and brought-forward balances on separate,
+        # index-friendly predicates. A combined OR + conditional aggregate made
+        # PostgreSQL scan a broad union of the ledger and spill large hash joins
+        # under concurrent report traffic.
+        company_lines = JournalLine.objects.filter(entry__company_id=company_id)
         with _accounting_report_work_mem():
-            totals_by_account = {
+            period_totals = {
                 item["account_id"]: item
-                for item in scoped_lines.values("account_id").annotate(
-                    debit_total=Sum("debit", filter=date_filter),
-                    credit_total=Sum("credit", filter=date_filter),
-                    opening_debit=Sum("debit", filter=opening_filter),
-                    opening_credit=Sum("credit", filter=opening_filter),
-                )
+                for item in company_lines.filter(date_filter)
+                .values("account_id")
+                .annotate(debit_total=Sum("debit"), credit_total=Sum("credit"))
+            }
+            opening_totals = {
+                item["account_id"]: item
+                for item in company_lines.filter(opening_filter)
+                .values("account_id")
+                .annotate(opening_debit=Sum("debit"), opening_credit=Sum("credit"))
+            }
+        totals_by_account = {}
+        for account_id in period_totals.keys() | opening_totals.keys():
+            totals_by_account[account_id] = {
+                **period_totals.get(account_id, {}),
+                **opening_totals.get(account_id, {}),
             }
         accounts = ChartOfAccount.objects.filter(company_id=company_id).order_by("code")
         rows = []
