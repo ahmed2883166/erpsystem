@@ -53,7 +53,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ## تثبيت شهادة HTTPS على أجهزة الموظفين
 
-Caddy ينشئ سلطة شهادات داخلية محلية. بعد أول تشغيل، انسخ الشهادة العامة فقط من:
+Caddy ينشئ سلطة شهادات داخلية محلية. بعد أول تشغيل، شغّل `caddy trust` على الخادم (أو `tools\\caddy.exe trust` إذا كان داخل الحزمة) من PowerShell كمسؤول لتثبيت جذر الثقة محليًا، ثم انسخ الشهادة العامة فقط من:
 
 `%APPDATA%\Caddy\pki\authorities\local\root.crt`
 
