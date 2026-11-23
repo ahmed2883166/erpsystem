@@ -1,4 +1,6 @@
-from decimal import Decimal\n\nfrom django.contrib.auth import get_user_model
+from decimal import Decimal
+
+from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
