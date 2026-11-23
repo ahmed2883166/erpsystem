@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
@@ -9,6 +10,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
+from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
@@ -48,6 +50,19 @@ class PurchasingWorkflowTests(APITestCase):
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
             AccountRole.objects.create(company=self.company, role=role, account=account)
+
+    def test_unassigned_purchase_warehouse_uses_same_branch_for_validation_and_posting(self):
+        from purchasing.services import _branch_and_year
+
+        warehouse = Warehouse.objects.create(
+            company=self.company, branch=None, code="WH-NO-BRANCH", name_ar="مخزن بلا فرع",
+        )
+        resolved = resolve_warehouse_branch(self.company, warehouse)
+        posting_branch, _ = _branch_and_year(
+            SimpleNamespace(company=self.company, warehouse=warehouse), date(2026, 3, 10),
+        )
+        self.assertEqual(resolved.pk, self.branch.pk)
+        self.assertEqual(posting_branch.pk, resolved.pk)
 
     def _create_and_post_receipt(self):
         response = self.client.post("/api/purchasing/receipts/", {
