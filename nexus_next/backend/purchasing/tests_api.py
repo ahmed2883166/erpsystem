@@ -1327,6 +1327,22 @@ class PurchasingWorkflowTests(APITestCase):
         invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data
         self.assertEqual(invoice_after["balance_due"], "114.0000")
 
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "payment_number": "PAY-FX-AFTER-RETURN", "payment_date": "2026-03-13",
+            "method": "cash", "amount": "109.4400",
+            "transaction_currency": usd.pk, "transaction_amount": "2.28",
+            "exchange_rate": "48", "exchange_rate_date": "2026-03-10",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        payment_posted = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(payment_posted.status_code, 200, payment_posted.data)
+        self.assertEqual(payment_posted.data["historical_carrying_base_amount"], "114.0000")
+        final_invoice = self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data
+        self.assertEqual(final_invoice["balance_due"], "0.0000")
+
 
     def test_reversing_supplier_return_restores_original_cost_layers_and_vat(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
