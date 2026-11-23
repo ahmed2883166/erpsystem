@@ -591,6 +591,8 @@ export const accountRoleApi = {
 export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null }[]; created_at: string };
 export type SalesInvoice = { id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; discount_total: string; discount_approval_limit: string | null; invoice_approval_limit: string | null; approval_status: "not_required" | "pending" | "approved" | "rejected" | "superseded"; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; tax_code: number | null; discount_percent: string; discount_amount: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 
+export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; movement_status:string; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;cost_amount:string}[]; created_at:string; posted_at:string|null };
+
 export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
   delivery_line_id: number; product_id: number; product_code: string; product_name: string;
@@ -659,8 +661,9 @@ export const salesApi = {
   deliveries: (companyId: number) => request<SalesDelivery[]>(`/api/sales-documents/deliveries/?company=${companyId}&ordering=-delivery_date`),
   // جلب فواتير الموردين للشركة.
   invoices: (companyId: number) => request<SalesInvoice[]>(`/api/sales-documents/invoices/?company=${companyId}&ordering=-invoice_date`),
-  // جلب مستندات استلام المشتريات للشركة.
+  // جلب سندات القبض ومردودات المبيعات للشركة.
   receipts: (companyId: number) => request<CustomerReceipt[]>(`/api/sales-documents/receipts/?company=${companyId}&ordering=-receipt_date`),
+  returns: (companyId:number) => request<SalesReturn[]>(`/api/sales-documents/returns/?company=${companyId}&ordering=-return_date`),
   // جلب تقرير أعمار مديونيات العملاء مع فلاتر التاريخ والفرع.
   customerAging: (companyId: number, asOf = "", customerId?: number, branchId?: number) => request<CustomerAging>(`/api/sales-documents/invoices/customer-aging/?company=${companyId}${asOf ? `&as_of=${asOf}` : ""}${customerId ? `&customer=${customerId}` : ""}${branchId ? `&branch=${branchId}` : ""}`),
   // إنشاء مستند تسليم مبيعات جديد.
@@ -676,6 +679,10 @@ export const salesApi = {
   // إعادة تقييم رصيد فاتورة العميل الأجنبية المفتوح.
   revalueInvoice: async (id:number,payload:{revaluation_date:string;rate_date:string;rate:string}) => { await request<{detail:string}>("/api/csrf/"); return request<FxSubledgerRevaluation>(`/api/sales-documents/invoices/${id}/revalue/`,{method:"POST",body:JSON.stringify(payload)}); },
   fxRevaluations: (id:number) => request<FxSubledgerRevaluation[]>(`/api/sales-documents/invoices/${id}/revaluations/`),
+  // إنشاء مردود مبيعات مرتبط ببنود فاتورة أصلية.
+  createReturn: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesReturn>("/api/sales-documents/returns/", {method:"POST",body:JSON.stringify(payload)}); },
+  postReturn: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesReturn>(`/api/sales-documents/returns/${id}/post/`, {method:"POST"}); },
+  reverseReturn: async (id:number, entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<SalesReturn>(`/api/sales-documents/returns/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
   // إنشاء سند قبض من عميل.
   createReceipt: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>("/api/sales-documents/receipts/", { method: "POST", body: JSON.stringify(payload) }); },
   // ترحيل سند القبض وتحديث رصيد العميل والخزينة.
