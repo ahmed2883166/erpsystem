@@ -508,9 +508,12 @@ def post_supplier_payment(payment_id, user):
         paid_before = SupplierPayment.objects.filter(
             invoice=invoice, status=SupplierPayment.Status.POSTED
         ).exclude(pk=payment.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        if paid_before + payment.amount > invoice.grand_total:
-            remaining = max(Decimal("0"), invoice.grand_total - paid_before)
-            raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة ({remaining}).")
+        returned_before = SupplierReturn.objects.filter(
+            invoice=invoice, status=SupplierReturn.Status.POSTED,
+        ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+        if paid_before + payment.amount + returned_before > invoice.grand_total:
+            remaining = max(Decimal("0"), invoice.grand_total - paid_before - returned_before)
+            raise ValidationError(f"قيمة السند تتجاوز المتبقي على الفاتورة بعد المرتجعات ({remaining}).")
         carrying_amount = payment.amount
         historical_carrying = payment.amount
         unrealized_adjustment = Decimal("0")
