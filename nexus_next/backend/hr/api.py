@@ -294,7 +294,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
     @transaction.atomic
     def disburse(self, request, pk=None):
         """إعداد صرف السلفة من الخزينة وترحيله بعد استيفاء الاعتماد المالي."""
-        loan = EmployeeLoan.objects.select_for_update().select_related(
+        loan = EmployeeLoan.objects.select_for_update(of=("self",)).select_related(
             "employee__company__base_currency", "employee__branch", "receivable_account",
             "disbursement_transaction",
         ).get(pk=self.get_object().pk)
@@ -304,7 +304,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
         if loan.status in (EmployeeLoan.Status.SETTLED, EmployeeLoan.Status.SUSPENDED):
             raise ValidationError("لا يمكن صرف سلفة مسددة أو موقوفة.")
         if loan.disbursement_transaction_id:
-            treasury_doc = TreasuryTransaction.objects.select_for_update().select_related(
+            treasury_doc = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
                 "source_account", "counter_account", "fiscal_year",
             ).get(pk=loan.disbursement_transaction_id)
             if treasury_doc.status == TreasuryTransaction.Status.POSTED:
