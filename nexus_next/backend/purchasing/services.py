@@ -10,9 +10,9 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
-from accounting.services import get_account_for_role, post_journal
+from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.models import Branch, ExchangeRate, FiscalYear
-from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement
+from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 
 from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn, SupplierReturnLine
@@ -752,5 +752,82 @@ def post_supplier_return(return_id, user):
     document.save(update_fields=(
         "net_amount", "tax_amount", "grand_total", "transaction_net_amount", "transaction_tax_amount",
         "transaction_grand_total", "journal_entry", "status", "posted_at",
+    ))
+    return document
+
+
+@transaction.atomic
+def reverse_supplier_return(return_id, user, entry_date):
+    """عكس مرتجع المورد بقيد عكسي وإرجاع نفس طبقات التكلفة التي استهلكها المرتجع."""
+    document = SupplierReturn.objects.select_for_update(of=("self",)).select_related(
+        "company", "supplier", "invoice", "journal_entry", "stock_movement",
+    ).get(pk=return_id)
+    if document.status != SupplierReturn.Status.POSTED or not document.journal_entry_id:
+        raise ValidationError("لا يمكن عكس إلا مرتجع مورد مرحّل.")
+    if document.reversal_journal_entry_id or document.reversal_stock_movement_id:
+        raise ValidationError("تم عكس مرتجع المورد من قبل.")
+    if entry_date < document.return_date:
+        raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ المرتجع.")
+    invoice = PurchaseInvoice.objects.select_for_update().get(pk=document.invoice_id)
+    if invoice.transaction_currency_id and (
+        SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
+        or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists()
+    ):
+        raise ValidationError("لا يمكن عكس مرتجع فاتورة أجنبية بعد وجود دفعات أو إعادة تقييم؛ راجع تسوية العملة أولًا.")
+    if document.journal_entry.status != JournalEntry.Status.POSTED:
+        raise ValidationError("القيد الأصلي للمرتجع ليس مرحّلًا.")
+    lines = list(document.lines.select_for_update(of=("self",)).select_related(
+        "invoice_line__receipt_line__product", "movement_line",
+    ).order_by("id"))
+    if not lines:
+        raise ValidationError("لا توجد بنود مخزون مرتبطة بالمرتجع.")
+
+    reversal_movement = StockMovement.objects.create(
+        company=document.company,
+        movement_number=f"SRV-{document.pk}",
+        movement_type=StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL,
+        movement_date=entry_date,
+        destination_warehouse=invoice.receipt.warehouse,
+        notes=f"عكس مرتجع المورد {document.return_number}",
+        created_by=user,
+    )
+    for line in lines:
+        product = line.invoice_line.receipt_line.product
+        if product.costing_method not in (
+            Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE,
+        ):
+            raise ValidationError("لا يمكن عكس المرتجع بعد تغيير طريقة تكلفة الصنف من FIFO/المتوسط المرجح.")
+        reversal_line = StockMovementLine.objects.create(
+            movement=reversal_movement,
+            product=product,
+            quantity=line.quantity,
+            destination_location=line.movement_line.source_location,
+            expiry_date=line.movement_line.expiry_date,
+        )
+        line.reversal_movement_line = reversal_line
+        line.save(update_fields=("reversal_movement_line",))
+
+    posted_movement = post_stock_movement(reversal_movement.pk, user)
+    for line in lines:
+        line.reversal_movement_line.refresh_from_db()
+        if abs(line.reversal_movement_line.cost_amount - line.movement_line.cost_amount) > Decimal("0.0001"):
+            raise ValidationError("تكلفة المخزون المسترد لا تطابق تكلفة المرتجع الأصلي؛ تم إلغاء العكس.")
+
+    try:
+        reversal_entry = reverse_operational_journal(
+            document.journal_entry_id, user, entry_date, JournalEntry.Source.PURCHASES,
+        )
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    document.reversal_stock_movement = posted_movement
+    document.reversal_journal_entry = reversal_entry
+    document.reversal_date = entry_date
+    document.reversed_at = timezone.now()
+    document.status = SupplierReturn.Status.REVERSED
+    document.save(update_fields=(
+        "reversal_stock_movement", "reversal_journal_entry", "reversal_date",
+        "reversed_at", "status",
     ))
     return document
