@@ -1,3 +1,4 @@
+from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 from rest_framework import status
 from rest_framework.response import Response
@@ -6,6 +7,11 @@ from rest_framework.views import exception_handler
 
 def nexus_exception_handler(exc, context):
     """توحيد صياغة استجابات الأخطاء مع الحفاظ على رموز HTTP وتفاصيل التحقق."""
+    if isinstance(exc, IntegrityError):
+        return Response(
+            {"detail": "تعذر حفظ التغيير بسبب تعارض مع بيانات مرتبطة أو قيد فريد. حدّث الشاشة وراجع السجل قبل إعادة المحاولة."},
+            status=status.HTTP_409_CONFLICT,
+        )
     if isinstance(exc, ProtectedError):
         protected = getattr(exc, "protected_objects", ())
         labels = sorted({obj._meta.verbose_name for obj in protected})
