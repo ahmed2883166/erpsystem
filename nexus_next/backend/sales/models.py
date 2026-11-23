@@ -256,6 +256,7 @@ class SalesReturn(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_returns")
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="returns")
@@ -269,6 +270,11 @@ class SalesReturn(models.Model):
     grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return")
     cost_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_cost")
+    reversal_stock_movement = models.OneToOneField("inventory.StockMovement", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_reversal")
+    reversal_journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_reversal")
+    reversal_date = models.DateField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="reversed_sales_returns")
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_returns")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -284,13 +290,13 @@ class SalesReturn(models.Model):
         return self.company_id
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
-            raise ValidationError("مردود المبيعات المرحّل غير قابل للتعديل.")
+        if self.pk and type(self).objects.filter(pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)).exists():
+            raise ValidationError("مردود المبيعات المرحّل أو المعكوس غير قابل للتعديل.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.status == self.Status.POSTED:
-            raise ValidationError("لا يمكن حذف مردود مبيعات مرحّل.")
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف مردود مبيعات مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
 
     def clean(self):
@@ -331,11 +337,11 @@ class SalesReturnLine(models.Model):
         constraints = [models.UniqueConstraint(fields=("sales_return", "invoice_line"), name="uq_sales_return_invoice_line")]
 
     def save(self, *args, **kwargs):
-        if self.sales_return_id and SalesReturn.objects.filter(pk=self.sales_return_id, status=SalesReturn.Status.POSTED).exists():
-            raise ValidationError("لا يمكن تعديل بنود مردود مبيعات مرحّل.")
+        if self.sales_return_id and SalesReturn.objects.filter(pk=self.sales_return_id, status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED)).exists():
+            raise ValidationError("لا يمكن تعديل بنود مردود مبيعات مرحّل أو معكوس.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.sales_return.status == SalesReturn.Status.POSTED:
-            raise ValidationError("لا يمكن حذف بنود مردود مبيعات مرحّل.")
+        if self.sales_return.status in (SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف بنود مردود مبيعات مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
