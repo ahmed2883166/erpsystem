@@ -1,6 +1,6 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from .models import Branch, Company, CompanyMembership, Currency, PlatformOwner
+from .models import Branch, Company, CompanyMembership, Currency, FiscalPeriod, FiscalYear, PlatformOwner
 
 
 class CompanySetupApiTests(APITestCase):
@@ -847,3 +847,63 @@ class FiscalYearClosingApiTests(APITestCase):
         self.assertEqual(response.data["draft_entries"], 1)
         self.assertFalse(response.data["checks"]["no_drafts"])
         self.assertFalse(response.data["can_close"])
+
+
+class MonthlyFiscalPeriodApiTests(APITestCase):
+    def setUp(self):
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="MONTH-CLOSE", name_ar="شركة الفترات الشهرية",
+            country="EG", activity="commercial", base_currency=self.currency,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="FY-2026-2027",
+            start_date="2026-07-01", end_date="2027-06-30",
+        )
+        self.admin = get_user_model().objects.create_user(
+            username="monthly-period-admin", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=self.admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(self.admin)
+
+    def test_generate_close_and_reopen_monthly_period_with_audited_reason(self):
+        generated = self.client.post(
+            f"/api/setup/fiscal-years/{self.year.pk}/generate-periods/", {}, format="json",
+        )
+        self.assertEqual(generated.status_code, 201, generated.data)
+        self.assertEqual(generated.data["created"], 12)
+        self.assertEqual(FiscalPeriod.objects.filter(fiscal_year=self.year).count(), 12)
+
+        rows = self.client.get(f"/api/setup/fiscal-years/{self.year.pk}/periods/")
+        self.assertEqual(rows.status_code, 200, rows.data)
+        first = rows.data[0]
+        self.assertEqual(first["name"], "2026-07")
+        self.assertEqual(str(first["start_date"]), "2026-07-01")
+        self.assertEqual(str(first["end_date"]), "2026-07-31")
+
+        closed = self.client.post(
+            f"/api/setup/fiscal-years/{self.year.pk}/close-period/",
+            {"period_id": first["id"]}, format="json",
+        )
+        self.assertEqual(closed.status_code, 200, closed.data)
+        period = FiscalPeriod.objects.get(pk=first["id"])
+        self.assertEqual(period.status, FiscalPeriod.Status.CLOSED)
+        self.assertEqual(period.closed_by_id, self.admin.pk)
+
+        missing_reason = self.client.post(
+            f"/api/setup/fiscal-years/{self.year.pk}/reopen-period/",
+            {"period_id": period.pk, "reason": "قصير"}, format="json",
+        )
+        self.assertEqual(missing_reason.status_code, 400, missing_reason.data)
+
+        reopened = self.client.post(
+            f"/api/setup/fiscal-years/{self.year.pk}/reopen-period/",
+            {"period_id": period.pk, "reason": "تصحيح مستند محاسبي موثق"}, format="json",
+        )
+        self.assertEqual(reopened.status_code, 200, reopened.data)
+        period.refresh_from_db()
+        self.assertEqual(period.status, FiscalPeriod.Status.OPEN)
+        self.assertEqual(period.reopened_by_id, self.admin.pk)
+        self.assertEqual(period.reopen_reason, "تصحيح مستند محاسبي موثق")
