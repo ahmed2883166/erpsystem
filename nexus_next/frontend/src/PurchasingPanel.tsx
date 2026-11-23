@@ -149,7 +149,7 @@ const saveReceipt = async (event: React.FormEvent) => {
         supplier_delivery_ref: receiptForm.supplier_delivery_ref, notes: receiptForm.notes,
         lines: receiptLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_cost: line.unit_cost, expiry_date: line.expiry_date || null, ...(line.purchase_order_line ? { purchase_order_line: Number(line.purchase_order_line) } : {}) })),
       });
-      setShowForm(false); setReceiptForm((old) => ({ ...old, receipt_number: "", supplier_delivery_ref: "", notes: "" }));
+      setShowForm(false); setReceiptForm((old) => ({ ...old, purchase_order: "", receipt_number: "", supplier_delivery_ref: "", notes: "" }));
       setReceiptLines([{ product: String(products[0]?.id || ""), quantity: "1", unit_cost: "0", expiry_date: "" }]);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء إذن الاستلام."); }
@@ -361,7 +361,7 @@ const postInvoice = async (id: number) => {
       <label>مخزن الاستلام<select required value={receiptForm.warehouse} onChange={(e) => setReceiptForm({ ...receiptForm, warehouse: e.target.value })}><option value="">اختر المخزن</option>{warehouses.map((x) => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
       <label>رقم إذن الاستلام<input required maxLength={32} value={receiptForm.receipt_number} onChange={(e) => setReceiptForm({ ...receiptForm, receipt_number: e.target.value })} placeholder="GR-0001" /></label>
       <label>تاريخ الاستلام<input required type="date" value={receiptForm.receipt_date} onChange={(e) => setReceiptForm({ ...receiptForm, receipt_date: e.target.value })} /></label>
-      {receiptForm.purchase_order && <div className="inventory-wide"><strong>أمر الشراء المرتبط: {orders.find((x) => x.id === Number(receiptForm.purchase_order))?.order_number || "—"}</strong></div>}
+      {receiptForm.purchase_order && <div className="inventory-wide"><strong>أمر الشراء المرتبط: {orders.find((x) => x.id === Number(receiptForm.purchase_order))?.order_number || "—"}</strong><button className="subtle-button" type="button" onClick={() => { setReceiptForm((old) => ({ ...old, purchase_order: "" })); setReceiptLines((old) => old.map(({ purchase_order_line, ...line }) => line)); }}>إلغاء ارتباط أمر الشراء</button></div>}
       <label>مرجع مستند المورد<input value={receiptForm.supplier_delivery_ref} onChange={(e) => setReceiptForm({ ...receiptForm, supplier_delivery_ref: e.target.value })} /></label>
       <div className="inventory-wide"><div className="work-panel-head"><div><h3>أصناف الاستلام</h3><p>أضف كل الأصناف والكميات وتكلفة الوحدة قبل الحفظ.</p></div>{!receiptForm.purchase_order && <button className="subtle-button" type="button" onClick={() => setReceiptLines((old) => [...old, { product: "", quantity: "1", unit_cost: "0", expiry_date: "" }])}>＋ إضافة صنف</button>}</div></div>
       {receiptLines.map((line, index) => <div className="inventory-form-row inventory-wide" key={index}>
