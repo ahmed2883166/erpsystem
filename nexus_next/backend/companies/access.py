@@ -130,11 +130,12 @@ def acquire_fiscal_year_lock(fiscal_year, *, shared):
     fallback in the calling service.
     """
     if connection.vendor != "postgresql":
-        return
+        return False
     lock_key = f"admrail:fiscal-year:{fiscal_year.company_id}:{fiscal_year.pk}"
     function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
     with connection.cursor() as cursor:
         cursor.execute(f"SELECT {function}(hashtextextended(%s, 0))", [lock_key])
+    return True
 
 
 def ensure_fiscal_period_open(fiscal_year, target_date):
