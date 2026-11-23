@@ -62,6 +62,8 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         company: companyId,
         credit_limit: form.credit_limit || "0",
         payment_terms_days: Number(form.payment_terms_days || 0),
+        default_discount_percent: form.default_discount_percent || "0",
+        discount_approval_limit: form.discount_approval_limit || null,
       };
       if (editingId) await api.updateCustomer(editingId, payload);
       else await api.createCustomer(payload);
