@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Product, StockBalance, StockCostLayer, StockMovement, StockMovementLine
+from .models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
 
 
 @transaction.atomic
@@ -53,7 +53,7 @@ def post_stock_movement(movement_id, user):
         locked = StockBalance.objects.select_for_update().filter(pk__in=balance_ids).order_by("id")
         balances = {(b.warehouse_id, b.location_id, b.expiry_date): b for b in locked}
 
-        def receive(balance, quantity, unit_cost, source_line, product=product):
+        def receive(balance, quantity, unit_cost, source_line, product=product, parent_layer=None):
             """تنفيذ مسؤولية الدالة receive ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             amount = (quantity * unit_cost).quantize(Decimal("0.0001"))
             new_quantity = balance.quantity + quantity
@@ -66,10 +66,12 @@ def post_stock_movement(movement_id, user):
                 StockCostLayer.objects.create(
                     product=product, warehouse=balance.warehouse, location=balance.location,
                     expiry_date=balance.expiry_date, source_line=source_line,
+                    root_source_line_id=((parent_layer.root_source_line_id or parent_layer.source_line_id) if parent_layer else source_line.pk),
+                    parent_layer=parent_layer,
                     quantity_remaining=quantity, unit_cost=unit_cost,
                 )
 
-        def issue(balance, quantity, product=product):
+        def issue(balance, quantity, movement_line, product=product):
             """تنفيذ مسؤولية الدالة issue ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             if balance.quantity < quantity:
                 raise ValidationError(
@@ -88,18 +90,19 @@ def post_stock_movement(movement_id, user):
                     consumed = min(layer.quantity_remaining, remaining)
                     layer.quantity_remaining -= consumed
                     layer.save(update_fields=("quantity_remaining",))
-                    cost_parts.append((consumed, layer.unit_cost))
+                    StockCostConsumption.objects.create(movement_line=movement_line, source_layer=layer, quantity=consumed, unit_cost=layer.unit_cost)
+                    cost_parts.append((consumed, layer.unit_cost, layer))
                     remaining -= consumed
                 if remaining > 0:
                     raise ValidationError(
                         f"طبقات تكلفة FIFO غير مكتملة للصنف {product.code}; المتبقي {remaining}."
                     )
             else:
-                cost_parts.append((quantity, balance.average_cost))
+                cost_parts.append((quantity, balance.average_cost, None))
 
             amount = sum(
                 (part_quantity * unit_cost).quantize(Decimal("0.0001"))
-                for part_quantity, unit_cost in cost_parts
+                for part_quantity, unit_cost, _source_layer in cost_parts
             )
             balance.quantity -= quantity
             balance.inventory_value = max(Decimal("0"), balance.inventory_value - amount)
@@ -116,15 +119,15 @@ def post_stock_movement(movement_id, user):
             line.save(update_fields=("cost_amount",))
             receive(balances[destination_key], line.quantity, line.unit_cost, line)
         elif movement.movement_type == StockMovement.MovementType.ISSUE:
-            cost_parts = issue(balances[source_key], line.quantity)
-            line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost in cost_parts)
+            cost_parts = issue(balances[source_key], line.quantity, line)
+            line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost, _source_layer in cost_parts)
             line.unit_cost = line.cost_amount / line.quantity
             line.save(update_fields=("unit_cost", "cost_amount"))
         elif movement.movement_type == StockMovement.MovementType.TRANSFER:
-            cost_parts = issue(balances[source_key], line.quantity)
-            for qty, cost in cost_parts:
-                receive(balances[destination_key], qty, cost, line)
-            line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost in cost_parts)
+            cost_parts = issue(balances[source_key], line.quantity, line)
+            for qty, cost, source_layer in cost_parts:
+                receive(balances[destination_key], qty, cost, line, parent_layer=source_layer)
+            line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost, _source_layer in cost_parts)
             line.unit_cost = line.cost_amount / line.quantity
             line.save(update_fields=("unit_cost", "cost_amount"))
         elif movement.movement_type == StockMovement.MovementType.ADJUSTMENT:
@@ -133,8 +136,8 @@ def post_stock_movement(movement_id, user):
                 line.save(update_fields=("cost_amount",))
                 receive(balances[destination_key], line.quantity, line.unit_cost, line)
             else:
-                cost_parts = issue(balances[source_key], line.quantity)
-                line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost in cost_parts)
+                cost_parts = issue(balances[source_key], line.quantity, line)
+                line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost, _source_layer in cost_parts)
                 line.unit_cost = line.cost_amount / line.quantity
                 line.save(update_fields=("unit_cost", "cost_amount"))
 
