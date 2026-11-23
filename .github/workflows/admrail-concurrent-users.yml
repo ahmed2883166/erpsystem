@@ -5,6 +5,7 @@ on:
       - work/nexus-django-react-rebuild
     paths:
       - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
+      - "nexus_next/backend/scripts/benchmark_posting_concurrency.py"
       - "nexus_next/backend/scripts/explain_accounting_reports.py"
       - "nexus_next/backend/config/settings.py"
       - "nexus_next/backend/requirements.txt"
@@ -74,8 +75,10 @@ jobs:
           done
           cat /tmp/admrail-http.log
           exit 1
-      - name: Run concurrent authenticated-user test
+      - name: Run concurrent authenticated-user read test
         run: python scripts/benchmark_concurrent_users.py
+      - name: Run concurrent journal creation and posting test
+        run: python scripts/benchmark_posting_concurrency.py
       - name: Upload measurements
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,6 +86,7 @@ jobs:
           name: Admrail-Concurrent-Users-Benchmark
           path: |
             nexus_next/backend/concurrent-load-test.json
+            nexus_next/backend/concurrent-posting-load-test.json
             nexus_next/backend/accounting-report-explain.json
             /tmp/admrail-http.log
           if-no-files-found: warn
