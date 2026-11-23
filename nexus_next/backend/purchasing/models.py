@@ -298,6 +298,81 @@ class SupplierPayment(models.Model):
         return super().delete(*args, **kwargs)
 
 
+class SupplierRefund(models.Model):
+    """استرداد نقدي من المورد مقابل رصيد دائن نشأ عن مرتجع مرحّل."""
+
+    class Method(models.TextChoices):
+        CASH = "cash", "نقدي"
+        BANK = "bank", "تحويل بنكي"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_refunds")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="refunds")
+    return_document = models.ForeignKey(
+        SupplierReturn, on_delete=models.PROTECT, related_name="refunds",
+    )
+    refund_number = models.CharField(max_length=40)
+    refund_date = models.DateField()
+    method = models.CharField(max_length=8, choices=Method.choices, default=Method.BANK)
+    payment_account = models.ForeignKey(
+        ChartOfAccount, on_delete=models.PROTECT, related_name="supplier_refunds",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_refund",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_supplier_refunds",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-refund_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "refund_number"), name="uq_supplier_refund_company_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "refund_date"), name="pur_refund_co_status_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.return_document_id and (
+            self.return_document.company_id != self.company_id
+            or self.return_document.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"return_document": "مرتجع المورد لا يطابق الشركة أو المورد."})
+        if self.return_document_id and self.return_document.status != SupplierReturn.Status.POSTED:
+            raise ValidationError({"return_document": "لا يمكن استرداد مبلغ عن مرتجع غير مرحّل أو معكوس."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status= self.Status.POSTED).exists():
+            raise ValidationError("استرداد المورد المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.POSTED:
+            raise ValidationError("لا يمكن حذف استرداد مورد مرحّل.")
+        return super().delete(*args, **kwargs)
+
+
 class PurchaseOrder(models.Model):
     """يمثل أمر شراء ومراحله قبل الاستلام والفوترة."""
     class Status(models.TextChoices):
