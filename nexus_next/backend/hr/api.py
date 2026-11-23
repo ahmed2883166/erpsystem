@@ -372,7 +372,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
             )
 
         try:
-            posted = post_treasury_transaction(treasury_doc.pk, request.user)
+            post_treasury_transaction(treasury_doc.pk, request.user)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             messages = detail.values() if isinstance(detail, dict) else detail
