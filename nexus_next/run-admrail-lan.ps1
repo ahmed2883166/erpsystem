@@ -76,22 +76,29 @@ $Listening = Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction Sile
 if ($Listening) { throw "TCP 443 is already in use. Stop the existing service before starting Admrail LAN." }
 
 $CaddyProcess = Start-Process -FilePath $Caddy -WorkingDirectory $LanDirectory -ArgumentList @("run", "--config", "`"$CaddyFile`"", "--adapter", "caddyfile") -PassThru -WindowStyle Minimized
-Start-Sleep -Seconds 2
-if ($CaddyProcess.HasExited) { throw "Caddy failed to start. Check port 443 and the Caddy log." }
-
-if ($ConfigureFirewall) {
-  New-NetFirewallRule -DisplayName "Admrail ERP HTTPS LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private -ErrorAction SilentlyContinue | Out-Null
-} else {
-  Write-Host "If needed, allow TCP 443 on the Windows Private profile only; do not open 8000 or 5432." -ForegroundColor Yellow
-}
-
-$RootCertificate = Join-Path $env:APPDATA "Caddy\pki\authorities\local\root.crt"
-Write-Host "Admrail ERP LAN URL: https://$LanHost" -ForegroundColor Green
-Write-Host "Waitress is private on 127.0.0.1:8000. Caddy provides HTTPS on TCP 443." -ForegroundColor Green
-Write-Host "Install this public root certificate on each client: $RootCertificate" -ForegroundColor Yellow
-Write-Host "Never distribute root.key. On client Windows, import root.crt into Trusted Root Certification Authorities." -ForegroundColor Yellow
-Push-Location $Backend
 try {
-  & $Python -m waitress --listen=127.0.0.1:8000 config.wsgi:application
-  if ($LASTEXITCODE -ne 0) { throw "Waitress stopped with an error." }
-} finally { Pop-Location }
+  Start-Sleep -Seconds 2
+  if ($CaddyProcess.HasExited) { throw "Caddy failed to start. Check port 443 and the Caddy log." }
+
+  if ($ConfigureFirewall) {
+    New-NetFirewallRule -DisplayName "Admrail ERP HTTPS LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private -ErrorAction SilentlyContinue | Out-Null
+  } else {
+    Write-Host "If needed, allow TCP 443 on the Windows Private profile only; do not open 8000 or 5432." -ForegroundColor Yellow
+  }
+
+  $RootCertificate = Join-Path $env:APPDATA "Caddy\pki\authorities\local\root.crt"
+  Write-Host "Admrail ERP LAN URL: https://$LanHost" -ForegroundColor Green
+  Write-Host "Waitress is private on 127.0.0.1:8000. Caddy provides HTTPS on TCP 443." -ForegroundColor Green
+  Write-Host "Install this public root certificate on each client: $RootCertificate" -ForegroundColor Yellow
+  Write-Host "Never distribute root.key. On client Windows, import root.crt into Trusted Root Certification Authorities." -ForegroundColor Yellow
+  Push-Location $Backend
+  try {
+    & $Python -m waitress --listen=127.0.0.1:8000 config.wsgi:application
+    if ($LASTEXITCODE -ne 0) { throw "Waitress stopped with an error." }
+  } finally { Pop-Location }
+} finally {
+  if ($CaddyProcess -and -not $CaddyProcess.HasExited) {
+    Stop-Process -Id $CaddyProcess.Id -Force -ErrorAction SilentlyContinue
+    try { Wait-Process -Id $CaddyProcess.Id -Timeout 5 -ErrorAction SilentlyContinue } catch { }
+  }
+}
