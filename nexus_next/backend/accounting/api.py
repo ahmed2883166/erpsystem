@@ -1313,6 +1313,37 @@ class JournalEntryViewSet(AccountingViewSet):
             gross_amount=Sum("total_amount"), line_count=Count("id"),
         ).order_by("tax_code__code", "tax_rate"))
 
+        # Supplier returns reduce purchases and input tax in the return period.
+        from purchasing.models import SupplierReturnLine
+        return_groups = SupplierReturnLine.objects.filter(
+            return_document__company_id=company.pk,
+            return_document__status="posted",
+            return_document__return_date__gte=date_from,
+            return_document__return_date__lte=date_to,
+            return_document__journal_entry__status=JournalEntry.Status.POSTED,
+            return_document__journal_entry__branch_id__in=branch_ids,
+        ).values(
+            "invoice_line__tax_rate", "invoice_line__tax_code_id",
+            "invoice_line__tax_code__code", "invoice_line__tax_code__name_ar",
+            "invoice_line__tax_code__category", "invoice_line__tax_code__input_tax_recoverable",
+        ).annotate(
+            taxable_base=Sum("net_amount"), tax_amount=Sum("tax_amount"),
+            gross_net=Sum("net_amount"), line_count=Count("id"),
+        )
+        for returned in return_groups:
+            purchase_rows.append({
+                "tax_rate": returned["invoice_line__tax_rate"],
+                "tax_code_id": returned["invoice_line__tax_code_id"],
+                "tax_code__code": returned["invoice_line__tax_code__code"],
+                "tax_code__name_ar": returned["invoice_line__tax_code__name_ar"],
+                "tax_code__category": returned["invoice_line__tax_code__category"],
+                "tax_code__input_tax_recoverable": returned["invoice_line__tax_code__input_tax_recoverable"],
+                "taxable_base": -returned["taxable_base"],
+                "tax_amount": -returned["tax_amount"],
+                "gross_amount": -(returned["gross_net"] + returned["tax_amount"]),
+                "line_count": returned["line_count"],
+            })
+
         def summarize(rows, purchases=False):
             """تنفيذ وظيفة summarize ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
             normalized = []
