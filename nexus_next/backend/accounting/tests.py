@@ -6,7 +6,7 @@ from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalPeriod, FiscalYear
 from audit.models import AuditEvent
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
@@ -156,6 +156,18 @@ class PostingEngineTests(TestCase):
         entry = self.make_entry(credit="90.00")
         with self.assertRaises(ValidationError):
             post_journal(entry.pk)
+
+    def test_closed_monthly_period_rejects_journal_posting(self):
+        FiscalPeriod.objects.create(
+            fiscal_year=self.year, name="2026-01",
+            start_date=date(2026, 1, 1), end_date=date(2026, 1, 31),
+            status=FiscalPeriod.Status.CLOSED,
+        )
+        entry = self.make_entry()
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
 
     def test_closed_year_rejects_posting(self):
         self.year.status = FiscalYear.Status.CLOSED
