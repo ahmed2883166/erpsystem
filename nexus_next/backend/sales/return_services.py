@@ -14,7 +14,7 @@ from accounting.services import get_account_for_role, post_journal
 from inventory.models import Product, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from audit.models import AuditEvent
-from .models import SalesInvoice, SalesReturn
+from .models import SalesInvoice, SalesReturn, SalesReturnLine
 from .services import _branch_and_year
 
 
@@ -73,7 +73,6 @@ def post_sales_return(return_id, user):
     net = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     tax = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     total = net + tax
-    cost = sum((line.cost_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
 
     delivery = invoice.delivery
     branch, year = _branch_and_year(delivery, sales_return.return_date)
@@ -81,6 +80,12 @@ def post_sales_return(return_id, user):
     # Restock at the original recorded delivery cost; the standard receipt posting first
     # credits GRNI, then the clearing entry below reclassifies that credit to COGS.
     post_stock_movement(sales_return.stock_movement_id, user)
+    # اعتمد التكلفة الفعلية التي أضافتها طبقة المخزون بعد التقريب المحاسبي.
+    for line in lines:
+        line.movement_line.refresh_from_db(fields=("cost_amount",))
+        line.cost_amount = line.movement_line.cost_amount
+        SalesReturnLine.objects.filter(pk=line.pk).update(cost_amount=line.cost_amount)
+    cost = sum((line.cost_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     grni = _return_account(sales_return.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
     cogs = _return_account(sales_return.company, AccountRole.Role.COGS)
     cost_entry = None
@@ -191,7 +196,7 @@ def reverse_sales_return(return_id, user, entry_date):
     for line in lines:
         reversal_line = posted_movement.lines.get(reversal_of_line=line.movement_line)
         if abs(reversal_line.cost_amount - line.cost_amount) > Decimal("0.0001"):
-            raise ValidationError(f"تكلفة عكس مردود المبيعات لا تطابق الأصل؛ الأصل {line.cost_amount} والعكس {reversal_line.cost_amount}. تم إلغاء العكس.")
+            raise ValidationError("تكلفة المخزون المتبقية من مردود المبيعات لا تطابق التكلفة الأصلية؛ تم إلغاء العكس.")
 
     try:
         reversal_entry = reverse_operational_journal(
