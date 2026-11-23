@@ -26,8 +26,16 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"parent": "الحساب الأب يجب أن يتبع نفس الشركة."})
         if parent and not parent.is_group:
             raise serializers.ValidationError({"parent": "الحساب الأب يجب أن يكون تجميعياً."})
-        if self.instance and parent and parent.pk == self.instance.pk:
-            raise serializers.ValidationError({"parent": "لا يمكن ربط الحساب بنفسه."})
+        if self.instance and parent:
+            visited = set()
+            node = parent
+            while node is not None:
+                if node.pk == self.instance.pk:
+                    raise serializers.ValidationError({"parent": "لا يمكن ربط الحساب بأحد أبنائه؛ سيؤدي ذلك إلى دورة في دليل الحسابات."})
+                if node.pk in visited:
+                    raise serializers.ValidationError({"parent": "يوجد تسلسل أبوة دائري في دليل الحسابات؛ راجع الهيكل قبل التعديل."})
+                visited.add(node.pk)
+                node = node.parent
         if attrs.get("is_group", getattr(self.instance, "is_group", False)) and attrs.get(
             "allow_posting", getattr(self.instance, "allow_posting", True)
         ):
