@@ -1240,8 +1240,8 @@ class JournalEntryViewSet(AccountingViewSet):
             AccountRole.Role.ACCOUNTS_RECEIVABLE, AccountRole.Role.INVENTORY,
             AccountRole.Role.VAT_INPUT, AccountRole.Role.ACCOUNTS_PAYABLE,
             AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, AccountRole.Role.VAT_OUTPUT,
-            AccountRole.Role.PAYROLL_PAYABLE, AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE,
-            AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE,
+            AccountRole.Role.PAYROLL_PAYABLE, AccountRole.Role.PAYROLL_TAX_PAYABLE,
+            AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE, AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE,
         )
         role_accounts = {
             item.role: item.account
@@ -1346,7 +1346,49 @@ class JournalEntryViewSet(AccountingViewSet):
             (disposal_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(v=Sum("debit"))["v"] or Decimal("0"))
             - (disposal_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(v=Sum("credit"))["v"] or Decimal("0"))
         )
-        non_cash_adjustments = depreciation_addback + disposal_loss - disposal_gain
+        fx_role_accounts = {
+            item.role: item.account
+            for item in AccountRole.objects.filter(
+                company_id=company_id,
+                role__in=(AccountRole.Role.UNREALIZED_FX_GAIN, AccountRole.Role.UNREALIZED_FX_LOSS),
+            ).select_related("account")
+        }
+        fx_account_ids = list({account.pk for account in fx_role_accounts.values()})
+        fx_totals = {
+            row["account_id"]: row
+            for row in period_lines.filter(account_id__in=fx_account_ids)
+            .values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
+        }
+        fx_gain_account = fx_role_accounts.get(AccountRole.Role.UNREALIZED_FX_GAIN)
+        fx_loss_account = fx_role_accounts.get(AccountRole.Role.UNREALIZED_FX_LOSS)
+        fx_gain_row = fx_totals.get(fx_gain_account.pk, {}) if fx_gain_account else {}
+        fx_loss_row = fx_totals.get(fx_loss_account.pk, {}) if fx_loss_account else {}
+        unrealized_fx_gain = (
+            (fx_gain_row.get("credit") or Decimal("0"))
+            - (fx_gain_row.get("debit") or Decimal("0"))
+        )
+        unrealized_fx_loss = (
+            (fx_loss_row.get("debit") or Decimal("0"))
+            - (fx_loss_row.get("credit") or Decimal("0"))
+        )
+        unrealized_fx_adjustment = unrealized_fx_loss - unrealized_fx_gain
+        # FX revaluation changes both profit and the AR/AP carrying balance.
+        # Reverse its non-cash effect in working capital as it is added back
+        # (or deducted) below, so the same revaluation is not counted twice.
+        fx_working_capital_offset = -unrealized_fx_adjustment
+        operating_adjustments += fx_working_capital_offset
+        working_capital.append({
+            "role": "unrealized_fx_revaluation_offset",
+            "account_code": None,
+            "account_name": "تسوية أثر إعادة تقييم العملة غير النقدية",
+            "opening_balance": Decimal("0"),
+            "closing_balance": Decimal("0"),
+            "change": Decimal("0"),
+            "cash_flow_adjustment": fx_working_capital_offset,
+        })
+        non_cash_adjustments = (
+            depreciation_addback + disposal_loss - disposal_gain + unrealized_fx_adjustment
+        )
         operating_cash_flow = net_profit + operating_adjustments + non_cash_adjustments
 
         treasury_rows = TreasuryTransaction.objects.filter(
@@ -1383,7 +1425,11 @@ class JournalEntryViewSet(AccountingViewSet):
             "net_profit": net_profit,
             "non_cash_adjustments": {
                 "depreciation": depreciation_addback, "disposal_loss": disposal_loss,
-                "disposal_gain": disposal_gain, "net": non_cash_adjustments,
+                "disposal_gain": disposal_gain,
+                "unrealized_fx_gain": unrealized_fx_gain,
+                "unrealized_fx_loss": unrealized_fx_loss,
+                "unrealized_fx_net_adjustment": unrealized_fx_adjustment,
+                "net": non_cash_adjustments,
             },
             "working_capital": working_capital,
             "missing_account_roles": missing_roles,
