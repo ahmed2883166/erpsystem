@@ -458,13 +458,6 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"supplier": "المورد موقوف."})
         if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
-        if invoice.transaction_currency_id and (
-            SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
-            or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists()
-        ):
-            raise serializers.ValidationError({
-                "invoice": "المرتجع الأجنبي متاح فقط إذا لم توجد دفعات أو إعادة تقييم سابقة على الفاتورة."
-            })
         if company and invoice.company_id != company.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
         if supplier and invoice.supplier_id != supplier.pk:
@@ -670,6 +663,13 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
         lines = attrs.get("lines", [])
         if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
+        if invoice.transaction_currency_id and (
+            SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
+            or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists()
+        ):
+            raise serializers.ValidationError({
+                "invoice": "المرتجع الأجنبي متاح فقط إذا لم توجد دفعات أو إعادة تقييم سابقة على الفاتورة."
+            })
         if company and invoice.company_id != company.pk:
             raise serializers.ValidationError({"company": "الشركة لا تطابق فاتورة المورد."})
         if supplier and invoice.supplier_id != supplier.pk:
