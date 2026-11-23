@@ -15,7 +15,7 @@ from approvals.services import refresh_financial_approval
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
 
-from .models import AttendanceRecord, Employee, EmployeeComponent, LoanInstallment, LeaveRequest, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
+from .models import AttendanceRecord, Employee, EmployeeComponent, EmployeeLoan, LoanInstallment, LeaveRequest, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
 
 CENT = Decimal("0.01")
@@ -151,7 +151,7 @@ def calculate_component(
 @transaction.atomic
 def calculate_payroll_cycle(cycle_id, actor=None):
     """احتساب دورة المرتبات ومكوناتها واستقطاعاتها للموظفين المشمولين."""
-    cycle = PayrollCycle.objects.select_for_update().select_related("company", "rule_set").get(pk=cycle_id)
+    cycle = PayrollCycle.objects.select_for_update(of=("self",)).select_related("company", "rule_set").get(pk=cycle_id)
     if cycle.status not in (PayrollCycle.Status.DRAFT, PayrollCycle.Status.CALCULATED, PayrollCycle.Status.REVIEW):
         raise ValidationError("لا يمكن إعادة احتساب دورة معتمدة أو مرحلة أو مصروفة.")
     if cycle.rule_set_id:
