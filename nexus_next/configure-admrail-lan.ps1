@@ -17,7 +17,7 @@ if ($LanHost -notmatch "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$" -or $LanHost.Contain
 
 $Content = [IO.File]::ReadAllText($EnvFile)
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
-$BackupRoot = Join-Path $env:ProgramData "Admrail\\config-backups"
+$BackupRoot = Join-Path $env:ProgramData "Admrail\config-backups"
 New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
 $CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 & icacls.exe $BackupRoot /inheritance:r /grant:r "$($CurrentIdentity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
