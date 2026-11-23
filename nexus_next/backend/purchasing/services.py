@@ -741,8 +741,20 @@ def reverse_supplier_refund(refund_id, user, entry_date):
             "اعكس المستندات الأحدث أولًا."
         )
 
-    # عكس القيد يعيد الرصيد الدائن للمورد؛ لذلك لا يُشترط وجود رصيد دائن
-    # قبل العكس. يُعالج أي نقص نقدي في حساب البنك/الخزينة ضمن ضوابط العكس.
+    # عكس القيد يعيد الرصيد الدائن للمورد، لكنه يخرج النقدية من حساب الدفع.
+    # افحص الرصيد الدفتري في تاريخ العكس حتى لا ينتج رصيد خزينة/بنك سالب.
+    cash_totals = JournalLine.objects.filter(
+        account_id=document.payment_account_id,
+        entry__entry_date__lte=entry_date,
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).aggregate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    )
+    cash_balance = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+    if cash_balance < document.amount:
+        raise ValidationError(
+            f"لا يمكن عكس الاسترداد: رصيد حساب الخزينة/البنك في تاريخ العكس ({cash_balance}) أقل من المبلغ ({document.amount})."
+        )
 
     try:
         reversal_entry = reverse_operational_journal(
