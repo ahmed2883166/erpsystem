@@ -526,6 +526,10 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [costCenters, setCostCenters] = useState<CostCenter[]>([]);
   const [journals, setJournals] = useState<Journal[]>([]);
+  const [journalSummary, setJournalSummary] = useState({ total: 0, drafts: 0, posted: 0 });
+  const [journalPage, setJournalPage] = useState(1);
+  const [journalCount, setJournalCount] = useState(0);
+  const [journalLoading, setJournalLoading] = useState(false);
   const [trialBalance, setTrialBalance] = useState<TrialBalance | null>(null);
   const [trialBalanceFrom, setTrialBalanceFrom] = useState(new Date().getFullYear()+"-01-01");
   const [trialBalanceTo, setTrialBalanceTo] = useState(localISODate());
@@ -596,14 +600,26 @@ export default function App() {
     let cancelled = false;
     setLoading(true);
     setError("");
-    Promise.all([api.accounts(companyId), api.journals(companyId), api.costCenters(companyId)])
-      .then(([accountItems, journalItems, costCenterItems]) => {
-        if (!cancelled) { setAccounts(accountItems); setJournals(journalItems); setCostCenters(costCenterItems); }
+    Promise.all([api.accounts(companyId), api.costCenters(companyId), api.journalSummary(companyId)])
+      .then(([accountItems, costCenterItems, summary]) => {
+        if (!cancelled) { setAccounts(accountItems); setCostCenters(costCenterItems); setJournalSummary(summary); }
       })
       .catch((reason: Error) => { if (!cancelled) setError(reason.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [companyId]);
+
+  useEffect(() => {
+    if (!companyId) { setJournals([]); setJournalCount(0); return; }
+    let cancelled = false;
+    setJournalLoading(true);
+    api.journals(companyId, journalPage, search).then((page) => {
+      if (!cancelled) { setJournals(page.results); setJournalCount(page.count); }
+    }).catch((reason: Error) => {
+      if (!cancelled) setJournalError(reason.message);
+    }).finally(() => { if (!cancelled) setJournalLoading(false); });
+    return () => { cancelled = true; };
+  }, [companyId, journalPage, search]);
 
   useEffect(() => {
     if (!companyId) { setBranches([]); setFiscalYears([]); return; }
@@ -659,7 +675,7 @@ const saveDraft = async () => {
     setSaving(true);
     try {
       await api.createJournal({ company: companyId, branch: Number(draft.branch), fiscal_year: Number(draft.fiscal_year), entry_number: draft.entry_number, entry_date: draft.entry_date, description: draft.description, source_type: draft.source_type, lines: journalLines.map((line) => ({ account: Number(line.account), debit: line.debit || "0", credit: line.credit || "0", description: line.description || draft.description, cost_center: line.cost_center ? Number(line.cost_center) : null })) });
-      const rows = await api.journals(targetCompanyId); setJournals(rows); setJournalModal(false); setReviewingJournal(false);
+      setJournalModal(false); setReviewingJournal(false);
       setDraft((old) => ({ ...old, entry_number: "", description: "", source_type: "manual" }));
       setJournalLines([{ account: "", debit: "", credit: "", description: "", cost_center: "" }, { account: "", debit: "", credit: "", description: "", cost_center: "" }]);
     } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر حفظ القيد."); }
@@ -669,7 +685,7 @@ const saveDraft = async () => {
 const postDraft = async (entry: Journal) => {
     if (!window.confirm("تأكيد ترحيل القيد " + entry.entry_number + "؟ لن يمكن تعديله بعد الترحيل.")) return;
     setJournalError(""); setPostingId(entry.id);
-    try { await api.postJournal(entry.id); if (companyId) setJournals(await api.journals(companyId)); setSelectedJournal(null); }
+    try { await api.postJournal(entry.id); setSelectedJournal(null); if (companyId) { const page = await api.journals(companyId, journalPage, search); setJournals(page.results); setJournalCount(page.count); setJournalSummary(await api.journalSummary(companyId)); } }
     catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر ترحيل القيد."); }
     finally { setPostingId(null); }
   };
@@ -679,7 +695,7 @@ const postDraft = async (entry: Journal) => {
     setJournalError(""); setReversingId(entry.id);
     try {
       await api.reverseJournal(entry.id);
-      if (companyId) setJournals(await api.journals(companyId));
+      if (companyId) { const page = await api.journals(companyId, journalPage, search); setJournals(page.results); setJournalCount(page.count); setJournalSummary(await api.journalSummary(companyId)); }
       if (selectedJournal?.id === entry.id) setSelectedJournal(null);
     } catch (reason) {
       setJournalError(reason instanceof Error ? reason.message : "تعذر عكس القيد.");
@@ -687,8 +703,7 @@ const postDraft = async (entry: Journal) => {
       setReversingId(null);
     }
   };
-  const filteredJournals = useMemo(() => journals.filter((entry) =>
-    `${entry.entry_number} ${entry.description}`.toLowerCase().includes(search.toLowerCase())), [journals, search]);
+  const filteredJournals = journals;
   const selectedCompany = companies.find((company) => company.id === companyId);
   const today = new Intl.DateTimeFormat("ar-EG", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
 
@@ -774,9 +789,9 @@ const postDraft = async (entry: Journal) => {
             <div className="metrics-grid">
               {[
                 { label: "عدد الحسابات", value: accounts.length.toLocaleString("ar-EG"), note: "دليل الحسابات للشركة", icon: "☷", tone: "blue" },
-                { label: "إجمالي قيود اليومية", value: journals.length.toLocaleString("ar-EG"), note: "كل حالات القيود", icon: "⇄", tone: "orange" },
-                { label: "القيود المرحلة", value: journals.filter((item) => item.status === "posted").length.toLocaleString("ar-EG"), note: "قيود معتمدة محاسبياً", icon: "✓", tone: "green" },
-                { label: "القيود المسودة", value: journals.filter((item) => item.status === "draft").length.toLocaleString("ar-EG"), note: "تحتاج إلى مراجعة وترحيل", icon: "◷", tone: "purple" },
+                { label: "إجمالي قيود اليومية", value: journalSummary.total.toLocaleString("ar-EG"), note: "إجمالي سجلات الشركة", icon: "⇄", tone: "orange" },
+                { label: "القيود المرحلة", value: journalSummary.posted.toLocaleString("ar-EG"), note: "قيود معتمدة محاسبياً", icon: "✓", tone: "green" },
+                { label: "القيود المسودة", value: journalSummary.drafts.toLocaleString("ar-EG"), note: "تحتاج إلى مراجعة وترحيل", icon: "◷", tone: "purple" },
               ].map((metric) => <article className="metric-card" key={metric.label}><div className="metric-top"><span>{metric.label}</span><i className={`metric-icon ${metric.tone}`}>{metric.icon}</i></div>
                 <strong className="metric-value">{loading ? "…" : metric.value}</strong><small>{metric.note}</small></article>)}
             </div>
@@ -809,10 +824,11 @@ const postDraft = async (entry: Journal) => {
           {active === "accounts" && <Suspense fallback={panelFallback}><AccountsPanel companyId={companyId} companyName={selectedCompany?.name_ar || "الشركة"} activity={selectedCompany?.activity} accounts={accounts} onRefresh={async () => { if (!companyId) return; const rows = await api.accounts(companyId); setAccounts(rows); }} /></Suspense>}
 
           {active === "journals" && <section className="work-panel journal-register-panel"><div className="work-panel-head"><div><h2>قيود اليومية</h2><p>سجل القيود وحالات الترحيل للشركة المحددة</p></div><button className="primary-button" onClick={() => { setReviewingJournal(false); setDraft(old => ({ ...old, source_type: "manual" })); setJournalLines([{ account: "", debit: "", credit: "", description: "", cost_center: "" }, { account: "", debit: "", credit: "", description: "", cost_center: "" }]); setJournalModal(true); setJournalError(""); }}>＋ قيد جديد</button></div>
-            {journalError && <div className="error-banner">{journalError}</div>}<div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{filteredJournals.length} نتيجة</span></div>
+            {journalError && <div className="error-banner">{journalError}</div>}<div className="table-toolbar"><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ابحث برقم القيد أو البيان…" /><span className="module-count">{journalLoading ? "جارٍ التحميل…" : `${journalCount.toLocaleString("ar-EG")} نتيجة`}</span></div>
             <div className="data-table-wrap"><table><thead><tr><th>رقم القيد</th><th>التاريخ</th><th>البيان</th><th>الفرع</th><th>المصدر</th><th>الحالة</th><th>إجراء</th></tr></thead>
               <tbody>{filteredJournals.map((entry) => <tr key={entry.id}><td className="code-cell">{entry.entry_number}</td><td>{entry.entry_date}</td><td>{entry.description}</td><td>{entry.branch_code}</td><td>{sourceNames[entry.source_type] || entry.source_type}</td><td><span className={`status-pill ${entry.status}`}>{statusNames[entry.status] || entry.status}</span></td><td>{entry.status === "draft" ? <button className="subtle-button" onClick={() => { setJournalError(""); setSelectedJournal(entry); }}>مراجعة</button> : entry.status === "posted" && entry.source_type === "manual" && !entry.reversal_of ? <button className="subtle-button" disabled={reversingId === entry.id} onClick={() => void reverseJournal(entry)}>{reversingId === entry.id ? "جارٍ العكس…" : "عكس القيد"}</button> : entry.status === "posted" ? <span className="table-secondary-text">التصحيح من الوحدة المصدر</span> : "—"}</td></tr>)}</tbody></table>
-              {!loading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div></section>}
+              {!journalLoading && !filteredJournals.length && <div className="table-empty">لا توجد قيود مطابقة للبحث.</div>}</div>
+            <div className="table-toolbar journal-pagination"><span className="module-count">صفحة {journalPage.toLocaleString("ar-EG")} من {Math.max(1, Math.ceil(journalCount / 100)).toLocaleString("ar-EG")}</span><div className="toolbar-actions"><button className="subtle-button" disabled={journalPage <= 1 || journalLoading} onClick={() => setJournalPage((page) => Math.max(1, page - 1))}>السابق</button><button className="subtle-button" disabled={journalPage >= Math.ceil(journalCount / 100) || journalLoading} onClick={() => setJournalPage((page) => page + 1)}>التالي</button></div></div></section>}
 
           {active === "reports" && <section className="work-panel"><div className="work-panel-head"><div><h2>ميزان المراجعة</h2><p>أرصدة الحسابات من القيود المرحلة فقط — للشركة المحددة</p></div><span className="coming-soon">{trialBalance?.accounts.length ?? 0} حساب</span></div>
             <div className="asset-report-filters">
