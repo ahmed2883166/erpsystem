@@ -1579,6 +1579,31 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(result.data["partial_reconciliation_count"], 0)
         self.assertFalse(result.data["is_reconciled"])
 
+    def test_payroll_partial_limitation_remains_visible_with_pending_cycle(self):
+        from hr.models import PayrollCycle
+
+        payroll_account = ChartOfAccount.objects.create(
+            company=self.company, code="2101", name_ar="مرتبات مستحقة", nature="liability",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.PAYROLL_PAYABLE, account=payroll_account,
+        )
+        PayrollCycle.objects.create(
+            company=self.company, period_start=date(2026, 3, 1),
+            period_end=date(2026, 3, 31), payment_date=date(2026, 4, 1),
+            status=PayrollCycle.Status.DRAFT,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        payroll = next(item for item in result.data["rows"] if item["key"] == "payroll")
+        self.assertEqual(payroll["status"], "partial_reconciliation")
+        self.assertEqual(payroll["pending_documents_count"], 1)
+        self.assertEqual(result.data["partial_reconciliation_count"], 1)
+        self.assertFalse(result.data["is_reconciled"])
+
     def test_unpaid_payroll_net_pay_is_listed_by_employee(self):
         from hr.models import Employee, PayrollCycle, PayrollResult
 
