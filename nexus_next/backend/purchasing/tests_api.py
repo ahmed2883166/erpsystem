@@ -1425,10 +1425,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(vat.status_code, 200, vat.data)
         self.assertEqual(vat.data["purchases"]["tax_amount"], "28.0000", vat.data)
         self.assertEqual(vat.data["input_tax"], "28.0000")
-        ledger_rows = list(JournalLine.objects.filter(
-            entry__company=self.company, account__code="1300",
-            entry__entry_date__range=("2026-03-01", "2026-03-31"),
-        ).values("entry__entry_number", "entry__status", "entry__reversal_of_id", "debit", "credit"))
+        self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0")).values("entry__entry_number", "entry__status", "entry__reversal_of_id", "debit", "credit"))
         self.assertEqual(
             Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"),
             {"vat": vat.data["ledger_reconciliation"], "ledger_rows": ledger_rows},
