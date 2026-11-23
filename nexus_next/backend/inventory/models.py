@@ -190,6 +190,7 @@ class StockMovement(models.Model):
     class MovementType(models.TextChoices):
         RECEIPT = "receipt", "استلام"
         ISSUE = "issue", "صرف"
+        SUPPLIER_RETURN = "sup_return", "مرتجع مورد"
         TRANSFER = "transfer", "تحويل"
         ADJUSTMENT = "adjustment", "تسوية جرد"
 
@@ -226,7 +227,7 @@ class StockMovement(models.Model):
                 raise ValidationError("كل المخازن يجب أن تتبع نفس الشركة.")
         if self.movement_type == self.MovementType.RECEIPT and not self.destination_warehouse_id:
             raise ValidationError({"destination_warehouse": "حدد مخزن الاستلام."})
-        if self.movement_type == self.MovementType.ISSUE and not self.source_warehouse_id:
+        if self.movement_type in (self.MovementType.ISSUE, self.MovementType.SUPPLIER_RETURN) and not self.source_warehouse_id:
             raise ValidationError({"source_warehouse": "حدد مخزن الصرف."})
         if self.movement_type == self.MovementType.TRANSFER:
             if not self.source_warehouse_id or not self.destination_warehouse_id:
