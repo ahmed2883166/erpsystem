@@ -277,7 +277,10 @@ class SubledgerReconciliationView(APIView):
             elif pending_count:
                 status = "pending_documents"
             else:
-                status = "matched"
+                # Linked-journal comparison is not a complete party-level subledger.
+                # Never label it fully reconciled until invoice allocations/open items
+                # are included in the calculation.
+                status = "partial_reconciliation"
             return {
                 "key": key, "label": label, "status": status,
                 "accounts": [{"id": a.pk, "code": a.code, "name": a.name_ar} for a in accounts],
@@ -289,7 +292,7 @@ class SubledgerReconciliationView(APIView):
                     "entry_date": line.entry.entry_date.isoformat(), "description": line.entry.description,
                     "account_code": line.account.code, "debit": str(line.debit), "credit": str(line.credit),
                 } for line in unmatched],
-                "detail": "المقارنة مبنية على القيود المرحلة المرتبطة بمستندات الوحدة مقابل كامل حركة الحساب. المستندات المسودة تظهر كتنبيه ولا تدخل في الرصيد المرحّل.",
+                "detail": "مطابقة جزئية: تقارن القيود المرحلة المرتبطة بالمستندات بحركة الحساب الرقابي. لا تمثل هذه القيمة رصيدًا مفتوحًا تفصيليًا لكل عميل أو مورد، لذلك لا تُعد اعتمادًا نهائيًا للأستاذ المساعد. المستندات المسودة تظهر كتنبيه."
             }
 
         rows = [
@@ -344,10 +347,11 @@ class SubledgerReconciliationView(APIView):
             "rows": rows, "pending_documents": pending, "pending_documents_count": pending_total,
             "posted_documents_missing_journal": missing_links, "posted_documents_missing_journal_count": missing_links_total,
             "matched_count": sum(row["status"] == "matched" for row in rows),
+            "partial_reconciliation_count": sum(row["status"] == "partial_reconciliation" for row in rows),
             "difference_count": sum(row["status"] == "difference" for row in rows),
             "pending_count": sum(row["status"] == "pending_documents" for row in rows),
             "configuration_issue_count": sum(row["status"] in ("not_configured", "invalid_account") for row in rows),
             "unavailable_count": sum(row["status"] == "historical_snapshot_unavailable" for row in rows),
-            "is_reconciled": all(row["status"] == "matched" for row in rows) and pending_total == 0 and missing_links_total == 0,
-            "note": "تقرير قراءة فقط. المسودات تظهر كتنبيه ولا تدخل في أرصدة الأستاذ. كما تُكشف المستندات المرحلة التي لا ترتبط بقيد. المخزون يُطابق بتاريخ اليوم فقط لعدم وجود سجل لقطات تاريخية؛ أي تاريخ سابق يُعلّم كبيانات غير متاحة.",
+            "is_reconciled": False,
+            "note": "تقرير قراءة فقط وفي مرحلته الحالية لا يمنح اعتماد مطابقة نهائيًا للعملاء والموردين والرواتب؛ إذ يلزم احتساب الأرصدة المفتوحة على مستوى كل طرف وتخصيصات السداد. يعرض التقرير مقارنة القيود المرتبطة، والفروق، والمسودات، والمستندات المرحلة بلا قيود. المخزون يُطابق بتاريخ اليوم فقط لعدم وجود سجل لقطات تاريخية؛ أي تاريخ سابق يُعلّم كبيانات غير متاحة.",
         })
