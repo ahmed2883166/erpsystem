@@ -1,4 +1,4 @@
-from django.contrib.auth import get_user_model
+from decimal import Decimal\n\nfrom django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
@@ -186,13 +186,22 @@ class FiscalYearJournalSafetyTests(APITestCase):
             company=self.company, code="4000", name_ar="إيرادات", nature="revenue",
             is_group=False, allow_posting=True,
         )
+        expense = ChartOfAccount.objects.create(
+            company=self.company, code="5000", name_ar="مصروفات", nature="expense",
+            is_group=False, allow_posting=True,
+        )
         self.create_and_post("manual", "REV-001", "2026-05-01", [
             {"account": self.asset.pk, "debit": "100.0000", "credit": "0"},
             {"account": revenue.pk, "debit": "0", "credit": "100.0000"},
         ])
+        self.create_and_post("manual", "EXP-001", "2026-06-01", [
+            {"account": expense.pk, "debit": "40.0000", "credit": "0"},
+            {"account": self.asset.pk, "debit": "0", "credit": "40.0000"},
+        ])
         self.create_and_post(JournalEntry.Source.CLOSING, "CLS-001", "2026-12-31", [
             {"account": revenue.pk, "debit": "100.0000", "credit": "0"},
-            {"account": self.equity.pk, "debit": "0", "credit": "100.0000"},
+            {"account": expense.pk, "debit": "0", "credit": "40.0000"},
+            {"account": self.equity.pk, "debit": "0", "credit": "60.0000"},
         ])
         review = self.client.get(
             f"/api/setup/fiscal-years/{self.year.pk}/closing_review/"
@@ -200,6 +209,16 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.assertEqual(review.status_code, 200, review.content)
         self.assertTrue(review.data["can_close"], review.data)
         self.assertEqual(review.data["unclosed_income_statement_accounts"], 0)
+        trial_balance = self.client.get(
+            f"/api/accounting/reports/trial-balance/?company={self.company.pk}"
+        )
+        self.assertEqual(trial_balance.status_code, 200, trial_balance.content)
+        self.assertEqual(Decimal(str(trial_balance.data["difference"])), Decimal("0"))
+        pnl_rows = [
+            row for row in trial_balance.data["accounts"]
+            if row["account_id"] in (revenue.pk, expense.pk)
+        ]
+        self.assertTrue(all(Decimal(str(row["closing_balance"])) == 0 for row in pnl_rows))
         closed = self.client.post(
             f"/api/setup/fiscal-years/{self.year.pk}/close/", {}, format="json"
         )
