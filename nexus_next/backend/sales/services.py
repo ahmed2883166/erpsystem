@@ -145,7 +145,7 @@ def post_sales_invoice(invoice_id, user):
         journal_lines.append(JournalLine(entry=entry, account=vat_output, description="ضريبة قيمة مضافة مخرجات", debit=0, credit=tax))
     JournalLine.objects.bulk_create(journal_lines)
     try:
-        posted = post_journal(entry.pk)
+        posted = post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
