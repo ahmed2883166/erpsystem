@@ -55,7 +55,7 @@ try {
     }
 
     $Bytes = New-Object byte[] 36
-    [Security.Cryptography.RandomNumberGenerator]::Fill($Bytes)
+    $Rng = New-Object Security.Cryptography.RNGCryptoServiceProvider`n    try { $Rng.GetBytes($Bytes) } finally { $Rng.Dispose() }
     $DbPassword = [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+','A').Replace('/','B')
     $SqlPassword = $DbPassword.Replace("'","''")
     $null = Invoke-Psql "postgres" "CREATE ROLE admrail_app LOGIN PASSWORD '$SqlPassword';"
@@ -63,7 +63,7 @@ try {
     Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 
     $SecretBytes = New-Object byte[] 64
-    [Security.Cryptography.RandomNumberGenerator]::Fill($SecretBytes)
+    $Rng = New-Object Security.Cryptography.RNGCryptoServiceProvider`n    try { $Rng.GetBytes($SecretBytes) } finally { $Rng.Dispose() }
     $DjangoSecret = [Convert]::ToBase64String($SecretBytes).TrimEnd('=').Replace('+','-').Replace('/','_')
     $EnvText = Get-Content -LiteralPath $EnvExample -Raw
     $Replacements = @{
