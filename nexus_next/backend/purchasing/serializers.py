@@ -631,6 +631,8 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, allow_null=True)
+    reversal_movement_status = serializers.CharField(source="reversal_stock_movement.status", read_only=True, allow_null=True)
     transaction_currency_code = serializers.CharField(source="invoice.transaction_currency.code", read_only=True, allow_null=True)
     transaction_exchange_rate = serializers.DecimalField(source="invoice.exchange_rate", max_digits=20, decimal_places=10, read_only=True, allow_null=True)
 
@@ -641,14 +643,16 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
             "return_number", "return_date", "status", "net_amount", "tax_amount",
             "grand_total", "transaction_currency_code", "transaction_exchange_rate",
             "transaction_net_amount", "transaction_tax_amount", "transaction_grand_total",
-            "movement_status", "journal_entry", "journal_number",
-            "notes", "lines", "return_lines", "created_at", "posted_at",
+            "movement_status", "journal_entry", "journal_number", "reversal_date",
+            "reversal_journal_entry", "reversal_journal_number", "reversal_movement_status",
+            "notes", "lines", "return_lines", "created_at", "posted_at", "reversed_at",
         )
         read_only_fields = (
             "status", "net_amount", "tax_amount", "grand_total", "transaction_net_amount",
             "transaction_tax_amount", "transaction_grand_total", "transaction_currency_code",
             "transaction_exchange_rate", "movement_status",
-            "journal_entry", "journal_number", "return_lines", "created_at", "posted_at",
+            "journal_entry", "journal_number", "reversal_date", "reversal_journal_entry",
+            "reversal_journal_number", "reversal_movement_status", "return_lines", "created_at", "posted_at", "reversed_at",
         )
 
     def validate(self, attrs):
