@@ -73,6 +73,26 @@ def post_sales_return(return_id, user):
     net = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     tax = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     total = net + tax
+    if invoice.transaction_currency_id:
+        if any(
+            line.transaction_net_amount is None or line.transaction_tax_amount is None
+            for line in lines
+        ):
+            raise ValidationError("لقطات العملة الأجنبية غير مكتملة في بنود مردود المبيعات.")
+        transaction_net = sum(
+            (line.transaction_net_amount for line in lines), Decimal("0")
+        ).quantize(Decimal("0.0001"))
+        transaction_tax = sum(
+            (line.transaction_tax_amount for line in lines), Decimal("0")
+        ).quantize(Decimal("0.0001"))
+        transaction_total = transaction_net + transaction_tax
+    else:
+        if any(
+            line.transaction_net_amount is not None or line.transaction_tax_amount is not None
+            for line in lines
+        ):
+            raise ValidationError("لا يجوز وجود مبالغ أجنبية على مردود فاتورة بالعملة الأساسية.")
+        transaction_net = transaction_tax = transaction_total = None
 
     delivery = invoice.delivery
     branch, year = _branch_and_year(delivery, sales_return.return_date)
@@ -134,12 +154,16 @@ def post_sales_return(return_id, user):
     sales_return.net_total = net
     sales_return.tax_total = tax
     sales_return.grand_total = total
+    sales_return.transaction_net_total = transaction_net
+    sales_return.transaction_tax_total = transaction_tax
+    sales_return.transaction_grand_total = transaction_total
     sales_return.journal_entry = posted
     sales_return.cost_journal_entry = cost_entry
     sales_return.status = SalesReturn.Status.POSTED
     sales_return.posted_at = timezone.now()
     sales_return.save(update_fields=(
-        "net_total", "tax_total", "grand_total", "journal_entry",
+        "net_total", "tax_total", "grand_total", "transaction_net_total",
+        "transaction_tax_total", "transaction_grand_total", "journal_entry",
         "cost_journal_entry", "status", "posted_at",
     ))
     return sales_return
