@@ -121,7 +121,9 @@ class BackupConfigurationView(APIView):
 
     def get(self, request):
         """عرض حالة النسخ بصورة منقحة؛ تفاصيل المسارات والسجل لمدير النظام فقط."""
-        can_manage = request.user.is_superuser and not is_platform_owner(request.user)
+        if is_platform_owner(request.user):
+            raise PermissionDenied("مالك المنصة لا يطّلع على إعدادات النسخ الاحتياطي الخاصة بالشركات.")
+        can_manage = request.user.is_superuser
         config = _config()
         payload = _serialize(config, can_manage)
         if can_manage:
