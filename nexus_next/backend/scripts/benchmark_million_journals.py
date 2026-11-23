@@ -89,7 +89,10 @@ def main():
         if response.status_code != 200:
             result["body_preview"] = response.content[:1000].decode("utf-8", "replace")
             metrics[name] = result
-            raise RuntimeError(f"{name} returned HTTP {response.status_code}")
+            print(f"{name} ERROR BODY: {result['body_preview']}", flush=True)
+            output = Path(os.getenv("BENCHMARK_OUTPUT", "million-journal-benchmark.json"))
+            output.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+            raise RuntimeError(f"{name} returned HTTP {response.status_code}: {result['body_preview']}")
         data = response.data
         if row_key:
             rows = data.get(row_key, []) if isinstance(data, dict) else data
