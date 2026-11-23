@@ -25,6 +25,14 @@ if ($Settings["DJANGO_ENV"] -ne "production" -or $Settings["DJANGO_DEBUG"] -noti
 if (-not $Settings["DJANGO_ALLOWED_HOSTS"] -or -not $Settings["CSRF_TRUSTED_ORIGINS"]) {
   throw "DJANGO_ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS must be configured for LAN."
 }
+$WebThreads = 32
+if ($Settings["ADMRAIL_WEB_THREADS"]) {
+  $ParsedThreads = 0
+  if (-not [int]::TryParse($Settings["ADMRAIL_WEB_THREADS"], [ref]$ParsedThreads) -or $ParsedThreads -lt 8 -or $ParsedThreads -gt 64) {
+    throw "ADMRAIL_WEB_THREADS must be an integer from 8 to 64."
+  }
+  $WebThreads = $ParsedThreads
+}
 $LanHost = $Settings["ADMRAIL_LAN_HOST"]
 if ($LanHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$") { throw "ADMRAIL_LAN_HOST must be a stable internal DNS name." }
 $AllowedHosts = @($Settings["DJANGO_ALLOWED_HOSTS"].Split(",") | ForEach-Object { $_.Trim() })
@@ -88,12 +96,12 @@ try {
 
   $RootCertificate = Join-Path $env:APPDATA "Caddy\pki\authorities\local\root.crt"
   Write-Host "Admrail ERP LAN URL: https://$LanHost" -ForegroundColor Green
-  Write-Host "Waitress is private on 127.0.0.1:8000. Caddy provides HTTPS on TCP 443." -ForegroundColor Green
+  Write-Host "Waitress is private on 127.0.0.1:8000 with $WebThreads worker threads. Caddy provides HTTPS on TCP 443." -ForegroundColor Green
   Write-Host "Install this public root certificate on each client: $RootCertificate" -ForegroundColor Yellow
   Write-Host "Never distribute root.key. On client Windows, import root.crt into Trusted Root Certification Authorities." -ForegroundColor Yellow
   Push-Location $Backend
   try {
-    & $Python -m waitress --listen=127.0.0.1:8000 config.wsgi:application
+    & $Python -m waitress --listen=127.0.0.1:8000 "--threads=$WebThreads" config.wsgi:application
     if ($LASTEXITCODE -ne 0) { throw "Waitress stopped with an error." }
   } finally { Pop-Location }
 } finally {
