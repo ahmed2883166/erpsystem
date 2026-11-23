@@ -192,6 +192,7 @@ class StockMovement(models.Model):
         ISSUE = "issue", "صرف"
         SUPPLIER_RETURN = "sup_return", "مرتجع مورد"
         SUPPLIER_RETURN_REVERSAL = "sup_rev", "عكس مرتجع مورد"
+        SALES_RETURN_REVERSAL = "sal_rev", "عكس مردود مبيعات"
         TRANSFER = "transfer", "تحويل"
         ADJUSTMENT = "adjustment", "تسوية جرد"
 
@@ -228,7 +229,7 @@ class StockMovement(models.Model):
                 raise ValidationError("كل المخازن يجب أن تتبع نفس الشركة.")
         if self.movement_type == self.MovementType.RECEIPT and not self.destination_warehouse_id:
             raise ValidationError({"destination_warehouse": "حدد مخزن الاستلام."})
-        if self.movement_type in (self.MovementType.ISSUE, self.MovementType.SUPPLIER_RETURN) and not self.source_warehouse_id:
+        if self.movement_type in (self.MovementType.ISSUE, self.MovementType.SUPPLIER_RETURN, self.MovementType.SALES_RETURN_REVERSAL) and not self.source_warehouse_id:
             raise ValidationError({"source_warehouse": "حدد مخزن الصرف."})
         if self.movement_type == self.MovementType.TRANSFER:
             if not self.source_warehouse_id or not self.destination_warehouse_id:
@@ -254,6 +255,7 @@ class StockMovementLine(models.Model):
     unit_cost = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     cost_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     adjustment_direction = models.CharField(max_length=3, choices=AdjustmentDirection.choices, blank=True)
+    reversal_of_line = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="reversal_lines")
 
     class Meta:
         ordering = ("id",)
