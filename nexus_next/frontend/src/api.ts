@@ -296,6 +296,7 @@ export type GeneralLedgerReport = {
   company:number; account:number; account_code:string; account_name:string; date_from:string; date_to:string;
   opening_balance:string; closing_balance:string;
   rows:{line_id:number;date:string;entry_id:number;entry_number:string;description:string;source_type:string;branch:string;debit:string;credit:string;running_balance:string}[];
+  pagination:{page:number;page_size:number;total_rows:number;total_pages:number;has_next:boolean;has_previous:boolean};
 };
 export type EquityChangesReport = {
   company:number; date_from:string; date_to:string; opening_equity:string; equity_movements:string;
@@ -481,7 +482,7 @@ export const api = {
   // جلب قائمة الدخل للفترة المحددة.
   incomeStatement: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => request<IncomeStatementReport>(`/api/accounting/journal-entries/income-statement/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branch ? `&branch=${branch}` : ""}`),
   // جلب حركة الأستاذ العام لحساب محدد خلال الفترة.
-  generalLedger: (companyId: number, accountId: number, dateFrom: string, dateTo: string, branch?: number) => request<GeneralLedgerReport>(`/api/accounting/journal-entries/general-ledger/?company=${companyId}&account=${accountId}&date_from=${dateFrom}&date_to=${dateTo}${branch ? `&branch=${branch}` : ""}`),
+  generalLedger: (companyId: number, accountId: number, dateFrom: string, dateTo: string, branch?: number, page = 1, pageSize = 100) => request<GeneralLedgerReport>(`/api/accounting/journal-entries/general-ledger/?company=${companyId}&account=${accountId}&date_from=${dateFrom}&date_to=${dateTo}&page=${page}&page_size=${pageSize}${branch ? `&branch=${branch}` : ""}`),
   // جلب تقرير التغيرات في حقوق الملكية للفترة.
   changesInEquity: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => request<EquityChangesReport>(`/api/accounting/journal-entries/changes-in-equity/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branch ? `&branch=${branch}` : ""}`),
   // جلب قائمة العملاء للشركة.
