@@ -359,6 +359,57 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(second.status_code, 400, second.data)
         self.assertEqual(EmployeeComponent.objects.filter(employee=self.employee, component=component).count(), 1)
 
+    def test_employee_loan_disbursement_posts_treasury_payment_and_activates_installments(self):
+        year = FiscalYear.objects.create(
+            company=self.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        receivable = ChartOfAccount.objects.create(
+            company=self.company, code="HR-LOAN-REC", name_ar="ذمم سلف الموظفين",
+            nature="asset", is_group=False, allow_posting=True,
+        )
+        cash = ChartOfAccount.objects.create(
+            company=self.company, code="HR-LOAN-CASH", name_ar="خزينة السلف",
+            nature="asset", is_group=False, allow_posting=True,
+        )
+        treasury = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash,
+            kind=TreasuryAccount.Kind.CASH, code="HR-LOAN-CASH",
+            name_ar="خزينة السلف", currency_code="EGP",
+            opening_balance=Decimal("10000"),
+        )
+        created = self.client.post("/api/hr/employee-loans/create-with-schedule/", {
+            "employee": self.employee.pk, "reference": "LOAN-DISBURSE-001",
+            "issue_date": "2026-04-01", "principal": "2000",
+            "installment_count": 2, "installment_amount": "1000",
+            "receivable_account": receivable.pk, "notes": "",
+            "installments": [
+                {"due_date": "2026-05-01", "amount": "1000"},
+                {"due_date": "2026-06-01", "amount": "1000"},
+            ],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["status"], EmployeeLoan.Status.DRAFT)
+        loan_id = created.data["id"]
+
+        disbursed = self.client.post(
+            f"/api/hr/employee-loans/{loan_id}/disburse/",
+            {"treasury_account": treasury.pk}, format="json",
+        )
+        self.assertEqual(disbursed.status_code, 200, disbursed.data)
+        self.assertEqual(disbursed.data["status"], EmployeeLoan.Status.ACTIVE)
+        self.assertIsNotNone(disbursed.data["disbursement_transaction"])
+        self.assertIsNotNone(disbursed.data["disbursed_at"])
+        loan = EmployeeLoan.objects.get(pk=loan_id)
+        treasury_doc = loan.disbursement_transaction
+        self.assertEqual(treasury_doc.status, TreasuryTransaction.Status.POSTED)
+        self.assertEqual(treasury_doc.amount, Decimal("2000.0000"))
+        self.assertEqual(treasury_doc.journal_entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(
+            list(treasury_doc.journal_entry.lines.order_by("debit").values_list("account_id", "debit", "credit")),
+            [(receivable.pk, Decimal("0.0000"), Decimal("2000.0000")), (cash.pk, Decimal("2000.0000"), Decimal("0.0000"))],
+        )
+
     def test_manual_loan_installments_cannot_exceed_loan_principal(self):
         loan = EmployeeLoan.objects.create(
             employee=self.employee, reference="LOAN-CAP", issue_date=date(2026, 1, 1),
