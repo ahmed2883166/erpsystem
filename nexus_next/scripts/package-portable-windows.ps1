@@ -67,6 +67,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root "backend\.env.example") -Destination (Join-Path $BackendTarget ".env.example") -Force
   Copy-Item -LiteralPath (Join-Path $Root "initialize-admrail.cmd") -Destination (Join-Path $Stage "initialize-admrail.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Setup-Admrail.cmd") -Destination (Join-Path $Stage "Setup-Admrail.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Remove-Old-Admrail-Database.cmd") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "scripts\Remove-Old-Admrail-Database.ps1") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "setup-admrail.ps1") -Destination (Join-Path $Stage "setup-admrail.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.ps1") -Destination (Join-Path $Stage "run-admrail-lan.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "run-admrail-lan.cmd") -Destination (Join-Path $Stage "run-admrail-lan.cmd") -Force
@@ -112,7 +114,7 @@ FIRST RUN
 5. Choose the first Admrail administrator username, email, and password when prompted.
    The wizard generates the Django secret, writes backend\.env, applies migrations,
    creates the administrator, and registers the platform owner.
-6. After the success message, double-click run-admrail.cmd and open http://127.0.0.1:8000.
+7. After the success message, double-click run-admrail.cmd and open http://127.0.0.1:8000.
 
 The wizard never installs PostgreSQL, never drops an existing database, and refuses to
 reuse existing admrail_app / admrail_db names. Keep backend\.env private. If setup stops
@@ -172,7 +174,7 @@ Never expose ports 8000 or 5432 to employee devices.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Remove-Old-Admrail-Database.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
