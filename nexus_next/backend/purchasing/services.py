@@ -694,26 +694,24 @@ def reverse_supplier_refund(refund_id, user, entry_date):
     if document.journal_entry.status != JournalEntry.Status.POSTED:
         raise ValidationError("القيد الأصلي لاسترداد المورد ليس مرحّلًا.")
 
-    # لا نعكس استردادًا سابقًا إذا كانت استردادات لاحقة قد استهلكت الرصيد
-    # الدائن الناتج عنه؛ كما نتحقق من كفاية الرصيد الحالي قبل إعادة القيد.
+    # لا نعكس استردادًا إذا وُجد استرداد مرحّل أحدث منه؛ ويُحسم الترتيب
+    # داخل اليوم نفسه برقم السجل حتى لا يحجب كل استردادٍ الآخر.
     later_refunds = SupplierRefund.objects.filter(
         company_id=document.company_id,
         supplier_id=document.supplier_id,
         status=SupplierRefund.Status.POSTED,
-        refund_date__gte=document.refund_date,
-    ).exclude(pk=document.pk)
+    ).filter(
+        Q(refund_date__gt=document.refund_date)
+        | Q(refund_date=document.refund_date, pk__gt=document.pk)
+    )
     if later_refunds.exists():
         raise ValidationError(
-            "لا يمكن عكس هذا الاسترداد لوجود استردادات أخرى لاحقة للمورد؛ "
-            "اعكس المستندات اللاحقة أولًا."
+            "لا يمكن عكس هذا الاسترداد لوجود استردادات أحدث للمورد؛ "
+            "اعكس المستندات الأحدث أولًا."
         )
-    available_credit = supplier_credit_balance(
-        document.company_id, document.supplier_id, timezone.localdate(),
-    )
-    if available_credit < document.amount:
-        raise ValidationError(
-            "لا يمكن عكس الاسترداد لأن الرصيد الدائن المتاح لا يكفي لإعادة المبلغ إلى حساب المورد."
-        )
+
+    # عكس القيد يعيد الرصيد الدائن للمورد؛ لذلك لا يُشترط وجود رصيد دائن
+    # قبل العكس. يُعالج أي نقص نقدي في حساب البنك/الخزينة ضمن ضوابط العكس.
 
     try:
         reversal_entry = reverse_operational_journal(
