@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from companies.models import FiscalYear
-from companies.access import ensure_fiscal_period_open
+from companies.access import acquire_fiscal_year_lock, ensure_fiscal_period_open
 from audit.models import AuditEvent
 from .models import JournalEntry
 
@@ -51,9 +51,10 @@ def post_journal(entry_id: int) -> JournalEntry:
     entry = JournalEntry.objects.select_for_update().select_related(
         "company", "company__base_currency", "branch", "fiscal_year"
     ).get(pk=entry_id)
-    # Serialize posting against year closure so a concurrent close cannot pass
-    # its checks while a journal is still being posted.
-    fiscal_year = FiscalYear.objects.select_for_update().get(pk=entry.fiscal_year_id)
+    # Shared transaction lock allows independent postings to proceed together,
+    # while fiscal-year/period closure takes the matching exclusive lock.
+    fiscal_year = FiscalYear.objects.get(pk=entry.fiscal_year_id)
+    acquire_fiscal_year_lock(fiscal_year, shared=True)
 
     if entry.status != JournalEntry.Status.DRAFT:
         raise ValidationError("لا يمكن ترحيل إلا القيود المسجلة كمسودة.")
