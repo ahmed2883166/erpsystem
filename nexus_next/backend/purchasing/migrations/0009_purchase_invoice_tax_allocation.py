@@ -5,7 +5,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
     dependencies = [
         ("companies", "0003_companymembership_branch_scope"),
-        ("inventory", "0008_fifo_cost_lineage"),
+        ("inventory", "0009_stock_cost_layer_precision"),
         ("purchasing", "0008_supplier_payment_reversed_status"),
     ]
 
