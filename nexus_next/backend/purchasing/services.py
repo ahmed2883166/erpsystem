@@ -698,7 +698,7 @@ def post_supplier_refund(refund_id, user):
         ),
     ])
     try:
-        posted_entry = post_journal(entry.pk)
+        posted_entry = post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
