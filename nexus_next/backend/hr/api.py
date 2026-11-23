@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -9,6 +10,12 @@ from rest_framework.permissions import IsAuthenticated
 
 from accounting.permissions import CompanyRolePermission
 from audit.models import AuditEvent
+from companies.models import FiscalYear
+from treasury.models import TreasuryAccount, TreasuryTransaction
+from treasury.services import post_treasury_transaction
+from approvals.models import FinancialApprovalRequest
+from approvals.services import refresh_financial_approval
+
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from .models import (
     AttendanceRecord, Department, Employee, EmployeeComponent, EmployeeLoan, EmployeeSalaryHistory, LoanInstallment,
@@ -247,7 +254,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         employee = serializer.validated_data["employee"]
         self.check_employee_write(employee)
-        serializer.save(outstanding_balance=serializer.validated_data["principal"])
+        serializer.save(outstanding_balance=serializer.validated_data["principal"], status=EmployeeLoan.Status.DRAFT)
 
     @decorators.action(detail=False, methods=("post",), url_path="create-with-schedule")
     def create_with_schedule(self, request):
@@ -277,12 +284,112 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
         if abs(sum(amounts, Decimal("0")) - principal) > Decimal("0.0001"):
             raise ValidationError({"installments": "مجموع الأقساط يجب أن يساوي أصل السلفة."})
         with transaction.atomic():
-            loan = serializer.save(outstanding_balance=principal)
+            loan = serializer.save(outstanding_balance=principal, status=EmployeeLoan.Status.DRAFT)
             LoanInstallment.objects.bulk_create([
                 LoanInstallment(loan=loan, due_date=due_date, amount=amount)
                 for due_date, amount in normalized
             ])
         return response.Response(self.get_serializer(loan).data, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=("post",), url_path="disburse")
+    @transaction.atomic
+    def disburse(self, request, pk=None):
+        """إعداد صرف السلفة من الخزينة وترحيله بعد استيفاء الاعتماد المالي."""
+        loan = EmployeeLoan.objects.select_for_update().select_related(
+            "employee__company__base_currency", "employee__branch", "receivable_account",
+            "disbursement_transaction",
+        ).get(pk=self.get_object().pk)
+        employee = loan.employee
+        self.check_employee_write(employee)
+
+        if loan.status in (EmployeeLoan.Status.SETTLED, EmployeeLoan.Status.SUSPENDED):
+            raise ValidationError("لا يمكن صرف سلفة مسددة أو موقوفة.")
+        if loan.disbursement_transaction_id:
+            treasury_doc = TreasuryTransaction.objects.select_for_update().select_related(
+                "source_account", "counter_account", "fiscal_year",
+            ).get(pk=loan.disbursement_transaction_id)
+            if treasury_doc.status == TreasuryTransaction.Status.POSTED:
+                if loan.status != EmployeeLoan.Status.ACTIVE:
+                    loan.status = EmployeeLoan.Status.ACTIVE
+                    loan.disbursed_at = loan.disbursed_at or timezone.now()
+                    loan.disbursed_by = loan.disbursed_by or request.user
+                    loan.save(update_fields=("status", "disbursed_at", "disbursed_by"))
+                return response.Response(self.get_serializer(loan).data)
+            if treasury_doc.status != TreasuryTransaction.Status.DRAFT:
+                raise ValidationError("مستند صرف السلفة ملغي؛ راجع السلفة وأنشئ إجراء تصحيح معتمد.")
+        else:
+            if loan.status != EmployeeLoan.Status.DRAFT:
+                raise ValidationError("السلفة الحالية لا تحتوي على مستند صرف؛ لا يمكن إنشاء صرف مكرر تلقائيًا.")
+            if not loan.receivable_account_id:
+                raise ValidationError({"receivable_account": "حدد حساب ذمم سلف الموظفين قبل الصرف."})
+            if (
+                loan.receivable_account.company_id != employee.company_id
+                or loan.receivable_account.nature != "asset"
+                or loan.receivable_account.is_group
+                or not loan.receivable_account.allow_posting
+                or not loan.receivable_account.is_active
+            ):
+                raise ValidationError({"receivable_account": "حساب ذمم السلف يجب أن يكون أصلًا تفصيليًا نشطًا قابلًا للترحيل."})
+            treasury_account_id = request.data.get("treasury_account")
+            if not treasury_account_id:
+                raise ValidationError({"treasury_account": "اختر الخزينة أو البنك الذي سيتم صرف السلفة منه."})
+            try:
+                treasury_account = TreasuryAccount.objects.select_for_update().select_related(
+                    "account", "company__base_currency",
+                ).get(pk=treasury_account_id, company_id=employee.company_id)
+            except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
+                raise ValidationError({"treasury_account": "حساب الخزينة غير موجود ضمن الشركة."})
+            if not treasury_account.is_active or treasury_account.account.nature != "asset":
+                raise ValidationError({"treasury_account": "اختر حساب خزينة نشطًا مرتبطًا بحساب أصول."})
+            if treasury_account.branch_id and treasury_account.branch_id != employee.branch_id:
+                raise ValidationError({"treasury_account": "فرع الخزينة لا يطابق فرع الموظف."})
+            if treasury_account.currency_code != employee.company.base_currency.code or employee.currency_id != employee.company.base_currency_id:
+                raise ValidationError({"treasury_account": "صرف السلف متاح حاليًا بالعملة الأساسية للشركة فقط؛ لا تستخدم حساب خزينة أجنبي."})
+            if treasury_account.account_id == loan.receivable_account_id:
+                raise ValidationError({"receivable_account": "حساب ذمم السلف يجب أن يختلف عن حساب الخزينة."})
+            fiscal_year = FiscalYear.objects.filter(
+                company_id=employee.company_id, status=FiscalYear.Status.OPEN,
+                start_date__lte=loan.issue_date, end_date__gte=loan.issue_date,
+            ).first()
+            if not fiscal_year:
+                raise ValidationError("لا توجد سنة مالية مفتوحة تغطي تاريخ السلفة.")
+            treasury_doc = TreasuryTransaction.objects.create(
+                company=employee.company, branch=employee.branch, fiscal_year=fiscal_year,
+                source_account=treasury_account, counter_account=loan.receivable_account,
+                kind=TreasuryTransaction.Kind.PAYMENT,
+                document_number=f"LOAN-{loan.pk}",
+                transaction_date=loan.issue_date, amount=loan.principal,
+                description=f"صرف سلفة الموظف {employee.full_name_ar} رقم {loan.reference}"[:500],
+                cash_flow_category=TreasuryTransaction.CashFlowCategory.FINANCING,
+                created_by=request.user,
+            )
+            loan.disbursement_transaction = treasury_doc
+            loan.status = EmployeeLoan.Status.PENDING
+            loan.save(update_fields=("disbursement_transaction", "status"))
+            refresh_financial_approval(
+                FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
+                treasury_doc, request.user,
+            )
+
+        try:
+            posted = post_treasury_transaction(treasury_doc.pk, request.user)
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+            messages = detail.values() if isinstance(detail, dict) else detail
+            flattened = " ".join(str(item) for value in messages for item in (value if isinstance(value, (list, tuple)) else [value]))
+            if "تجاوز المستند حد الاعتماد المالي" in flattened:
+                return response.Response({
+                    **self.get_serializer(loan).data,
+                    "approval_pending": True,
+                    "detail": "تم تجهيز مستند صرف السلفة؛ يلزم اعتماد حد الصرف المالي قبل إعادة تنفيذ الصرف.",
+                }, status=status.HTTP_202_ACCEPTED)
+            raise ValidationError(detail) from exc
+
+        loan.status = EmployeeLoan.Status.ACTIVE
+        loan.disbursed_at = timezone.now()
+        loan.disbursed_by = request.user
+        loan.save(update_fields=("status", "disbursed_at", "disbursed_by"))
+        return response.Response(self.get_serializer(loan).data, status=status.HTTP_200_OK)
 
 
 class EmployeeSalaryHistoryViewSet(EmployeeScopedViewSet):
