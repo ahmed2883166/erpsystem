@@ -143,7 +143,7 @@ def post_sales_return(return_id, user):
 @transaction.atomic
 def reverse_sales_return(return_id, user, entry_date):
     """عكس مردود المبيعات مع استهلاك طبقات تكلفة الاستلام الأصلي فقط."""
-    document = SalesReturn.objects.select_for_update().select_related(
+    document = SalesReturn.objects.select_for_update(of=("self",)).select_related(
         "company", "invoice", "warehouse", "journal_entry", "stock_movement",
     ).get(pk=return_id)
     if document.status != SalesReturn.Status.POSTED or not document.journal_entry_id:
