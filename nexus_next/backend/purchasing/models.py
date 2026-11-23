@@ -7,7 +7,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 from accounting.models import ChartOfAccount, TaxCode
-from companies.models import Company, Currency, ExchangeRate
+from companies.models import Branch, Company, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 from suppliers.models import Supplier
 
@@ -166,7 +166,6 @@ class PurchaseInvoiceLine(models.Model):
             if (not code.is_active or code.company_id != self.invoice.company_id
                     or code.country != self.invoice.company.country
                     or code.category == TaxCode.Category.REVERSE_CHARGE
-                    or (not code.input_tax_recoverable and code.rate > 0)
                     or code.effective_from > self.invoice.invoice_date
                     or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح أو غير قابل للخصم لهذه الشركة أو تاريخ الفاتورة."})
@@ -211,6 +210,27 @@ class PurchaseInvoiceLine(models.Model):
         if self.invoice.status == PurchaseInvoice.Status.POSTED:
             raise ValidationError("لا يمكن حذف سطور فاتورة مورد مرحلة.")
         return super().delete(*args, **kwargs)
+
+
+class PurchaseInvoiceTaxAllocation(models.Model):
+    """يحفظ توزيع ضريبة المدخلات غير القابلة للخصم بين المخزون والتكلفة المستهلكة حسب الفرع."""
+    invoice = models.ForeignKey(
+        PurchaseInvoice, on_delete=models.PROTECT, related_name="tax_allocations",
+    )
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="purchase_tax_allocations")
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", on_delete=models.PROTECT,
+        related_name="purchase_invoice_tax_allocation",
+    )
+    inventory_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    cogs_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    adjustment_loss_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("branch_id", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("invoice", "branch"), name="uq_purchase_tax_allocation_branch"),
+        ]
 
 
 class SupplierPayment(models.Model):
