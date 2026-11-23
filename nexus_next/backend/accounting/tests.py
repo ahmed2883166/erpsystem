@@ -422,6 +422,37 @@ class CompanyIsolationApiTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+    def test_journal_entries_hide_unassigned_and_inactive_branches(self):
+        main = Branch.objects.create(company=self.company_a, code="J-MAIN", name_ar="المركز الرئيسي", is_head_office=True)
+        inactive = Branch.objects.create(company=self.company_a, code="J-OLD", name_ar="فرع موقوف", is_active=False)
+        year = FiscalYear.objects.create(
+            company=self.company_a, name="2029",
+            start_date=date(2029, 1, 1), end_date=date(2029, 12, 31),
+        )
+        visible = JournalEntry.objects.create(
+            company=self.company_a, branch=main, fiscal_year=year,
+            entry_number="J-MAIN-1", entry_date=date(2029, 1, 2), description="قيد المركز الرئيسي",
+        )
+        hidden = JournalEntry.objects.create(
+            company=self.company_a, branch=inactive, fiscal_year=year,
+            entry_number="J-OLD-1", entry_date=date(2029, 1, 2), description="قيد فرع موقوف",
+        )
+        user = User.objects.create_user(username="journal_branch_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        membership = CompanyMembership.objects.create(user=user, company=self.company_a, role="viewer")
+        membership.branches.add(main)
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get("/api/accounting/journal-entries/")
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data.get("results", response.data)
+        visible_ids = [row["id"] for row in rows]
+        self.assertIn(visible.pk, visible_ids)
+        self.assertNotIn(hidden.pk, visible_ids)
+
+        hidden_detail = self.client.get(f"/api/accounting/journal-entries/{hidden.pk}/")
+        self.assertEqual(hidden_detail.status_code, 404)
+
     def test_user_cannot_read_an_unassigned_company_trial_balance(self):
         Company.objects.create(
             code="OTHER", name_ar="شركة غير مسموحة", country="SA",
