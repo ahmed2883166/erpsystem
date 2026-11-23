@@ -12,7 +12,7 @@ from rest_framework.exceptions import ValidationError
 from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.models import Branch, ExchangeRate, FiscalYear
-from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
+from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 
 from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn, SupplierReturnLine
