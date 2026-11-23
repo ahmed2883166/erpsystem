@@ -1,5 +1,6 @@
 param(
-  [switch]$EnableLan
+  [switch]$EnableLan,
+  [switch]$ConfigureFirewall
 )
 
 $ErrorActionPreference = "Stop"
@@ -149,21 +150,56 @@ try {
 
 $Bind = "127.0.0.1:8000"
 if ($EnableLan) {
-  $AllowedLine = (Select-String -Path $EnvFile -Pattern "^DJANGO_ALLOWED_HOSTS=" | Select-Object -First 1).Line
+  $LanHost = $ProductionEnv["ADMRAIL_LAN_HOST"]
+  if (-not $LanHost -or $LanHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$") {
+    throw "اضبط ADMRAIL_LAN_HOST باسم DNS داخلي ثابت مثل erp.company.lan داخل backend/.env."
+  }
   $AllowedHosts = @()
-  if ($AllowedLine) {
-    $AllowedValue = ($AllowedLine -split "=", 2)[1]
-    $AllowedValue = $AllowedValue.Replace('"', '').Replace("'", '')
-    $AllowedHosts = $AllowedValue.Split(",") | ForEach-Object { $_.Trim() }
+  if ($ProductionEnv["DJANGO_ALLOWED_HOSTS"]) {
+    $AllowedHosts = $ProductionEnv["DJANGO_ALLOWED_HOSTS"].Split(",") | ForEach-Object { $_.Trim() }
   }
-  $HasLanHost = $AllowedHosts | Where-Object { $_ -and $_ -notin @("localhost", "127.0.0.1", "[::1]") }
-  if (-not $HasLanHost) {
-    throw "قبل تفعيل الشبكة، أضف عنوان IP أو اسم جهاز الشبكة إلى DJANGO_ALLOWED_HOSTS داخل backend/.env."
+  if ($AllowedHosts -notcontains $LanHost) {
+    throw "أضف $LanHost إلى DJANGO_ALLOWED_HOSTS داخل backend/.env."
   }
-  Write-Warning "Waitress سيظل مربوطًا على 127.0.0.1 فقط. انشر الوصول من الشبكة عبر بوابة TLS عكسية موثوقة، ولا تعرض منفذ Waitress مباشرة."
+  $TrustedOrigins = @()
+  if ($ProductionEnv["CSRF_TRUSTED_ORIGINS"]) {
+    $TrustedOrigins = $ProductionEnv["CSRF_TRUSTED_ORIGINS"].Split(",") | ForEach-Object { $_.Trim().TrimEnd("/") }
+  }
+  if ($TrustedOrigins -notcontains "https://$LanHost") {
+    throw "أضف https://$LanHost إلى CSRF_TRUSTED_ORIGINS داخل backend/.env."
+  }
+  $CaddyCommand = Get-Command "caddy.exe" -ErrorAction SilentlyContinue
+  if (-not $CaddyCommand) { $CaddyCommand = Get-Command "caddy" -ErrorAction SilentlyContinue }
+  if (-not $CaddyCommand) {
+    throw "وضع LAN الآمن يحتاج Caddy مثبتًا على جهاز الخادم. ثبّته مرة واحدة ثم أعد التشغيل."
+  }
+  $CaddyDirectory = Join-Path $Root "lan"
+  New-Item -ItemType Directory -Force -Path $CaddyDirectory | Out-Null
+  $CaddyFile = Join-Path $CaddyDirectory "Caddyfile"
+  $CaddyConfig = @("https://$LanHost {", "    tls internal", "    encode zstd gzip", "    reverse_proxy 127.0.0.1:8000", "}") -join [Environment]::NewLine
+  Set-Content -LiteralPath $CaddyFile -Value $CaddyConfig -Encoding UTF8
+  $ExistingCaddy = Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -match "^caddy(\.exe)?$" -and $_.CommandLine -like "*$CaddyFile*"
+  } | Select-Object -First 1
+  if (-not $ExistingCaddy) {
+    $CaddyProcess = Start-Process -FilePath $CaddyCommand.Path -WorkingDirectory $CaddyDirectory -ArgumentList @("run", "--config", $CaddyFile, "--adapter", "caddyfile") -PassThru -WindowStyle Minimized
+    Start-Sleep -Seconds 2
+    if ($CaddyProcess.HasExited) { throw "تعذر تشغيل Caddy. راجع تعارض المنفذ 443 أو سجل Caddy." }
+  }
+  if ($ConfigureFirewall) {
+    $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $IsAdmin) { throw "شغّل PowerShell كمسؤول لاستخدام -ConfigureFirewall." }
+    New-NetFirewallRule -DisplayName "Admrail ERP HTTPS LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private -ErrorAction SilentlyContinue | Out-Null
+  } else {
+    Write-Host "إذا لم يكن المنفذ 443 مسموحًا على ملف تعريف Private، افتح PowerShell كمسؤول ونفّذ: New-NetFirewallRule -DisplayName 'Admrail ERP HTTPS LAN' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 443 -Profile Private" -ForegroundColor Yellow
+  }
+  Write-Host "LAN URL: https://$LanHost" -ForegroundColor Green
+  Write-Host "Waitress remains private on 127.0.0.1:8000; Caddy terminates internal HTTPS on TCP 443." -ForegroundColor Green
+  Write-Host "Trust the Caddy local root certificate on each client: %APPDATA%\Caddy\pki\authorities\local\root.crt" -ForegroundColor Yellow
+} else {
+  Write-Host "Admrail ERP v2 Production mode (localhost only): http://$Bind" -ForegroundColor Green
 }
 
 if (-not (Test-Path $Waitress)) { throw "لم يتم تثبيت Waitress داخل بيئة Backend." }
-Write-Host "Admrail ERP v2 Production mode (internal Waitress): http://$Bind" -ForegroundColor Green
 & $Waitress "--listen=$Bind" "config.wsgi:application"
 if ($LASTEXITCODE -ne 0) { throw "توقف خادم Waitress بخطأ." }
