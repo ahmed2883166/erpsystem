@@ -140,7 +140,7 @@ try {
       throw "توجد migrations معلقة، لكن pg_dump.exe غير موجود. أضف PostgreSQL bin إلى PATH؛ لم يتم تعديل قاعدة البيانات."
     }
 
-    $BackupDirectory = Join-Path $env:ProgramData "Admrail\\upgrade-backups"
+    $BackupDirectory = Join-Path $env:ProgramData "Admrail\upgrade-backups"
     New-Item -ItemType Directory -Force -Path $BackupDirectory | Out-Null
     $BackupIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     & icacls.exe $BackupDirectory /inheritance:r /grant:r "$($BackupIdentity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
