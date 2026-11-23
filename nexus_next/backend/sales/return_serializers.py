@@ -31,16 +31,21 @@ class SalesReturnSerializer(serializers.ModelSerializer):
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     cost_journal_number = serializers.CharField(source="cost_journal_entry.entry_number", read_only=True, allow_null=True)
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, allow_null=True)
 
     class Meta:
         model = SalesReturn
         fields = ("id", "company", "invoice", "invoice_number", "customer_name", "warehouse",
                   "return_number", "return_date", "status", "net_total", "tax_total", "grand_total",
                   "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
-                  "cost_journal_number", "notes", "lines", "line_items", "created_at", "posted_at")
+                  "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
+                  "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
+                  "notes", "lines", "line_items", "created_at", "posted_at")
         read_only_fields = ("warehouse", "status", "net_total", "tax_total", "grand_total",
                             "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
-                            "cost_journal_number", "line_items", "created_at", "posted_at")
+                            "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
+                            "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
+                            "line_items", "created_at", "posted_at")
 
     def validate(self, attrs):
         invoice = attrs.get("invoice", self.instance.invoice if self.instance else None)
