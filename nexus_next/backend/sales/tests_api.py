@@ -1234,3 +1234,31 @@ class SalesWorkflowTests(APITestCase):
             {"entry_date": "2026-03-13"}, format="json",
         )
         self.assertEqual(repeated.status_code, 400, repeated.data)
+
+    def test_customer_default_discount_and_lower_approval_limit_apply_to_new_invoice(self):
+        self.customer.default_discount_percent = Decimal("5")
+        self.customer.discount_approval_limit = Decimal("3")
+        self.customer.save(update_fields=("default_discount_percent", "discount_approval_limit"))
+
+        delivery_id, line_id = self._create_delivery("DEL-CUSTOMER-DISCOUNT")
+        response = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "INV-CUSTOMER-DISCOUNT",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["invoice_lines"][0]["discount_percent"], "5.0000")
+        self.assertEqual(response.data["discount_total"], "10.0000")
+        self.assertEqual(response.data["discount_approval_limit"], "3.0000")
+        self.assertEqual(response.data["approval_status"], "pending")
+
+        blocked = self.client.post(
+            f"/api/sales-documents/invoices/{response.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+        self.assertEqual(JournalEntry.objects.filter(
+            source_type=JournalEntry.Source.SALES, status=JournalEntry.Status.POSTED
+        ).count(), 0)
