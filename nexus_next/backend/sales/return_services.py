@@ -22,9 +22,9 @@ def _return_account(company, role):
     return get_account_for_role(company, role)
 
 
-def _post_entry(entry):
+def _post_entry(entry, user):
     try:
-        return post_journal(entry.pk)
+        return post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
@@ -126,7 +126,7 @@ def post_sales_return(return_id, user):
             JournalLine(entry=cost_entry, account=grni, description="تسوية استلام مردود المبيعات", debit=cost, credit=0),
             JournalLine(entry=cost_entry, account=cogs, description="عكس تكلفة البضاعة المرتجعة", debit=0, credit=cost),
         ])
-        cost_entry = _post_entry(cost_entry)
+        cost_entry = _post_entry(cost_entry, user)
 
     receivable = _return_account(sales_return.company, AccountRole.Role.ACCOUNTS_RECEIVABLE)
     sales_returns = _return_account(sales_return.company, AccountRole.Role.SALES_RETURNS) if net else None
@@ -153,7 +153,7 @@ def post_sales_return(return_id, user):
         entry=journal, account=receivable, description="تخفيض مديونية العميل", debit=0, credit=total
     ))
     JournalLine.objects.bulk_create(journal_lines)
-    posted = _post_entry(journal)
+    posted = _post_entry(journal, user)
 
     sales_return.net_total = net
     sales_return.tax_total = tax
