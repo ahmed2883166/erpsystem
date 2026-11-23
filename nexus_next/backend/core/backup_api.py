@@ -2,6 +2,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+import threading
+from contextlib import contextmanager
 from pathlib import Path, PureWindowsPath
 
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -19,6 +22,56 @@ from companies.access import is_platform_owner
 from .backup_crypto import BackupCryptoError
 from .models import BackupConfiguration, BackupRun
 from .reset_service import reset_preview, reset_operational_data
+
+
+_BACKUP_THREAD_LOCK = threading.Lock()
+
+
+class BackupAlreadyRunning(Exception):
+    """Raised when another backup operation already owns the host-wide lock."""
+
+
+@contextmanager
+def _backup_execution_lock():
+    """Serialize backup execution across threads and worker processes on this host."""
+    if not _BACKUP_THREAD_LOCK.acquire(blocking=False):
+        raise BackupAlreadyRunning
+    handle = None
+    locked = False
+    try:
+        lock_path = Path(tempfile.gettempdir()) / "admrail-backup-operation.lock"
+        handle = open(lock_path, "a+b")
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise BackupAlreadyRunning from exc
+        else:
+            import fcntl
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise BackupAlreadyRunning from exc
+        locked = True
+        yield
+    finally:
+        if handle is not None:
+            if locked:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+        _BACKUP_THREAD_LOCK.release()
 
 
 def _config():
@@ -84,14 +137,15 @@ class BackupConfigurationView(APIView):
         if not script.is_file():
             raise ValidationError({"detail": "ملف تشغيل النسخ الاحتياطي غير موجود."})
         try:
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
-                cwd=str(settings.BASE_DIR.parent),
-                capture_output=True,
-                text=True,
-                timeout=7200,
-                check=False,
-            )
+            with _backup_execution_lock():
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                    cwd=str(settings.BASE_DIR.parent),
+                    capture_output=True,
+                    text=True,
+                    timeout=7200,
+                    check=False,
+                )
             output = (result.stdout or "")[-6000:]
             error = (result.stderr or "")[-2000:]
             match = re.search(r"Encrypted backup verified:\s*(.+)", output)
@@ -131,6 +185,11 @@ class BackupConfigurationView(APIView):
                 "size_bytes": run.size_bytes, "created_at": run.created_at,
                 "detail": "تم إنشاء النسخة والتحقق من سلامة الأرشيف.",
             }, status=201)
+        except BackupAlreadyRunning:
+            return Response(
+                {"detail": "توجد عملية نسخ احتياطي أخرى قيد التنفيذ؛ انتظر انتهاءها ثم أعد المحاولة."},
+                status=409,
+            )
         except subprocess.TimeoutExpired:
             run = BackupRun.objects.create(status=BackupRun.Status.FAILURE, details="انتهت مهلة النسخ الاحتياطي بعد ساعتين.", started_by=request.user)
             AuditEvent.objects.create(actor=request.user, action=AuditEvent.Action.ACTION, resource="core.BackupRun", object_id=str(run.pk), http_method="POST", status_code=500, succeeded=False, metadata={"status": run.status})
@@ -155,14 +214,17 @@ class BackupConfigurationView(APIView):
                 raise ValidationError({"backup_path": "يجب اختيار مسار مطلق على قرص غير C، مثل D:\\NEXUS_Backups."})
             if any(part in (".", "..") for part in win.parts):
                 raise ValidationError({"backup_path": "المسار يحتوي على أجزاء غير مسموح بها."})
-            # Validate on the machine hosting Django; never create arbitrary paths from a request.
-            candidate = Path(raw)
-            if os.name == "nt":
-                if not candidate.exists() or not candidate.is_dir():
-                    raise ValidationError({"backup_path": "المجلد غير موجود على جهاز الخادم."})
-                if not os.access(candidate, os.W_OK):
-                    raise ValidationError({"backup_path": "لا توجد صلاحية كتابة في المجلد المحدد."})
-            config.backup_path = str(win)
+            # Revalidate only when the destination actually changes; unchanged
+            # stored paths must remain editable for schedule/retention settings.
+            current_path = PureWindowsPath(config.backup_path) if config.backup_path else None
+            if current_path != win:
+                candidate = Path(raw)
+                if os.name == "nt":
+                    if not candidate.exists() or not candidate.is_dir():
+                        raise ValidationError({"backup_path": "المجلد غير موجود على جهاز الخادم."})
+                    if not os.access(candidate, os.W_OK):
+                        raise ValidationError({"backup_path": "لا توجد صلاحية كتابة في المجلد المحدد."})
+                config.backup_path = str(win)
         if "schedule" in request.data:
             if request.data["schedule"] not in BackupConfiguration.Schedule.values:
                 raise ValidationError({"schedule": "نوع الجدولة غير صحيح."})
