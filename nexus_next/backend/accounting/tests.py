@@ -1727,6 +1727,7 @@ class SubledgerReconciliationApiTests(APITestCase):
         JournalLine.objects.create(entry=journal, account=accounts["tax"], credit=Decimal("500"))
         JournalLine.objects.create(entry=journal, account=accounts["employer_insurance"], credit=Decimal("1500"))
         post_journal(journal.pk)
+        journal.refresh_from_db()
         PayrollPosting.objects.create(cycle=cycle, branch=self.branch, journal_entry=journal)
 
         original_lines = list(journal.lines.order_by("account_id").values_list("account_id", "debit", "credit"))
