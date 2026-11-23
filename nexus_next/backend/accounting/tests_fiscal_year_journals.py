@@ -50,6 +50,27 @@ class FiscalYearJournalSafetyTests(APITestCase):
             ],
         }
 
+    def test_journal_list_uses_100_row_pages_and_summary_is_unpaginated(self):
+        JournalEntry.objects.bulk_create([
+            JournalEntry(
+                company=self.company, branch=self.branch, fiscal_year=self.year,
+                entry_number=f"PAGE-{index:03d}", entry_date="2026-06-01",
+                description="اختبار ترقيم القيود",
+            )
+            for index in range(105)
+        ])
+
+        page = self.client.get("/api/accounting/journal-entries/?company=%s&page_size=100" % self.company.pk)
+        self.assertEqual(page.status_code, 200, page.data)
+        self.assertEqual(page.data["count"], 105)
+        self.assertEqual(len(page.data["results"]), 100)
+        self.assertIsNotNone(page.data["next"])
+        self.assertIsNone(page.data["previous"])
+
+        summary = self.client.get("/api/accounting/journal-entries/summary/?company=%s" % self.company.pk)
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data, {"total": 105, "drafts": 105, "posted": 0})
+
     def test_company_admin_can_create_closing_draft_only_on_year_end(self):
         response = self.client.post(
             "/api/accounting/journal-entries/",
