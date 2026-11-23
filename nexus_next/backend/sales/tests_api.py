@@ -11,7 +11,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer
-from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
+from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
 
@@ -949,6 +949,35 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("4.0000"))
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+        self.assertIsNotNone(reversed_return.data["reversal_journal_entry"])
+        self.assertIsNotNone(reversed_return.data["reversal_stock_movement"])
+        balance.refresh_from_db()
+        self.assertEqual(balance.quantity, Decimal("3.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("120.0000"))
+        original_return_journal = JournalEntry.objects.get(pk=posted.data["journal_entry"])
+        self.assertEqual(original_return_journal.status, JournalEntry.Status.REVERSED)
+        reversal_movement = StockMovement.objects.get(pk=reversed_return.data["reversal_stock_movement"])
+        self.assertEqual(reversal_movement.movement_type, StockMovement.MovementType.SALES_RETURN_REVERSAL)
+        reversal_line = reversal_movement.lines.get()
+        self.assertIsNotNone(reversal_line.reversal_of_line_id)
+        self.assertEqual(reversal_line.reversal_of_line.movement.movement_type, StockMovement.MovementType.RECEIPT)
+        consumed = sum(
+            StockCostConsumption.objects.filter(movement_line=reversal_line).values_list("quantity", flat=True),
+            Decimal("0"),
+        )
+        self.assertEqual(consumed, Decimal("1.0000"))
+        repeated = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-15"}, format="json",
+        )
+        self.assertEqual(repeated.status_code, 400, repeated.data)
 
     def test_foreign_customer_invoice_partial_and_final_receipts_post_realized_fx(self):
         delivery_id, line_id = self._create_delivery("DEL-FX-001")
