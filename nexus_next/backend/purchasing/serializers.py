@@ -387,7 +387,30 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
             invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
             invoice.grand_total = invoice.net_total + invoice.tax_total
-            invoice.save(update_fields=("net_total", "tax_total", "grand_total"))
+            update_fields = ["net_total", "tax_total", "grand_total"]
+            if invoice.transaction_currency_id:
+                invoice.transaction_net_total = sum(
+                    (line.transaction_net_amount or Decimal("0") for line in invoice.lines.all()),
+                    Decimal("0"),
+                )
+                invoice.transaction_tax_total = sum(
+                    (line.transaction_tax_amount or Decimal("0") for line in invoice.lines.all()),
+                    Decimal("0"),
+                )
+                invoice.transaction_grand_total = (
+                    invoice.transaction_net_total + invoice.transaction_tax_total
+                )
+                expected_base = (
+                    invoice.transaction_grand_total * invoice.exchange_rate
+                ).quantize(Decimal("0.0001"))
+                if abs(expected_base - invoice.grand_total) > Decimal("0.0002") * max(invoice.lines.count(), 1):
+                    raise serializers.ValidationError(
+                        "إجمالي الفاتورة الأساسي لا يطابق الإجمالي الأجنبي مضروبًا في سعر الصرف."
+                    )
+                update_fields.extend((
+                    "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
+                ))
+            invoice.save(update_fields=update_fields)
 
         refresh_financial_approval(
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
