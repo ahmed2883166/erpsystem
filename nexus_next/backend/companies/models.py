@@ -150,6 +150,56 @@ class FiscalYear(models.Model):
         return f"{self.company.code} - {self.name}"
 
 
+class FiscalPeriod(models.Model):
+    """يمثل فترة محاسبية شهرية داخل سنة مالية مع سجل آخر إقفال وإعادة فتح."""
+    class Status(models.TextChoices):
+        OPEN = "open", "مفتوحة"
+        CLOSED = "closed", "مغلقة"
+
+    fiscal_year = models.ForeignKey(FiscalYear, on_delete=models.PROTECT, related_name="periods")
+    name = models.CharField(max_length=40)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.OPEN)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="closed_fiscal_periods")
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="reopened_fiscal_periods")
+    reopen_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("start_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("fiscal_year", "name"), name="uq_fiscal_period_year_name"),
+            models.CheckConstraint(condition=Q(end_date__gte=models.F("start_date")), name="ck_fiscal_period_dates"),
+        ]
+        indexes = [
+            models.Index(fields=("fiscal_year", "status", "start_date"), name="fiscal_period_status_idx"),
+        ]
+
+    @property
+    def company_id(self):
+        return self.fiscal_year.company_id
+
+    def clean(self):
+        super().clean()
+        if self.start_date < self.fiscal_year.start_date or self.end_date > self.fiscal_year.end_date:
+            raise ValidationError("الفترة الشهرية يجب أن تقع بالكامل داخل حدود السنة المالية.")
+        overlapping = type(self).objects.filter(
+            fiscal_year_id=self.fiscal_year_id,
+            start_date__lte=self.end_date,
+            end_date__gte=self.start_date,
+        )
+        if self.pk:
+            overlapping = overlapping.exclude(pk=self.pk)
+        if overlapping.exists():
+            raise ValidationError("تتداخل الفترة الشهرية مع فترة أخرى في نفس السنة المالية.")
+
+    def __str__(self):
+        return f"{self.fiscal_year.name} - {self.name}"
+
+
 class CompanyMembership(models.Model):
     """Explicit company and branch access for a user."""
     class Role(models.TextChoices):
