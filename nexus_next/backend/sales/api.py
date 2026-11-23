@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
@@ -12,7 +12,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from accounting.models import FxSubledgerRevaluation, JournalEntry
+from accounting.models import FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
@@ -521,6 +521,19 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             entry_date = None
         if not entry_date:
             raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        cash_account_id = receipt.payment_account_id or receipt.journal_entry.lines.filter(
+            debit__gt=0,
+        ).values_list("account_id", flat=True).first()
+        cash_totals = JournalLine.objects.filter(
+            account_id=cash_account_id,
+            entry__entry_date__lte=entry_date,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        cash_balance = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+        if cash_balance < receipt.amount:
+            raise ValidationError(
+                f"لا يمكن عكس سند القبض: رصيد حساب الخزينة/البنك في تاريخ العكس ({cash_balance}) أقل من مبلغ السند ({receipt.amount})."
+            )
         try:
             reversal = reverse_operational_journal(
                 receipt.journal_entry_id, request.user, entry_date, JournalEntry.Source.SALES
