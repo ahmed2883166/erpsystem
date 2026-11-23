@@ -51,7 +51,7 @@ try {
     $ExistingRole = Invoke-Psql "postgres" "SELECT 1 FROM pg_roles WHERE rolname = 'admrail_app';"
     $ExistingDb = Invoke-Psql "postgres" "SELECT 1 FROM pg_database WHERE datname = 'admrail_db';"
     if ($ExistingRole -or $ExistingDb) {
-        throw "A role or database named admrail_app / admrail_db already exists. Setup will not modify or overwrite it."
+        throw "An older Admrail database or login already exists (admrail_db / admrail_app). Setup will not delete it. If you have confirmed that its data is no longer needed, run Remove-Old-Admrail-Database.cmd from the package, then start setup again."
     }
 
     $Bytes = New-Object byte[] 36
