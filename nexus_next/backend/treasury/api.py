@@ -129,7 +129,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                     credit=account.opening_balance, description=f"مقابل الرصيد الافتتاحي - {account.name_ar}",
                 ),
             ])
-            posted = post_journal(entry.pk)
+            posted = post_journal(entry.pk, actor=self.request.user)
             account.opening_journal_entry = posted
             account.save(update_fields=("opening_journal_entry",))
 
