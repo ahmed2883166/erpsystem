@@ -725,7 +725,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             account_id=inventory_account.pk,
             entry__company_id=company_id,
             entry__branch_id__in=branch_ids,
-            entry__status=JournalEntry.Status.POSTED,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
         ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
         gl_balance = (gl_totals["debit"] or Decimal("0")) - (gl_totals["credit"] or Decimal("0"))
         difference = gl_balance - stock_value
