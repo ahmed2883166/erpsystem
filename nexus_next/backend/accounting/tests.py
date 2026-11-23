@@ -1551,7 +1551,7 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(stock["pending_documents_count"], 1)
         self.assertFalse(result.data["is_reconciled"])
 
-    def test_historical_inventory_date_is_not_claimed_as_reconciled_without_a_snapshot(self):
+    def test_historical_inventory_value_is_rebuilt_when_posted_movement_ledger_matches_today(self):
         inventory = ChartOfAccount.objects.create(
             company=self.company, code="1200", name_ar="المخزون", nature="asset",
         )
@@ -1563,6 +1563,6 @@ class SubledgerReconciliationApiTests(APITestCase):
         )
         self.assertEqual(result.status_code, 200, result.data)
         stock = next(item for item in result.data["rows"] if item["key"] == "inventory")
-        self.assertEqual(stock["status"], "historical_snapshot_unavailable")
-        self.assertIsNone(stock["difference"])
+        self.assertEqual(stock["status"], "matched")
+        self.assertEqual(Decimal(stock["difference"]), Decimal("0"))
         self.assertFalse(result.data["is_reconciled"])

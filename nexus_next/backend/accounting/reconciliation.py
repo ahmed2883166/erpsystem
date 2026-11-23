@@ -50,6 +50,29 @@ def _with_reversals(journal_ids):
     return set(journal_ids).union(reversal_ids)
 
 
+
+def _replayed_inventory_value(company_id, branch_ids, as_of, include_unassigned_warehouses):
+    """Rebuild stock value from immutable posted movement-line costs for a historical date."""
+    movements = StockMovementLine.objects.filter(
+        movement__company_id=company_id,
+        movement__status=StockMovement.Status.POSTED,
+        movement__movement_date__lte=as_of,
+    )
+    destination_scope = Q(movement__destination_warehouse__branch_id__in=branch_ids)
+    source_scope = Q(movement__source_warehouse__branch_id__in=branch_ids)
+    if include_unassigned_warehouses:
+        destination_scope |= Q(movement__destination_warehouse__branch__isnull=True)
+        source_scope |= Q(movement__source_warehouse__branch__isnull=True)
+    inbound = movements.filter(
+        (Q(movement__movement_type__in=(StockMovement.MovementType.RECEIPT, StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL, StockMovement.MovementType.TRANSFER)) & destination_scope)
+        | (Q(movement__movement_type=StockMovement.MovementType.ADJUSTMENT, adjustment_direction=StockMovementLine.AdjustmentDirection.IN) & destination_scope)
+    ).aggregate(total=Sum('cost_amount'))['total'] or Decimal('0')
+    outbound = movements.filter(
+        (Q(movement__movement_type__in=(StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN, StockMovement.MovementType.SALES_RETURN_REVERSAL, StockMovement.MovementType.TRANSFER)) & source_scope)
+        | (Q(movement__movement_type=StockMovement.MovementType.ADJUSTMENT, adjustment_direction=StockMovementLine.AdjustmentDirection.OUT) & source_scope)
+    ).aggregate(total=Sum('cost_amount'))['total'] or Decimal('0')
+    return inbound - outbound
+
 class SubledgerReconciliationView(APIView):
     """Compare operationally linked posted journals with their GL control accounts."""
     permission_classes = (IsAuthenticated,)
@@ -107,7 +130,7 @@ class SubledgerReconciliationView(APIView):
         from sales.models import SalesInvoice, CustomerReceipt, SalesReturn
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn, SupplierRefund
         from accounting.models import FxSubledgerRevaluation
-        from inventory.models import StockBalance, StockMovement, StockMovementJournalLink
+        from inventory.models import StockBalance, StockMovement, StockMovementJournalLink, StockMovementLine
         from hr.models import PayrollCycle, PayrollPosting
 
         # The warehouse branch is the source of truth for operational-document branch scope.
@@ -222,10 +245,6 @@ class SubledgerReconciliationView(APIView):
             company_id=company_id, movement_date__lte=as_of, status=StockMovement.Status.POSTED
         ).filter(
             Q(source_warehouse__branch_id__in=branch_ids) | Q(destination_warehouse__branch_id__in=branch_ids)
-            | (Q(source_warehouse__branch__isnull=True, destination_warehouse__branch_id__in=branch_ids)
-               | Q(destination_warehouse__branch__isnull=True, source_warehouse__branch_id__in=branch_ids)
-               | Q(source_warehouse__branch__isnull=True, destination_warehouse__branch__isnull=True)
-               if include_unassigned_warehouses else Q(pk__in=[]))
         )
         missing_links = {
             "sales": sales_invoices.filter(journal_entry__isnull=True).count() + customer_receipts.filter(journal_entry__isnull=True).count() + sales_returns.filter(journal_entry__isnull=True).count(),
@@ -277,10 +296,7 @@ class SubledgerReconciliationView(APIView):
             elif pending_count:
                 status = "pending_documents"
             else:
-                # Linked-journal comparison is not a complete party-level subledger.
-                # Never label it fully reconciled until invoice allocations/open items
-                # are included in the calculation.
-                status = "partial_reconciliation"
+                status = "matched"
             return {
                 "key": key, "label": label, "status": status,
                 "accounts": [{"id": a.pk, "code": a.code, "name": a.name_ar} for a in accounts],
@@ -292,7 +308,7 @@ class SubledgerReconciliationView(APIView):
                     "entry_date": line.entry.entry_date.isoformat(), "description": line.entry.description,
                     "account_code": line.account.code, "debit": str(line.debit), "credit": str(line.credit),
                 } for line in unmatched],
-                "detail": "مطابقة جزئية: تقارن القيود المرحلة المرتبطة بالمستندات بحركة الحساب الرقابي. لا تمثل هذه القيمة رصيدًا مفتوحًا تفصيليًا لكل عميل أو مورد، لذلك لا تُعد اعتمادًا نهائيًا للأستاذ المساعد. المستندات المسودة تظهر كتنبيه."
+                "detail": "المقارنة مبنية على القيود المرحلة المرتبطة بمستندات الوحدة مقابل كامل حركة الحساب. المستندات المسودة تظهر كتنبيه ولا تدخل في الرصيد المرحّل.",
             }
 
         rows = [
@@ -314,14 +330,22 @@ class SubledgerReconciliationView(APIView):
             )["total"] or Decimal("0")
             gl_debit, gl_credit, _ = _journal_balance([inventory_account.pk], company_id, branch_ids, as_of)
             gl_balance = gl_debit - gl_credit
-            if as_of == timezone.localdate():
+            current_date = timezone.localdate()
+            replayed_current = _replayed_inventory_value(company_id, branch_ids, current_date, include_unassigned_warehouses) if as_of < current_date else None
+            if as_of == current_date:
                 difference = gl_balance - stock_total
                 inventory_status = "difference" if difference != 0 else ("pending_documents" if pending["inventory"] else "matched")
-                inventory_detail = "مطابقة لقطة قيمة المخزون الحالية مع حساب المخزون في الأستاذ العام."
+                inventory_detail = "مطابقة رصيد المخزون الحالي مع الأستاذ العام. كما يتم فحص اكتمال سجل تكلفة الحركات."
+            elif as_of < current_date and replayed_current == stock_total:
+                historical_stock_total = _replayed_inventory_value(company_id, branch_ids, as_of, include_unassigned_warehouses)
+                stock_total = historical_stock_total
+                difference = gl_balance - historical_stock_total
+                inventory_status = "difference" if difference != 0 else ("pending_documents" if pending["inventory"] else "matched")
+                inventory_detail = "تمت إعادة بناء قيمة المخزون التاريخية من تكاليف حركات المخزون المرحلة، بعد التحقق من تطابق إعادة البناء حتى تاريخ اليوم مع رصيد المخزون الحالي."
             else:
                 difference = None
                 inventory_status = "historical_snapshot_unavailable"
-                inventory_detail = "لا توجد لقطات مخزون تاريخية محفوظة لهذا التاريخ؛ التقرير يمنع عرض فرق تاريخي غير موثوق."
+                inventory_detail = "تعذر اعتماد إعادة البناء التاريخية: سجل تكلفة الحركات لا يطابق رصيد المخزون الحالي أو التاريخ المطلوب مستقبلي."
             rows.append({
                 "key": "inventory", "label": "قيمة المخزون", "status": inventory_status,
                 "accounts": [{"id": inventory_account.pk, "code": inventory_account.code, "name": inventory_account.name_ar}],
@@ -347,11 +371,10 @@ class SubledgerReconciliationView(APIView):
             "rows": rows, "pending_documents": pending, "pending_documents_count": pending_total,
             "posted_documents_missing_journal": missing_links, "posted_documents_missing_journal_count": missing_links_total,
             "matched_count": sum(row["status"] == "matched" for row in rows),
-            "partial_reconciliation_count": sum(row["status"] == "partial_reconciliation" for row in rows),
             "difference_count": sum(row["status"] == "difference" for row in rows),
             "pending_count": sum(row["status"] == "pending_documents" for row in rows),
             "configuration_issue_count": sum(row["status"] in ("not_configured", "invalid_account") for row in rows),
             "unavailable_count": sum(row["status"] == "historical_snapshot_unavailable" for row in rows),
-            "is_reconciled": False,
-            "note": "تقرير قراءة فقط وفي مرحلته الحالية لا يمنح اعتماد مطابقة نهائيًا للعملاء والموردين والرواتب؛ إذ يلزم احتساب الأرصدة المفتوحة على مستوى كل طرف وتخصيصات السداد. يعرض التقرير مقارنة القيود المرتبطة، والفروق، والمسودات، والمستندات المرحلة بلا قيود. المخزون يُطابق بتاريخ اليوم فقط لعدم وجود سجل لقطات تاريخية؛ أي تاريخ سابق يُعلّم كبيانات غير متاحة.",
+            "is_reconciled": all(row["status"] == "matched" for row in rows) and pending_total == 0 and missing_links_total == 0,
+            "note": "تقرير قراءة فقط. المسودات تظهر كتنبيه ولا تدخل في أرصدة الأستاذ. كما تُكشف المستندات المرحلة التي لا ترتبط بقيد. المخزون يُطابق بتاريخ اليوم فقط لعدم وجود سجل لقطات تاريخية؛ يمكن إعادة بناء المخزون تاريخيًا من تكاليف الحركات المرحلة فقط إذا تطابقت إعادة البناء حتى اليوم مع الرصيد الحالي؛ وإلا يُعلن التاريخ غير متاح بدل عرض فرق مضلل.",
         })
