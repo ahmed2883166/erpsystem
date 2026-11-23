@@ -95,6 +95,16 @@ WHERE NOT d.datistemplate AND d.datname <> 'postgres';
         throw "Refusing to delete '$SelectedDb': it is the active Admrail database configured in backend/.env."
     }
 
+    # A copied standalone cleanup script must still prove that the selected
+    # database is an Admrail/Django database before any destructive action.
+    $SignatureOutput = & $script:Psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p 5432 -U postgres -d $SelectedDb -Atc "SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='django_migrations') OR EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name LIKE 'nexus_%') THEN 'admrail' ELSE 'unrecognized' END;" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not verify the selected database '$SelectedDb'. It was not deleted: $($SignatureOutput -join ' ')"
+    }
+    if (($SignatureOutput -join '').Trim() -cne "admrail") {
+        throw "Refusing to delete '$SelectedDb': no Admrail/Django database signature was found."
+    }
+
     $EscapedDb = $SelectedDb.Replace("'", "''")
     $RoleSql = @"
 SELECT COALESCE(json_agg(json_build_object('name',role_name,'relationship',relationship) ORDER BY role_name),'[]'::json)::text
