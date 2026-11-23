@@ -333,6 +333,16 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "number": payment.payment_number, "description": f"سداد فاتورة {payment.invoice.invoice_number}",
                 "debit": payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount, "credit": Decimal("0"), "sort": 0,
             })
+        returns = SupplierReturn.objects.filter(
+            invoice__in=invoices, status=SupplierReturn.Status.POSTED,
+        ).select_related("invoice")
+        for returned in returns:
+            events.append({
+                "date": returned.return_date, "kind": "supplier_return",
+                "number": returned.return_number,
+                "description": f"مرتجع مورد عن الفاتورة {returned.invoice.invoice_number}",
+                "debit": returned.grand_total, "credit": Decimal("0"), "sort": 0,
+            })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
         opening = sum(
@@ -398,7 +408,10 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                  if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= as_of),
                 Decimal("0"),
             )
-            balance_due = invoice.grand_total - paid
+            returned = invoice.returns.filter(
+                status=SupplierReturn.Status.POSTED, return_date__lte=as_of,
+            ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+            balance_due = invoice.grand_total - paid - returned
             if balance_due <= 0:
                 continue
             due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
