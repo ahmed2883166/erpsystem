@@ -170,6 +170,13 @@ def post_customer_receipt(receipt_id, user):
         raise ValidationError("لا يمكن قبض فاتورة غير مرحلة.")
     if receipt.company_id != invoice.company_id or receipt.customer_id != invoice.customer_id:
         raise ValidationError("بيانات السند لا تطابق فاتورة العميل.")
+    if CustomerReceipt.objects.filter(
+        invoice=invoice, status=CustomerReceipt.Status.POSTED,
+    ).filter(
+        Q(receipt_date__gt=receipt.receipt_date)
+        | Q(receipt_date=receipt.receipt_date, pk__gt=receipt.pk)
+    ).exists():
+        raise ValidationError("لا يمكن ترحيل سند قبض بتاريخ يسبق سندًا مرحّلًا أحدث؛ عالج المستندات بترتيبها الزمني.")
 
     if invoice.transaction_currency_id:
         if receipt.transaction_currency_id != invoice.transaction_currency_id:
