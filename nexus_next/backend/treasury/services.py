@@ -91,6 +91,8 @@ def post_treasury_transaction(transaction_id, user=None):
     try:
         require_financial_approval(FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT, doc)
     except DjangoValidationError as exc:
+        if getattr(exc, "code", None) == "approval_required":
+            raise ValidationError(str(exc), code="approval_required") from exc
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
     if doc.fiscal_year.status != FiscalYear.Status.OPEN:
         raise ValidationError("السنة المالية مغلقة.")
