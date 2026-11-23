@@ -1,9 +1,11 @@
 """Concurrent authenticated HTTP benchmark against an isolated million-entry database."""
+import atexit
 import concurrent.futures
 import http.cookiejar
 import json
 import math
 import os
+import secrets
 import socket
 import threading
 import time
@@ -26,8 +28,34 @@ from accounts.models import User
 from companies.models import Company, CompanyMembership
 from accounting.models import ChartOfAccount
 
+def require_isolated_benchmark_database():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT current_database()")
+        database_name = cursor.fetchone()[0]
+    if not (
+        database_name.endswith("benchmark")
+        or database_name.endswith("nexus_test")
+        or os.getenv("ALLOW_BENCHMARK_DATABASE") == "1"
+    ):
+        raise SystemExit(
+            f"Refusing benchmark writes to database {database_name!r}; "
+            "use an isolated *benchmark or nexus_test database."
+        )
+
+
+def deactivate_benchmark_users(usernames):
+    try:
+        for user in User.objects.filter(username__in=usernames):
+            user.is_active = False
+            user.set_unusable_password()
+            user.save(update_fields=["is_active", "password"])
+        CompanyMembership.objects.filter(user__username__in=usernames).update(is_active=False)
+    except Exception:  # noqa: BLE001 - cleanup must not hide the benchmark's original result.
+        pass
+
+
 BASE = os.getenv("BENCHMARK_BASE_URL", "http://127.0.0.1:8000")
-PASSWORD = "Concurrent-Benchmark-Only-2026!"
+PASSWORD = secrets.token_urlsafe(32)
 ITERATIONS = 5
 
 
@@ -71,12 +99,14 @@ def pct(values, fraction):
 
 
 def main():
+    require_isolated_benchmark_database()
     company = Company.objects.filter(code__startswith="BENCH-").order_by("-id").first()
     account = ChartOfAccount.objects.filter(company=company, code="1110").first() if company else None
     if not company or not account:
         raise SystemExit("The million-entry benchmark company/account was not found.")
     suffix = str(int(time.time()))
     usernames = []
+    atexit.register(deactivate_benchmark_users, usernames)
     for i in range(50):
         username = f"loadtest-{suffix}-{i+1:02d}"
         user = User.objects.create_user(username=username, password=PASSWORD)
