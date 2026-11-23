@@ -127,3 +127,79 @@ class PlatformOwnerBootstrapCommandTests(TestCase):
         with self.assertRaises(CommandError):
             call_command("bootstrap_platform_owner", username=other_user.username)
         self.assertFalse(PlatformOwner.objects.filter(user=other_user).exists())
+
+
+class BranchMembershipIsolationTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="cairo-accountant", password="long-test-password",
+        )
+        self.egp = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="BRANCH-EG", name_ar="شركة الفروع",
+            country=Company.Country.EGYPT,
+            activity=Company.Activity.COMMERCIAL,
+            base_currency=self.egp,
+        )
+        self.cairo = Branch.objects.create(
+            company=self.company, code="CAI", name_ar="القاهرة",
+        )
+        self.alex = Branch.objects.create(
+            company=self.company, code="ALX", name_ar="الإسكندرية",
+        )
+        self.other_company = Company.objects.create(
+            code="BRANCH-SA", name_ar="شركة أخرى",
+            country=Company.Country.SAUDI_ARABIA,
+            activity=Company.Activity.SERVICE,
+            base_currency=self.egp,
+        )
+        self.other_branch = Branch.objects.create(
+            company=self.other_company, code="RYD", name_ar="الرياض",
+        )
+
+    def test_user_sees_only_explicitly_assigned_active_branch(self):
+        from .models import CompanyMembership
+
+        membership = CompanyMembership.objects.create(
+            user=self.user,
+            company=self.company,
+            role=CompanyMembership.Role.ACCOUNTANT,
+            all_branches=False,
+        )
+        membership.branches.add(self.cairo)
+
+        visible_ids = set(
+            accessible_branches(self.user, self.company.pk).values_list("pk", flat=True)
+        )
+        self.assertSetEqual(visible_ids, {self.cairo.pk})
+        self.assertFalse(accessible_branches(self.user, self.other_company.pk).exists())
+
+    def test_all_branches_membership_includes_only_that_company(self):
+        from .models import CompanyMembership
+
+        membership = CompanyMembership.objects.create(
+            user=self.user,
+            company=self.company,
+            role=CompanyMembership.Role.ACCOUNTANT,
+            all_branches=True,
+        )
+        membership.branches.add(self.other_branch)
+
+        visible_ids = set(
+            accessible_branches(self.user, self.company.pk).values_list("pk", flat=True)
+        )
+        self.assertSetEqual(visible_ids, {self.cairo.pk, self.alex.pk})
+        self.assertNotIn(self.other_branch.pk, visible_ids)
+
+    def test_inactive_membership_grants_no_branch_access(self):
+        from .models import CompanyMembership
+
+        CompanyMembership.objects.create(
+            user=self.user,
+            company=self.company,
+            role=CompanyMembership.Role.ACCOUNTANT,
+            all_branches=True,
+            is_active=False,
+        )
+        self.assertFalse(accessible_branches(self.user, self.company.pk).exists())
