@@ -1,4 +1,5 @@
 from django.db.models import Q
+from django.utils import timezone, dateparse
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -8,7 +9,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from .api import SalesBaseViewSet, _sales_warehouse_accessible
 from .models import SalesReturn
 from .return_serializers import SalesReturnSerializer
-from .return_services import post_sales_return
+from .return_services import post_sales_return, reverse_sales_return
 
 
 class SalesReturnViewSet(SalesBaseViewSet):
@@ -16,6 +17,7 @@ class SalesReturnViewSet(SalesBaseViewSet):
     queryset = SalesReturn.objects.select_related(
         "company", "invoice", "invoice__customer", "invoice__delivery",
         "warehouse", "stock_movement", "journal_entry", "cost_journal_entry",
+        "reversal_stock_movement", "reversal_journal_entry", "reversed_by",
     ).prefetch_related("lines__invoice_line__delivery_line__product")
     filterset_fields = ("company", "invoice", "status", "return_date")
     search_fields = ("return_number", "invoice__invoice_number", "invoice__customer__name_ar")
@@ -70,4 +72,18 @@ class SalesReturnViewSet(SalesBaseViewSet):
         if not _sales_warehouse_accessible(request.user, sales_return.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى مخزن المردود.")
         sales_return = post_sales_return(sales_return.pk, request.user)
+        return Response(self.get_serializer(sales_return).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    def reverse(self, request, pk=None):
+        """عكس مردود المبيعات بقيد عكسي وحركة صرف من طبقات الاستلام الأصلية."""
+        sales_return = self.get_object()
+        self._check_write(sales_return.company_id)
+        if not _sales_warehouse_accessible(request.user, sales_return.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى مخزن المردود.")
+        raw_date = request.data.get("entry_date") or timezone.localdate().isoformat()
+        entry_date = dateparse.parse_date(str(raw_date))
+        if not entry_date:
+            raise ValidationError({"entry_date": "أدخل تاريخ عكس صحيحًا بصيغة YYYY-MM-DD."})
+        sales_return = reverse_sales_return(sales_return.pk, request.user, entry_date)
         return Response(self.get_serializer(sales_return).data, status=status.HTTP_200_OK)
