@@ -115,6 +115,33 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(revised_lines.data["line_items"][0]["quantity"], "7.0000")
         self.assertEqual(revised_lines.data["line_items"][0]["unit_price"], "105.0000")
 
+    def test_only_untouched_draft_purchase_order_can_be_deleted(self):
+        payload = {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-DELETE-DRAFT", "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_price": "100", "tax_rate": "14"}],
+        }
+        created = self.client.post("/api/purchasing/orders/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        draft_id = created.data["id"]
+
+        deleted = self.client.delete(f"/api/purchasing/orders/{draft_id}/")
+        self.assertEqual(deleted.status_code, 204, getattr(deleted, "data", None))
+        self.assertEqual(self.client.get(f"/api/purchasing/orders/{draft_id}/").status_code, 404)
+
+        payload["order_number"] = "PO-DELETE-CONFIRMED"
+        confirmed_order = self.client.post("/api/purchasing/orders/", payload, format="json")
+        self.assertEqual(confirmed_order.status_code, 201, confirmed_order.data)
+        confirmed_id = confirmed_order.data["id"]
+        confirmed = self.client.post(
+            f"/api/purchasing/orders/{confirmed_id}/confirm/", {}, format="json"
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        rejected = self.client.delete(f"/api/purchasing/orders/{confirmed_id}/")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(self.client.get(f"/api/purchasing/orders/{confirmed_id}/").status_code, 200)
+
     def test_receipt_posting_rejects_inactive_supplier_and_preserves_stock(self):
         created = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
