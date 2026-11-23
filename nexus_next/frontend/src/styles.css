@@ -912,3 +912,26 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
 [data-theme="dark"] .table-pagination{background:#172337;border-color:#34465f;color:#b8c7da}
 
 .journal-pagination .toolbar-actions{display:flex;align-items:center;gap:8px}
+
+
+/* بطاقة تعريف المنتج وحقوق الملكية */
+.about-program-panel{display:grid;gap:18px}
+.about-program-panel .work-panel-head{align-items:flex-start}
+.about-info-grid{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.about-info-card{min-height:112px;padding:16px}
+.about-info-value{display:block;margin-top:13px;font-size:17px;line-height:1.5}
+.about-ownership-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.about-detail-card{padding:19px;border:1px solid #e4eaf2;border-radius:12px;background:#fbfcfe}
+.about-detail-kicker{display:block;margin-bottom:10px;color:#66809f;font-size:9px;font-weight:800;letter-spacing:.65px;direction:ltr;text-align:right}
+.about-detail-card h3{margin:0 0 10px;color:#273c59;font-size:14px}
+.about-detail-card strong{display:block;color:#1e579b;font-size:15px;line-height:1.7}
+.about-detail-card p{margin:9px 0 0;color:#687991;font-size:11px;line-height:1.9}
+.about-copyright{display:grid;gap:6px;padding:15px 17px;border:1px solid #dce7f5;border-radius:11px;background:#f2f7fd;color:#34506f;font-size:11px;line-height:1.8}
+.about-copyright span{color:#687991}
+.footer-about-link{border:0;background:transparent;color:inherit;font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+@media(max-width:650px){.about-ownership-grid{grid-template-columns:1fr}.about-info-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.about-info-value{font-size:14px}}
+[data-theme="dark"] .about-detail-card{background:#172337;border-color:#34465f}
+[data-theme="dark"] .about-detail-card h3{color:#e2eaf5}
+[data-theme="dark"] .about-detail-card p{color:#b4c3d7}
+[data-theme="dark"] .about-copyright{background:#172b43;border-color:#365273;color:#d7e7fa}
+[data-theme="dark"] .about-copyright span{color:#b4c3d7}
