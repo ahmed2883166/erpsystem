@@ -75,7 +75,10 @@ def _capitalize_nonrecoverable_stock_tax(invoice_line):
     for consumption in consumptions:
         movement_line = consumption.movement_line
         movement = movement_line.movement
-        if movement.movement_type == StockMovement.MovementType.ISSUE:
+        if movement.movement_type in (
+            StockMovement.MovementType.ISSUE,
+            StockMovement.MovementType.SALES_RETURN_REVERSAL,
+        ):
             category = "cogs"
         elif (
             movement.movement_type == StockMovement.MovementType.ADJUSTMENT
@@ -621,7 +624,13 @@ def supplier_credit_balance(company_id, supplier_id, as_of):
         company_id=company_id, supplier_id=supplier_id,
         status=SupplierRefund.Status.POSTED, refund_date__lte=as_of,
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-    supplier_balance = invoice_total - payment_total - return_total + refund_total
+    revaluation_total = FxSubledgerRevaluation.objects.filter(
+        company_id=company_id,
+        purchase_invoice__supplier_id=supplier_id,
+        revaluation_date__lte=as_of,
+        journal_entry__status=JournalEntry.Status.POSTED,
+    ).aggregate(total=Sum("difference"))["total"] or Decimal("0")
+    supplier_balance = invoice_total - payment_total - return_total + refund_total + revaluation_total
     return max(Decimal("0"), -supplier_balance).quantize(Decimal("0.0001"))
 
 
@@ -649,6 +658,28 @@ def post_supplier_refund(refund_id, user):
     payable = _account(document.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     if document.payment_account_id == payable.pk:
         raise ValidationError("حساب الاسترداد يجب أن يختلف عن حساب الموردين.")
+    from treasury.models import TreasuryAccount
+    expected_kind = (
+        TreasuryAccount.Kind.CASH
+        if document.method == SupplierRefund.Method.CASH
+        else TreasuryAccount.Kind.BANK
+    )
+    treasury_account = TreasuryAccount.objects.filter(
+        company=document.company, account=document.payment_account,
+        kind=expected_kind, is_active=True,
+    ).first()
+    branch = resolve_warehouse_branch(document.company, return_document.invoice.receipt.warehouse)
+    if (
+        document.payment_account.company_id != document.company_id
+        or document.payment_account.nature != document.payment_account.Nature.ASSET
+        or not document.payment_account.is_active
+        or document.payment_account.is_group
+        or not document.payment_account.allow_posting
+        or not treasury_account
+        or (treasury_account.branch_id and treasury_account.branch_id != (branch.pk if branch else None))
+        or treasury_account.currency_code != document.company.base_currency.code
+    ):
+        raise ValidationError("حساب الاسترداد لم يعد حساب خزينة/بنك نشطًا ومطابقًا لعملة الشركة وطريقة الاسترداد والفرع.")
     branch, year = _branch_and_year(return_document.invoice.receipt, document.refund_date)
     entry = JournalEntry.objects.create(
         company=document.company, branch=branch, fiscal_year=year,
@@ -842,8 +873,9 @@ def post_supplier_return(return_id, user):
         inventory_credit += actual_cost
 
     grand_total = net_total + tax_total
-    if inventory_credit != net_total + (tax_total - recoverable_total):
-        raise ValidationError("قيمة تكلفة المخزون المرتجع لا تتطابق مع صافي المرتجع والضريبة غير القابلة للخصم.")
+    expected_inventory_credit = net_total + (tax_total - recoverable_total)
+    if abs(inventory_credit - expected_inventory_credit) > Decimal("0.0001"):
+        raise ValidationError("قيمة تكلفة المخزون المرتجع لا تتطابق مع صافي المرتجع والضريبة غير القابلة للخصم ضمن هامش التقريب.")
 
     payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     inventory = _account(invoice.company, AccountRole.Role.INVENTORY)
