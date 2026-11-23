@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from companies.access import accessible_branches, can_access_branch, can_access_company, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
+from inventory.models import StockMovement, StockMovementLine
 from .models import AccountRole, JournalEntry, JournalLine
 
 
@@ -130,7 +131,7 @@ class SubledgerReconciliationView(APIView):
         from sales.models import SalesInvoice, CustomerReceipt, SalesReturn
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn, SupplierRefund
         from accounting.models import FxSubledgerRevaluation
-        from inventory.models import StockBalance, StockMovement, StockMovementJournalLink, StockMovementLine
+        from inventory.models import StockBalance, StockMovementJournalLink
         from hr.models import PayrollCycle, PayrollPosting
 
         # The warehouse branch is the source of truth for operational-document branch scope.
