@@ -1322,6 +1322,7 @@ class JournalEntryViewSet(AccountingViewSet):
             tax_amount = Decimal("0")
             gross_amount = Decimal("0")
             recoverable_tax = Decimal("0")
+            nonrecoverable_tax = Decimal("0")
             for row in rows:
                 base = row["taxable_base"] or Decimal("0")
                 tax = row["tax_amount"] or Decimal("0")
@@ -1332,6 +1333,8 @@ class JournalEntryViewSet(AccountingViewSet):
                     row.get("tax_code_id") is not None
                     and row.get("tax_code__input_tax_recoverable", False)
                 ))
+                recoverable_amount = tax if recoverable else Decimal("0")
+                nonrecoverable_amount = tax - recoverable_amount if purchases else Decimal("0")
                 normalized.append({
                     "tax_code_id": row.get("tax_code_id"),
                     "tax_code": code,
@@ -1340,32 +1343,37 @@ class JournalEntryViewSet(AccountingViewSet):
                     "tax_rate": str(row["tax_rate"]),
                     "taxable_base": str(base),
                     "tax_amount": str(tax),
-                    "recoverable_tax_amount": str(tax if recoverable else Decimal("0")),
+                    "recoverable_tax_amount": str(recoverable_amount),
+                    "nonrecoverable_tax_amount": str(nonrecoverable_amount),
                     "gross_amount": str(gross),
                     "line_count": row.get("line_count", 0),
                 })
                 taxable_base += base
                 tax_amount += tax
                 gross_amount += gross
-                if recoverable:
-                    recoverable_tax += tax
+                recoverable_tax += recoverable_amount
+                nonrecoverable_tax += nonrecoverable_amount
                 category_row = by_category.setdefault(category, {
                     "taxable_base": Decimal("0"), "tax_amount": Decimal("0"),
                     "gross_amount": Decimal("0"), "recoverable_tax_amount": Decimal("0"),
+                    "nonrecoverable_tax_amount": Decimal("0"),
                 })
                 category_row["taxable_base"] += base
                 category_row["tax_amount"] += tax
                 category_row["gross_amount"] += gross
-                if recoverable:
-                    category_row["recoverable_tax_amount"] += tax
+                category_row["recoverable_tax_amount"] += recoverable_amount
+                category_row["nonrecoverable_tax_amount"] += nonrecoverable_amount
                 rate_key = str(row["tax_rate"])
                 rate_row = by_rate.setdefault(rate_key, {
                     "taxable_base": Decimal("0"), "tax_amount": Decimal("0"),
-                    "gross_amount": Decimal("0"),
+                    "gross_amount": Decimal("0"), "recoverable_tax_amount": Decimal("0"),
+                    "nonrecoverable_tax_amount": Decimal("0"),
                 })
                 rate_row["taxable_base"] += base
                 rate_row["tax_amount"] += tax
                 rate_row["gross_amount"] += gross
+                rate_row["recoverable_tax_amount"] += recoverable_amount
+                rate_row["nonrecoverable_tax_amount"] += nonrecoverable_amount
 
             def strings(values):
                 """تنفيذ وظيفة strings ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
@@ -1375,6 +1383,7 @@ class JournalEntryViewSet(AccountingViewSet):
                 "taxable_base": str(taxable_base),
                 "tax_amount": str(tax_amount),
                 "recoverable_tax_amount": str(recoverable_tax),
+                "nonrecoverable_tax_amount": str(nonrecoverable_tax),
                 "gross_amount": str(gross_amount),
                 "by_rate": [{"tax_rate": rate, **strings(values)} for rate, values in by_rate.items()],
                 "by_category": [{"category": category, **strings(values)}
