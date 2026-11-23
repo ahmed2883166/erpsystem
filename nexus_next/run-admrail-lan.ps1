@@ -31,7 +31,7 @@ $AllowedHosts = @($Settings["DJANGO_ALLOWED_HOSTS"].Split(",") | ForEach-Object 
 if ($AllowedHosts -notcontains $LanHost) { throw "Add $LanHost to DJANGO_ALLOWED_HOSTS." }
 $TrustedOrigins = @($Settings["CSRF_TRUSTED_ORIGINS"].Split(",") | ForEach-Object { $_.Trim().TrimEnd("/") })
 if ($TrustedOrigins -notcontains "https://$LanHost") { throw "Add https://$LanHost to CSRF_TRUSTED_ORIGINS." }
-foreach ($Key in @("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT", "DJANGO_HTTPS_TERMINATED_BY_PROXY")) {
+foreach ($Key in @("SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE", "SECURE_SSL_REDIRECT", "DJANGO_HTTPS_TERMINATED_BY_PROXY", "SECURE_HSTS_INCLUDE_SUBDOMAINS")) {
   if ($Settings[$Key] -notin @("True", "true", "1", "yes", "on")) { throw "$Key must be enabled for LAN production." }
 }
 $Hsts = 0
