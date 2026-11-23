@@ -47,7 +47,7 @@ def _default_branch_company_ids(user, companies):
     return company_ids
 from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
-from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_return
+from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
 class PurchaseBaseViewSet(viewsets.ModelViewSet):
@@ -604,6 +604,20 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         ):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
         document = post_supplier_refund(document.pk, request.user)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    def reverse(self, request, pk=None):
+        """عكس استرداد المورد وإعادة الرصيد الدائن إلى حساب المورد."""
+        document = self.get_object()
+        self._check_write(document.company_id)
+        warehouse = document.return_document.invoice.receipt.warehouse
+        if not _purchase_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
+        entry_date = parse_date(str(request.data.get("entry_date") or timezone.localdate()))
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        document = reverse_supplier_refund(document.pk, request.user, entry_date)
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
 
 
