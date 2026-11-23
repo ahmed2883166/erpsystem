@@ -9,7 +9,7 @@ from django.db.models import F, Q, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
+from accounting.models import AccountRole, ChartOfAccount, FxSubledgerRevaluation, JournalEntry, JournalLine
 from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
@@ -671,7 +671,7 @@ def post_supplier_refund(refund_id, user):
     branch = resolve_warehouse_branch(document.company, return_document.invoice.receipt.warehouse)
     if (
         document.payment_account.company_id != document.company_id
-        or document.payment_account.nature != document.payment_account.Nature.ASSET
+        or document.payment_account.nature != ChartOfAccount.Nature.ASSET
         or not document.payment_account.is_active
         or document.payment_account.is_group
         or not document.payment_account.allow_posting
