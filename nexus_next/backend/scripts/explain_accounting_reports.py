@@ -35,9 +35,13 @@ def capture_selects(client, url):
         return execute(sql, params, many, context)
 
     with connection.execute_wrapper(capture):
-        response = client.get(url)
+        # The benchmark runs with DEBUG=False and ALLOWED_HOSTS restricted to
+        # localhost; APIClient's default "testserver" host otherwise returns 400.
+        response = client.get(url, HTTP_HOST="localhost")
     if response.status_code != 200:
-        raise RuntimeError(f"{url} returned HTTP {response.status_code}: {response.content[:300]!r}")
+        raise RuntimeError(f"{url} returned HTTP {response.status_code}: {response.content[:500]!r}")
+    if not captured:
+        raise RuntimeError(f"{url} returned HTTP 200 but no SELECT statements were captured.")
     return captured
 
 
