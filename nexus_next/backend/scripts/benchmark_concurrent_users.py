@@ -9,6 +9,14 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+import sys
+
+# When executed as ``python scripts/...py``, Python puts the scripts folder
+# (not the Django project root) at sys.path[0]. Add the backend root so that
+# ``config.settings`` and the Django apps resolve exactly as they do via manage.py.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 import django
