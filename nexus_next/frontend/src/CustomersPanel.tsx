@@ -26,11 +26,11 @@ export default function CustomersPanel({ companyId }: Props) {
   const [form, setForm] = useState({
     code: "", customer_type: "company" as "company" | "individual",
     name_ar: "", tax_number: "", phone: "", mobile: "", email: "",
-    credit_limit: "0", payment_terms_days: "0", address: "",
+    credit_limit: "0", payment_terms_days: "0", default_discount_percent: "0", discount_approval_limit: "", address: "",
   });
   const resetForm = () => {
     setEditingId(null);
-    setForm({ code: "", customer_type: "company", name_ar: "", tax_number: "", phone: "", mobile: "", email: "", credit_limit: "0", payment_terms_days: "0", address: "" });
+    setForm({ code: "", customer_type: "company", name_ar: "", tax_number: "", phone: "", mobile: "", email: "", credit_limit: "0", payment_terms_days: "0", default_discount_percent: "0", discount_approval_limit: "", address: "" });
   };
 
   // تحميل قائمة العملاء للشركة الحالية وتحديث نتائج العرض.
@@ -68,7 +68,7 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
       setForm({
         code: "", customer_type: "company", name_ar: "", tax_number: "",
         phone: "", mobile: "", email: "", credit_limit: "0",
-        payment_terms_days: "0", address: "",
+        payment_terms_days: "0", default_discount_percent: "0", discount_approval_limit: "", address: "",
       });
       setShowForm(false);
       setEditingId(null);
@@ -85,7 +85,9 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
       code: customer.code, customer_type: customer.customer_type, name_ar: customer.name_ar,
       tax_number: customer.tax_number || "", phone: customer.phone || "", mobile: customer.mobile || "",
       email: customer.email || "", credit_limit: customer.credit_limit || "0",
-      payment_terms_days: String(customer.payment_terms_days || 0), address: customer.address || "",
+      payment_terms_days: String(customer.payment_terms_days || 0),
+      default_discount_percent: customer.default_discount_percent || "0",
+      discount_approval_limit: customer.discount_approval_limit || "", address: customer.address || "",
     });
     setShowForm(true);
     setError("");
@@ -161,6 +163,8 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
         <label>البريد الإلكتروني<input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
         <label>حد الائتمان<input type="number" min="0" step="0.01" value={form.credit_limit} onChange={(event) => setForm({ ...form, credit_limit: event.target.value })} /></label>
         <label>مدة السداد (يوم)<input type="number" min="0" max="32767" value={form.payment_terms_days} onChange={(event) => setForm({ ...form, payment_terms_days: event.target.value })} /></label>
+        <label>الخصم الافتراضي %<input type="number" min="0" max="100" step="0.0001" value={form.default_discount_percent} onChange={(event) => setForm({ ...form, default_discount_percent: event.target.value })} /></label>
+        <label>حد الخصم دون موافقة المدير %<input type="number" min="0" max="100" step="0.0001" value={form.discount_approval_limit} onChange={(event) => setForm({ ...form, discount_approval_limit: event.target.value })} placeholder="بدون حد خاص" /></label>
         <label className="customer-form-wide">العنوان<textarea rows={2} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></label>
         <div className="customer-form-actions customer-form-wide">
           <button className="subtle-button" type="button" disabled={saving} onClick={() => { setShowForm(false); resetForm(); }}>إلغاء</button>
