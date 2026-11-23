@@ -76,6 +76,9 @@ def main():
     metrics["balanced"] = debit_total == credit_total
 
     client = APIClient()
+    # Django DEBUG=False rejects the test client default host "testserver" when it is not in ALLOWED_HOSTS.
+    # Use the same loopback host allowed by the local Windows deployment settings.
+    client.defaults["HTTP_HOST"] = "127.0.0.1"
     client.force_authenticate(user=user)
     query = f"company={company.pk}&date_from=2026-01-01&date_to=2026-12-31"
     def request_metric(name, url, row_key=None):
