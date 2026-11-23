@@ -6,7 +6,7 @@ from io import BytesIO
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, connection, transaction
 from django.http import HttpResponse
 from openpyxl import Workbook
 from django.db.models import Count, Q, Sum, F, ExpressionWrapper, DecimalField
@@ -28,6 +28,20 @@ from .services import post_journal
 from .account_templates import ACTIVITY_LABELS, apply_activity_template, build_activity_template
 from .account_imports import inspect_account_workbook, import_account_rows
 from treasury.models import TreasuryFxRevaluation, TreasuryTransaction
+
+
+@contextmanager
+def _accounting_report_work_mem():
+    """Give large PostgreSQL report aggregates a bounded memory budget per request."""
+    if connection.vendor != "postgresql":
+        yield
+        return
+    # Keep this scoped to the report transaction: never change the server-wide
+    # work_mem setting. 8MB limits per-node memory multiplication under LAN load.
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL work_mem = '8MB'")
+        yield
 
 
 def _branch_aware_opening_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal_year_start, *, prefix="entry__"):
@@ -730,15 +744,16 @@ class JournalEntryViewSet(AccountingViewSet):
         scoped_lines = JournalLine.objects.filter(entry__company_id=company_id).filter(
             date_filter | opening_filter
         )
-        totals_by_account = {
-            item["account_id"]: item
-            for item in scoped_lines.values("account_id").annotate(
-                debit_total=Sum("debit", filter=date_filter),
-                credit_total=Sum("credit", filter=date_filter),
-                opening_debit=Sum("debit", filter=opening_filter),
-                opening_credit=Sum("credit", filter=opening_filter),
-            )
-        }
+        with _accounting_report_work_mem():
+            totals_by_account = {
+                item["account_id"]: item
+                for item in scoped_lines.values("account_id").annotate(
+                    debit_total=Sum("debit", filter=date_filter),
+                    credit_total=Sum("credit", filter=date_filter),
+                    opening_debit=Sum("debit", filter=opening_filter),
+                    opening_credit=Sum("credit", filter=opening_filter),
+                )
+            }
         accounts = ChartOfAccount.objects.filter(company_id=company_id).order_by("code")
         rows = []
         debit_sum = 0
@@ -1001,37 +1016,37 @@ class JournalEntryViewSet(AccountingViewSet):
         period_scope = base.filter(entry__entry_date__gte=date_from, entry__entry_date__lte=date_to).exclude(
             entry__source_type=JournalEntry.Source.OPENING, entry__entry_date=date_from
         )
-        total_rows = period_scope.count()
-        period_totals = period_scope.aggregate(total=Sum(
-            ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
-        ))
-        # Do not calculate a window over every matching ledger line just to
-        # return one page. Fetch the requested page first, then calculate the
-        # balance immediately before that page with an indexed aggregate.
-        offset = (page - 1) * page_size
-        page_lines = list(
-            period_scope.select_related("entry", "entry__branch")
-            .order_by("entry__entry_date", "entry_id", "id")[offset:offset + page_size]
-        )
-        prior_movement = Decimal("0")
-        if page_lines:
-            first_line = page_lines[0]
-            prior_scope = period_scope.filter(
-                Q(entry__entry_date__lt=first_line.entry.entry_date)
-                | Q(entry__entry_date=first_line.entry.entry_date, entry_id__lt=first_line.entry_id)
-                | Q(
-                    entry__entry_date=first_line.entry.entry_date,
-                    entry_id=first_line.entry_id,
-                    pk__lt=first_line.pk,
+        with _accounting_report_work_mem():
+            total_rows = period_scope.count()
+            period_totals = period_scope.aggregate(total=Sum(
+                ExpressionWrapper(F("debit") - F("credit"), output_field=DecimalField(max_digits=20, decimal_places=4))
+            ))
+            # Fetch the requested page first; aggregate only the movements before
+            # that page instead of evaluating a window over the entire ledger.
+            offset = (page - 1) * page_size
+            page_lines = list(
+                period_scope.select_related("entry", "entry__branch")
+                .order_by("entry__entry_date", "entry_id", "id")[offset:offset + page_size]
+            )
+            prior_movement = Decimal("0")
+            if page_lines:
+                first_line = page_lines[0]
+                prior_scope = period_scope.filter(
+                    Q(entry__entry_date__lt=first_line.entry.entry_date)
+                    | Q(entry__entry_date=first_line.entry.entry_date, entry_id__lt=first_line.entry_id)
+                    | Q(
+                        entry__entry_date=first_line.entry.entry_date,
+                        entry_id=first_line.entry_id,
+                        pk__lt=first_line.pk,
+                    )
                 )
-            )
-            prior_total = prior_scope.aggregate(
-                total=Sum(ExpressionWrapper(
-                    F("debit") - F("credit"),
-                    output_field=DecimalField(max_digits=20, decimal_places=4),
-                ))
-            )
-            prior_movement = prior_total["total"] or Decimal("0")
+                prior_total = prior_scope.aggregate(
+                    total=Sum(ExpressionWrapper(
+                        F("debit") - F("credit"),
+                        output_field=DecimalField(max_digits=20, decimal_places=4),
+                    ))
+                )
+                prior_movement = prior_total["total"] or Decimal("0")
 
         rows = []
         running_movement = prior_movement
