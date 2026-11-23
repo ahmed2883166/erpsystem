@@ -681,21 +681,25 @@ class JournalEntryViewSet(AccountingViewSet):
             raise ValidationError({"date_to": "صيغة تاريخ النهاية يجب أن تكون YYYY-MM-DD."})
         if date_from and date_to and date_from > date_to:
             raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
-        date_filter = Q(journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED))
+        # Aggregate from the filtered journal-line table instead of starting with
+        # every account and LEFT JOINing the full ledger. This keeps the large
+        # million-entry report on the selective company/branch/date path.
+        date_filter = Q(entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED))
         exclude_closing = request.query_params.get("exclude_closing", "").lower() in ("1", "true", "yes")
         if exclude_closing:
-            date_filter &= ~Q(journal_lines__entry__source_type=JournalEntry.Source.CLOSING)
+            date_filter &= ~Q(entry__source_type=JournalEntry.Source.CLOSING)
         branch_raw = request.query_params.get("branch")
         if branch_raw:
             if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), int(company_id)):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
             branch_ids = [int(branch_raw)]
-            date_filter &= Q(journal_lines__entry__branch_id=int(branch_raw))
+            date_filter &= Q(entry__branch_id=int(branch_raw))
         elif not request.user.is_superuser or is_platform_owner(request.user):
             branch_ids = list(accessible_branches(request.user, int(company_id)).values_list("pk", flat=True))
-            date_filter &= Q(journal_lines__entry__branch_id__in=branch_ids)
+            date_filter &= Q(entry__branch_id__in=branch_ids)
         else:
             branch_ids = list(JournalEntry.objects.filter(company_id=company_id).values_list("branch_id", flat=True).distinct())
+
         opening_filter = date_filter
         if date_from:
             opening_year = FiscalYear.objects.filter(
@@ -711,31 +715,42 @@ class JournalEntryViewSet(AccountingViewSet):
             opening_filter &= _branch_aware_opening_filter(
                 branch_ids, snapshot_branch_ids, date_from,
                 opening_year.start_date if opening_year else date_from,
-                prefix="journal_lines__entry__",
+                prefix="entry__",
             )
-            date_filter &= Q(journal_lines__entry__entry_date__gte=date_from)
+            date_filter &= Q(entry__entry_date__gte=date_from)
             date_filter &= ~Q(
-                journal_lines__entry__entry_date=date_from,
-                journal_lines__entry__source_type=JournalEntry.Source.OPENING,
+                entry__entry_date=date_from,
+                entry__source_type=JournalEntry.Source.OPENING,
             )
+        else:
+            opening_filter = Q(pk__isnull=True)
         if date_to:
-            date_filter &= Q(journal_lines__entry__entry_date__lte=date_to)
-        accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
-            debit_total=Sum("journal_lines__debit", filter=date_filter),
-            credit_total=Sum("journal_lines__credit", filter=date_filter),
-            opening_debit=Sum("journal_lines__debit", filter=opening_filter) if date_from else Sum("journal_lines__debit", filter=Q(pk__isnull=True)),
-            opening_credit=Sum("journal_lines__credit", filter=opening_filter) if date_from else Sum("journal_lines__credit", filter=Q(pk__isnull=True)),
-        ).order_by("code")
+            date_filter &= Q(entry__entry_date__lte=date_to)
+
+        scoped_lines = JournalLine.objects.filter(entry__company_id=company_id).filter(
+            date_filter | opening_filter
+        )
+        totals_by_account = {
+            item["account_id"]: item
+            for item in scoped_lines.values("account_id").annotate(
+                debit_total=Sum("debit", filter=date_filter),
+                credit_total=Sum("credit", filter=date_filter),
+                opening_debit=Sum("debit", filter=opening_filter),
+                opening_credit=Sum("credit", filter=opening_filter),
+            )
+        }
+        accounts = ChartOfAccount.objects.filter(company_id=company_id).order_by("code")
         rows = []
         debit_sum = 0
         credit_sum = 0
         opening_debit_sum = 0
         opening_credit_sum = 0
         for account in accounts:
-            debit = account.debit_total or 0
-            credit = account.credit_total or 0
-            opening_debit = account.opening_debit or 0
-            opening_credit = account.opening_credit or 0
+            totals = totals_by_account.get(account.pk, {})
+            debit = totals.get("debit_total") or 0
+            credit = totals.get("credit_total") or 0
+            opening_debit = totals.get("opening_debit") or 0
+            opening_credit = totals.get("opening_credit") or 0
             debit_sum += debit
             credit_sum += credit
             opening_debit_sum += opening_debit
