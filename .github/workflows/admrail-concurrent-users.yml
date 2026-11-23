@@ -8,6 +8,9 @@ on:
       - "nexus_next/backend/accounting/api.py"
       - ".github/workflows/admrail-concurrent-users.yml"
   workflow_dispatch:
+concurrency:
+  group: admrail-concurrent-users-benchmark
+  cancel-in-progress: true
 jobs:
   concurrent-users:
     runs-on: ubuntu-latest
