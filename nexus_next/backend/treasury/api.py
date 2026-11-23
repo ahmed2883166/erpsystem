@@ -354,20 +354,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     ordering_fields = ("statement_date", "created_at", "statement_number")
 
     def get_queryset(self):
-        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
-        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
-        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
-            from django.db.models import Q
-            branches = accessible_branches(self.request.user)
-            company_wide_ids = [
-                company_id for company_id in qs.values_list("company_id", flat=True).distinct()
-                if has_company_wide_branch_access(self.request.user, company_id)
-            ]
-            qs = qs.filter(
-                Q(bank_account__branch__in=branches)
-                | Q(bank_account__branch__isnull=True, company_id__in=company_wide_ids)
-            )
-        return qs
+        """عرض التسويات داخل الشركات المصرح بها؛ وتُحرس العمليات بحسب نطاق الفروع."""
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
 
     def perform_create(self, serializer):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
@@ -494,6 +482,10 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         """مطابقة سطر كشف البنك مع الحركة المالية المقابلة."""
         recon = self.get_object()
         self._write(recon.company_id)
+        if not recon.bank_account.branch_id and not has_company_wide_branch_access(
+            request.user, recon.company_id
+        ):
+            raise PermissionDenied("مطابقة كشف حساب بنكي عام تتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         if recon.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("التسوية ليست مسودة.")
         try:
