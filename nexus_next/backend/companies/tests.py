@@ -295,6 +295,16 @@ class HeadOfficeTransferApiTests(APITestCase):
             Branch.objects.filter(company=self.company, is_head_office=True).count(), 1
         )
 
+    def test_branch_patch_cannot_change_head_office_flag(self):
+        response = self.client.patch(
+            f"/api/setup/branches/{self.main.pk}/",
+            {"is_head_office": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.main.refresh_from_db()
+        self.assertTrue(self.main.is_head_office)
+
     def test_inactive_branch_cannot_become_head_office(self):
         inactive = Branch.objects.create(
             company=self.company, code="BR-OFF", name_ar="فرع موقوف",
