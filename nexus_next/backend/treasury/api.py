@@ -650,26 +650,47 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
     queryset = BankStatementLine.objects.select_related("reconciliation", "matched_transaction").all()
 
     def get_queryset(self):
-        """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
+        """تطبيق نطاق الفروع نفسه المستخدم في تسويات الحسابات البنكية."""
         qs = self.queryset.filter(reconciliation__company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
-            qs = qs.filter(models.Q(reconciliation__bank_account__branch__isnull=True) | models.Q(reconciliation__bank_account__branch__in=accessible_branches(self.request.user)))
+            branches = accessible_branches(self.request.user)
+            company_wide_ids = [
+                company_id for company_id in qs.values_list("reconciliation__company_id", flat=True).distinct()
+                if has_company_wide_branch_access(self.request.user, company_id)
+            ]
+            qs = qs.filter(
+                models.Q(reconciliation__bank_account__branch__in=branches)
+                | models.Q(
+                    reconciliation__bank_account__branch__isnull=True,
+                    reconciliation__company_id__in=company_wide_ids,
+                )
+            )
         return qs
+
+    def _assert_reconciliation_branch_access(self, recon):
+        """رفض الوصول إلى حسابات الشركة العامة دون صلاحية شاملة لكل فروعها."""
+        branch_id = recon.bank_account.branch_id
+        if branch_id:
+            allowed = can_access_branch(self.request.user, branch_id, recon.company_id)
+        else:
+            allowed = has_company_wide_branch_access(self.request.user, recon.company_id)
+        if not allowed:
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى نطاق فروع هذا الحساب البنكي.")
 
     def perform_create(self, serializer):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         recon = serializer.validated_data["reconciliation"]
         self._write(recon.company_id)
+        self._assert_reconciliation_branch_access(recon)
         if recon.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("التسوية ليست مسودة.")
-        if recon.bank_account.branch_id and not can_access_branch(self.request.user, recon.bank_account.branch_id, recon.company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
         serializer.save()
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         recon = serializer.instance.reconciliation
         self._write(recon.company_id)
+        self._assert_reconciliation_branch_access(recon)
         if recon.status != BankReconciliation.Status.DRAFT or serializer.instance.matched_transaction_id:
             raise ValidationError("لا يمكن تعديل سطر مطابق أو ضمن تسوية معتمدة.")
         if serializer.validated_data.get("reconciliation", recon).pk != recon.pk:
@@ -678,7 +699,9 @@ class BankStatementLineViewSet(TreasuryBaseViewSet):
 
     def perform_destroy(self, instance):
         """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
-        self._write(instance.reconciliation.company_id)
-        if instance.reconciliation.status != BankReconciliation.Status.DRAFT or instance.matched_transaction_id:
+        recon = instance.reconciliation
+        self._write(recon.company_id)
+        self._assert_reconciliation_branch_access(recon)
+        if recon.status != BankReconciliation.Status.DRAFT or instance.matched_transaction_id:
             raise ValidationError("لا يمكن حذف سطر مطابق أو ضمن تسوية معتمدة.")
         instance.delete()
