@@ -54,6 +54,9 @@ jobs:
       - run: python manage.py migrate --noinput
       - name: Seed isolated million-entry dataset
         run: python scripts/benchmark_million_journals.py --entries 1000000 --batch-size 5000
+      - name: Refresh PostgreSQL planner statistics
+        run: |
+          python manage.py shell -c "from django.db import connection; c=connection.cursor(); c.execute(\"ANALYZE accounting_journalentry\"); c.execute(\"ANALYZE accounting_journalline\"); c.execute(\"ANALYZE accounting_chartofaccount\"); print(\"ANALYZE completed\")"
       - name: Start HTTP server
         run: |
           python manage.py runserver 127.0.0.1:8000 --noreload > /tmp/admrail-http.log 2>&1 &
