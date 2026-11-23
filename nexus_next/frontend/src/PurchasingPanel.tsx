@@ -227,7 +227,7 @@ const postInvoice = async (id: number) => {
     event.preventDefault();
     if (!companyId) return;
     const invoice = invoices.find((row) => row.id === Number(returnForm.invoice));
-    if (!invoice) { setError("اختر فاتورة مورد مرحلة وغير أجنبية."); return; }
+    if (!invoice) { setError("اختر فاتورة مورد مرحلة ومسموحًا بمرتجعها."); return; }
     if (!returnForm.return_number.trim() || !returnLines.length || returnLines.some((line) => !line.invoice_line || Number(line.quantity) <= 0)) {
       setError("أدخل رقم المرتجع وبند الفاتورة وكمية صحيحة."); return;
     }
