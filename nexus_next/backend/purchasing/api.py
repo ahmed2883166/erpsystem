@@ -47,7 +47,7 @@ def _default_branch_company_ids(user, companies):
     return company_ids
 from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment, SupplierReturn
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer, SupplierReturnSerializer
-from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_return
+from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_return, reverse_supplier_return
 
 
 class PurchaseBaseViewSet(viewsets.ModelViewSet):
@@ -467,8 +467,8 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierReturnSerializer
     queryset = SupplierReturn.objects.select_related(
         "company", "supplier", "invoice", "invoice__receipt__warehouse",
-        "stock_movement", "journal_entry",
-    ).prefetch_related("lines__invoice_line__receipt_line__product")
+        "stock_movement", "journal_entry", "reversal_stock_movement", "reversal_journal_entry",
+    ).prefetch_related("lines__invoice_line__receipt_line__product", "lines__movement_line")
     filterset_fields = ("company", "supplier", "invoice", "status", "return_date")
     search_fields = ("return_number", "supplier__name_ar", "invoice__invoice_number")
     ordering_fields = ("return_date", "return_number", "created_at")
@@ -511,6 +511,21 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
         document = post_supplier_return(document.pk, request.user)
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def reverse(self, request, pk=None):
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(request.user, document.invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        entry_date_raw = request.data.get("entry_date")
+        entry_date = parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        document = reverse_supplier_return(document.pk, request.user, entry_date)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
 
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
