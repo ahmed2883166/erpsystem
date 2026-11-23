@@ -82,6 +82,8 @@ class BackupConfigurationApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["can_manage"])
         self.assertFalse(response.data["encryption_ready"])
+        self.assertEqual(response.data["backup_path"], "")
+        self.assertEqual(response.data["history"], [])
         update = self.client.patch(self.url, {"backup_path": r"D:\NEXUS_Backups"}, format="json")
         self.assertEqual(update.status_code, 403)
 
