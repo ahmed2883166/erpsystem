@@ -255,6 +255,50 @@ class AccountingApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_trial_balance_separates_opening_and_period_totals_without_double_counting(self):
+        branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        year = FiscalYear.objects.create(
+            company=self.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        capital = ChartOfAccount.objects.create(
+            company=self.company, code="3000", name_ar="رأس المال", nature="equity"
+        )
+        opening = JournalEntry.objects.create(
+            company=self.company, branch=branch, fiscal_year=year,
+            entry_number="TB-OPEN-001", entry_date=date(2026, 1, 1),
+            description="رصيد افتتاحي", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening, account=self.account, debit=Decimal("100"))
+        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("100"))
+        post_journal(opening.pk)
+
+        movement = JournalEntry.objects.create(
+            company=self.company, branch=branch, fiscal_year=year,
+            entry_number="TB-MOVE-001", entry_date=date(2026, 1, 15),
+            description="حركة قبل الفترة",
+        )
+        JournalLine.objects.create(entry=movement, account=self.account, debit=Decimal("25"))
+        JournalLine.objects.create(entry=movement, account=capital, credit=Decimal("25"))
+        post_journal(movement.pk)
+
+        user = User.objects.create_user(username="opening_reporter", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=self.company, role="viewer", all_branches=True)
+        self.client.force_authenticate(user=user)
+
+        response = self.client.get(
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["opening_debit_total"], Decimal("125.0000"))
+        self.assertEqual(response.data["opening_credit_total"], Decimal("125.0000"))
+        self.assertEqual(response.data["debit_total"], Decimal("0.0000"))
+        self.assertEqual(response.data["credit_total"], Decimal("0.0000"))
+        self.assertEqual(response.data["closing_debit_credit_difference"], Decimal("0.0000"))
+
     def test_trial_balance_uses_posted_entries_only(self):
         branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
         year = FiscalYear.objects.create(company=self.company, name="2026",
