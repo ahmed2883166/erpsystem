@@ -145,7 +145,7 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
     entry.posted_at = timezone.now()
     entry.save(update_fields=["status", "posted_at"])
     AuditEvent.objects.create(
-        actor=entry.created_by,
+        actor=actor or entry.created_by,
         company=entry.company,
         branch=entry.branch,
         action=AuditEvent.Action.ACTION,
