@@ -70,6 +70,8 @@ def _create_posted_entry(movement, user, fiscal_year, branch, suffix, debit_acco
 
 def post_movement_journals(movement, user):
     """إنشاء القيود المحاسبية اللازمة لحركة المخزون دون تكرار الترحيل."""
+    if movement.movement_type == StockMovement.MovementType.SUPPLIER_RETURN:
+        return []
     lines = list(movement.lines.select_related("product"))
     amounts = [line.cost_amount for line in lines]
     total = sum(amounts, Decimal("0"))
