@@ -267,6 +267,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
         # Employee social-insurance contributions reduce the Egyptian annual
         # salary-tax base. Calculate them before progressive tax regardless of
         # the order in which statutory components were assigned to the employee.
+        taxable_base_before_employee_insurance = taxable_base
         for assignment in statutory_assignments:
             component = assignment.component
             if component.method != component.Method.EMPLOYEE_INSURANCE:
@@ -300,6 +301,7 @@ def calculate_payroll_cycle(cycle_id, actor=None):
                 employer_share += amount
             lines.append((component, component.code, component.name_ar, component.kind, amount, component.kind == component.Kind.EMPLOYER_SHARE, {
                 "method": component.method,
+                "taxable_base_before_employee_insurance": str(taxable_base_before_employee_insurance),
                 "taxable_base": str(taxable_base),
                 "insurance_base": str(insurance_base),
             }))
@@ -566,7 +568,7 @@ def complete_payroll_payment(cycle_id, actor=None):
     completed = []
     payroll_payable = get_account_for_role(cycle.company, "payroll_payable")
     for posting in postings:
-        document = TreasuryTransaction.objects.select_for_update().select_related(
+        document = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
             "source_account", "counter_account", "branch", "fiscal_year"
         ).get(pk=posting.payment_treasury_transaction_id)
         branch_results = cycle.results.filter(employee__branch_id=posting.branch_id)
