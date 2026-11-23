@@ -334,7 +334,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "debit": payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount, "credit": Decimal("0"), "sort": 0,
             })
         returns = SupplierReturn.objects.filter(
-            invoice__in=invoices, status=SupplierReturn.Status.POSTED,
+            invoice__in=invoices, status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),
         ).select_related("invoice")
         for returned in returns:
             events.append({
@@ -343,6 +343,13 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "description": f"مرتجع مورد عن الفاتورة {returned.invoice.invoice_number}",
                 "debit": returned.grand_total, "credit": Decimal("0"), "sort": 0,
             })
+            if returned.status == SupplierReturn.Status.REVERSED and returned.reversal_date:
+                events.append({
+                    "date": returned.reversal_date, "kind": "supplier_return_reversal",
+                    "number": f"REV-{returned.return_number}",
+                    "description": f"عكس مرتجع المورد {returned.return_number}",
+                    "debit": Decimal("0"), "credit": returned.grand_total, "sort": 1,
+                })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
         opening = sum(
@@ -398,7 +405,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
         invoices = self.get_queryset().filter(
             company_id=company_id, status=PurchaseInvoice.Status.POSTED, invoice_date__lte=as_of
-        ).select_related("supplier", "receipt__warehouse").prefetch_related("payments")
+        ).select_related("supplier", "receipt__warehouse").prefetch_related("payments", "returns")
         if branch_id:
             invoices = invoices.filter(receipt__warehouse__branch_id=branch_id)
         suppliers = {}
@@ -408,9 +415,16 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                  if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= as_of),
                 Decimal("0"),
             )
-            returned = invoice.returns.filter(
-                status=SupplierReturn.Status.POSTED, return_date__lte=as_of,
-            ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+            returned = sum((
+                item.grand_total for item in invoice.returns.all()
+                if item.return_date <= as_of and (
+                    item.status == SupplierReturn.Status.POSTED
+                    or (
+                        item.status == SupplierReturn.Status.REVERSED
+                        and (item.reversal_date is None or item.reversal_date > as_of)
+                    )
+                )
+            ), Decimal("0"))
             balance_due = invoice.grand_total - paid - returned
             if balance_due <= 0:
                 continue
