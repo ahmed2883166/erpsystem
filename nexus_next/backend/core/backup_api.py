@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import subprocess
@@ -22,6 +23,17 @@ from companies.access import is_platform_owner
 from .backup_crypto import BackupCryptoError
 from .models import BackupConfiguration, BackupRun
 from .reset_service import reset_preview, reset_operational_data
+
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_backup_audit_event(**kwargs):
+    """Do not turn a completed backup into an API failure if audit storage is unavailable."""
+    try:
+        AuditEvent.objects.create(**kwargs)
+    except Exception:
+        logger.exception("Could not persist backup audit event")
 
 
 _BACKUP_THREAD_LOCK = threading.Lock()
@@ -109,8 +121,8 @@ class BackupConfigurationView(APIView):
 
     def get(self, request):
         """عرض إعدادات النسخ الاحتياطي وسجل التشغيل للمستخدمين المصرح لهم."""
-        if is_platform_owner(request.user):
-            raise PermissionDenied("مالك المنصة لا يطّلع على إعدادات أو سجلات نسخ قواعد الشركات.")
+        if not request.user.is_superuser or is_platform_owner(request.user):
+            raise PermissionDenied("عرض إعدادات وسجل النسخ الاحتياطي متاح لمدير النظام الأعلى فقط.")
         config = _config()
         payload = _serialize(config, (request.user.is_superuser and not is_platform_owner(request.user)))
         payload["history"] = [{
@@ -172,7 +184,7 @@ class BackupConfigurationView(APIView):
                     details=details,
                     started_by=request.user,
                 )
-            AuditEvent.objects.create(
+            _safe_backup_audit_event(
                 actor=request.user, action=AuditEvent.Action.ACTION,
                 resource="core.BackupRun", object_id=str(run.pk),
                 http_method="POST", status_code=200 if success else 500,
@@ -192,7 +204,7 @@ class BackupConfigurationView(APIView):
             )
         except subprocess.TimeoutExpired:
             run = BackupRun.objects.create(status=BackupRun.Status.FAILURE, details="انتهت مهلة النسخ الاحتياطي بعد ساعتين.", started_by=request.user)
-            AuditEvent.objects.create(actor=request.user, action=AuditEvent.Action.ACTION, resource="core.BackupRun", object_id=str(run.pk), http_method="POST", status_code=500, succeeded=False, metadata={"status": run.status})
+            _safe_backup_audit_event(actor=request.user, action=AuditEvent.Action.ACTION, resource="core.BackupRun", object_id=str(run.pk), http_method="POST", status_code=500, succeeded=False, metadata={"status": run.status})
             return Response({"detail": "انتهت مهلة النسخ الاحتياطي؛ راجع سجل التشغيل."}, status=504)
 
     @transaction.atomic
@@ -244,7 +256,7 @@ class BackupConfigurationView(APIView):
                 setattr(config, field, value)
         config.updated_by = request.user
         config.save()
-        AuditEvent.objects.create(
+        _safe_backup_audit_event(
             actor=request.user,
             action=AuditEvent.Action.UPDATE,
             resource="core.BackupConfiguration",
