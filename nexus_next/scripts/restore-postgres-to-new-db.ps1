@@ -35,15 +35,18 @@ $PgPort = if ($Values["POSTGRES_PORT"]) { $Values["POSTGRES_PORT"] } else { "543
 
 $PgRestore = Get-Command "pg_restore.exe" -ErrorAction SilentlyContinue
 $Createdb = Get-Command "createdb.exe" -ErrorAction SilentlyContinue
-if (-not $PgRestore -or -not $Createdb) {
+$Psql = Get-Command "psql.exe" -ErrorAction SilentlyContinue
+if (-not $PgRestore -or -not $Createdb -or -not $Psql) {
     $PgRoot = Join-Path $env:ProgramFiles "PostgreSQL"
-    $PgBin = if (Test-Path $PgRoot) { Get-ChildItem $PgRoot -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName "bin" } | Where-Object { (Test-Path (Join-Path $_ "pg_restore.exe")) -and (Test-Path (Join-Path $_ "createdb.exe")) } | Select-Object -First 1 } else { $null }
-    if (-not $PgBin) { throw "PostgreSQL pg_restore.exe and createdb.exe were not found in PATH or Program Files." }
+    $PgBin = if (Test-Path $PgRoot) { Get-ChildItem $PgRoot -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName "bin" } | Where-Object { (Test-Path (Join-Path $_ "pg_restore.exe")) -and (Test-Path (Join-Path $_ "createdb.exe")) -and (Test-Path (Join-Path $_ "psql.exe")) } | Select-Object -First 1 } else { $null }
+    if (-not $PgBin) { throw "PostgreSQL pg_restore.exe, createdb.exe and psql.exe were not found in PATH or Program Files." }
     $PgRestorePath = Join-Path $PgBin "pg_restore.exe"
     $CreatedbPath = Join-Path $PgBin "createdb.exe"
+    $PsqlPath = Join-Path $PgBin "psql.exe"
 } else {
     $PgRestorePath = $PgRestore.Source
     $CreatedbPath = $Createdb.Source
+    $PsqlPath = $Psql.Source
 }
 
 $env:PGPASSWORD = $Values["POSTGRES_PASSWORD"]
@@ -68,8 +71,19 @@ try {
     & $PgRestorePath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --exit-on-error --no-owner --dbname=$TargetDatabase $RestoreSource
     if ($LASTEXITCODE -ne 0) { throw "Restore failed. The incomplete database '$TargetDatabase' was left separate; the active database was not changed." }
 
-    Write-Host "Restore completed into separate database '$TargetDatabase'." -ForegroundColor Green
-    Write-Host "The active NEXUS database was not overwritten. Validate this database before any controlled switch."
+    # Verify the restored database itself, not just the archive extraction exit code.
+    $PublicTableCount = & $PsqlPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --dbname=$TargetDatabase --tuples-only --no-align --set=ON_ERROR_STOP=1 --command="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';"
+    if ($LASTEXITCODE -ne 0 -or [int]($PublicTableCount | Select-Object -Last 1) -lt 1) {
+        throw "Restore verification failed: target database has no readable public tables. The active database was not changed."
+    }
+    $MigrationCount = & $PsqlPath --host=$PgHost --port=$PgPort --username=$Values["POSTGRES_USER"] --no-password --dbname=$TargetDatabase --tuples-only --no-align --set=ON_ERROR_STOP=1 --command="SELECT COUNT(*) FROM django_migrations;"
+    if ($LASTEXITCODE -ne 0 -or [int]($MigrationCount | Select-Object -Last 1) -lt 1) {
+        throw "Restore verification failed: Django migration history is missing or unreadable. The active database was not changed."
+    }
+
+    Write-Host "Restore completed and verified in separate database '$TargetDatabase'." -ForegroundColor Green
+    Write-Host "Verified public tables: $($PublicTableCount | Select-Object -Last 1); Django migrations: $($MigrationCount | Select-Object -Last 1)." -ForegroundColor Green
+    Write-Host "The active NEXUS database was not overwritten. Validate application login and critical reports before any controlled switch."
 } finally {
     if ($DecryptedTemp -and (Test-Path -LiteralPath $DecryptedTemp)) {
         Remove-Item -LiteralPath $DecryptedTemp -Force -ErrorAction SilentlyContinue
