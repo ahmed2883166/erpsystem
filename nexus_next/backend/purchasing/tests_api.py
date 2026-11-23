@@ -9,9 +9,10 @@ from rest_framework.test import APITestCase
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from inventory.models import Product, StockBalance, UnitOfMeasure, Warehouse
+from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
+from inventory.services import post_stock_movement
 from suppliers.models import Supplier
-from purchasing.models import SupplierPayment
+from purchasing.models import PurchaseInvoiceTaxAllocation, SupplierPayment
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -29,6 +30,9 @@ class PurchasingWorkflowTests(APITestCase):
         self.warehouse = Warehouse.objects.create(company=self.company, branch=self.branch, code="WH1", name_ar="المخزن الرئيسي")
         roles = {
             AccountRole.Role.INVENTORY: ("1000", "المخزون", ChartOfAccount.Nature.ASSET),
+            AccountRole.Role.COGS: ("5100", "تكلفة المبيعات", ChartOfAccount.Nature.EXPENSE),
+            AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS: ("5900", "خسائر تسوية المخزون", ChartOfAccount.Nature.EXPENSE),
+            AccountRole.Role.INTER_BRANCH_CLEARING: ("2190", "تسوية بين الفروع", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED: ("2100", "بضاعة مستلمة غير مفوترة", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.ACCOUNTS_PAYABLE: ("2200", "الموردون", ChartOfAccount.Nature.LIABILITY),
             AccountRole.Role.VAT_INPUT: ("1300", "ضريبة مدخلات", ChartOfAccount.Nature.ASSET),
@@ -497,19 +501,92 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
-    def test_purchase_invoice_rejects_nonrecoverable_tax_until_stock_costing_support_exists(self):
+    def test_nonrecoverable_purchase_tax_is_split_between_remaining_stock_and_consumed_cogs_by_branch(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
+        second_branch = Branch.objects.create(
+            company=self.company, code="BR-02", name_ar="الفرع الثاني",
+        )
+        second_warehouse = Warehouse.objects.create(
+            company=self.company, branch=second_branch, code="WH2", name_ar="مخزن الفرع الثاني",
+        )
+        transfer = StockMovement.objects.create(
+            company=self.company, movement_number="TAX-XFER-01",
+            movement_type=StockMovement.MovementType.TRANSFER, movement_date=date(2026, 3, 11),
+            source_warehouse=self.warehouse, destination_warehouse=second_warehouse,
+            created_by=self.user,
+        )
+        StockMovementLine.objects.create(
+            movement=transfer, product=self.product, quantity=Decimal("1"),
+        )
+        post_stock_movement(transfer.pk, self.user)
+
+        issue = StockMovement.objects.create(
+            company=self.company, movement_number="TAX-ISS-01",
+            movement_type=StockMovement.MovementType.ISSUE, movement_date=date(2026, 3, 12),
+            source_warehouse=second_warehouse, created_by=self.user,
+        )
+        StockMovementLine.objects.create(
+            movement=issue, product=self.product, quantity=Decimal("1"),
+        )
+        post_stock_movement(issue.pk, self.user)
+
         code = TaxCode.objects.create(
             company=self.company, country="EG", code="INPUT-NR", name_ar="ضريبة غير قابلة للخصم",
             category=TaxCode.Category.STANDARD, rate=Decimal("14"),
             effective_from=date(2026, 1, 1), input_tax_recoverable=False,
         )
-        response = self.client.post("/api/purchasing/invoices/", {
+        created = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
-            "invoice_number": "INV-TAX-IN-2", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-TAX-IN-2", "invoice_date": "2026-03-13",
             "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(created.status_code, 201, created.data)
+        line_data = created.data["invoice_lines"][0]
+        self.assertEqual(line_data["recoverable_tax_amount"], "0.0000")
+        self.assertEqual(line_data["nonrecoverable_tax_amount"], "28.0000")
+
+        posted = self.client.post(f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        invoice = PurchaseInvoice.objects.get(pk=created.data["id"])
+        self.assertEqual(invoice.grand_total, Decimal("228.0000"))
+        self.assertEqual(invoice.journal_entry.lines.get(
+            account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE).account
+        ).credit, Decimal("228.0000"))
+        self.assertFalse(invoice.journal_entry.lines.filter(
+            account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.VAT_INPUT).account,
+            debit__gt=0,
+        ).exists())
+
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        destination_balance = StockBalance.objects.get(product=self.product, warehouse=second_warehouse)
+        self.assertEqual(source_balance.quantity, Decimal("1"))
+        self.assertEqual(source_balance.inventory_value, Decimal("114.0000"))
+        self.assertEqual(destination_balance.quantity, Decimal("0"))
+        allocations = list(PurchaseInvoiceTaxAllocation.objects.filter(invoice=invoice).select_related("branch", "journal_entry"))
+        self.assertEqual(len(allocations), 2)
+        by_branch = {row.branch_id: row for row in allocations}
+        self.assertEqual(by_branch[self.branch.pk].inventory_amount, Decimal("14.0000"))
+        self.assertEqual(by_branch[self.branch.pk].cogs_amount, Decimal("0.0000"))
+        self.assertEqual(by_branch[second_branch.pk].inventory_amount, Decimal("0.0000"))
+        self.assertEqual(by_branch[second_branch.pk].cogs_amount, Decimal("14.0000"))
+        self.assertEqual(
+            by_branch[second_branch.pk].journal_entry.lines.get(
+                account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.COGS).account
+            ).debit,
+            Decimal("14.0000"),
+        )
+        clearing = AccountRole.objects.get(company=self.company, role=AccountRole.Role.INTER_BRANCH_CLEARING).account
+        allocation_entries = [invoice.journal_entry, *(row.journal_entry for row in allocations)]
+        clearing_debit = sum(
+            (entry.lines.filter(account=clearing).aggregate(total=Sum("debit"))["total"] or Decimal("0"))
+            for entry in allocation_entries
+        )
+        clearing_credit = sum(
+            (entry.lines.filter(account=clearing).aggregate(total=Sum("credit"))["total"] or Decimal("0"))
+            for entry in allocation_entries
+        )
+        self.assertEqual(clearing_debit, Decimal("28.0000"))
+        self.assertEqual(clearing_credit, Decimal("28.0000"))
 
 
     def test_purchase_invoice_over_limit_requires_manager_approval_of_exact_snapshot(self):
