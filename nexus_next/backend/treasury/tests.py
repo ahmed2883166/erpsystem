@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
-from .models import BankReconciliation, TreasuryAccount, TreasuryTransaction
+from .models import BankReconciliation, BankStatementLine, TreasuryAccount, TreasuryTransaction
 from .services import record_posted_document_bank_movement
 
 
@@ -129,3 +129,67 @@ class BankReconciliationOpeningBalanceTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.reconciliation.refresh_from_db()
         self.assertEqual(self.reconciliation.status, BankReconciliation.Status.RECONCILED)
+
+    def test_branch_limited_member_cannot_read_or_write_unassigned_branchless_bank_lines(self):
+        Branch.objects.create(
+            company=self.company, code="OTHER", name_ar="فرع آخر",
+        )
+        bank_account = ChartOfAccount.objects.create(
+            company=self.company, code="1198", name_ar="بنك الشركة العام", nature="asset",
+        )
+        shared_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=None, account=bank_account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-SHARED", name_ar="حساب بنكي عام",
+        )
+        shared_reconciliation = BankReconciliation.objects.create(
+            company=self.company, bank_account=shared_bank, statement_number="SHARED-001",
+            statement_date=date(2026, 1, 31), opening_balance=0, closing_balance=0,
+        )
+        line = BankStatementLine.objects.create(
+            reconciliation=shared_reconciliation, line_number=1,
+            transaction_date=date(2026, 1, 15), description="حركة خاصة",
+            reference="PRIVATE-REF", amount=Decimal("250.0000"),
+        )
+        user = User.objects.create_user(username="branch_limited_bank_user", password="test-password")
+        membership = CompanyMembership.objects.create(
+            user=user, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(user=user)
+
+        list_response = self.client.get("/api/treasury/statement-lines/")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertNotIn(str(line.pk), str(list_response.data))
+        self.assertEqual(
+            self.client.get(f"/api/treasury/statement-lines/{line.pk}/").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/api/treasury/statement-lines/{line.pk}/",
+                {"description": "تعديل غير مصرح"}, format="json",
+            ).status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.delete(f"/api/treasury/statement-lines/{line.pk}/").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/treasury/statement-lines/",
+                {
+                    "reconciliation": shared_reconciliation.pk,
+                    "line_number": 2,
+                    "transaction_date": "2026-01-16",
+                    "description": "إضافة غير مصرح بها",
+                    "reference": "UNAUTHORIZED",
+                    "amount": "75.0000",
+                },
+                format="json",
+            ).status_code,
+            403,
+        )
+        line.refresh_from_db()
+        self.assertEqual(line.description, "حركة خاصة")
+        self.assertEqual(shared_reconciliation.lines.count(), 1)
