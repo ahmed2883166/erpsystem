@@ -22,6 +22,9 @@ foreach ($Key in @("DJANGO_SECRET_KEY", "POSTGRES_DB", "POSTGRES_USER", "POSTGRE
 if ($Settings["DJANGO_ENV"] -ne "production" -or $Settings["DJANGO_DEBUG"] -notin @("False", "false", "0")) {
   throw "Set DJANGO_ENV=production and DJANGO_DEBUG=False."
 }
+if (-not $Settings["DJANGO_ALLOWED_HOSTS"] -or -not $Settings["CSRF_TRUSTED_ORIGINS"]) {
+  throw "DJANGO_ALLOWED_HOSTS and CSRF_TRUSTED_ORIGINS must be configured for LAN."
+}
 $LanHost = $Settings["ADMRAIL_LAN_HOST"]
 if ($LanHost -notmatch "^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$") { throw "ADMRAIL_LAN_HOST must be a stable internal DNS name." }
 $AllowedHosts = @($Settings["DJANGO_ALLOWED_HOSTS"].Split(",") | ForEach-Object { $_.Trim() })
