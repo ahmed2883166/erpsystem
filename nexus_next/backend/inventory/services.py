@@ -31,7 +31,7 @@ def post_stock_movement(movement_id, user):
         destination_key = (movement.destination_warehouse_id, line.destination_location_id, line.expiry_date)
         if movement.movement_type == StockMovement.MovementType.RECEIPT:
             balance_keys = [destination_key]
-        elif movement.movement_type == StockMovement.MovementType.ISSUE:
+        elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN):
             balance_keys = [source_key]
         elif movement.movement_type == StockMovement.MovementType.TRANSFER:
             balance_keys = [source_key, destination_key]
@@ -71,17 +71,22 @@ def post_stock_movement(movement_id, user):
                     quantity_remaining=quantity, unit_cost=unit_cost,
                 )
 
-        def issue(balance, quantity, movement_line, product=product):
+        def issue(balance, quantity, movement_line, product=product, source_root_line_id=None):
             """تنفيذ مسؤولية الدالة issue ضمن وحدة services.py مع الحفاظ على قواعد التحقق والتعامل مع البيانات."""
             if balance.quantity < quantity:
                 raise ValidationError(
                     f"الرصيد غير كافٍ للصنف {product.code}. المتاح {balance.quantity} والمطلوب {quantity}."
                 )
             cost_parts = []
-            layers = list(StockCostLayer.objects.select_for_update().filter(
+            layer_query = StockCostLayer.objects.select_for_update().filter(
                 product=product, warehouse=balance.warehouse, location=balance.location,
                 expiry_date=balance.expiry_date, quantity_remaining__gt=0,
-            ).order_by("source_line__movement__movement_date", "source_line__movement_id", "source_line_id", "id"))
+            )
+            if source_root_line_id is not None:
+                layer_query = layer_query.filter(root_source_line_id=source_root_line_id)
+            layers = list(layer_query.order_by(
+                "source_line__movement__movement_date", "source_line__movement_id", "source_line_id", "id"
+            ))
             if product.costing_method == Product.CostingMethod.FIFO:
                 remaining = quantity
                 for layer in layers:
@@ -102,10 +107,17 @@ def post_stock_movement(movement_id, user):
                     )
             else:
                 tracked_quantity = sum((layer.quantity_remaining for layer in layers), Decimal("0"))
-                tracked_to_consume = min(
-                    tracked_quantity,
-                    quantity if quantity == balance.quantity else
-                    (quantity * tracked_quantity / balance.quantity).quantize(Decimal("0.0001")),
+                if source_root_line_id is not None and tracked_quantity < quantity:
+                    raise ValidationError(
+                        f"طبقات تكلفة مصدر الفاتورة غير كافية للصنف {product.code}; "
+                        f"المتاح من المصدر {tracked_quantity} والمطلوب {quantity}."
+                    )
+                tracked_to_consume = (
+                    quantity if source_root_line_id is not None else min(
+                        tracked_quantity,
+                        quantity if quantity == balance.quantity else
+                        (quantity * tracked_quantity / balance.quantity).quantize(Decimal("0.0001")),
+                    )
                 )
                 remaining_tracked = tracked_to_consume
                 for index, layer in enumerate(layers):
@@ -150,8 +162,16 @@ def post_stock_movement(movement_id, user):
             line.cost_amount = (line.quantity * line.unit_cost).quantize(Decimal("0.0001"))
             line.save(update_fields=("cost_amount",))
             receive(balances[destination_key], line.quantity, line.unit_cost, line)
-        elif movement.movement_type == StockMovement.MovementType.ISSUE:
-            cost_parts = issue(balances[source_key], line.quantity, line)
+        elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN):
+            source_root_line_id = None
+            if movement.movement_type == StockMovement.MovementType.SUPPLIER_RETURN:
+                source_root_line_id = line.supplier_return_line.invoice_line.receipt_line_id
+                if product.costing_method not in (Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE):
+                    raise ValidationError("مرتجع المورد يتطلب تتبع تكلفة FIFO أو المتوسط المرجح.")
+            cost_parts = issue(
+                balances[source_key], line.quantity, line,
+                source_root_line_id=source_root_line_id,
+            )
             line.cost_amount = sum((qty * cost).quantize(Decimal("0.0001")) for qty, cost, _source_layer in cost_parts)
             line.unit_cost = line.cost_amount / line.quantity
             line.save(update_fields=("unit_cost", "cost_amount"))
@@ -173,8 +193,9 @@ def post_stock_movement(movement_id, user):
                 line.unit_cost = line.cost_amount / line.quantity
                 line.save(update_fields=("unit_cost", "cost_amount"))
 
-    from .posting import post_movement_journals
-    post_movement_journals(movement, user)
+    if movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN:
+        from .posting import post_movement_journals
+        post_movement_journals(movement, user)
 
     movement.status = StockMovement.Status.POSTED
     movement.posted_by = user
