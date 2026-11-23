@@ -66,7 +66,7 @@ def post_stock_movement(movement_id, user):
                 StockCostLayer.objects.create(
                     product=product, warehouse=balance.warehouse, location=balance.location,
                     expiry_date=balance.expiry_date, source_line=source_line,
-                    root_source_line_id=((parent_layer.root_source_line_id or parent_layer.source_line_id) if parent_layer else source_line.pk),
+                    root_source_line_id=(parent_layer.root_source_line_id if parent_layer else source_line.pk),
                     parent_layer=parent_layer,
                     quantity_remaining=quantity, unit_cost=unit_cost,
                 )
