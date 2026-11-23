@@ -242,9 +242,15 @@ class SubledgerReconciliationView(APIView):
             posted_customer_receipts, "customer_id", "amount", "carrying_base_amount"
         )
         customer_return_totals = grouped_amount(active_sales_returns, "invoice__customer_id", "grand_total")
+        active_sales_fx = sales_fx.annotate(
+            _reversed_by_as_of=Exists(reversal_journals_as_of)
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | Q(journal_entry__status=JournalEntry.Status.POSTED)
+            | Q(journal_entry__status=JournalEntry.Status.REVERSED, _reversed_by_as_of=False)
+        )
         customer_fx_totals = grouped_amount(
-            sales_fx.filter(journal_entry__status=JournalEntry.Status.POSTED),
-            "sales_invoice__customer_id", "difference",
+            active_sales_fx, "sales_invoice__customer_id", "difference",
         )
         customer_ids = set().union(
             customer_invoice_totals, customer_receipt_totals, customer_return_totals, customer_fx_totals
@@ -279,9 +285,15 @@ class SubledgerReconciliationView(APIView):
         )
         supplier_return_totals = grouped_amount(active_supplier_returns, "supplier_id", "grand_total")
         supplier_refund_totals = grouped_amount(posted_supplier_refunds, "supplier_id", "amount")
+        active_purchase_fx = purchase_fx.annotate(
+            _reversed_by_as_of=Exists(reversal_journals_as_of)
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | Q(journal_entry__status=JournalEntry.Status.POSTED)
+            | Q(journal_entry__status=JournalEntry.Status.REVERSED, _reversed_by_as_of=False)
+        )
         supplier_fx_totals = grouped_amount(
-            purchase_fx.filter(journal_entry__status=JournalEntry.Status.POSTED),
-            "purchase_invoice__supplier_id", "difference",
+            active_purchase_fx, "purchase_invoice__supplier_id", "difference",
         )
         supplier_ids = set().union(
             supplier_invoice_totals, supplier_payment_totals, supplier_return_totals,
