@@ -1264,7 +1264,7 @@ class SalesWorkflowTests(APITestCase):
         ).count(), 0)
 
     def test_discount_rules_apply_one_highest_priority_rule_and_keep_manual_override(self):
-        CustomerDiscountRule.objects.create(
+        specific_rule = CustomerDiscountRule.objects.create(
             company=self.company, customer=self.customer, product=self.product,
             min_quantity=Decimal("2"), min_invoice_amount=Decimal("150"),
             discount_percent=Decimal("12"), priority=10,
@@ -1284,7 +1284,7 @@ class SalesWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["invoice_lines"][0]["discount_percent"], "12.0000")
-        self.assertEqual(response.data["invoice_lines"][0]["discount_rule"], 1)
+        self.assertEqual(response.data["invoice_lines"][0]["discount_rule"], specific_rule.pk)
         self.assertEqual(response.data["discount_total"], "24.0000")
 
     def test_explicit_invoice_discount_overrides_rules_without_stacking(self):
