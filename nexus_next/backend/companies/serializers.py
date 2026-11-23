@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 
@@ -17,6 +18,21 @@ class CompanySerializer(serializers.ModelSerializer):
             "address", "phone", "email", "is_active", "created_at", "updated_at",
         )
         read_only_fields = ("created_at", "updated_at")
+
+    @transaction.atomic
+    def create(self, validated_data):
+        """إنشاء الشركة وفرعها الرئيسي كوحدة واحدة حتى لا تُترك شركة بلا فرع تشغيلي."""
+        company = super().create(validated_data)
+        Branch.objects.get_or_create(
+            company=company,
+            code="MAIN",
+            defaults={
+                "name_ar": "الفرع الرئيسي",
+                "is_head_office": True,
+                "is_active": True,
+            },
+        )
+        return company
 
     def validate(self, attrs):
         """حماية مفاتيح تأسيس الشركة من التغيير بعد إنشائها حفاظًا على سلامة الحسابات والضرائب."""
