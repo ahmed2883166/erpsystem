@@ -135,8 +135,13 @@ by the company network administrator. It does not enable internet access.
 
 The initializer never creates or deletes a database and never deletes existing records.
 Use a new empty trial database. For upgrades, create and verify a PostgreSQL backup first.
-Do not use this package against the legacy Flask/SQLite database. The service binds to
-127.0.0.1 only; LAN access is not enabled by this package.
+Do not use this package against the legacy Flask/SQLite database.
+
+Default local mode binds to 127.0.0.1 only. Optional private LAN mode is available through
+run-admrail-lan.cmd after configuring the production HTTPS settings in backend\\.env and
+placing Caddy in tools\\caddy.exe (or PATH). It uses Caddy internal TLS and keeps Waitress
+bound to localhost. DNS mapping and trusting the public root.crt on each client are required.
+Never expose ports 8000 or 5432 to employee devices.
 '@ | Set-Content -LiteralPath (Join-Path $Stage "PORTABLE-README.txt") -Encoding UTF8
 
   $env:DJANGO_SECRET_KEY = "portable-build-check-only-secret"
