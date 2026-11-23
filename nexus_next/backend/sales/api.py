@@ -383,6 +383,15 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         if branch_id:
             invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
 
+        returned_by_invoice = {
+            row["invoice_id"]: row["total"]
+            for row in SalesReturn.objects.filter(
+                invoice__in=invoices, return_date__lte=as_of,
+            ).filter(
+                Q(status=SalesReturn.Status.POSTED)
+                | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
+            ).values("invoice_id").annotate(total=Sum("grand_total"))
+        }
         customers = {}
         totals = {
             "not_due": Decimal("0"), "1_30": Decimal("0"),
@@ -396,12 +405,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                  and receipt.receipt_date <= as_of),
                 Decimal("0"),
             )
-            returned_as_of = SalesReturn.objects.filter(
-                invoice=invoice, return_date__lte=as_of,
-            ).filter(
-                Q(status=SalesReturn.Status.POSTED)
-                | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
-            ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+            returned_as_of = returned_by_invoice.get(invoice.pk, Decimal("0"))
             balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
             if balance_due <= 0:
                 continue
