@@ -113,6 +113,7 @@ jobs:
             Get-Item nexus_next/start-local.ps1
             Get-Item nexus_next/start-production.ps1
             Get-Item nexus_next/setup-admrail.ps1
+            Get-Item nexus_next/scripts/Remove-Old-Admrail-Database.ps1
           )
           foreach ($script in $scripts) {
             $tokens = $null
