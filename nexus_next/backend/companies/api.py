@@ -412,6 +412,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
         current_company_id = serializer.instance.company_id
         if not has_company_role(self.request.user, current_company_id, ("admin",)):
             raise PermissionDenied("تعديل السنوات المالية متاح لمدير الشركة فقط.")
+        acquire_fiscal_year_lock(serializer.instance, shared=False)
         Company.objects.select_for_update().get(pk=current_company_id)
         FiscalYear.objects.select_for_update().get(pk=serializer.instance.pk)
         if serializer.instance.journal_entries.exists():
