@@ -185,7 +185,7 @@ def post_stock_movement(movement_id, user):
             )
             line.unit_cost = line.cost_amount / line.quantity
             line.save(update_fields=("unit_cost", "cost_amount"))
-        elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN):
+        elif movement.movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.SUPPLIER_RETURN, StockMovement.MovementType.SALES_RETURN_REVERSAL):
             source_root_line_id = None
             if movement.movement_type == StockMovement.MovementType.SUPPLIER_RETURN:
                 source_root_line_id = line.supplier_return_line.invoice_line.receipt_line_id
