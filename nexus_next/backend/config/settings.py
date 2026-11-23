@@ -101,12 +101,26 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 WHITENOISE_ROOT = BASE_DIR.parent / "frontend" / "dist"
 WHITENOISE_INDEX_FILE = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Send security and audit failures to the process stderr captured by Waitress/service logs.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "audit.middleware": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:5173"])
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 # وضع الإنتاج لا يعمل بإعدادات HTTP غير الآمنة؛ يلزم إنهاء TLS على الخادم أو Proxy موثوق.
 DJANGO_ENV = env.str("DJANGO_ENV", default="development").strip().lower()
 IS_PRODUCTION = DJANGO_ENV == "production"
 SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_AGE = 8 * 60 * 60
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=IS_PRODUCTION)
 CSRF_COOKIE_SAMESITE = "Lax"
