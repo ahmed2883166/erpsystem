@@ -22,6 +22,7 @@ class SalesDelivery(models.Model):
     delivery_date = models.DateField()
     customer_reference = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
+    quotation_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_deliveries")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -52,7 +53,115 @@ class SalesDelivery(models.Model):
             raise ValidationError({"stock_movement": "حركة الصرف لا تطابق إذن التسليم."})
 
 
-class SalesInvoice(models.Model):
+
+
+class SalesQuotation(models.Model):
+    """عرض سعر تجاري لا ينشئ حركة مخزون أو قيدًا محاسبيًا."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        SENT = "sent", "مرسل"
+        ACCEPTED = "accepted", "مقبول"
+        REJECTED = "rejected", "مرفوض"
+        EXPIRED = "expired", "منتهي"
+        CONVERTED = "converted", "تم تحويله"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_quotations")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_quotations")
+    quotation_number = models.CharField(max_length=80)
+    quotation_date = models.DateField()
+    valid_until = models.DateField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    converted_delivery = models.OneToOneField(
+        SalesDelivery, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="source_quotation",
+    )
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_quotations")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    converted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-quotation_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "quotation_number"), name="uq_sales_quote_company_no"),
+            models.CheckConstraint(condition=models.Q(valid_until__gte=models.F("quotation_date")), name="ck_sales_quote_validity"),
+        ]
+        indexes = [models.Index(fields=("company", "status", "quotation_date"), name="sales_quote_co_status_idx")]
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.valid_until and self.quotation_date and self.valid_until < self.quotation_date:
+            raise ValidationError({"valid_until": "تاريخ الصلاحية لا يسبق تاريخ العرض."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.get(pk=self.pk)
+            if old.status == self.Status.CONVERTED:
+                raise ValidationError("عرض السعر المحول لا يمكن تعديله.")
+            if old.converted_delivery_id and self.converted_delivery_id != old.converted_delivery_id:
+                raise ValidationError("رابط التحويل لا يمكن تغييره.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT or self.converted_delivery_id:
+            raise ValidationError("لا يمكن حذف عرض سعر مرسل أو مقبول أو محول.")
+        return super().delete(*args, **kwargs)
+
+
+class SalesQuotationLine(models.Model):
+    """بند عرض السعر وأسعاره وخصمه وضريبته وقت إعداد العرض."""
+    quotation = models.ForeignKey(SalesQuotation, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_quotation_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_quotation_lines")
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    discount_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+
+    def save(self, *args, **kwargs):
+        if self.quotation_id and self.quotation.status != SalesQuotation.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود عرض سعر غير مسودة.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.quotation.status != SalesQuotation.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف بنود عرض سعر غير مسودة.")
+        return super().delete(*args, **kwargs)
+
+    def calculate(self):
+        if self.product.company_id != self.quotation.company_id:
+            raise ValidationError({"product": "الصنف لا يتبع شركة عرض السعر."})
+        if self.tax_code_id:
+            code = self.tax_code
+            if (not code.is_active or code.company_id != self.quotation.company_id
+                    or code.country != self.quotation.company.country
+                    or code.category == TaxCode.Category.REVERSE_CHARGE
+                    or code.effective_from > self.quotation.quotation_date
+                    or (code.effective_to and code.effective_to < self.quotation.quotation_date)):
+                raise ValidationError({"tax_code": "كود الضريبة غير صالح لعرض السعر."})
+            self.tax_rate = code.rate
+        gross = (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
+        self.discount_amount = (gross * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
+        self.net_amount = gross - self.discount_amount
+        self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+        self.total_amount = self.net_amount + self.tax_amount
+\n\nclass SalesInvoice(models.Model):
     """يمثل فاتورة العميل وإجماليات البيع والضريبة والاعتماد."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
