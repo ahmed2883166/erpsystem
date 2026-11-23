@@ -55,6 +55,9 @@ def post_journal(entry_id: int) -> JournalEntry:
     # while fiscal-year/period closure takes the matching exclusive lock.
     fiscal_year = FiscalYear.objects.get(pk=entry.fiscal_year_id)
     acquire_fiscal_year_lock(fiscal_year, shared=True)
+    # The lock may have waited for a concurrent close; refresh the status only
+    # after acquiring it so a stale pre-lock OPEN value cannot authorize posting.
+    fiscal_year.refresh_from_db(fields=("status", "start_date", "end_date"))
 
     if entry.status != JournalEntry.Status.DRAFT:
         raise ValidationError("لا يمكن ترحيل إلا القيود المسجلة كمسودة.")
