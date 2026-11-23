@@ -163,7 +163,7 @@ def reverse_sales_return(return_id, user, entry_date):
 
     reversal_movement = StockMovement.objects.create(
         company=document.company,
-        movement_number=f"SRV-{document.pk}",
+        movement_number=f"SRETREV-{document.pk}",
         movement_type=StockMovement.MovementType.SALES_RETURN_REVERSAL,
         movement_date=entry_date,
         source_warehouse=document.warehouse,
