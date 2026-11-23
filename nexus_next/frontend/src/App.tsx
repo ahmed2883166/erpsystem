@@ -103,7 +103,7 @@ function TaxCodeSettingsPanel({ companyId, country }: { companyId: number | null
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const load = async () => {
+  const load = async (page = 1) => {
     if (!companyId) { setItems([]); return; }
     try { setItems(await api.taxCodes(companyId)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أكواد الضرائب."); }
@@ -457,6 +457,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [ledger, setLedger] = useState<GeneralLedgerReport|null>(null);
+  const [ledgerPage, setLedgerPage] = useState(1);
   const [equity, setEquity] = useState<EquityChangesReport|null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -465,7 +466,7 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
     api.accounts(companyId).then(items => {
       setAccounts(items);
       setAccountId(String(items.find(item=>!item.is_group)?.id || ""));
-      setLedger(null); setEquity(null);
+      setLedger(null); setLedgerPage(1); setEquity(null);
     }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الحسابات."));
     api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
       .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
@@ -475,10 +476,10 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
     setBusy(true); setError("");
     try {
       const [ledgerData, equityData] = await Promise.all([
-        api.generalLedger(companyId, Number(accountId), from, to, branchId ? Number(branchId) : undefined),
+        api.generalLedger(companyId, Number(accountId), from, to, branchId ? Number(branchId) : undefined, page, 100),
         api.changesInEquity(companyId, from, to, branchId ? Number(branchId) : undefined),
       ]);
-      setLedger(ledgerData); setEquity(equityData);
+      setLedger(ledgerData); setLedgerPage(page); setEquity(equityData);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل دفتر الأستاذ والتغيرات في حقوق الملكية."); }
     finally { setBusy(false); }
   };
@@ -498,6 +499,13 @@ function LedgerAndEquityPanel({ companyId }: { companyId: number | null }) {
       <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>الفرع</th><th>مدين</th><th>دائن</th><th>الرصيد المتحرك</th></tr></thead><tbody>
         {ledger.rows.map(row=><tr key={row.line_id}><td>{row.date}</td><td>{row.entry_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.running_balance)}</td></tr>)}
       </tbody></table>{!ledger.rows.length&&<div className="table-empty">لا توجد حركات على الحساب خلال الفترة.</div>}</div>
+      <div className="asset-cashflow-totals">
+        <span>صفحة {ledger.pagination.page} من {ledger.pagination.total_pages} — إجمالي الحركات: {ledger.pagination.total_rows.toLocaleString("ar-EG")}</span>
+        <div className="report-actions">
+          <button type="button" className="subtle-button" disabled={busy || !ledger.pagination.has_previous} onClick={()=>void load(ledgerPage-1)}>السابق</button>
+          <button type="button" className="subtle-button" disabled={busy || !ledger.pagination.has_next} onClick={()=>void load(ledgerPage+1)}>التالي</button>
+        </div>
+      </div>
     </>}
     {equity && <>
       <h3>قائمة التغيرات في حقوق الملكية</h3>
