@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
+from django.db.models import Sum
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.test import APITestCase
 
@@ -12,7 +13,7 @@ from companies.models import Branch, Company, CompanyMembership, Currency, Excha
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 from suppliers.models import Supplier
-from purchasing.models import PurchaseInvoiceTaxAllocation, SupplierPayment
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, SupplierPayment
 
 
 class PurchasingWorkflowTests(APITestCase):
