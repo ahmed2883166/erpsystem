@@ -10,7 +10,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import post_treasury_transaction, revalue_treasury_fx_account
@@ -358,7 +358,15 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             from django.db.models import Q
-            qs = qs.filter(Q(bank_account__branch__isnull=True) | Q(bank_account__branch__in=accessible_branches(self.request.user)))
+            branches = accessible_branches(self.request.user)
+            company_wide_ids = [
+                company_id for company_id in qs.values_list("company_id", flat=True).distinct()
+                if has_company_wide_branch_access(self.request.user, company_id)
+            ]
+            qs = qs.filter(
+                Q(bank_account__branch__in=branches)
+                | Q(bank_account__branch__isnull=True, company_id__in=company_wide_ids)
+            )
         return qs
 
     def perform_create(self, serializer):
@@ -371,6 +379,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise ValidationError("اختر حسابًا بنكيًا نشطًا تابعًا للشركة.")
         if bank.branch_id and not can_access_branch(self.request.user, bank.branch_id, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        if not bank.branch_id and not has_company_wide_branch_access(self.request.user, company_id):
+            raise PermissionDenied("الحساب البنكي العام بلا فرع يتطلب صلاحية الوصول إلى جميع فروع الشركة لإجراء التسوية.")
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -385,6 +395,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         self._write(instance.company_id)
         if bank.branch_id and not can_access_branch(self.request.user, bank.branch_id, instance.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        if not bank.branch_id and not has_company_wide_branch_access(self.request.user, instance.company_id):
+            raise PermissionDenied("الحساب البنكي العام بلا فرع يتطلب صلاحية الوصول إلى جميع فروع الشركة لإجراء التسوية.")
         serializer.save()
 
     def perform_destroy(self, instance):
