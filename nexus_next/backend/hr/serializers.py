@@ -20,11 +20,6 @@ class DepartmentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
-        employee_user = attrs.get("user")
-        if "user" in attrs and employee_user and company and not CompanyMembership.objects.filter(
-            user=employee_user, company=company, is_active=True,
-        ).exists():
-            raise serializers.ValidationError({"user": "حساب الموظف يجب أن يمتلك عضوية نشطة في نفس الشركة."})
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if branch and company and branch.company_id != company.pk:
             raise serializers.ValidationError({"branch": "الفرع يجب أن يتبع نفس الشركة."})
@@ -66,6 +61,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
+        employee_user = attrs.get("user", getattr(self.instance, "user", None))
+        if employee_user and company and not CompanyMembership.objects.filter(
+            user=employee_user, company=company, is_active=True,
+        ).exists():
+            raise serializers.ValidationError({"user": "حساب الموظف يجب أن يمتلك عضوية نشطة في نفس الشركة."})
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         if branch and company and branch.company_id != company.pk:
             raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
