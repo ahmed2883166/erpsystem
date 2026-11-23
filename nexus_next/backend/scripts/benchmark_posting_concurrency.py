@@ -105,11 +105,11 @@ def main():
     for index in range(max(COUNTS)):
         username = f"posting-load-{suffix}-{index + 1:02d}"
         user = User.objects.create_user(username=username, password=PASSWORD)
+        user_records.append(username)
         CompanyMembership.objects.create(
             user=user, company=company, role=CompanyMembership.Role.ACCOUNTANT,
             all_branches=True,
         )
-        user_records.append(username)
 
     report = {
         "company_id": company.pk,
