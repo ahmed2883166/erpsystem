@@ -28,7 +28,7 @@ class AuditEventListView(APIView):
                 Q(company_id__in=company_ids)
                 | Q(
                     company__isnull=True,
-                    actor__memberships__company_id__in=company_ids,
+                    actor__company_memberships__company_id__in=company_ids,
                     resource__in=("authentication.login", "authentication.logout"),
                 )
             ).filter(
@@ -50,7 +50,7 @@ class AuditEventListView(APIView):
                     Q(company_id=company_id)
                     | Q(
                         company__isnull=True,
-                        actor__memberships__company_id=company_id,
+                        actor__company_memberships__company_id=company_id,
                         resource__in=("authentication.login", "authentication.logout"),
                     )
                 )
