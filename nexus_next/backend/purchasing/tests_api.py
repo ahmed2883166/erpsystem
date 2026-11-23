@@ -15,6 +15,7 @@ from companies.models import Branch, Company, CompanyMembership, Currency, Excha
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 from suppliers.models import Supplier
+from treasury.models import TreasuryAccount
 from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, SupplierPayment, SupplierReturn
 
 
@@ -1250,6 +1251,73 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(vat.data["input_tax"], "14.0000")
         self.assertEqual(vat.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
 
+
+    def test_supplier_refund_posts_against_return_credit_and_rejects_over_refund(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-REFUND-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        returned = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-REFUND-001", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        bank = ChartOfAccount.objects.create(
+            company=self.company, code="1111", name_ar="بنك استرداد المورد", nature=ChartOfAccount.Nature.ASSET,
+        )
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank, kind=TreasuryAccount.Kind.BANK,
+            code="BANK-REFUND", name_ar="بنك استرداد المورد", currency_code="EGP",
+        )
+        refund = self.client.post("/api/purchasing/refunds/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "return_document": posted_return.data["id"], "refund_number": "REF-001",
+            "refund_date": "2026-03-13", "method": "bank", "payment_account": bank.pk,
+            "amount": "50", "reference": "BANK-REF-001",
+        }, format="json")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        over_refund = self.client.post("/api/purchasing/refunds/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "return_document": posted_return.data["id"], "refund_number": "REF-OVER",
+            "refund_date": "2026-03-13", "method": "bank", "payment_account": bank.pk,
+            "amount": "115",
+        }, format="json")
+        self.assertEqual(over_refund.status_code, 201, over_refund.data)
+        rejected = self.client.post(
+            f"/api/purchasing/refunds/{over_refund.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+        posted_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+        self.assertEqual(posted_refund.data["status"], "posted")
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted_refund.data["journal_entry"], account=bank, debit=Decimal("50.0000"),
+        ).exists())
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted_refund.data["journal_entry"], account__code="2200", credit=Decimal("50.0000"),
+        ).exists())
+        statement = self.client.get(
+            f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_refund")
+        self.assertEqual(statement.data["closing_balance"], "164.0000")
 
     def test_supplier_return_cannot_consume_another_receipts_cost_layers(self):
         first_receipt_id, first_receipt_line_id = self._create_and_post_receipt()
