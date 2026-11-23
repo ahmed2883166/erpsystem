@@ -1599,16 +1599,142 @@ class SubledgerReconciliationApiTests(APITestCase):
         )
         self.assertEqual(result.status_code, 200, result.data)
         payroll = next(item for item in result.data["rows"] if item["key"] == "payroll")
-        self.assertEqual(payroll["status"], "partial_reconciliation")
+        self.assertEqual(payroll["status"], "pending_documents")
         self.assertEqual(payroll["pending_documents_count"], 1)
-        self.assertEqual(result.data["partial_reconciliation_count"], 1)
+        self.assertEqual(result.data["partial_reconciliation_count"], 0)
         self.assertFalse(result.data["is_reconciled"])
 
+    def test_statutory_payroll_liabilities_reconcile_without_changing_posted_journal(self):
+        from hr.models import (
+            Employee, PayrollComponent, PayrollCycle, PayrollPosting,
+            PayrollResult, PayrollResultLine,
+        )
+
+        accounts = {
+            "payroll": ChartOfAccount.objects.create(
+                company=self.company, code="2100", name_ar="مرتبات مستحقة", nature="liability",
+            ),
+            "employee_insurance": ChartOfAccount.objects.create(
+                company=self.company, code="2110", name_ar="تأمينات الموظف", nature="liability",
+            ),
+            "tax": ChartOfAccount.objects.create(
+                company=self.company, code="2120", name_ar="ضريبة المرتبات", nature="liability",
+            ),
+            "employer_insurance": ChartOfAccount.objects.create(
+                company=self.company, code="2130", name_ar="تأمينات صاحب العمل", nature="liability",
+            ),
+            "payroll_expense": ChartOfAccount.objects.create(
+                company=self.company, code="5100", name_ar="مصروف المرتبات", nature="expense",
+            ),
+            "employer_expense": ChartOfAccount.objects.create(
+                company=self.company, code="5110", name_ar="مصروف تأمينات صاحب العمل", nature="expense",
+            ),
+        }
+        for role, key in (
+            (AccountRole.Role.PAYROLL_PAYABLE, "payroll"),
+            (AccountRole.Role.EMPLOYEE_INSURANCE_PAYABLE, "employee_insurance"),
+            (AccountRole.Role.PAYROLL_TAX_PAYABLE, "tax"),
+            (AccountRole.Role.EMPLOYER_INSURANCE_PAYABLE, "employer_insurance"),
+        ):
+            AccountRole.objects.create(company=self.company, role=role, account=accounts[key])
+
+        employee = Employee.objects.create(
+            company=self.company, branch=self.branch, code="EMP-STAT-001",
+            full_name_ar="موظف التزامات", hire_date=date(2025, 1, 1),
+            currency=self.company.base_currency,
+        )
+        cycle = PayrollCycle.objects.create(
+            company=self.company, period_start=date(2026, 3, 1),
+            period_end=date(2026, 3, 31), payment_date=date(2026, 4, 1),
+            status=PayrollCycle.Status.POSTED,
+        )
+        result = PayrollResult.objects.create(
+            cycle=cycle, employee=employee, basic_salary_snapshot=Decimal("10000"),
+            earnings_total=Decimal("10000"), employee_deductions_total=Decimal("1500"),
+            employer_share_total=Decimal("1500"), employer_share_display_addition=Decimal("1500"),
+            employer_share_display_offset=Decimal("1500"), net_pay=Decimal("8500"),
+            company_cost=Decimal("11500"),
+        )
+        employee_insurance = PayrollComponent.objects.create(
+            company=self.company, code="EMP-INS", name_ar="تأمينات الموظف",
+            kind=PayrollComponent.Kind.DEDUCTION,
+            method=PayrollComponent.Method.EMPLOYEE_INSURANCE,
+            payable_account=accounts["employee_insurance"],
+        )
+        tax = PayrollComponent.objects.create(
+            company=self.company, code="PAY-TAX", name_ar="ضريبة المرتبات",
+            kind=PayrollComponent.Kind.DEDUCTION,
+            method=PayrollComponent.Method.PROGRESSIVE_TAX,
+            payable_account=accounts["tax"],
+        )
+        employer_insurance = PayrollComponent.objects.create(
+            company=self.company, code="ER-INS", name_ar="تأمينات صاحب العمل",
+            kind=PayrollComponent.Kind.EMPLOYER_SHARE,
+            method=PayrollComponent.Method.EMPLOYER_INSURANCE,
+            expense_account=accounts["employer_expense"],
+            payable_account=accounts["employer_insurance"],
+        )
+        PayrollResultLine.objects.create(
+            result=result, component=employee_insurance, code_snapshot="EMP-INS",
+            name_snapshot="تأمينات الموظف", kind_snapshot="deduction", amount=Decimal("1000"),
+        )
+        PayrollResultLine.objects.create(
+            result=result, component=tax, code_snapshot="PAY-TAX",
+            name_snapshot="ضريبة المرتبات", kind_snapshot="deduction", amount=Decimal("500"),
+        )
+        PayrollResultLine.objects.create(
+            result=result, component=employer_insurance, code_snapshot="ER-INS",
+            name_snapshot="تأمينات صاحب العمل", kind_snapshot="employer_share",
+            amount=Decimal("1500"), display_only=True,
+        )
+
+        journal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="PAY-STAT-001", entry_date=date(2026, 3, 31),
+            description="قيد مرتبات واستمارات الالتزامات",
+        )
+        JournalLine.objects.create(entry=journal, account=accounts["payroll_expense"], debit=Decimal("10000"))
+        JournalLine.objects.create(entry=journal, account=accounts["employer_expense"], debit=Decimal("1500"))
+        JournalLine.objects.create(entry=journal, account=accounts["payroll"], credit=Decimal("8500"))
+        JournalLine.objects.create(entry=journal, account=accounts["employee_insurance"], credit=Decimal("1000"))
+        JournalLine.objects.create(entry=journal, account=accounts["tax"], credit=Decimal("500"))
+        JournalLine.objects.create(entry=journal, account=accounts["employer_insurance"], credit=Decimal("1500"))
+        post_journal(journal.pk)
+        PayrollPosting.objects.create(cycle=cycle, branch=self.branch, journal_entry=journal)
+
+        original_lines = list(journal.lines.order_by("account_id").values_list("account_id", "debit", "credit"))
+        original_status = journal.status
+        response = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {item["key"]: item for item in response.data["rows"]}
+        for key, amount in (
+            ("payroll_employee_insurance", Decimal("1000")),
+            ("payroll_payroll_tax", Decimal("500")),
+            ("payroll_employer_insurance", Decimal("1500")),
+        ):
+            self.assertEqual(rows[key]["status"], "partial_reconciliation")
+            self.assertEqual(Decimal(rows[key]["subledger_balance"]), amount)
+            self.assertEqual(Decimal(rows[key]["gl_balance"]), amount)
+        payroll = rows["payroll"]
+        self.assertEqual(payroll["status"], "matched")
+        self.assertEqual(Decimal(payroll["subledger_balance"]), Decimal("8500"))
+        journal.refresh_from_db()
+        self.assertEqual(journal.status, original_status)
+        self.assertEqual(
+            list(journal.lines.order_by("account_id").values_list("account_id", "debit", "credit")),
+            original_lines,
+        )
+
     def test_unpaid_payroll_net_pay_is_listed_by_employee(self):
-        from hr.models import Employee, PayrollCycle, PayrollResult
+        from hr.models import Employee, PayrollCycle, PayrollPosting, PayrollResult
 
         payroll_account = ChartOfAccount.objects.create(
             company=self.company, code="2100", name_ar="مرتبات مستحقة", nature="liability",
+        )
+        payroll_expense = ChartOfAccount.objects.create(
+            company=self.company, code="5100", name_ar="مصروف المرتبات", nature="expense",
         )
         AccountRole.objects.create(
             company=self.company, role=AccountRole.Role.PAYROLL_PAYABLE, account=payroll_account,
@@ -1633,12 +1759,24 @@ class SubledgerReconciliationApiTests(APITestCase):
             employer_share_display_offset=Decimal("1500"),
             net_pay=Decimal("9000"), company_cost=Decimal("11500"),
         )
+        journal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="PAY-RECON-001", entry_date=date(2026, 3, 31),
+            description="استحقاق مرتبات اختبار",
+        )
+        JournalLine.objects.create(entry=journal, account=payroll_expense, debit=Decimal("9000"))
+        JournalLine.objects.create(entry=journal, account=payroll_account, credit=Decimal("9000"))
+        post_journal(journal.pk)
+        PayrollPosting.objects.create(cycle=cycle, branch=self.branch, journal_entry=journal)
+
         result = self.client.get(
             f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
         )
         self.assertEqual(result.status_code, 200, result.data)
         payroll = next(item for item in result.data["rows"] if item["key"] == "payroll")
-        self.assertEqual(payroll["status"], "partial_reconciliation")
+        self.assertEqual(payroll["status"], "matched")
+        self.assertEqual(Decimal(payroll["subledger_balance"]), Decimal("9000"))
+        self.assertEqual(Decimal(payroll["gl_balance"]), Decimal("9000"))
         self.assertEqual(payroll["party_count"], 1)
         self.assertEqual(payroll["party_balances"][0]["code"], "EMP-001")
         self.assertEqual(Decimal(payroll["party_balances"][0]["balance"]), Decimal("9000"))
