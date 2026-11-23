@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, type FiscalYear, type FiscalYearClosingReview } from "./api";
+import { api, type FiscalPeriod, type FiscalYear, type FiscalYearClosingReview } from "./api";
 
 type Props = { companyId: number | null; onStructureChanged: () => Promise<void> };
 const currentYear = new Date().getFullYear();
@@ -8,6 +8,9 @@ export default function FiscalYearsPanel({ companyId, onStructureChanged }: Prop
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [review, setReview] = useState<FiscalYearClosingReview | null>(null);
+  const [periods, setPeriods] = useState<FiscalPeriod[]>([]);
+  const [periodsLoading, setPeriodsLoading] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
   const [name, setName] = useState(String(currentYear));
   const [startDate, setStartDate] = useState(`${currentYear}-01-01`);
   const [endDate, setEndDate] = useState(`${currentYear}-12-31`);
@@ -23,7 +26,7 @@ export default function FiscalYearsPanel({ companyId, onStructureChanged }: Prop
   };
 
   useEffect(() => {
-    setYears([]); setSelectedId(null); setReview(null); setEditingId(null);
+    setYears([]); setSelectedId(null); setReview(null); setPeriods([]); setEditingId(null);
     setError(""); setNotice("");
     if (companyId) void api.fiscalYears(companyId)
       .then(rows => setYears(rows.filter(row => row.company === companyId)))
@@ -50,14 +53,17 @@ export default function FiscalYearsPanel({ companyId, onStructureChanged }: Prop
   };
 
   const inspect = async (year: FiscalYear) => {
-    setSelectedId(year.id); setReview(null); setError(""); setNotice("");
-    try { setReview(await api.fiscalYearClosingReview(year.id)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إجراء مراجعة الإقفال."); }
+    setSelectedId(year.id); setReview(null); setPeriods([]); setError(""); setNotice(""); setPeriodsLoading(true);
+    try {
+      const [closingReview, periodRows] = await Promise.all([api.fiscalYearClosingReview(year.id), api.fiscalPeriods(year.id)]);
+      setReview(closingReview); setPeriods(periodRows);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إجراء مراجعة الإقفال."); }
+    finally { setPeriodsLoading(false); }
   };
 
   const beginEdit = (year: FiscalYear) => {
     setEditingId(year.id); setName(year.name); setStartDate(year.start_date); setEndDate(year.end_date);
-    setSelectedId(year.id); setReview(null); setError(""); setNotice("");
+    setSelectedId(year.id); setReview(null); setPeriods([]); setError(""); setNotice("");
   };
 
   const closeYear = async () => {
@@ -68,6 +74,38 @@ export default function FiscalYearsPanel({ companyId, onStructureChanged }: Prop
       const result = await api.closeFiscalYear(selectedId);
       await load(); await onStructureChanged(); setReview(result.review); setNotice(result.detail);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إقفال السنة المالية."); }
+    finally { setBusy(false); }
+  };
+
+  const generatePeriods = async () => {
+    if (!selectedId) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api.generateFiscalPeriods(selectedId);
+      setPeriods(await api.fiscalPeriods(selectedId));
+      setNotice(result.detail);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء الفترات الشهرية."); }
+    finally { setBusy(false); }
+  };
+
+  const closePeriod = async (period: FiscalPeriod) => {
+    if (!selectedId || !window.confirm(`تأكيد إقفال الفترة ${period.name}؟ لن يمكن ترحيل قيود جديدة بتاريخ داخلها.`)) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api.closeFiscalPeriod(selectedId, period.id);
+      setPeriods(await api.fiscalPeriods(selectedId)); setNotice(result.detail);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إقفال الفترة الشهرية."); }
+    finally { setBusy(false); }
+  };
+
+  const reopenPeriod = async (period: FiscalPeriod) => {
+    if (!selectedId) return;
+    if (reopenReason.trim().length < 10) { setError("اكتب سبب إعادة الفتح بما لا يقل عن 10 أحرف."); return; }
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await api.reopenFiscalPeriod(selectedId, period.id, reopenReason.trim());
+      setPeriods(await api.fiscalPeriods(selectedId)); setReopenReason(""); setNotice(result.detail);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إعادة فتح الفترة الشهرية."); }
     finally { setBusy(false); }
   };
 
@@ -99,6 +137,17 @@ export default function FiscalYearsPanel({ companyId, onStructureChanged }: Prop
       </tbody></table></div>
       {selectedId !== null && <div className="journal-review">
         <div className="section-heading"><div><h3>قائمة مراجعة الإقفال</h3><p>{years.find(year => year.id === selectedId)?.name || "السنة المحددة"}</p></div><button type="button" className="subtle-button" onClick={() => { setSelectedId(null); setReview(null); }}>إغلاق المراجعة</button></div>
+        <div className="section-heading"><div><h3>الإقفال الشهري</h3><p>إنشاء الفترات الشهرية وإقفالها أو إعادة فتحها بسبب موثق.</p></div><button type="button" className="subtle-button" disabled={busy || periodsLoading || years.find(year=>year.id===selectedId)?.status!=="open"} onClick={() => void generatePeriods()}>إنشاء الفترات الشهرية</button></div>
+        {periodsLoading && <div className="empty-state">جارٍ تحميل الفترات الشهرية…</div>}
+        {!periodsLoading && periods.length > 0 && <>
+          {periods.some(period=>period.status==="closed") && <label className="form-wide">سبب إعادة فتح الفترة<input value={reopenReason} onChange={event=>setReopenReason(event.target.value)} placeholder="اكتب سببًا واضحًا لا يقل عن 10 أحرف" /></label>}
+          <div className="data-table-wrap"><table><thead><tr><th>الفترة</th><th>من</th><th>إلى</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>
+            {periods.map(period=><tr key={period.id}><td>{period.name}</td><td>{period.start_date}</td><td>{period.end_date}</td><td><span className={period.status==="open"?"status-pill status-posted":"status-pill"}>{period.status==="open"?"مفتوحة":"مغلقة"}</span></td><td>{years.find(year=>year.id===selectedId)?.status==="open" ? (period.status==="open" ? <button type="button" className="text-action-button" disabled={busy} onClick={()=>void closePeriod(period)}>إقفال الفترة</button> : <button type="button" className="text-action-button" disabled={busy || reopenReason.trim().length<10} onClick={()=>void reopenPeriod(period)}>إعادة فتح</button>) : "—"}</td></tr>)}
+          </tbody></table></div>
+        </>}
+        {!periodsLoading && !periods.length && <div className="asset-report-note">لم تُنشأ فترات شهرية لهذه السنة بعد. اضغط «إنشاء الفترات الشهرية» لتجهيزها وفق حدود السنة المالية.</div>}
+        <div className="divider" />
+        <div className="section-heading"><div><h3>قائمة مراجعة إقفال السنة</h3><p>{years.find(year => year.id === selectedId)?.name || "السنة المحددة"}</p></div></div>
         {!review && <div className="empty-state">جارٍ تحميل نتائج المراجعة…</div>}
         {review && <>
           <div className="data-table-wrap"><table><thead><tr><th>شرط الإقفال</th><th>النتيجة</th><th>التفاصيل</th></tr></thead><tbody>{checks.map(item => <tr key={item.key}><td>{item.label}</td><td><span className={item.passed ? "status-pill status-posted" : "status-pill"}>{item.passed ? "مكتمل" : "غير مكتمل"}</span></td><td>{item.detail}</td></tr>)}</tbody></table></div>
