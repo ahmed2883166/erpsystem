@@ -46,6 +46,16 @@ export type AccountTemplateApplyResult = {
 };
 export type JournalLine = { id: number; account: number; account_code: string; account_name: string; debit: string; credit: string; description: string; cost_center: number | null };
 export type TrialBalance = { company_id: number; debit_total: string; credit_total: string; difference: string; accounts: { account_id: number; code: string; name_ar: string; nature: string; opening_debit: string; opening_credit: string; opening_balance: string; debit_total: string; credit_total: string; net_balance: string; closing_balance: string }[]; opening_debit_total: string; opening_credit_total: string; closing_debit_credit_difference: string };
+export type SubledgerReconciliation = {
+  company:number; as_of:string; branch:number|null; branch_name:string; scope_branch_ids:number[];
+  currency:string; currency_decimal_places:number; matched_count:number; difference_count:number;
+  configuration_issue_count:number; unavailable_count:number; note:string;
+  rows:{key:string;label:string;status:"matched"|"difference"|"not_configured"|"invalid_account"|"historical_snapshot_unavailable";
+    accounts:{id:number;code:string;name:string}[];subledger_balance:string|null;gl_balance:string|null;difference:string|null;
+    source_journal_count:number;detail:string;
+    unmatched_entries:{journal_id:number;entry_number:string;entry_date:string;description:string;account_code:string;debit:string;credit:string}[];
+  }[];
+};
 export type ThemePreference = "light" | "dark" | "system";
 export type SessionUser = { id: number; username: string; display_name: string; is_staff: boolean; is_superuser: boolean; is_platform_owner: boolean; theme_preference: ThemePreference };
 export type SessionResponse = { authenticated: boolean; user?: SessionUser };
@@ -240,6 +250,12 @@ export type IndirectCashFlowReport = {
 };
 // واجهات الخزينة والتدفقات النقدية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const treasuryApi = {
+  // جلب تقرير مطابقة دفاتر العملاء والموردين والمرتبات والمخزون مع الأستاذ العام.
+  subledgerReconciliation: (companyId:number, asOf:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId),as_of:asOf});
+    if (branch) q.set("branch",String(branch));
+    return request<SubledgerReconciliation>(`/api/accounting/subledger-reconciliation/?${q.toString()}`);
+  },
   // جلب حسابات الخزينة والبنوك للشركة.
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
   // جلب حركات الخزينة مرتبة من الأحدث.

@@ -1455,3 +1455,74 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(TaxCode.objects.filter(company=self.company, code="VAT-STD").count(), 1)
         self.assertEqual(len(response.data["existing"]), 1)
+
+
+from datetime import date
+from decimal import Decimal
+
+from rest_framework.test import APITestCase
+
+from accounts.models import User
+from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
+from accounting.services import post_journal
+
+
+class SubledgerReconciliationApiTests(APITestCase):
+    def setUp(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="RECON", name_ar="شركة اختبار المطابقة", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        self.user = User.objects.create_user(username="recon-user", password="test-password")
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="accountant", all_branches=True,
+        )
+        self.client.force_authenticate(self.user)
+        self.receivables = ChartOfAccount.objects.create(
+            company=self.company, code="1100", name_ar="العملاء", nature="asset",
+        )
+        self.cash = ChartOfAccount.objects.create(
+            company=self.company, code="1000", name_ar="الصندوق", nature="asset",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE, account=self.receivables,
+        )
+
+    def test_manual_control_account_movement_is_reported_as_a_difference(self):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="MANUAL-AR-001", entry_date=date(2026, 3, 10),
+            description="حركة يدوية على حساب العملاء",
+        )
+        JournalLine.objects.create(entry=entry, account=self.receivables, debit=Decimal("125.2500"))
+        JournalLine.objects.create(entry=entry, account=self.cash, credit=Decimal("125.2500"))
+        post_journal(entry.pk)
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        row = next(item for item in result.data["rows"] if item["key"] == "customers")
+        self.assertEqual(row["status"], "difference")
+        self.assertEqual(Decimal(row["subledger_balance"]), Decimal("0"))
+        self.assertEqual(Decimal(row["gl_balance"]), Decimal("125.2500"))
+        self.assertEqual(Decimal(row["difference"]), Decimal("125.2500"))
+        self.assertEqual(row["unmatched_entries"][0]["entry_number"], "MANUAL-AR-001")
+
+    def test_missing_control_account_is_not_silently_reported_as_zero(self):
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        suppliers = next(item for item in result.data["rows"] if item["key"] == "suppliers")
+        self.assertEqual(suppliers["status"], "not_configured")
+        self.assertIsNone(suppliers["gl_balance"])
