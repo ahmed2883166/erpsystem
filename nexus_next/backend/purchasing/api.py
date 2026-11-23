@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
@@ -45,9 +45,9 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer
-from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseReceipt, SupplierPayment, SupplierReturn
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer, SupplierReturnSerializer
+from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_return
 
 
 class PurchaseBaseViewSet(viewsets.ModelViewSet):
@@ -447,6 +447,57 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
 
 
+
+
+
+class SupplierReturnViewSet(PurchaseBaseViewSet):
+    serializer_class = SupplierReturnSerializer
+    queryset = SupplierReturn.objects.select_related(
+        "company", "supplier", "invoice", "invoice__receipt__warehouse",
+        "stock_movement", "journal_entry",
+    ).prefetch_related("lines__invoice_line__receipt_line__product")
+    filterset_fields = ("company", "supplier", "invoice", "status", "return_date")
+    search_fields = ("return_number", "supplier__name_ar", "invoice__invoice_number")
+    ordering_fields = ("return_date", "return_number", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(
+            Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."})
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_write(data["company"].pk)
+        invoice = data["invoice"]
+        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("تعديل مرتجع المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(request.user, document.invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        document = post_supplier_return(document.pk, request.user)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
 
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
