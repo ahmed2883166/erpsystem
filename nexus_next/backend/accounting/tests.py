@@ -1704,6 +1704,9 @@ class SubledgerReconciliationApiTests(APITestCase):
 
         original_lines = list(journal.lines.order_by("account_id").values_list("account_id", "debit", "credit"))
         original_status = journal.status
+        original_journal_count = JournalEntry.objects.filter(company=self.company).count()
+        original_payroll_line_count = PayrollResultLine.objects.filter(result__cycle=cycle).count()
+        original_cycle_status = cycle.status
         response = self.client.get(
             f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
         )
@@ -1726,6 +1729,10 @@ class SubledgerReconciliationApiTests(APITestCase):
             list(journal.lines.order_by("account_id").values_list("account_id", "debit", "credit")),
             original_lines,
         )
+        self.assertEqual(JournalEntry.objects.filter(company=self.company).count(), original_journal_count)
+        self.assertEqual(PayrollResultLine.objects.filter(result__cycle=cycle).count(), original_payroll_line_count)
+        cycle.refresh_from_db()
+        self.assertEqual(cycle.status, original_cycle_status)
 
     def test_unpaid_payroll_net_pay_is_listed_by_employee(self):
         from hr.models import Employee, PayrollCycle, PayrollPosting, PayrollResult
