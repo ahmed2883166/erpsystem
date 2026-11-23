@@ -37,11 +37,14 @@ def _accounting_report_work_mem():
     if connection.vendor != "postgresql":
         yield
         return
-    # Keep this scoped to the report transaction: never change the server-wide
-    # work_mem setting. 8MB limits per-node memory multiplication under LAN load.
+    # Keep report memory bounded per request and avoid multiplying hash/sort
+    # memory across PostgreSQL parallel workers under concurrent LAN load.
+    # The benchmark showed large hash-join spills at 8MB with parallel workers;
+    # validate this 16MB single-worker profile against the same load test.
     with transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute("SET LOCAL work_mem = '8MB'")
+            cursor.execute("SET LOCAL work_mem = '16MB'")
+            cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
         yield
 
 
