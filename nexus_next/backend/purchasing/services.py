@@ -15,7 +15,7 @@ from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import StockBalance, StockCostConsumption, StockCostLayer, StockMovement
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierReturn, SupplierReturnLine
 
 
 def _account(company, role):
@@ -667,6 +667,7 @@ def post_supplier_return(return_id, user):
     # The stock service consumes only layers whose root is the exact receipt line.
     movement = post_stock_movement(movement.pk, user)
     for line in lines:
+        line.movement_line.refresh_from_db()
         expected_inventory_credit = line.net_amount + line.nonrecoverable_tax_amount
         actual_cost = line.movement_line.cost_amount
         if abs(actual_cost - expected_inventory_credit) > Decimal("0.0001"):
