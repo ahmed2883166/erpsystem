@@ -101,6 +101,10 @@ try {
         }
         $Email = Read-Host "Administrator email address"
         if ([string]::IsNullOrWhiteSpace($Email)) { throw "Administrator email is required." }
+        try { $ParsedEmail = [System.Net.Mail.MailAddress]::new($Email.Trim()) }
+        catch { throw "Enter a valid administrator email address." }
+        if ($ParsedEmail.Address -cne $Email.Trim()) { throw "Enter only the email address, without a display name." }
+        $Email = $ParsedEmail.Address
         $AdminAppPassword = Read-PlainSecret "Choose administrator password (minimum 12 characters)"
         if ($AdminAppPassword.Length -lt 12) { throw "Administrator password must be at least 12 characters." }
 
@@ -130,7 +134,16 @@ catch {
     Remove-Item Env:DJANGO_SUPERUSER_PASSWORD -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "SETUP STOPPED: $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "No existing database was dropped or overwritten. If setup stopped after database creation, admrail_db may remain; do not rerun blindly." -ForegroundColor Yellow
+    Write-Host "No existing database was dropped or overwritten. Do not delete admrail_db or backend\.env to retry." -ForegroundColor Yellow
+    if (Test-Path -LiteralPath $EnvFile) {
+        Write-Host "Recovery: keep backend\.env. Open PowerShell in this package folder and run:" -ForegroundColor Yellow
+        Write-Host "  .\runtime\python.exe .\backend\manage.py migrate --noinput"
+        Write-Host "  .\runtime\python.exe .\backend\manage.py createsuperuser"
+        Write-Host "  .\runtime\python.exe .\backend\manage.py bootstrap_platform_owner --username YOUR_ADMIN_USERNAME"
+        Write-Host "Then start Admrail with run-admrail.cmd. If any command fails, stop and keep the database and .env for diagnosis." -ForegroundColor Yellow
+    } else {
+        Write-Host "No backend\.env was written. Do not rerun blindly; check whether admrail_db or admrail_app already exists before retrying." -ForegroundColor Yellow
+    }
     Read-Host "Press Enter to close"
     exit 1
 }
