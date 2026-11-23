@@ -60,7 +60,7 @@ class SalesWorkflowTests(APITestCase):
     def _create_delivery(self, number="DEL-001"):
         response = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": self.warehouse.pk,
-            "delivery_number": number, "delivery_date": "2026-03-10",
+            "delivery_number": number, "delivery_date": "2027-01-10",
             "lines": [{"product": self.product.pk, "quantity": "2"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -98,7 +98,7 @@ class SalesWorkflowTests(APITestCase):
         self.client.force_authenticate(limited)
         created = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": shared.pk,
-            "delivery_number": "DEL-BRANCH-BLOCK", "delivery_date": "2026-03-10",
+            "delivery_number": "DEL-BRANCH-BLOCK", "delivery_date": "2027-01-10",
             "lines": [{"product": self.product.pk, "quantity": "1"}],
         }, format="json")
         self.assertEqual(created.status_code, 403, created.data)
@@ -106,7 +106,7 @@ class SalesWorkflowTests(APITestCase):
     def test_draft_delivery_can_be_corrected_and_deleted_safely(self):
         created = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": self.warehouse.pk,
-            "delivery_number": "DEL-DRAFT-EDIT", "delivery_date": "2026-03-10",
+            "delivery_number": "DEL-DRAFT-EDIT", "delivery_date": "2027-01-10",
             "notes": "قبل التعديل", "lines": [{"product": self.product.pk, "quantity": "1"}],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -134,7 +134,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-INVOICE-DELETE")
         payload = {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DRAFT-DELETE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DRAFT-DELETE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }
         created = self.client.post("/api/sales-documents/invoices/", payload, format="json")
@@ -170,7 +170,7 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(balance.inventory_value, Decimal("120.0000"))
         invoice_response = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-001", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-001", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
@@ -187,7 +187,7 @@ class SalesWorkflowTests(APITestCase):
             code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
         receipt_response = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
-            "receipt_number": "RC-001", "receipt_date": "2026-03-11",
+            "receipt_number": "RC-001", "receipt_date": "2027-01-11",
             "method": "bank", "payment_account": alternate_bank.pk, "amount": "100",
         }, format="json")
         self.assertEqual(receipt_response.status_code, 201, receipt_response.data)
@@ -260,7 +260,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery()
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-002", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-002", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -268,7 +268,7 @@ class SalesWorkflowTests(APITestCase):
         self.client.post(f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json")
         receipt = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
-            "receipt_number": "RC-OVER", "receipt_date": "2026-03-11",
+            "receipt_number": "RC-OVER", "receipt_date": "2027-01-11",
             "method": "bank", "amount": "201",
         }, format="json")
         self.assertEqual(receipt.status_code, 201, receipt.data)
@@ -367,7 +367,7 @@ class SalesWorkflowTests(APITestCase):
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk,
             "delivery": self.company.sales_deliveries.get(delivery_number="DEL-VAT-REPORT").pk,
-            "invoice_number": "INV-VAT-REPORT", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-VAT-REPORT", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -391,7 +391,7 @@ class SalesWorkflowTests(APITestCase):
         )
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-TAX-1", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-TAX-1", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -408,7 +408,7 @@ class SalesWorkflowTests(APITestCase):
         )
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-TAX-LOCK", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-TAX-LOCK", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -425,7 +425,7 @@ class SalesWorkflowTests(APITestCase):
         )
         response = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-TAX-2", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-TAX-2", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_code": code.pk}],
         }, format="json")
         self.assertEqual(response.status_code, 400)
@@ -439,7 +439,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-APPROVAL")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-APPROVAL", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-APPROVAL", "invoice_date": "2027-01-10",
             "lines": [{
                 "delivery_line": line_id, "unit_price": "100", "tax_rate": "14",
                 "discount_percent": "10",
@@ -487,7 +487,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-WITHIN")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-WITHIN", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-WITHIN", "invoice_date": "2027-01-10",
             "lines": [{
                 "delivery_line": line_id, "unit_price": "100", "tax_rate": "0",
                 "discount_percent": "7.5",
@@ -507,7 +507,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-REJECT")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-REJECT", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-REJECT", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "1"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -532,7 +532,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-IMMUTABLE")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-IMMUTABLE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-IMMUTABLE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "1"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -592,7 +592,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-SELF-APPROVAL")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-SELF-APPROVAL", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-SELF-APPROVAL", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "1"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -611,7 +611,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-REVISE")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-REVISE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-REVISE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "10"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -663,7 +663,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-SUPERSEDE")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-SUPERSEDE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-SUPERSEDE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "10"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -704,7 +704,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-DISCOUNT-REAPPROVE")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-DISCOUNT-REAPPROVE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-DISCOUNT-REAPPROVE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "discount_percent": "10"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -752,7 +752,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-AMOUNT-APPROVAL")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-AMOUNT-APPROVAL", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-AMOUNT-APPROVAL", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -790,7 +790,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-AMOUNT-BOUNDARY")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-AMOUNT-BOUNDARY", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-AMOUNT-BOUNDARY", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -809,7 +809,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-AMOUNT-REVISE")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-AMOUNT-REVISE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-AMOUNT-REVISE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -838,7 +838,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-AMOUNT-IMMUTABLE")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-AMOUNT-IMMUTABLE", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-AMOUNT-IMMUTABLE", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -888,7 +888,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-CUSTOMER-STATEMENT")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-CUSTOMER-STATEMENT", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-CUSTOMER-STATEMENT", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -934,7 +934,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, delivery_line_id = self._create_delivery("DEL-RETURN-001")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-RETURN-001", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-RETURN-001", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": delivery_line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -1022,8 +1022,8 @@ class SalesWorkflowTests(APITestCase):
 
         created = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-FX-001", "invoice_date": "2026-03-10",
-            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "invoice_number": "INV-FX-001", "invoice_date": "2027-01-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -1035,9 +1035,9 @@ class SalesWorkflowTests(APITestCase):
 
         first = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
-            "receipt_number": "RC-FX-001", "receipt_date": "2026-03-11", "method": "cash",
+            "receipt_number": "RC-FX-001", "receipt_date": "2027-01-11", "method": "cash",
             "amount": "2080.0000", "transaction_currency": usd.pk, "transaction_amount": "40",
-            "exchange_rate": "52", "exchange_rate_date": "2026-03-11",
+            "exchange_rate": "52", "exchange_rate_date": "2027-01-11",
         }, format="json")
         self.assertEqual(first.status_code, 201, first.data)
         first_posted = self.client.post(f"/api/sales-documents/receipts/{first.data['id']}/post/", {}, format="json")
@@ -1074,8 +1074,8 @@ class SalesWorkflowTests(APITestCase):
             ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate))
         created = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-FX-REV", "invoice_date": "2026-03-10",
-            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "invoice_number": "INV-FX-REV", "invoice_date": "2027-01-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -1131,8 +1131,8 @@ class SalesWorkflowTests(APITestCase):
             ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate))
         created = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-FX-REVAL", "invoice_date": "2026-03-10",
-            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2026-03-10",
+            "invoice_number": "INV-FX-REVAL", "invoice_date": "2027-01-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50", "exchange_rate_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -1193,7 +1193,7 @@ class SalesWorkflowTests(APITestCase):
         delivery_id, line_id = self._create_delivery("DEL-REV-001")
         invoice = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
-            "invoice_number": "INV-REV-001", "invoice_date": "2026-03-10",
+            "invoice_number": "INV-REV-001", "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(invoice.status_code, 201, invoice.data)
@@ -1206,7 +1206,7 @@ class SalesWorkflowTests(APITestCase):
             kind=TreasuryAccount.Kind.BANK, code="BANK-REV", name_ar="بنك العكس", currency_code="EGP")
         receipt = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
-            "receipt_number": "RC-REV-001", "receipt_date": "2026-03-11",
+            "receipt_number": "RC-REV-001", "receipt_date": "2027-01-11",
             "method": "bank", "payment_account": bank.pk, "amount": "100",
         }, format="json")
         self.assertEqual(receipt.status_code, 201, receipt.data)
@@ -1247,7 +1247,7 @@ class SalesWorkflowTests(APITestCase):
             "customer": self.customer.pk,
             "delivery": delivery_id,
             "invoice_number": "INV-CUSTOMER-DISCOUNT",
-            "invoice_date": "2026-03-10",
+            "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -1280,7 +1280,7 @@ class SalesWorkflowTests(APITestCase):
         response = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk,
             "delivery": delivery_id, "invoice_number": "INV-DISCOUNT-RULE",
-            "invoice_date": "2026-03-10",
+            "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -1298,7 +1298,7 @@ class SalesWorkflowTests(APITestCase):
         response = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk,
             "delivery": delivery_id, "invoice_number": "INV-DISCOUNT-OVERRIDE",
-            "invoice_date": "2026-03-10",
+            "invoice_date": "2027-01-10",
             "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0", "discount_percent": "2"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -1313,8 +1313,8 @@ class SalesWorkflowTests(APITestCase):
             "company": self.company.pk,
             "customer": self.customer.pk,
             "quotation_number": "Q-2026-001",
-            "quotation_date": "2026-03-10",
-            "valid_until": "2026-03-20",
+            "quotation_date": "2027-01-10",
+            "valid_until": "2027-01-20",
             "lines": [{"product": self.product.pk, "quantity": "2", "unit_price": "100", "tax_rate": "14"}],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -1332,7 +1332,7 @@ class SalesWorkflowTests(APITestCase):
         converted = self.client.post(f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/", {
             "warehouse": self.warehouse.pk,
             "delivery_number": "DEL-FROM-Q-001",
-            "delivery_date": "2026-03-11",
+            "delivery_date": "2027-01-11",
         }, format="json")
         self.assertEqual(converted.status_code, 201, converted.data)
         self.assertEqual(converted.data["movement_status"], "draft")
@@ -1343,7 +1343,7 @@ class SalesWorkflowTests(APITestCase):
 
         repeated = self.client.post(f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/", {
             "warehouse": self.warehouse.pk, "delivery_number": "DEL-DUPLICATE",
-            "delivery_date": "2026-03-11",
+            "delivery_date": "2027-01-11",
         }, format="json")
         self.assertEqual(repeated.status_code, 200, repeated.data)
         self.assertEqual(repeated.data["delivery"]["id"], converted.data["id"])
