@@ -234,7 +234,7 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(str(balance.quantity), "2.0000")
         self.assertEqual(str(balance.inventory_value), "20.0000")
         self.assertEqual(StockCostLayer.objects.filter(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).count(), 1)
-        self.assertEqual(str(StockCostLayer.objects.get(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).unit_cost), "10.000000")
+        self.assertEqual(str(StockCostLayer.objects.get(product=self.product, warehouse=warehouse, quantity_remaining__gt=0).unit_cost), "10.00000000")
 
 
     def test_admin_can_delete_only_a_draft_movement(self):
