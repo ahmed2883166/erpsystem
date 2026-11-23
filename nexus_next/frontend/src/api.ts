@@ -507,6 +507,13 @@ export const api = {
   // جلب تقرير التغيرات في حقوق الملكية للفترة.
   changesInEquity: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => request<EquityChangesReport>(`/api/accounting/journal-entries/changes-in-equity/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branch ? `&branch=${branch}` : ""}`),
   // جلب قائمة العملاء للشركة.
+
+  // جلب قواعد الخصم التجارية للشركة.
+  discountRules: (companyId: number) => request<CustomerDiscountRule[]>(`/api/sales/customer-discount-rules/?company=${companyId}&ordering=-priority`),
+  // إنشاء قاعدة خصم جديدة.
+  createDiscountRule: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerDiscountRule>("/api/sales/customer-discount-rules/", {method:"POST",body:JSON.stringify(payload)}); },
+  // تعديل قاعدة خصم قائمة.
+  updateDiscountRule: async (id: number, payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerDiscountRule>(`/api/sales/customer-discount-rules/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
   customers: (companyId: number) => request<Customer[]>(`/api/sales/customers/?company=${companyId}&ordering=name_ar`),
   // جلب قائمة الموردين للشركة.
   suppliers: (companyId: number) => request<Supplier[]>(`/api/purchases/suppliers/?company=${companyId}&ordering=name_ar`),
@@ -662,6 +669,16 @@ export const approvalsApi = {
   approveFinancial: async (id: number, note = "") => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/approve/`, {method:"POST",body:JSON.stringify({note})}); },
   // رفض الطلب المالي مع توثيق الملاحظة.
   rejectFinancial: async (id: number, note: string) => { await request<{detail:string}>("/api/csrf/"); return request<FinancialApprovalRequest>(`/api/approvals/financial-requests/${id}/reject/`, {method:"POST",body:JSON.stringify({note})}); },
+};
+
+
+export type CustomerDiscountRule = {
+  id: number; company: number; customer: number | null; customer_name: string | null;
+  customer_type: "" | "company" | "individual"; product: number | null; product_name: string | null;
+  category: number | null; category_name: string | null; min_quantity: string | null;
+  min_invoice_amount: string | null; discount_percent: string; priority: number;
+  effective_from: string; effective_to: string | null; is_active: boolean; notes: string;
+  created_at: string; updated_at: string;
 };
 
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
