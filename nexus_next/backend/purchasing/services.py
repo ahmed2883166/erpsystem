@@ -356,7 +356,7 @@ def post_purchase_invoice(invoice_id, user):
         ))
     JournalLine.objects.bulk_create(journal_lines)
     try:
-        posted_entry = post_journal(entry.pk)
+        posted_entry = post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
@@ -405,7 +405,7 @@ def post_purchase_invoice(invoice_id, user):
         ))
         JournalLine.objects.bulk_create(allocation_lines)
         try:
-            allocation_entry = post_journal(allocation_entry.pk)
+            allocation_entry = post_journal(allocation_entry.pk, actor=user)
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
