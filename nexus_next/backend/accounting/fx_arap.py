@@ -17,6 +17,12 @@ def decimal_value(value, field):
 
 
 def to_base_amount(foreign_amount, rate):
+    """Convert using four-decimal internal precision.
+
+    Journal posting is the rounding boundary: accounting.services.post_journal
+    rounds debit/credit to the company's configured base-currency decimal_places
+    before posting. Keeping four decimals here avoids premature FX allocation loss.
+    """
     foreign = decimal_value(foreign_amount, "foreign_amount")
     exchange_rate = decimal_value(rate, "rate")
     if foreign <= 0 or exchange_rate <= 0:
