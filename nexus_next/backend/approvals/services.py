@@ -88,4 +88,7 @@ def require_financial_approval(document_type, document):
         or latest.requested_amount != amount
         or latest.requested_snapshot != financial_document_snapshot(document_type, document)
     ):
-        raise ValidationError("تجاوز المستند حد الاعتماد المالي؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل.")
+        raise ValidationError(
+            "تجاوز المستند حد الاعتماد المالي؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل.",
+            code="approval_required",
+        )
