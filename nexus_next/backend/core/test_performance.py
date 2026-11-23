@@ -26,3 +26,16 @@ class PerformanceMetricsAccessTests(TestCase):
         self.client.force_login(user)
         response = self.client.get(reverse("performance-metrics"))
         self.assertEqual(response.status_code, 403)
+
+    def test_platform_owner_cannot_read_tenant_performance_metrics(self):
+        from companies.models import PlatformOwner
+
+        user = get_user_model().objects.create_superuser(
+            username="monitor-platform-owner",
+            email="monitor-owner@example.test",
+            password="test-password-123",
+        )
+        PlatformOwner.objects.create(user=user)
+        self.client.force_login(user)
+        response = self.client.get(reverse("performance-metrics"))
+        self.assertEqual(response.status_code, 403)
