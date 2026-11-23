@@ -62,7 +62,7 @@ def post_stock_movement(movement_id, user):
             balance.inventory_value = new_value
             balance.average_cost = (new_value / new_quantity).quantize(Decimal("0.000001"))
             balance.save(update_fields=("quantity", "inventory_value", "average_cost", "updated_at"))
-            if product.costing_method == Product.CostingMethod.FIFO:
+            if product.costing_method in (Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE):
                 StockCostLayer.objects.create(
                     product=product, warehouse=balance.warehouse, location=balance.location,
                     expiry_date=balance.expiry_date, source_line=source_line,
@@ -78,19 +78,22 @@ def post_stock_movement(movement_id, user):
                     f"الرصيد غير كافٍ للصنف {product.code}. المتاح {balance.quantity} والمطلوب {quantity}."
                 )
             cost_parts = []
+            layers = list(StockCostLayer.objects.select_for_update().filter(
+                product=product, warehouse=balance.warehouse, location=balance.location,
+                expiry_date=balance.expiry_date, quantity_remaining__gt=0,
+            ).order_by("source_line__movement__movement_date", "source_line__movement_id", "source_line_id", "id"))
             if product.costing_method == Product.CostingMethod.FIFO:
                 remaining = quantity
-                layers = StockCostLayer.objects.select_for_update().filter(
-                    product=product, warehouse=balance.warehouse, location=balance.location,
-                    expiry_date=balance.expiry_date, quantity_remaining__gt=0,
-                ).order_by("source_line__movement__movement_date", "source_line__movement_id", "source_line_id", "id")
                 for layer in layers:
                     if remaining <= 0:
                         break
                     consumed = min(layer.quantity_remaining, remaining)
                     layer.quantity_remaining -= consumed
                     layer.save(update_fields=("quantity_remaining",))
-                    StockCostConsumption.objects.create(movement_line=movement_line, source_layer=layer, quantity=consumed, unit_cost=layer.unit_cost)
+                    StockCostConsumption.objects.create(
+                        movement_line=movement_line, source_layer=layer,
+                        quantity=consumed, unit_cost=layer.unit_cost,
+                    )
                     cost_parts.append((consumed, layer.unit_cost, layer))
                     remaining -= consumed
                 if remaining > 0:
@@ -98,7 +101,36 @@ def post_stock_movement(movement_id, user):
                         f"طبقات تكلفة FIFO غير مكتملة للصنف {product.code}; المتبقي {remaining}."
                     )
             else:
-                cost_parts.append((quantity, balance.average_cost, None))
+                tracked_quantity = sum((layer.quantity_remaining for layer in layers), Decimal("0"))
+                tracked_to_consume = min(
+                    tracked_quantity,
+                    quantity if quantity == balance.quantity else
+                    (quantity * tracked_quantity / balance.quantity).quantize(Decimal("0.0001")),
+                )
+                remaining_tracked = tracked_to_consume
+                for index, layer in enumerate(layers):
+                    if remaining_tracked <= 0:
+                        break
+                    if index == len(layers) - 1:
+                        consumed = remaining_tracked
+                    else:
+                        consumed = min(
+                            layer.quantity_remaining,
+                            (tracked_to_consume * layer.quantity_remaining / tracked_quantity).quantize(Decimal("0.0001")),
+                        )
+                    if consumed <= 0:
+                        continue
+                    layer.quantity_remaining -= consumed
+                    layer.save(update_fields=("quantity_remaining",))
+                    StockCostConsumption.objects.create(
+                        movement_line=movement_line, source_layer=layer,
+                        quantity=consumed, unit_cost=balance.average_cost,
+                    )
+                    cost_parts.append((consumed, balance.average_cost, layer))
+                    remaining_tracked -= consumed
+                untracked_quantity = quantity - tracked_to_consume
+                if untracked_quantity > 0:
+                    cost_parts.append((untracked_quantity, balance.average_cost, None))
 
             amount = sum(
                 (part_quantity * unit_cost).quantize(Decimal("0.0001"))
