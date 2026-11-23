@@ -9,7 +9,6 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 
 from accounting.permissions import CompanyRolePermission
-from audit.models import AuditEvent
 from companies.models import FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
