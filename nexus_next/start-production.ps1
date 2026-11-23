@@ -142,6 +142,12 @@ try {
 
     $BackupDirectory = Join-Path $env:ProgramData "Admrail\upgrade-backups"
     New-Item -ItemType Directory -Force -Path $BackupDirectory | Out-Null
+    Get-ChildItem -LiteralPath $BackupDirectory -Directory -Filter ".nexus-verify-*" -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+      Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath $BackupDirectory -Filter "admrail-before-migration-*.dump" -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-1) } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
     $BackupIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     & icacls.exe $BackupDirectory /inheritance:r /grant:r "$($BackupIdentity):(OI)(CI)F" "SYSTEM:(OI)(CI)F" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "تعذر تقييد صلاحيات مجلد النسخ الاحتياطية قبل الترقية." }
@@ -160,6 +166,10 @@ try {
       if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $EncryptedBackupPath) -or (Get-Item $EncryptedBackupPath).Length -eq 0) {
         throw "فشل تشفير أو التحقق من نسخة ما قبل الترقية؛ لم يتم تطبيق migrations."
       }
+      Get-ChildItem -LiteralPath $BackupDirectory -Filter "admrail-before-migration-*.dump.nexusenc" -File |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip 5 |
+        Remove-Item -Force
     } finally {
       Remove-Item Env:\PGPASSWORD -ErrorAction SilentlyContinue
       if (Test-Path -LiteralPath $BackupPath -PathType Leaf) {
