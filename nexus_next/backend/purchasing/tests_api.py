@@ -502,6 +502,31 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.data["purchases"]["by_code"][0]["tax_code"], "INPUT-14")
         self.assertEqual(report.data["purchases"]["by_category"][0]["category"], "standard")
 
+    def test_legacy_purchase_tax_without_tax_code_matches_historical_vat_input_posting(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-LEGACY-TAX-01", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        report = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["input_tax"], "28.0000")
+        self.assertEqual(report.data["purchases"]["recoverable_tax_amount"], "28.0000")
+        self.assertEqual(report.data["purchases"]["nonrecoverable_tax_amount"], "0")
+        self.assertEqual(report.data["unclassified_tax"]["purchase_amount"], "28.0000")
+        self.assertEqual(report.data["unclassified_tax"]["purchase_recoverable_amount"], "28.0000")
+        self.assertEqual(
+            Decimal(report.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0")
+        )
+
     def test_nonrecoverable_purchase_tax_is_split_between_remaining_stock_and_consumed_cogs_by_branch(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         second_branch = Branch.objects.create(
