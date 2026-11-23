@@ -123,6 +123,44 @@ class PayrollTaxPipelineTests(TestCase):
         self.assertEqual(tax_line.calculation_snapshot["taxable_base_before_employee_insurance"], "50000.00")
 
 
+    def test_payroll_calculation_includes_active_employee_loan_installment(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="HR-LOAN-CALC", name_ar="شركة اختبار قسط السلفة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        employee = Employee.objects.create(
+            company=company, code="EMP-LOAN", full_name_ar="موظف عليه سلفة",
+            branch=branch, hire_date=date(2026, 1, 1),
+            basic_salary=Decimal("10000"), currency=currency,
+        )
+        cycle = PayrollCycle.objects.create(
+            company=company, period_start=date(2026, 1, 1),
+            period_end=date(2026, 1, 31), payment_date=date(2026, 2, 1),
+        )
+        loan = EmployeeLoan.objects.create(
+            employee=employee, reference="LOAN-CALC-001",
+            issue_date=date(2025, 12, 1), principal=Decimal("2000"),
+            installment_count=2, installment_amount=Decimal("1000"),
+            outstanding_balance=Decimal("2000"), status=EmployeeLoan.Status.ACTIVE,
+        )
+        LoanInstallment.objects.create(
+            loan=loan, due_date=date(2026, 1, 15),
+            amount=Decimal("1000"), status=LoanInstallment.Status.DUE,
+        )
+
+        calculate_payroll_cycle(cycle.pk)
+
+        result = cycle.results.get(employee=employee)
+        self.assertEqual(result.employee_deductions_total, Decimal("1000.00"))
+        self.assertEqual(result.net_pay, Decimal("9000.00"))
+        self.assertTrue(result.lines.filter(code_snapshot__startswith="LOAN-").exists())
+
+
+
 class PayrollCalculationTests(SimpleTestCase):
     def test_monthly_daily_divisor_rounds_money(self):
         self.assertEqual(money(Decimal("12000") * Decimal("15") / Decimal("30")), Decimal("6000.00"))
