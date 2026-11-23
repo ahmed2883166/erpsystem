@@ -49,8 +49,8 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
-  const [branchCode, setBranchCode] = useState("MAIN");
-  const [branchName, setBranchName] = useState("الفرع الرئيسي");
+  const [branchCode, setBranchCode] = useState("BR-01");
+  const [branchName, setBranchName] = useState("فرع جديد");
   const [branchAddress, setBranchAddress] = useState("");
   const [branchPhone, setBranchPhone] = useState("");
   const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
@@ -130,7 +130,7 @@ const createCompany = async (event: FormEvent) => {
         is_active: true,
       });
       onCompanyCreated(company);
-      setNotice("تم إنشاء الشركة وربط حسابك بصفة مدير شركة. أكمل إعداد الفرع والسنة المالية.");
+      setNotice("تم إنشاء الشركة والمركز الرئيسي تلقائيًا. أكمل إعداد السنة المالية، ويمكنك إضافة فروع أخرى لاحقًا.");
       setCompanyCode(""); setCompanyName(""); setCompanyNameEn(""); setTaxNumber(""); setAddress(""); setPhone(""); setEmail("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة. تأكد من تسجيل الدخول بحساب مسؤول النظام.");
@@ -167,12 +167,12 @@ const createBranch = async (event: FormEvent) => {
       await api.createBranch({
         company: companyId, code: branchCode.trim().toUpperCase(),
         name_ar: branchName.trim(), address: branchAddress.trim(), phone: branchPhone.trim(),
-        is_head_office: branches.length === 0, is_active: true,
+        is_head_office: false, is_active: true,
       });
       await refreshStructure(companyId);
       await onStructureChanged();
       setNotice("تم إنشاء الفرع وحفظه.");
-      setBranchCode(""); setBranchName(""); setBranchAddress(""); setBranchPhone("");
+      setBranchCode(""); setBranchName("فرع جديد"); setBranchAddress(""); setBranchPhone("");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء الفرع."); }
     finally { setBusy(false); }
   };
@@ -201,6 +201,20 @@ const createBranch = async (event: FormEvent) => {
       setNotice("تم تحديث بيانات الفرع دون تغيير كوده أو ارتباطه بالشركة.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تحديث بيانات الفرع.");
+    } finally { setBusy(false); }
+  };
+
+  const transferHeadOffice = async (branch: Branch) => {
+    if (!companyId || branch.is_head_office || !branch.is_active) return;
+    if (!window.confirm(`هل تريد جعل "${branch.name_ar}" المركز الرئيسي للشركة؟ سيصبح المركز الحالي فرعًا عاديًا دون حذف أي بيانات.`)) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await api.makeHeadOffice(branch.id);
+      await refreshStructure(companyId);
+      await onStructureChanged();
+      setNotice(`تم نقل صفة المركز الرئيسي إلى ${branch.name_ar} بنجاح.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر نقل صفة المركز الرئيسي.");
     } finally { setBusy(false); }
   };
 
@@ -263,7 +277,7 @@ const createYear = async (event: FormEvent) => {
 
     {!companies.length && <div className="setup-intro">
       <strong>مرحبًا بك في NEXUS ERP</strong>
-      <p>ابدأ بإدخال بيانات شركتك لأول مرة. بعد الحفظ سيتم إنشاء عضوية مدير الشركة لحسابك، ثم يمكنك إضافة الفرع والسنة المالية.</p>
+      <p>ابدأ بإدخال بيانات شركتك لأول مرة. بعد الحفظ سيتم إنشاء المركز الرئيسي تلقائيًا. بعد ذلك يعيّن مسؤول النظام مدير الشركة، ويمكن إضافة فروع أخرى لاحقًا.</p>
     </div>}
 
     {!companyId && <form className="journal-form" onSubmit={createCompany}>
@@ -305,7 +319,7 @@ const createYear = async (event: FormEvent) => {
         <div><span>حالة الشركة</span><strong>{selectedCompany.is_active === false ? "موقوفة" : "نشطة"}</strong></div>
       </div>
 
-      <div className="setup-step-heading"><span>1</span><div><strong>الفروع</strong><small>أنشئ الفرع الرئيسي أولًا، ويمكن إضافة فروع أخرى لاحقًا.</small></div></div>
+      <div className="setup-step-heading"><span>1</span><div><strong>الفروع</strong><small>تم إنشاء المركز الرئيسي تلقائيًا؛ يمكنك تعديل بياناته أو إضافة فروع أخرى لاحقًا.</small></div></div>
       {branches.length > 0 && <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الفرع</th><th>نوع الفرع</th><th>العنوان</th><th>الهاتف</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>{branches.map(item => <tr key={item.id}>
         <td>{item.code}</td>
         {editingBranchId === item.id ? <>
@@ -322,12 +336,13 @@ const createYear = async (event: FormEvent) => {
         <td>{item.is_active ? "نشط" : "موقوف"}</td>
         <td><div className="table-actions">
           <button type="button" onClick={() => editingBranchId === item.id ? setEditingBranchId(null) : beginBranchEdit(item)} disabled={busy}>{editingBranchId === item.id ? "إغلاق التعديل" : "تعديل"}</button>
-          <button type="button" onClick={() => toggleBranchStatus(item)} disabled={busy}>{item.is_active ? "إيقاف" : "إعادة تفعيل"}</button>
+          {!item.is_head_office && item.is_active && <button type="button" onClick={() => transferHeadOffice(item)} disabled={busy}>جعله مركزًا رئيسيًا</button>}
+          <button type="button" onClick={() => toggleBranchStatus(item)} disabled={busy || item.is_head_office}>{item.is_active ? (item.is_head_office ? "المركز الرئيسي" : "إيقاف") : "إعادة تفعيل"}</button>
         </div></td>
       </tr>)}</tbody></table></div>}
       <form className="journal-form setup-subform" onSubmit={createBranch}>
-        <label>كود الفرع<input required maxLength={30} value={branchCode} onChange={e => setBranchCode(e.target.value)} placeholder="MAIN" /></label>
-        <label>اسم الفرع<input required maxLength={160} value={branchName} onChange={e => setBranchName(e.target.value)} placeholder="الفرع الرئيسي" /></label>
+        <label>كود الفرع<input required maxLength={30} value={branchCode} onChange={e => setBranchCode(e.target.value)} placeholder="BR-01" /></label>
+        <label>اسم الفرع<input required maxLength={160} value={branchName} onChange={e => setBranchName(e.target.value)} placeholder="فرع جديد" /></label>
         <label>الهاتف<input maxLength={40} value={branchPhone} onChange={e => setBranchPhone(e.target.value)} /></label>
         <label className="form-wide">العنوان<input value={branchAddress} onChange={e => setBranchAddress(e.target.value)} /></label>
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : branches.length ? "إضافة فرع" : "إنشاء الفرع الرئيسي"}</button></div>
