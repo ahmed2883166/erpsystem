@@ -134,6 +134,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
     </div>
     {error && <div className="error-banner">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {!busy && !error && !policy && <div className="error-banner"><strong>تنبيه أمني:</strong> لا توجد سياسة حدود مالية لهذه الشركة؛ لذلك لن تُطلب موافقة مالية بناءً على حدود المشتريات أو سندات الصرف حتى يضبط مدير الشركة السياسة.</div>}
     {canManage && <form className="inventory-form" onSubmit={savePolicy}>
       <label>أقصى خصم دون موافقة (%)<input type="number" min="0" max="100" step="0.0001" value={limit} onChange={e => setLimit(e.target.value)} placeholder="اتركه فارغًا لتعطيل الحد" /></label>
       <label>أقصى إجمالي فاتورة مبيعات دون موافقة<input type="number" min="0" step="0.0001" value={invoiceAmountLimit} onChange={e => setInvoiceAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
