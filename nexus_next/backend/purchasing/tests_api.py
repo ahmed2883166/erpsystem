@@ -1290,3 +1290,39 @@ class PurchasingWorkflowTests(APITestCase):
             SupplierReturn.objects.get(pk=created.data["id"]).status,
             SupplierReturn.Status.DRAFT,
         )
+
+
+    def test_unpaid_foreign_supplier_return_uses_invoice_historical_rate(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 10), rate=Decimal("50"),
+        )
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-FX-RETURN-001", "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "transaction_unit_price": "2", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        draft = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-FX-001", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(draft.status_code, 201, draft.data)
+        returned = self.client.post(f"/api/purchasing/returns/{draft.data['id']}/post/", {}, format="json")
+        self.assertEqual(returned.status_code, 200, returned.data)
+        self.assertEqual(returned.data["transaction_currency_code"], "USD")
+        self.assertEqual(returned.data["transaction_exchange_rate"], "50.0000000000")
+        self.assertEqual(returned.data["transaction_net_amount"], "2.0000")
+        self.assertEqual(returned.data["transaction_tax_amount"], "0.2800")
+        self.assertEqual(returned.data["transaction_grand_total"], "2.2800")
+        self.assertEqual(returned.data["grand_total"], "114.0000")
+        invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data
+        self.assertEqual(invoice_after["balance_due"], "114.0000")
