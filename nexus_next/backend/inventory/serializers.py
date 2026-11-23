@@ -15,8 +15,16 @@ class ProductCategorySerializer(serializers.ModelSerializer):
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and company and parent.company_id != company.pk:
             raise serializers.ValidationError({"parent": "المجموعة الأب يجب أن تتبع نفس الشركة."})
-        if self.instance and parent and parent.pk == self.instance.pk:
-            raise serializers.ValidationError({"parent": "لا يمكن ربط المجموعة بنفسها."})
+        if self.instance and parent:
+            visited = set()
+            node = parent
+            while node is not None:
+                if node.pk == self.instance.pk:
+                    raise serializers.ValidationError({"parent": "لا يمكن ربط المجموعة بأحد أبنائها؛ سيؤدي ذلك إلى دورة في التصنيفات."})
+                if node.pk in visited:
+                    raise serializers.ValidationError({"parent": "يوجد تسلسل أبوة دائري في التصنيفات؛ راجع الهيكل قبل التعديل."})
+                visited.add(node.pk)
+                node = node.parent
         return attrs
 
 
@@ -141,8 +149,16 @@ class StorageLocationSerializer(serializers.ModelSerializer):
         parent = attrs.get("parent", getattr(self.instance, "parent", None))
         if parent and warehouse and parent.warehouse_id != warehouse.pk:
             raise serializers.ValidationError({"parent": "الموقع الأب يجب أن يتبع نفس المخزن."})
-        if self.instance and parent and parent.pk == self.instance.pk:
-            raise serializers.ValidationError({"parent": "لا يمكن ربط الموقع بنفسه."})
+        if self.instance and parent:
+            visited = set()
+            node = parent
+            while node is not None:
+                if node.pk == self.instance.pk:
+                    raise serializers.ValidationError({"parent": "لا يمكن نقل الموقع ليصبح تابعًا لأحد أبنائه."})
+                if node.pk in visited:
+                    raise serializers.ValidationError({"parent": "يوجد تسلسل أبوة دائري في مواقع التخزين؛ راجع الهيكل قبل التعديل."})
+                visited.add(node.pk)
+                node = node.parent
         return attrs
 
 
