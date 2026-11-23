@@ -108,11 +108,11 @@ def main():
         lock = threading.Lock()
         start_stage = time.perf_counter()
 
-        def add_error(record):
-            with lock:
-                errors.append(record)
+        def add_error(record, error_lock=lock, stage_errors=errors):
+            with error_lock:
+                stage_errors.append(record)
 
-        def worker(username, stage_barrier=barrier):
+        def worker(username, stage_barrier=barrier, sample_lock=lock, stage_samples=samples):
             attempted = 0
             opener, jar = client()
             try:
@@ -135,8 +135,8 @@ def main():
                     for name, path in endpoints:
                         attempted += 1
                         status_code, duration, body, error = call(opener, BASE + path)
-                        with lock:
-                            samples.append((name, status_code, duration))
+                        with sample_lock:
+                            stage_samples.append((name, status_code, duration))
                         if status_code != 200:
                             add_error({
                                 "user": username, "iteration": iteration + 1,
@@ -144,7 +144,7 @@ def main():
                                 "error": error,
                                 "body": body[:200].decode("utf-8", "replace"),
                             })
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - worker boundary records every failure as request errors.
                 # Account for every request this worker did not get to issue.
                 remaining = requests_per_user - attempted
                 for missing in range(remaining):
