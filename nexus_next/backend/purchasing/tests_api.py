@@ -550,6 +550,16 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         invoice = PurchaseInvoice.objects.get(pk=created.data["id"])
         self.assertEqual(invoice.grand_total, Decimal("228.0000"))
+        vat_report = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(vat_report.status_code, 200, vat_report.data)
+        self.assertEqual(vat_report.data["purchases"]["tax_amount"], "28.0000")
+        self.assertEqual(vat_report.data["purchases"]["recoverable_tax_amount"], "0")
+        self.assertEqual(vat_report.data["purchases"]["nonrecoverable_tax_amount"], "28.0000")
+        self.assertEqual(vat_report.data["purchases"]["by_code"][0]["nonrecoverable_tax_amount"], "28.0000")
+        self.assertEqual(vat_report.data["input_tax"], "0")
+        self.assertEqual(vat_report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
         self.assertEqual(invoice.journal_entry.lines.get(
             account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE).account
         ).credit, Decimal("228.0000"))
