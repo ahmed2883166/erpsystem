@@ -2,7 +2,7 @@ from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
 
 from companies.models import Company, CompanyMembership, Currency
-from .models import Customer
+from .models import Customer, CustomerDiscountRule
 
 
 class CustomerApiTests(APITestCase):
@@ -109,3 +109,39 @@ class CustomerApiTests(APITestCase):
         }, format="json")
         self.assertEqual(invalid.status_code, 400, invalid.data)
         self.assertFalse(Customer.objects.filter(company=self.company, code="C-DISCOUNT-BAD").exists())
+
+    def test_discount_rules_are_company_scoped_and_accountant_can_manage_them(self):
+        response = self.client.post("/api/sales/customer-discount-rules/", {
+            "company": self.company.pk,
+            "customer_type": "company",
+            "discount_percent": "6.2500",
+            "priority": 20,
+            "effective_from": "2026-01-01",
+            "notes": "خصم شركات",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["discount_percent"], "6.2500")
+
+        hidden = CustomerDiscountRule.objects.create(
+            company=self.other_company, discount_percent="9.0000",
+            effective_from="2026-01-01",
+        )
+        listed = self.client.get("/api/sales/customer-discount-rules/?company=%s" % self.company.pk)
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual([row["id"] for row in listed.data], [response.data["id"]])
+        self.assertNotIn(hidden.pk, [row["id"] for row in listed.data])
+
+    def test_viewer_cannot_manage_discount_rules(self):
+        viewer = get_user_model().objects.create_user(
+            username="discount_rule_viewer", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=viewer, company=self.company, role="viewer", all_branches=True
+        )
+        self.client.force_authenticate(viewer)
+        response = self.client.post("/api/sales/customer-discount-rules/", {
+            "company": self.company.pk, "discount_percent": "5",
+            "effective_from": "2026-01-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(CustomerDiscountRule.objects.filter(company=self.company).exists())
