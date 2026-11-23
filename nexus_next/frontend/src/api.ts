@@ -130,8 +130,8 @@ export type SupplierReturn = {
 export type SupplierRefund = {
   id: number; company: number; supplier: number; supplier_name: string; return_document: number; return_number: string;
   refund_number: string; refund_date: string; method: "cash" | "bank"; payment_account: number; payment_account_name: string;
-  amount: string; reference: string; notes: string; status: "draft" | "posted"; journal_entry: number | null;
-  journal_number: string | null; created_at: string; posted_at: string | null;
+  amount: string; reference: string; notes: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null;
+  journal_number: string | null; reversal_journal_entry: number | null; reversal_journal_number: string | null; reversal_date: string | null; reversed_at: string | null; reversed_by: number | null; created_at: string; posted_at: string | null;
 };
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
@@ -176,6 +176,7 @@ export const purchasingApi = {
   refunds: (companyId: number) => request<SupplierRefund[]>(`/api/purchasing/refunds/?company=${companyId}&ordering=-refund_date`),
   createRefund: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierRefund>("/api/purchasing/refunds/", { method: "POST", body: JSON.stringify(payload) }); },
   postRefund: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierRefund>(`/api/purchasing/refunds/${id}/post/`, { method: "POST" }); },
+  reverseRefund: async (id:number, entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierRefund>(`/api/purchasing/refunds/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
   // عكس مرتجع مرحّل بإرجاع طبقات التكلفة الأصلية وإنشاء قيد عكسي.
   reverseReturn: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<SupplierReturn>(`/api/purchasing/returns/${id}/reverse/`, { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }); },
   // إنشاء مستند استلام مشتريات جديد.
