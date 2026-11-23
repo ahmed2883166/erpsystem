@@ -231,6 +231,11 @@ class CompanyMembership(models.Model):
         if self.pk and self.branches.exclude(company_id=self.company_id).exists():
             raise ValidationError({"branches": "كل الفروع المحددة يجب أن تتبع نفس الشركة."})
 
+    def save(self, *args, **kwargs):
+        if self.role == self.Role.ADMIN and not self.all_branches:
+            raise ValidationError({"all_branches": "مدير الشركة يجب أن يمتلك نطاق الوصول إلى جميع الفروع."})
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.user} - {self.company} ({self.get_role_display()})"
 
