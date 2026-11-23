@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from assets.models import FixedAsset
 from accounting.models import ChartOfAccount, JournalEntry, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
