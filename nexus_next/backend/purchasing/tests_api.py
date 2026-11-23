@@ -520,7 +520,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(report.status_code, 200, report.data)
         self.assertEqual(report.data["input_tax"], "28.0000")
         self.assertEqual(report.data["purchases"]["recoverable_tax_amount"], "28.0000")
-        self.assertEqual(report.data["purchases"]["nonrecoverable_tax_amount"], "0")
+        self.assertEqual(report.data["purchases"]["nonrecoverable_tax_amount"], "0.0000")
         self.assertEqual(report.data["unclassified_tax"]["purchase_amount"], "28.0000")
         self.assertEqual(report.data["unclassified_tax"]["purchase_recoverable_amount"], "28.0000")
         self.assertEqual(
