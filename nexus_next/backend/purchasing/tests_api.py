@@ -523,6 +523,15 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(sum((line.debit for line in lines), Decimal("0")),
                          sum((line.credit for line in lines), Decimal("0")))
 
+        report = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["input_tax"], "0.0000")
+        self.assertEqual(report.data["purchases"]["recoverable_tax_amount"], "0.0000")
+        self.assertEqual(report.data["purchases"]["tax_amount"], "28.0000")
+        self.assertEqual(report.data["ledger_reconciliation"]["input_tax_difference"], "0.0000")
+
 
     def test_purchase_invoice_over_limit_requires_manager_approval_of_exact_snapshot(self):
         DiscountApprovalPolicy.objects.create(
