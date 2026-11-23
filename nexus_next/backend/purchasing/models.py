@@ -312,7 +312,7 @@ class SupplierRefund(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_refunds")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="refunds")
     return_document = models.ForeignKey(
-        SupplierReturn, on_delete=models.PROTECT, related_name="refunds",
+        "SupplierReturn", on_delete=models.PROTECT, related_name="refunds",
     )
     refund_number = models.CharField(max_length=40)
     refund_date = models.DateField()
