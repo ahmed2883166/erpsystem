@@ -166,6 +166,7 @@ class PurchaseInvoiceLine(models.Model):
             if (not code.is_active or code.company_id != self.invoice.company_id
                     or code.country != self.invoice.company.country
                     or code.category == TaxCode.Category.REVERSE_CHARGE
+                    or (not code.input_tax_recoverable and code.rate > 0)
                     or code.effective_from > self.invoice.invoice_date
                     or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح أو غير قابل للخصم لهذه الشركة أو تاريخ الفاتورة."})
