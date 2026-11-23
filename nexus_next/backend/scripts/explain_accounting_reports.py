@@ -3,8 +3,10 @@
 Run after seeding the isolated benchmark database. Bound values are used to execute
 plans but are never written to the artifact.
 """
+import atexit
 import json
 import os
+import secrets
 from pathlib import Path
 import sys
 from time import perf_counter
@@ -23,6 +25,32 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Company, CompanyMembership
 from accounting.models import ChartOfAccount
+
+def require_isolated_benchmark_database():
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT current_database()")
+        database_name = cursor.fetchone()[0]
+    if not (
+        database_name.endswith("benchmark")
+        or database_name.endswith("nexus_test")
+        or os.getenv("ALLOW_BENCHMARK_DATABASE") == "1"
+    ):
+        raise SystemExit(
+            f"Refusing benchmark writes to database {database_name!r}; "
+            "use an isolated *benchmark or nexus_test database."
+        )
+
+
+def deactivate_benchmark_users(usernames):
+    try:
+        for user in User.objects.filter(username__in=usernames):
+            user.is_active = False
+            user.set_unusable_password()
+            user.save(update_fields=["is_active", "password"])
+        CompanyMembership.objects.filter(user__username__in=usernames).update(is_active=False)
+    except Exception:  # noqa: BLE001 - cleanup must not hide the benchmark's original result.
+        pass
+
 
 
 def capture_selects(client, url):
@@ -46,18 +74,18 @@ def capture_selects(client, url):
 
 
 def main():
+    require_isolated_benchmark_database()
     company = Company.objects.filter(code__startswith="BENCH-").order_by("-id").first()
     account = ChartOfAccount.objects.filter(company=company, code="1110").first() if company else None
     if not company or not account:
         raise SystemExit("The million-entry benchmark company/account was not found.")
 
-    username = "report-explain-diagnostics"
-    user, _ = User.objects.get_or_create(username=username, defaults={"is_active": True})
-    user.set_password("Explain-Only-Benchmark-2026!")
-    user.save(update_fields=["password"])
-    CompanyMembership.objects.update_or_create(
+    username = f"report-explain-diagnostics-{secrets.token_hex(6)}"
+    user = User.objects.create_user(username=username)
+    atexit.register(deactivate_benchmark_users, [username])
+    CompanyMembership.objects.create(
         user=user, company=company,
-        defaults={"role": CompanyMembership.Role.ACCOUNTANT, "all_branches": True},
+        role=CompanyMembership.Role.ACCOUNTANT, all_branches=True,
     )
 
     client = APIClient()
