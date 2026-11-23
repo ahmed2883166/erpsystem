@@ -24,7 +24,7 @@ def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines
         source_type=JournalEntry.Source.ASSETS, created_by=user,
     )
     JournalLine.objects.bulk_create([JournalLine(entry=entry, **line) for line in lines])
-    return post_journal(entry.pk)
+    return post_journal(entry.pk, actor=user)
 
 
 @transaction.atomic
