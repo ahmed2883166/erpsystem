@@ -14,6 +14,7 @@ from hr.services import post_payroll_cycle, complete_payroll_payment, cancel_pay
 
 from hr.models import Department, Employee, EmployeeSalaryHistory, PayrollCycle, PayrollResult, PayrollResultLine, PayrollComponent, LeaveRequest, AttendanceRecord, EmployeeLoan, LoanInstallment, PayrollRuleSet, EmployeeComponent
 from hr.services import calculate_component, calculate_payroll_cycle, money, salary_for_date
+from hr.serializers import EmployeeSerializer
 
 
 
@@ -336,6 +337,22 @@ class EmployeePayrollReportApiTests(TestCase):
         )
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+
+    def test_employee_user_must_have_active_membership_in_the_same_company(self):
+        serializer = EmployeeSerializer(
+            instance=self.employee, data={"user": self.user.pk}, partial=True,
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        serializer.save()
+        self.employee.refresh_from_db()
+        self.assertEqual(self.employee.user_id, self.user.pk)
+
+        outsider = User.objects.create_user(username="hr_unlinked_employee_user", password="test-password")
+        invalid = EmployeeSerializer(
+            instance=self.employee, data={"user": outsider.pk}, partial=True,
+        )
+        self.assertFalse(invalid.is_valid())
+        self.assertIn("user", invalid.errors)
 
     def test_attendance_cannot_be_changed_or_deleted_after_payroll_is_paid(self):
         self.cycle.status = PayrollCycle.Status.CALCULATED
