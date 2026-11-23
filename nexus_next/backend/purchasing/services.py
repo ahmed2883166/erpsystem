@@ -681,7 +681,7 @@ def post_supplier_refund(refund_id, user):
 @transaction.atomic
 def reverse_supplier_refund(refund_id, user, entry_date):
     """عكس استرداد المورد بقيد عكسي وإعادة الرصيد الدائن للمورد."""
-    document = SupplierRefund.objects.select_for_update().select_related(
+    document = SupplierRefund.objects.select_for_update(of=("self",)).select_related(
         "company", "supplier", "return_document__invoice__receipt__warehouse",
         "journal_entry",
     ).get(pk=refund_id)
