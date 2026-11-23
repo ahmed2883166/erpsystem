@@ -106,7 +106,7 @@ def main():
             for future in concurrent.futures.as_completed(futures):
                 try:
                     future.result()
-                except Exception as exc:
+                except (RuntimeError, TimeoutError, threading.BrokenBarrierError, OSError) as exc:
                     errors.append({"error": str(exc)})
 
         elapsed = time.perf_counter() - start_stage
