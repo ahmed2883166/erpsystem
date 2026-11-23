@@ -568,7 +568,7 @@ class EmployeePayrollReportApiTests(TestCase):
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         self.employee.refresh_from_db()
-        self.assertEqual(response.data["previous_salary"], Decimal("10000"))
+        self.assertEqual(Decimal(response.data["previous_salary"]), Decimal("10000"))
         self.assertEqual(self.employee.basic_salary, Decimal("11000"))
 
     def test_salary_history_records_cannot_be_edited_or_deleted(self):
