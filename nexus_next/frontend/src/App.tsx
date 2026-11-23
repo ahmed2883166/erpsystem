@@ -5,6 +5,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import LoginPanel from "./LoginPanel";
 import OwnerPortalPanel from "./OwnerPortalPanel";
+import AboutPanel from "./AboutPanel";
 import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode, type ThemePreference, type CostCenter } from "./api";
 const BackupPanel = lazy(() => import("./BackupPanel"));
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
@@ -37,7 +38,7 @@ const localISODate = () => {
   return `${year}-${month}-${day}`;
 };
 
-type Section = "overview" | "journals" | "accounts" | "cost-centers" | "fiscal-years" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access";
+type Section = "overview" | "journals" | "accounts" | "cost-centers" | "fiscal-years" | "reports" | "tax" | "backup" | "customers" | "sales-workflow" | "suppliers" | "purchasing" | "inventory" | "treasury" | "fixed-assets" | "hr" | "setup" | "audit" | "approvals" | "access" | "about";
 type DraftLine = { account: string; debit: string; credit: string; description: string; cost_center: string };
 
 // تجهيز ملف CSV للتنزيل مع تنسيق القيم وحماية النصوص من كسر الأعمدة.
@@ -77,6 +78,7 @@ const navigation: { id: Section; label: string; icon: string; group: string }[] 
   { id: "audit", label: "مركز مراقبة النظام", icon: "⌕", group: "الإدارة" },
   { id: "approvals", label: "الموافقات وحدود الخصم", icon: "✓", group: "الإدارة" },
   { id: "access", label: "المستخدمون والصلاحيات", icon: "♙", group: "الإدارة" },
+  { id: "about", label: "حول البرنامج وحقوق الملكية", icon: "ⓘ", group: "الإدارة" },
 ];
 const modules = [
   { title: "المحاسبة العامة", detail: "القيود، دليل الحسابات، مراكز التكلفة", icon: "◈", tone: "blue", section: "accounts" as Section },
@@ -872,6 +874,7 @@ const postDraft = async (entry: Journal) => {
           {active === "approvals" && <Suspense fallback={panelFallback}><DiscountApprovalsPanel companyId={companyId} /></Suspense>}
           {active === "access" && <Suspense fallback={panelFallback}><CompanyAccessPanel companyId={companyId} /></Suspense>}
           {active === "setup" && <Suspense fallback={panelFallback}><CompanySetupPanel companies={companies} companyId={companyId} onCompanyCreated={(company) => { setCompanies((rows) => [...rows, company]); setCompanyId(company.id); setActive("setup"); }} onCompanyUpdated={(company) => setCompanies((rows) => rows.map((row) => row.id === company.id ? company : row))} onStructureChanged={async () => { if (!companyId) return; try { const [branchRows, yearRows] = await Promise.all([api.branches(companyId), api.fiscalYears(companyId)]); setBranches(branchRows.filter((row) => row.company === companyId)); setFiscalYears(yearRows.filter((row) => row.company === companyId)); setDraft((old) => ({ ...old, branch: String(branchRows.find((row) => row.is_active)?.id || ""), fiscal_year: String(yearRows.find((row) => row.status === "open")?.id || "") })); } catch (reason) { setJournalError(reason instanceof Error ? reason.message : "تعذر تحديث إعدادات الفرع والسنة المالية."); } }} /></Suspense>}
+          {active === "about" && <AboutPanel />}
           {journalModal && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setJournalModal(false); }}>
             <section className="journal-modal journal-entry-workspace" role="dialog" aria-modal="true" aria-labelledby="journal-title">
               <div className="modal-heading"><div><h2 id="journal-title">{reviewingJournal ? "مراجعة القيد قبل الحفظ" : "إنشاء قيد يومية"}</h2><p>{reviewingJournal ? "راجع بيانات القيد وإجمالياته، ثم احفظه كمسودة دون ترحيل." : "أدخل البيانات والتفاصيل ثم انتقل إلى المراجعة قبل الحفظ."}</p></div><button type="button" className="icon-button" onClick={() => setJournalModal(false)} aria-label="إغلاق">×</button></div>
@@ -906,7 +909,7 @@ const postDraft = async (entry: Journal) => {
 <div className="review-totals"><div><span>إجمالي المدين</span><strong>{selectedJournal.lines.reduce((sum, line) => sum + Number(line.debit), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>إجمالي الدائن</span><strong>{selectedJournal.lines.reduce((sum, line) => sum + Number(line.credit), 0).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong></div><div><span>الفرق</span><strong>{(selectedJournal.lines.reduce((sum, line) => sum + Number(line.debit), 0) - selectedJournal.lines.reduce((sum, line) => sum + Number(line.credit), 0)).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong><small>{selectedCompany?.base_currency_code || ""}</small></div></div>
 <div className="form-actions"><button type="button" className="subtle-button" onClick={() => setSelectedJournal(null)}>إغلاق</button><button type="button" className="primary-button" disabled={postingId === selectedJournal.id} onClick={() => postDraft(selectedJournal)}>{postingId === selectedJournal.id ? "جارٍ الترحيل…" : "اعتماد وترحيل القيد"}</button></div>
 </section></div>}
-          <footer className="page-footer"><span>© 2026 Admrail ERP v2</span><span><i /> واجهة التطوير المحلية</span><span>الإصدار التأسيسي 0.1.0</span></footer>
+          <footer className="page-footer"><span>© 2026 أحمد مصطفى الشاعر · Admrail ERP</span><button type="button" className="footer-about-link" onClick={() => setActive("about")}>حقوق الملكية وبيانات البرنامج</button><span>الإصدار V2 · 0.1.0</span></footer>
         </div>
       </main>
     </div>
