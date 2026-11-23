@@ -352,6 +352,10 @@ class SubledgerReconciliationView(APIView):
             "sales": sales_invoices.filter(journal_entry__isnull=True).count() + customer_receipts.filter(journal_entry__isnull=True).count() + sales_returns.filter(journal_entry__isnull=True).count(),
             "purchasing": purchase_invoices.filter(journal_entry__isnull=True).count() + supplier_payments.filter(journal_entry__isnull=True).count() + supplier_returns.filter(journal_entry__isnull=True).count() + supplier_refunds.filter(journal_entry__isnull=True).count(),
             "inventory": posted_stock_movements.filter(journal_links__isnull=True).count(),
+            "payroll": PayrollPosting.objects.filter(
+                cycle__company_id=company_id, cycle__period_start__lte=as_of,
+                branch_id__in=branch_ids, journal_entry__isnull=True,
+            ).count(),
         }
         missing_links_total = sum(missing_links.values())
 
@@ -479,10 +483,11 @@ class SubledgerReconciliationView(APIView):
             "rows": rows, "pending_documents": pending, "pending_documents_count": pending_total,
             "posted_documents_missing_journal": missing_links, "posted_documents_missing_journal_count": missing_links_total,
             "matched_count": sum(row["status"] == "matched" for row in rows),
+            "partial_reconciliation_count": sum(row["status"] == "partial_reconciliation" for row in rows),
             "difference_count": sum(row["status"] == "difference" for row in rows),
             "pending_count": sum(row["status"] == "pending_documents" for row in rows),
             "configuration_issue_count": sum(row["status"] in ("not_configured", "invalid_account") for row in rows),
             "unavailable_count": sum(row["status"] == "historical_snapshot_unavailable" for row in rows),
             "is_reconciled": all(row["status"] == "matched" for row in rows) and pending_total == 0 and missing_links_total == 0,
-            "note": "تقرير قراءة فقط. المسودات تظهر كتنبيه ولا تدخل في أرصدة الأستاذ. كما تُكشف المستندات المرحلة التي لا ترتبط بقيد. المخزون يُطابق بتاريخ اليوم فقط لعدم وجود سجل لقطات تاريخية؛ يمكن إعادة بناء المخزون تاريخيًا من تكاليف الحركات المرحلة فقط إذا تطابقت إعادة البناء حتى اليوم مع الرصيد الحالي؛ وإلا يُعلن التاريخ غير متاح بدل عرض فرق مضلل.",
+            "note": "تقرير قراءة فقط. أرصدة العملاء والموردين محسوبة من المستندات المرحلة ومجمعة حسب الطرف، مع استخدام القيمة الدفترية الفعلية للتحصيلات والمدفوعات الأجنبية. المرتبات ما زالت مقارنة قيود مرتبطة وليست دفترًا فرعيًا على مستوى الموظف، لذلك تظهر كمطابقة جزئية ولا يمكن اعتماد التقرير بالكامل قبل استكمالها. المستندات المرحلة بلا قيود تُعرض كتحذير. المخزون يُعاد بناؤه تاريخيًا من سجل تكاليف الحركات فقط إذا تطابقت إعادة البناء حتى اليوم مع الرصيد الحالي.",
         })
