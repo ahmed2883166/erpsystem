@@ -93,11 +93,11 @@ def main():
         prefix = f"POSTLOAD-{suffix}-{count}-"
         expected = count * ENTRIES_PER_USER
 
-        def record_error(item):
-            with lock:
-                errors.append(item)
+        def record_error(item, stage_lock=lock, stage_errors=errors):
+            with stage_lock:
+                stage_errors.append(item)
 
-        def worker(username):
+        def worker(username, stage_barrier=barrier, stage_lock=lock, stage_create_samples=create_samples, stage_post_samples=post_samples, stage_prefix=prefix):
             opener, jar = client()
             drafts = []
             try:
@@ -118,7 +118,7 @@ def main():
                     raise RuntimeError(f"Login failed: HTTP {status_code}; {error or body[:300].decode('utf-8', 'replace')}")
 
                 for iteration in range(ENTRIES_PER_USER):
-                    entry_number = f"{prefix}{username.rsplit('-', 1)[-1]}-{iteration + 1:02d}"
+                    entry_number = f"{stage_prefix}{username.rsplit('-', 1)[-1]}-{iteration + 1:02d}"
                     payload = {
                         "company": company.pk,
                         "branch": branch.pk,
@@ -140,23 +140,23 @@ def main():
                         response_data = json.loads(body.decode("utf-8")) if body else {}
                     except (UnicodeDecodeError, json.JSONDecodeError):
                         response_data = {}
-                    with lock:
-                        create_samples.append(elapsed)
+                    with stage_lock:
+                        stage_create_samples.append(elapsed)
                     if status_code != 201 or not response_data.get("id"):
                         raise RuntimeError(
                             f"Draft creation failed: HTTP {status_code}; {error or body[:500].decode('utf-8', 'replace')}"
                         )
                     drafts.append((response_data["id"], entry_number))
 
-                barrier.wait(timeout=90)
+                stage_barrier.wait(timeout=90)
                 for entry_id, entry_number in drafts:
                     status_code, elapsed, body, error = call_once(
                         opener,
                         f"{BASE}/api/accounting/journal-entries/{entry_id}/post/",
                         "POST", {}, headers,
                     )
-                    with lock:
-                        post_samples.append(elapsed)
+                    with stage_lock:
+                        stage_post_samples.append(elapsed)
                     if status_code != 200:
                         record_error({
                             "user": username, "entry_number": entry_number,
@@ -165,7 +165,7 @@ def main():
                             "body": body[:500].decode("utf-8", "replace"),
                         })
             except Exception as exc:  # noqa: BLE001 - capture each worker failure for the benchmark report.
-                barrier.abort()
+                stage_barrier.abort()
                 record_error({
                     "user": username,
                     "phase": "create_or_barrier",
