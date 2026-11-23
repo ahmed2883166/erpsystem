@@ -200,7 +200,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         User = get_user_model()
         users = User.objects.filter(is_active=True).filter(
             Q(username__icontains=term) | Q(display_name__icontains=term)
-        ).exclude(company_memberships__is_active=True).exclude(
+        ).exclude(company_memberships__isnull=False).exclude(
             platform_owner_profile__isnull=False
         ).order_by("username")[:25]
         return Response([
