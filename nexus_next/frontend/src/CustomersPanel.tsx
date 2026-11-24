@@ -158,7 +158,8 @@ const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحديث قاعدة الخصم."); }
     finally { setRuleSaving(false); }
   };
-\n  const exportStatement = () => {
+
+  const exportStatement = () => {
     if (!statement) return;
     const values = [
       ["التاريخ", "نوع المستند", "رقم المستند", "البيان", "مدين", "دائن", "الرصيد"],
