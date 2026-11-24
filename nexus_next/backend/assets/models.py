@@ -111,7 +111,9 @@ class FixedAsset(models.Model):
 
     @property
     def accumulated_impairment(self):
-        return self.impairments.filter(journal_entry__status=JournalEntry.Status.POSTED).aggregate(total=models.Sum("impairment_loss"))["total"] or 0
+        losses = self.impairments.filter(journal_entry__status=JournalEntry.Status.POSTED).aggregate(total=models.Sum("impairment_loss"))["total"] or 0
+        reversals = self.impairment_reversals.filter(journal_entry__status=JournalEntry.Status.POSTED).aggregate(total=models.Sum("reversal_amount"))["total"] or 0
+        return losses - reversals
 
     @property
     def net_book_value(self):
@@ -186,6 +188,68 @@ class AssetImpairment(models.Model):
             raise ValidationError({"accumulated_impairment_account": "اختر حسابًا مقابلًا للأصل من نفس الشركة."})
         if self.impairment_expense_account_id == self.accumulated_impairment_account_id:
             raise ValidationError("يجب فصل حساب مصروف الانخفاض عن حساب مجمع الانخفاض.")
+
+
+class AssetImpairmentReversal(models.Model):
+    """IAS 36 reversal, capped at the no-impairment carrying amount under the cost model."""
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="impairment_reversals")
+    reversal_date = models.DateField()
+    carrying_amount_before = models.DecimalField(max_digits=20, decimal_places=4)
+    recoverable_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    hypothetical_carrying_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    reversal_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    reversal_income_account = models.ForeignKey(
+        ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_impairment_reversal_income",
+    )
+    journal_entry = models.OneToOneField(
+        JournalEntry, on_delete=models.PROTECT, related_name="asset_impairment_reversal",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("reversal_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("asset", "reversal_date"), name="uq_asset_impairment_reversal_date"),
+            models.CheckConstraint(condition=Q(carrying_amount_before__gte=0), name="ck_asset_reversal_carrying_nonnegative"),
+            models.CheckConstraint(condition=Q(recoverable_amount__gte=0), name="ck_asset_reversal_recoverable_nonnegative"),
+            models.CheckConstraint(condition=Q(hypothetical_carrying_amount__gte=0), name="ck_asset_reversal_ceiling_nonnegative"),
+            models.CheckConstraint(condition=Q(reversal_amount__gt=0), name="ck_asset_reversal_amount_positive"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.reversal_amount > min(
+            self.recoverable_amount - self.carrying_amount_before,
+            self.hypothetical_carrying_amount - self.carrying_amount_before,
+        ):
+            raise ValidationError({"reversal_amount": "عكس الانخفاض يتجاوز الحد المسموح وفق IAS 36."})
+        account = self.reversal_income_account
+        if account and (
+            account.company_id != self.asset.company_id or account.nature != "revenue"
+            or account.is_group or not account.is_active or not account.allow_posting
+        ):
+            raise ValidationError({"reversal_income_account": "اختر حساب إيراد تفصيليًا نشطًا وقابلًا للترحيل من نفس الشركة."})
+
+
+class AssetImpairmentReversalAllocation(models.Model):
+    """Tracks the exact impairment layer and contra-account reduced by each reversal."""
+    reversal = models.ForeignKey(AssetImpairmentReversal, on_delete=models.PROTECT, related_name="allocations")
+    impairment = models.ForeignKey(AssetImpairment, on_delete=models.PROTECT, related_name="reversal_allocations")
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("reversal", "impairment"), name="uq_asset_reversal_impairment"),
+            models.CheckConstraint(condition=Q(amount__gt=0), name="ck_asset_reversal_allocation_positive"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.reversal_id and self.impairment_id and self.reversal.asset_id != self.impairment.asset_id:
+            raise ValidationError("طبقة الانخفاض لا تتبع الأصل المرتبط بعكس الانخفاض.")
+        if self.amount <= 0:
+            raise ValidationError({"amount": "قيمة التخصيص يجب أن تكون أكبر من صفر."})
+
 
 
 class AssetPurchaseInvoice(models.Model):
