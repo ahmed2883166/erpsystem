@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
-      - fix/audit-performance-and-owner-toolkit-2026-11\n      - feature/purchasing-completion
+      - feature/inventory-completion
+      - fix/audit-performance-and-owner-toolkit-2026-11
   pull_request:
     branches:
       - work/nexus-django-react-rebuild
+      - feature/inventory-completion
 
 jobs:
   backend:
