@@ -388,6 +388,31 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "debit": Decimal("0"), "credit": invoice.grand_total,
                 "sort": 1,
             })
+
+        # Include direct fixed-asset purchases in the same supplier subledger.
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+        asset_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id, supplier_id=supplier_id,
+            status=AssetPurchaseInvoice.Status.POSTED,
+        ).select_related("asset")
+        for invoice in asset_invoices:
+            events.append({
+                "date": invoice.invoice_date, "kind": "asset_invoice",
+                "number": invoice.invoice_number,
+                "description": f"فاتورة شراء أصل {invoice.invoice_number} - {invoice.asset.name_ar}",
+                "debit": Decimal("0"), "credit": invoice.grand_total, "sort": 1,
+            })
+        asset_payments = AssetSupplierPayment.objects.filter(
+            company_id=company_id, supplier_id=supplier_id,
+            status=AssetSupplierPayment.Status.POSTED,
+        ).select_related("invoice")
+        for payment in asset_payments:
+            events.append({
+                "date": payment.payment_date, "kind": "asset_payment",
+                "number": payment.payment_number,
+                "description": f"سداد فاتورة أصل {payment.invoice.invoice_number}",
+                "debit": payment.amount, "credit": Decimal("0"), "sort": 0,
+            })
         payments = SupplierPayment.objects.filter(
             invoice__in=invoices, status=SupplierPayment.Status.POSTED
         ).select_related("invoice")
