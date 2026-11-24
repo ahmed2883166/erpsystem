@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - feature/purchasing-completion
       - feature/inventory-completion
       - fix/audit-performance-and-owner-toolkit-2026-11
   pull_request:
