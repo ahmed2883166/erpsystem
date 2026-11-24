@@ -265,8 +265,7 @@ def post_purchase_receipt(receipt_id, user):
     except DjangoValidationError as exc:
         detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
         raise ValidationError(detail) from exc
-    receipt.journal_entry = posted_entry
-    receipt.save(update_fields=("journal_entry",))
+    PurchaseReceipt.objects.filter(pk=receipt.pk).update(journal_entry=posted_entry)
 
     return PurchaseReceipt.objects.select_related("stock_movement", "journal_entry").get(pk=receipt.pk)
 
