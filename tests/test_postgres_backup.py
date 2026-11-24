@@ -36,6 +36,35 @@ class PostgreSQLBackupTests(unittest.TestCase):
             self.assertEqual(manifest["database_name"], "nexus")
             self.assertEqual(run.call_args.args[0][:2], ["pg_restore", "--list"])
 
+    def test_created_archive_contains_only_dump_and_non_secret_manifest(self):
+        with tempfile.TemporaryDirectory() as folder:
+            def fake_run(command, *, env, timeout):
+                if command[0] == "pg_dump":
+                    dump_path = Path(command[command.index("--file") + 1])
+                    dump_path.write_bytes(b"verified-postgres-dump")
+                return None
+
+            with patch.object(
+                postgres_backup,
+                "_pg_environment",
+                return_value=({"PATH": os.environ.get("PATH", "")}, {"dbname": "nexus"}),
+            ), patch.object(postgres_backup.shutil, "which", side_effect=lambda name: name), patch.object(
+                postgres_backup, "_run", side_effect=fake_run
+            ):
+                archive_path = postgres_backup.create_postgres_backup_archive(
+                    "dbname=nexus", folder, keep_count=3,
+                    pg_dump_path="pg_dump", pg_restore_path="pg_restore",
+                )
+
+            with zipfile.ZipFile(archive_path, "r") as archive:
+                self.assertEqual(set(archive.namelist()), {"nexus.dump", "manifest.json"})
+                manifest_text = archive.read("manifest.json").decode("utf-8")
+                manifest = json.loads(manifest_text)
+                self.assertEqual(manifest["database_name"], "nexus")
+                self.assertNotIn("password", manifest_text.lower())
+                self.assertNotIn("secret", manifest_text.lower())
+                self.assertNotIn("connection_string", manifest_text.lower())
+
     def test_rejects_checksum_mismatch_before_pg_restore(self):
         with tempfile.TemporaryDirectory() as folder:
             archive = self._archive(folder, payload=b"tampered")
