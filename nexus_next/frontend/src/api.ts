@@ -576,6 +576,13 @@ export type StockMovement = {
   status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
 };
 export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[] };
+export type InventoryCostAging = {
+  company: number; branch: number | null; branch_name: string; as_of: string; basis: string; costing_method: "FIFO";
+  totals: { layers: number; quantity: string; value: string };
+  buckets: Record<"active" | "slow" | "very_slow" | "stagnant", { layers: number; quantity: string; value: string }>;
+  rows: { id: number; product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; location_name: string; source_movement_number: string; receipt_date: string; age_days: number; quantity_remaining: string; unit_cost: string; layer_value: string; expiry_date: string | null; expiry_status: "none" | "expired" | "expiring" | "valid" }[];
+  truncated: boolean; scope_branch_ids: number[]; scope_note: string;
+};
 export type InventoryValuationIntegrity = {
   company: number; branch: number | null; branch_name: string; scope_branch_ids: number[];
   fifo_mismatch_count: number;
@@ -602,6 +609,7 @@ export const stockApi = {
   // جلب تقرير مطابقة قيمة المخزون مع الحسابات.
   reconciliation: (companyId: number, branchId?: number) => request<InventoryReconciliation>(`/api/inventory/balances/reconciliation/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب فحص سلامة تقييم المخزون والحركات المرتبطة.
+  costAging: (companyId: number, branchId?: number) => request<InventoryCostAging>(`/api/inventory/balances/cost-aging/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   valuationIntegrity: (companyId: number, branchId?: number) => request<InventoryValuationIntegrity>(`/api/inventory/balances/valuation-integrity/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب كارت الصنف وحركاته داخل مخزن وفترة محددين.
   stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
