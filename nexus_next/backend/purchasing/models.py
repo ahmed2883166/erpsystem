@@ -622,3 +622,81 @@ class SupplierReturnLine(models.Model):
         if self.return_document.status in (SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED):
             raise ValidationError("لا يمكن حذف بند مرتجع مورد مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
+
+
+class PurchaseRequisition(models.Model):
+    """طلب احتياج داخلي يسبق اختيار المورد وإصدار أمر الشراء."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        SUBMITTED = "submitted", "مرسل للاعتماد"
+        APPROVED = "approved", "معتمد"
+        REJECTED = "rejected", "مرفوض"
+        CONVERTED = "converted", "تحول إلى أمر شراء"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_requisitions")
+    request_number = models.CharField(max_length=40)
+    request_date = models.DateField()
+    required_date = models.DateField(null=True, blank=True)
+    department = models.CharField(max_length=120, blank=True)
+    purpose = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="purchase_requisitions")
+    reviewed_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="reviewed_purchase_requisitions")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True)
+    converted_order = models.OneToOneField("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="source_requisition")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-request_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "request_number"), name="uq_purchase_req_company_no")]
+        indexes = [models.Index(fields=("company", "status", "request_date"), name="pur_req_co_status_date_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.required_date and self.required_date < self.request_date:
+            raise ValidationError({"required_date": "تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if old not in (None, self.Status.DRAFT):
+                raise ValidationError("طلب الشراء بعد إرساله غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف طلب شراء تم إرساله أو اعتماده.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseRequisitionLine(models.Model):
+    requisition = models.ForeignKey(PurchaseRequisition, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_requisition_lines")
+    requested_quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    estimated_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(Decimal("0"))])
+    notes = models.CharField(max_length=250, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.requisition.company_id or self.product.product_type != "goods" or not self.product.is_active):
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا نشطًا تابعًا لشركة الطلب."})
+
+    def save(self, *args, **kwargs):
+        if self.requisition_id and self.requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود طلب شراء تم إرساله.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف بنود طلب شراء تم إرساله.")
+        return super().delete(*args, **kwargs)
