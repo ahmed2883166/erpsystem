@@ -888,28 +888,65 @@ class JournalEntryViewSet(AccountingViewSet):
                 "debit_total": debit, "credit_total": credit, "balance": balance,
             })
             totals[account.nature] += balance
-        current_profit = Decimal("0")
-        if current_year and current_year.status == FiscalYear.Status.OPEN:
-            current_year_entries = JournalEntry.objects.filter(
-                company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-                entry_date__gte=current_year.start_date, entry_date__lte=as_of,
-                branch__in=visible_branches,
-            ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
-            current_year_lines = JournalLine.objects.filter(entry__in=current_year_entries)
-            rev = current_year_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
-                credit=Sum("credit"), debit=Sum("debit")
+        prior_unclosed_profit = Decimal("0")
+        if current_year:
+            prior_lines = JournalLine.objects.filter(
+                entry__company_id=company_id,
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+                entry__entry_date__lt=current_year.start_date,
+                entry__branch__in=visible_branches,
+                account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+            ).exclude(entry__source_type=JournalEntry.Source.OPENING)
+            prior_totals = prior_lines.aggregate(
+                revenue_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                revenue_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                expense_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+                expense_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
             )
-            exp = current_year_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
-                debit=Sum("debit"), credit=Sum("credit")
+            prior_unclosed_profit = (
+                (prior_totals["revenue_credit"] or Decimal("0"))
+                - (prior_totals["revenue_debit"] or Decimal("0"))
+                - (prior_totals["expense_debit"] or Decimal("0"))
+                + (prior_totals["expense_credit"] or Decimal("0"))
+            )
+        if prior_unclosed_profit:
+            sections["equity"].append({
+                "account_id": None, "code": "PRIOR-UNCLOSED-PROFIT",
+                "name_ar": "نتائج سنوات سابقة غير مقفلة",
+                "debit_total": Decimal("0"), "credit_total": Decimal("0"),
+                "balance": prior_unclosed_profit,
+            })
+            totals["equity"] += prior_unclosed_profit
+
+        # Derive the current-year result from the remaining posted P&L account
+        # balances. Including closing journals makes a properly closed branch
+        # contribute zero, while branches not yet closed retain their result.
+        current_profit = Decimal("0")
+        if current_year:
+            current_year_lines = JournalLine.objects.filter(
+                entry__company_id=company_id,
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+                entry__entry_date__gte=current_year.start_date,
+                entry__entry_date__lte=as_of,
+                entry__branch__in=visible_branches,
+                account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+            ).exclude(entry__source_type=JournalEntry.Source.OPENING)
+            current_totals = current_year_lines.aggregate(
+                revenue_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                revenue_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                expense_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+                expense_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
             )
             current_profit = (
-                (rev["credit"] or Decimal("0")) - (rev["debit"] or Decimal("0"))
-                - (exp["debit"] or Decimal("0")) + (exp["credit"] or Decimal("0"))
+                (current_totals["revenue_credit"] or Decimal("0"))
+                - (current_totals["revenue_debit"] or Decimal("0"))
+                - (current_totals["expense_debit"] or Decimal("0"))
+                + (current_totals["expense_credit"] or Decimal("0"))
             )
             if current_profit:
                 sections["equity"].append({
                     "account_id": None, "code": "CURRENT-PROFIT",
-                    "name_ar": "صافي ربح السنة حتى تاريخ الميزانية",
+                    "name_ar": "صافي ربح السنة غير المقفل حتى تاريخ الميزانية",
                     "debit_total": Decimal("0"), "credit_total": Decimal("0"),
                     "balance": current_profit,
                 })
@@ -1180,6 +1217,39 @@ class JournalEntryViewSet(AccountingViewSet):
                 })
             opening_total += opening_balance
             movement_total += period_movement
+
+        # P&L balances from earlier periods remain part of equity until a
+        # closing journal transfers them. Closing entries are included so a
+        # properly closed year contributes zero; opening entries are excluded.
+        prior_result_lines = JournalLine.objects.filter(
+            entry__company_id=company_id,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            entry__entry_date__lt=date_from,
+            entry__branch__in=visible_branches,
+            account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+        ).exclude(entry__source_type=JournalEntry.Source.OPENING)
+        prior_result_totals = prior_result_lines.aggregate(
+            revenue_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+            revenue_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+            expense_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+            expense_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+        )
+        opening_unclosed_result = (
+            (prior_result_totals["revenue_credit"] or Decimal("0"))
+            - (prior_result_totals["revenue_debit"] or Decimal("0"))
+            - (prior_result_totals["expense_debit"] or Decimal("0"))
+            + (prior_result_totals["expense_credit"] or Decimal("0"))
+        )
+        if opening_unclosed_result:
+            account_rows.append({
+                "account_id": None, "code": "PRIOR-UNCLOSED-PROFIT",
+                "name_ar": "نتائج فترات سابقة غير مقفلة",
+                "opening_balance": opening_unclosed_result,
+                "period_movement": Decimal("0"),
+                "closing_balance_before_profit": opening_unclosed_result,
+            })
+            opening_total += opening_unclosed_result
+
         period_entries = JournalEntry.objects.filter(
             company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry_date__gte=date_from, entry_date__lte=date_to, branch__in=visible_branches,
