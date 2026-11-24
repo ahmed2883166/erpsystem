@@ -99,9 +99,9 @@ const refresh = async () => {
   const remainingReceiptLineQuantity = (receipt: PurchaseReceipt, line: PurchaseReceipt["line_items"][number]) =>
     Math.max(Number(line.quantity) - billedReceiptLineQuantity(receipt.id, line.id), 0);
   const paymentableInvoices = useMemo(() => invoices.filter((invoice) => invoice.status === "posted" && Number(invoice.balance_due) > 0), [invoices]);
-  const invoiceableReceipts = useMemo(() => receipts.filter((receipt) =>
+  const invoiceableReceipts = receipts.filter((receipt) =>
     receipt.movement_status === "posted" && receipt.line_items.some((line) => remainingReceiptLineQuantity(receipt, line) > 0)
-  ), [receipts, invoices]);
+  );
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredPayments = payments.filter((row) => [row.payment_number, row.supplier_name, row.invoice_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
