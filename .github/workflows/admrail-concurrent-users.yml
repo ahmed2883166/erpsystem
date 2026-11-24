@@ -11,6 +11,7 @@ on:
       - "nexus_next/backend/config/settings.py"
       - "nexus_next/backend/requirements.txt"
       - "nexus_next/backend/accounting/api.py"
+      - "nexus_next/backend/accounting/services.py"
       - "nexus_next/backend/accounting/tests*.py"
       - "nexus_next/backend/accounting/reconciliation.py"
       - "nexus_next/backend/sales/api.py"
