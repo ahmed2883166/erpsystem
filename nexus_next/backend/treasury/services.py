@@ -190,6 +190,8 @@ def post_treasury_transaction(transaction_id, user=None):
         if not doc.counter_account.is_active or doc.counter_account.is_group or not doc.counter_account.allow_posting:
             raise ValidationError("الحساب المقابل غير صالح للترحيل.")
         if asset_acquisition and asset_acquisition.recoverable_tax_amount:
+            if foreign:
+                raise ValidationError("شراء أصل بضريبة مدخلات قابلة للاسترداد يتطلب حساب خزينة بعملة الشركة الأساسية لضمان توزيع لقطة سعر الصرف بدقة.")
             from accounting.services import get_account_for_role
             recoverable_tax = asset_acquisition.recoverable_tax_amount
             if (
