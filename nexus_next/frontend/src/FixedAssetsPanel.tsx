@@ -403,7 +403,7 @@ const loadReport = async () => {
       </div>
       {reportError && <div className="error-banner">{reportError}</div>}
       {reportTab==="reconciliation" && assetReconciliation && <>
-        <div className="asset-cashflow-totals"><b>{assetReconciliation.is_reconciled?"سجل الأصول مطابق للأستاذ":"توجد فروق تحتاج مراجعة: "+assetReconciliation.difference_count}</b><span>التكلفة ومجمع الإهلاك كما في {assetReconciliation.as_of}</span><span>مصروف الإهلاك خلال {assetReconciliation.date_from} إلى {assetReconciliation.date_to}</span></div>
+        <div className="asset-cashflow-totals"><b>{assetReconciliation.is_reconciled?"سجل الأصول مطابق للأستاذ":"توجد فروق تحتاج مراجعة: "+assetReconciliation.difference_count}</b><span>التكلفة ومجمع الإهلاك والانخفاض كما في {assetReconciliation.as_of}</span><span>مصروف الإهلاك والانخفاض خلال {assetReconciliation.date_from} إلى {assetReconciliation.date_to}</span></div>
         {([
           ["تكلفة الأصول",assetReconciliation.cost_accounts],
           ["مجمع الإهلاك",assetReconciliation.accumulated_depreciation_accounts],
