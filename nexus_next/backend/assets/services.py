@@ -196,7 +196,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         daily_rate = revised_basis / Decimal(remaining_life_days)
     else:
         daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
-    amount = min((daily_rate * Decimal(elapsed_days)).quantize(MONEY, rounding=ROUND_HALF_UP), remaining)
+    amount = min(round_currency_amount(daily_rate * Decimal(elapsed_days), asset.company.base_currency), remaining)
     entry = _post_entry(asset, year, f"FA-DEP-{asset.pk}-{period_date:%Y%m}", period_date,
         f"إهلاك الأصل: {asset.name_ar} - {period_date:%Y-%m}", [
             {"account": asset.depreciation_expense_account, "debit": amount, "credit": 0, "description": asset.name_ar},
@@ -226,6 +226,7 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
     ).get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("لا يمكن اختبار انخفاض أصل غير نشط أو لم يتم إثبات اقتنائه.")
+    recoverable_amount = round_currency_amount(recoverable_amount, asset.company.base_currency)
     if impairment_date < asset.acquisition_date:
         raise ValidationError("تاريخ اختبار الانخفاض يسبق تاريخ اقتناء الأصل.")
     if AssetImpairment.objects.filter(asset=asset, impairment_date=impairment_date).exists():
@@ -374,14 +375,19 @@ def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, revers
     total_life_days = asset.useful_life_months * 30
     hypothetical_depreciation = min(
         asset.depreciable_amount,
-        (asset.depreciable_amount * Decimal(elapsed_days) / Decimal(total_life_days)).quantize(
-            MONEY, rounding=ROUND_HALF_UP,
+        round_currency_amount(
+            asset.depreciable_amount * Decimal(elapsed_days) / Decimal(total_life_days),
+            asset.company.base_currency,
         ),
     )
     hypothetical_carrying = max(asset.salvage_value, asset.original_cost - hypothetical_depreciation)
     reversal_ceiling = max(Decimal("0"), hypothetical_carrying - carrying_amount)
     available_recoverable_increase = max(Decimal("0"), recoverable_amount - carrying_amount)
-    reversal_amount = min(reversal_ceiling, available_recoverable_increase).quantize(MONEY, rounding=ROUND_DOWN)
+    currency_places = int(getattr(asset.company.base_currency, "decimal_places", 2))
+    currency_quantum = Decimal("1").scaleb(-currency_places)
+    reversal_amount = min(reversal_ceiling, available_recoverable_increase).quantize(
+        currency_quantum, rounding=ROUND_DOWN,
+    )
     if reversal_amount <= 0:
         raise ValidationError(
             "لا توجد قيمة قابلة للعكس؛ إما أن القيمة القابلة للاسترداد لا تتجاوز القيمة الدفترية "
@@ -473,6 +479,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     ).get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("الأصل غير نشط أو لم يتم إثبات اقتنائه.")
+    proceeds = round_currency_amount(proceeds, asset.company.base_currency)
     if disposal_date < asset.depreciation_start_date:
         raise ValidationError("تاريخ الاستبعاد يسبق بداية الإهلاك.")
     if AssetDepreciation.objects.filter(
@@ -553,7 +560,9 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
             daily_rate = revised_basis / Decimal(remaining_life_days)
         else:
             daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
-        partial_amount = min(remaining, (daily_rate * Decimal(elapsed_days)).quantize(MONEY, rounding=ROUND_HALF_UP))
+        partial_amount = min(remaining, round_currency_amount(
+            daily_rate * Decimal(elapsed_days), asset.company.base_currency,
+        ))
         if partial_amount > 0:
             partial_entry = _post_entry(
                 asset, year, f"FA-DEP-PART-{asset.pk}-{disposal_date:%Y%m%d}", disposal_date,
