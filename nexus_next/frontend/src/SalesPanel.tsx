@@ -241,7 +241,7 @@ const post = async (action: () => Promise<unknown>) => {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر الشركة لعرض دورة المبيعات.</div></section>;
   return <section className="work-panel">
     <div className="work-panel-head"><div><h2>دورة المبيعات والتحصيل</h2><p>عروض أسعار، تسليم مخزني، فواتير مبيعات، ثم سند قبض مرتبط بحساب العميل.</p></div><div className="table-actions"><button className="subtle-button" type="button" onClick={()=>setShowTemplatesPanel(value=>!value)}>{showTemplatesPanel?"إغلاق قوالب الطباعة":"قوالب الطباعة"}</button><span className="coming-soon">المبيعات</span></div></div>
-     {showTemplatesPanel && <DocumentTemplatesPanel companyId={companyId}/ >}
+     {showTemplatesPanel && <DocumentTemplatesPanel companyId={companyId} />}
     {error && <div className="error-banner">{error}</div>}
     <div className="inventory-tabs">
       <button type="button" className={tab === "quotations" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("quotations"); setShowForm(false); setEditingInvoiceId(null); }}>عروض الأسعار <b>{quotations.length}</b></button>
