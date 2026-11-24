@@ -72,6 +72,10 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
         raise ValidationError("لا يمكن الترحيل داخل سنة مالية مغلقة.")
     if not (fiscal_year.start_date <= entry.entry_date <= fiscal_year.end_date):
         raise ValidationError("تاريخ القيد خارج حدود السنة المالية المحددة.")
+    if entry.source_type == JournalEntry.Source.OPENING and entry.entry_date != fiscal_year.start_date:
+        raise ValidationError("القيد الافتتاحي يجب أن يكون بتاريخ بداية السنة المالية.")
+    if entry.source_type == JournalEntry.Source.CLOSING and entry.entry_date != fiscal_year.end_date:
+        raise ValidationError("قيد الإقفال يجب أن يكون بتاريخ نهاية السنة المالية.")
     ensure_fiscal_period_open(fiscal_year, entry.entry_date)
     if entry.branch.company_id != entry.company_id:
         raise ValidationError("الفرع لا يتبع شركة القيد.")
@@ -95,6 +99,10 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
             line.save(update_fields=("debit", "credit"))
         if line.account.company_id != entry.company_id:
             raise ValidationError("يوجد حساب لا يتبع شركة القيد.")
+        if entry.source_type == JournalEntry.Source.OPENING and line.account.nature not in (
+            "asset", "liability", "equity",
+        ):
+            raise ValidationError("القيد الافتتاحي يقبل حسابات الأصول والالتزامات وحقوق الملكية فقط.")
         if not line.account.is_active or line.account.is_group or not line.account.allow_posting:
             raise ValidationError(f"الحساب {line.account.code} غير متاح للترحيل.")
         if line.debit < 0 or line.credit < 0 or ((line.debit > 0) == (line.credit > 0)):
