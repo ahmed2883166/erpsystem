@@ -277,6 +277,153 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
 
 
 @transaction.atomic
+def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, reversal_income_account_id,
+                             fiscal_year_id, user=None):
+    """Reverse IAS 36 impairment under the cost model, subject to the no-impairment ceiling."""
+    from .models import AssetImpairmentReversal, AssetImpairmentReversalAllocation
+    from accounting.models import ChartOfAccount
+
+    if isinstance(reversal_date, str):
+        reversal_date = dateparse.parse_date(reversal_date)
+    if not reversal_date:
+        raise ValidationError("أدخل تاريخ عكس انخفاض قيمة صحيحًا.")
+    try:
+        recoverable_amount = Decimal(str(recoverable_amount))
+    except Exception as exc:
+        raise ValidationError("القيمة القابلة للاسترداد غير صحيحة.") from exc
+    if recoverable_amount < 0:
+        raise ValidationError("القيمة القابلة للاسترداد لا يمكن أن تكون سالبة.")
+
+    asset = FixedAsset.objects.select_for_update().select_related(
+        "company", "branch", "asset_account", "accumulated_depreciation_account",
+    ).get(pk=asset_id)
+    if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
+        raise ValidationError("لا يمكن عكس انخفاض أصل غير نشط أو لم يتم إثبات اقتنائه.")
+    if not asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lt=reversal_date,
+    ).exists():
+        raise ValidationError("لا يوجد انخفاض قيمة سابق مرحّل يمكن عكسه.")
+    if AssetImpairmentReversal.objects.filter(asset=asset, reversal_date=reversal_date).exists():
+        raise ValidationError("تم تسجيل عكس انخفاض لهذا الأصل في التاريخ نفسه.")
+    if asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__gt=reversal_date,
+    ).exists() or asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__gt=reversal_date,
+    ).exists() or asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__gt=reversal_date,
+    ).exists():
+        raise ValidationError("يوجد حدث محاسبي لاحق؛ يجب معالجة الأحداث بترتيبها الزمني دون تعديل قيود مرحلة.")
+    last_depreciation = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=reversal_date,
+    ).order_by("-period_date", "-pk").first()
+    if reversal_date >= asset.depreciation_start_date and (
+        not last_depreciation or last_depreciation.period_date < reversal_date
+    ):
+        raise ValidationError("رحّل إهلاك الأصل حتى تاريخ عكس الانخفاض أولًا.")
+
+    try:
+        year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    except (FiscalYear.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة.") from None
+    if not (year.start_date <= reversal_date <= year.end_date):
+        raise ValidationError("تاريخ عكس الانخفاض خارج السنة المالية المفتوحة.")
+
+    depreciation_total = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=reversal_date,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    impairment_total = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lt=reversal_date,
+    ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+    reversal_total = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lt=reversal_date,
+    ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+    net_impairment = impairment_total - reversal_total
+    carrying_amount = asset.original_cost - depreciation_total - net_impairment
+    if carrying_amount < 0:
+        raise ValidationError("القيمة الدفترية المحسوبة سالبة؛ راجع سجل الأصل قبل العكس.")
+
+    elapsed_days = max(0, (reversal_date - asset.depreciation_start_date).days + 1)
+    total_life_days = asset.useful_life_months * 30
+    hypothetical_depreciation = min(
+        asset.depreciable_amount,
+        (asset.depreciable_amount * Decimal(elapsed_days) / Decimal(total_life_days)).quantize(
+            MONEY, rounding=ROUND_HALF_UP,
+        ),
+    )
+    hypothetical_carrying = max(asset.salvage_value, asset.original_cost - hypothetical_depreciation)
+    reversal_ceiling = max(Decimal("0"), hypothetical_carrying - carrying_amount)
+    available_recoverable_increase = max(Decimal("0"), recoverable_amount - carrying_amount)
+    reversal_amount = min(reversal_ceiling, available_recoverable_increase).quantize(MONEY, rounding=ROUND_DOWN)
+    if reversal_amount <= 0:
+        raise ValidationError(
+            "لا توجد قيمة قابلة للعكس؛ إما أن القيمة القابلة للاسترداد لا تتجاوز القيمة الدفترية "
+            "أو أن حد IAS 36 الافتراضي دون انخفاض يمنع الزيادة."
+        )
+
+    income_account = ChartOfAccount.objects.filter(
+        pk=reversal_income_account_id, company=asset.company, nature=ChartOfAccount.Nature.REVENUE,
+        is_active=True, is_group=False, allow_posting=True,
+    ).first()
+    if not income_account:
+        raise ValidationError("اختر حساب إيراد لعكس انخفاض القيمة، تفصيليًا ونشطًا وقابلًا للترحيل من نفس الشركة.")
+
+    impairments = list(asset.impairments.select_for_update().filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lt=reversal_date,
+    ).select_related("accumulated_impairment_account").order_by("-impairment_date", "-pk"))
+    remaining_to_allocate = reversal_amount
+    debit_by_account = {}
+    allocations = []
+    for impairment in impairments:
+        already_reversed = impairment.reversal_allocations.filter(
+            reversal__journal_entry__status=JournalEntry.Status.POSTED,
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        outstanding = impairment.impairment_loss - already_reversed
+        if outstanding <= 0:
+            continue
+        allocated = min(outstanding, remaining_to_allocate)
+        contra = impairment.accumulated_impairment_account
+        if not contra.is_active or contra.is_group or not contra.allow_posting or contra.nature != ChartOfAccount.Nature.ASSET:
+            raise ValidationError("حساب مجمع الانخفاض المرتبط بأحد الاختبارات السابقة غير صالح للترحيل؛ راجع دليل الحسابات.")
+        allocations.append((impairment, allocated))
+        debit_by_account[contra.pk] = (contra, debit_by_account.get(contra.pk, (contra, Decimal("0")))[1] + allocated)
+        remaining_to_allocate -= allocated
+        if remaining_to_allocate <= 0:
+            break
+    if remaining_to_allocate > Decimal("0.0000"):
+        raise ValidationError("رصيد خسائر الانخفاض المتاح للعكس لا يطابق القيمة المحسوبة؛ أوقف الترحيل وراجع سجل العكوس.")
+
+    lines = [
+        {"account": account, "debit": amount, "credit": 0, "description": f"عكس مجمع انخفاض الأصل {asset.name_ar}"}
+        for account, amount in debit_by_account.values()
+    ]
+    lines.append({
+        "account": income_account, "debit": 0, "credit": reversal_amount,
+        "description": f"عكس خسارة انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}",
+    })
+    entry = _post_entry(
+        asset, year, f"FA-IMPR-{asset.pk}-{reversal_date:%Y%m%d}", reversal_date,
+        f"عكس انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}", lines, user,
+    )
+    reversal = AssetImpairmentReversal(
+        asset=asset, reversal_date=reversal_date,
+        carrying_amount_before=carrying_amount, recoverable_amount=recoverable_amount,
+        hypothetical_carrying_amount=hypothetical_carrying, reversal_amount=reversal_amount,
+        reversal_income_account=income_account, journal_entry=entry,
+    )
+    reversal.full_clean()
+    reversal.save()
+    for impairment, allocated in allocations:
+        allocation = AssetImpairmentReversalAllocation(
+            reversal=reversal, impairment=impairment, amount=allocated,
+        )
+        allocation.full_clean()
+        allocation.save()
+    return reversal
+
+
+
+
+@transaction.atomic
 def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None):
     """إثبات بيع الأصل أو استبعاده ومعالجة النقدية ومجمع الإهلاك والربح أو الخسارة."""
     from treasury.models import TreasuryAccount, TreasuryTransaction
