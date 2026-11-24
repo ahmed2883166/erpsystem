@@ -194,6 +194,26 @@ const save = async (event: FormEvent) => {
           {!resetPreview.backup_ready && <p className="asset-report-note">سيُنشئ النظام نسخة حماية جديدة ويتحقق منها تلقائيًا عند طلب التصفير؛ إذا فشل النسخ فلن يبدأ الحذف.</p>}
         </>}
       </section>}
+
+      {config.can_manage && <section className="work-panel reset-panel">
+        <div className="work-panel-head"><div><h3>إدارة قاعدة البيانات</h3><p>أداة Windows منفصلة للعمليات الفنية؛ لا تنفذ حذفًا أو تغييرًا دون نسخة احتياطية وتأكيد صريح.</p></div><span className="coming-soon">مدير النظام فقط</span></div>
+        <div className="review-meta">
+          <div><span>تحديث القاعدة</span><strong>يحافظ على بياناتك</strong></div>
+          <div><span>إنشاء قاعدة جديدة</span><strong>قاعدة مستقلة</strong></div>
+          <div><span>تغيير الاسم</span><strong>يحدّث الاتصال</strong></div>
+          <div><span>الحذف</span><strong>بعد نسخة مشفرة</strong></div>
+        </div>
+        <p className="asset-report-note">لتشغيل الأداة: أوقف Admrail على جهاز الخادم، ثم افتح الملف <bdi dir="ltr">Admrail-Database-Manager.cmd</bdi> من المجلد الرئيسي للبرنامج. ستظهر قائمة عربية تشرح كل عملية وتطلب كلمة مرور مسؤول PostgreSQL عند التشغيل.</p>
+        <ul>
+          <li>تحديث القاعدة الحالية مع الاحتفاظ بالبيانات.</li>
+          <li>إنشاء قاعدة جديدة، مع اختيار إبقائها منفصلة أو تحويل البرنامج إليها.</li>
+          <li>تغيير اسم القاعدة وتحديث إعدادات الاتصال.</li>
+          <li>حذف قاعدة قديمة غير نشطة فقط، بعد إنشاء نسخة مشفرة والتحقق منها وكتابة اسمها للتأكيد.</li>
+          <li>تغيير كلمة مرور مستخدم قاعدة البيانات أو كلمة مرور مستخدم Admrail.</li>
+          <li>استعادة نسخة احتياطية إلى قاعدة منفصلة دون الكتابة فوق القاعدة الحالية.</li>
+        </ul>
+        <p className="asset-report-note">تنبيه: كلمة مرور مستخدم PostgreSQL (postgres) مختلفة عن كلمة مرور Admrail. إذا نسيت كلمة مرور postgres نفسها، يلزم إجراء استرداد بصلاحية مسؤول Windows؛ لا تحاول حذف القاعدة أو إعادة تثبيت PostgreSQL لحل المشكلة.</p>
+      </section>}
     </>}
   </section>;
 }
