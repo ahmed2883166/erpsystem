@@ -52,6 +52,17 @@ class PurchaseRFQWorkflowTests(APITestCase):
         self.assertEqual(reviewed.status_code, 200, reviewed.data)
         self.client.force_authenticate(self.user)
 
+        mismatched_rfq = self.client.post("/api/purchasing/rfqs/", {
+            "company": self.company.pk,
+            "source_requisition": requisition_id,
+            "rfq_number": "RFQ-INVALID-001",
+            "issue_date": "2026-11-24",
+            "closing_date": "2026-11-30",
+            "invited_suppliers": [self.supplier_a.pk, self.supplier_b.pk],
+            "lines": [{"product": self.product.pk, "quantity": "4"}],
+        }, format="json")
+        self.assertEqual(mismatched_rfq.status_code, 400, mismatched_rfq.data)
+
         created = self.client.post("/api/purchasing/rfqs/", {
             "company": self.company.pk,
             "source_requisition": requisition_id,
