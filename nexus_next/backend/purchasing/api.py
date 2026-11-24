@@ -555,6 +555,48 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "overdue_days": overdue_days,
                 "bucket": bucket, "balance_due": str(balance_due),
             })
+        # Direct fixed-asset vendor invoices participate in the same aging analysis.
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+        asset_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+            invoice_date__lte=as_of,
+        ).select_related("supplier", "asset").prefetch_related("payments")
+        if branch_id:
+            asset_invoices = asset_invoices.filter(branch_id=branch_id)
+        elif not request.user.is_superuser or is_platform_owner(request.user):
+            asset_invoices = asset_invoices.filter(branch__in=accessible_branches(request.user))
+        for invoice in asset_invoices:
+            paid = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED and payment.payment_date <= as_of
+            ), Decimal("0"))
+            balance_due = invoice.grand_total - paid
+            if balance_due <= 0:
+                continue
+            due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
+            overdue_days = max((as_of - due_date).days, 0)
+            bucket = (
+                "not_due" if overdue_days == 0 else
+                "1_30" if overdue_days <= 30 else
+                "31_60" if overdue_days <= 60 else
+                "61_90" if overdue_days <= 90 else "over_90"
+            )
+            supplier = suppliers.setdefault(invoice.supplier_id, {
+                "supplier": invoice.supplier_id, "supplier_code": invoice.supplier.code,
+                "supplier_name": invoice.supplier.name_ar, "not_due": Decimal("0"),
+                "1_30": Decimal("0"), "31_60": Decimal("0"), "61_90": Decimal("0"),
+                "over_90": Decimal("0"), "total_due": Decimal("0"), "invoices": [],
+            })
+            supplier[bucket] += balance_due
+            supplier["total_due"] += balance_due
+            supplier["invoices"].append({
+                "invoice_number": invoice.invoice_number,
+                "invoice_date": invoice.invoice_date.isoformat(),
+                "due_date": due_date.isoformat(), "overdue_days": overdue_days,
+                "bucket": bucket, "balance_due": str(balance_due),
+                "document_type": "asset_purchase_invoice", "asset_name": invoice.asset.name_ar,
+            })
+
         rows = []
         totals = {key: Decimal("0") for key in ("not_due", "1_30", "31_60", "61_90", "over_90", "total_due")}
         for supplier in sorted(suppliers.values(), key=lambda item: item["supplier_name"]):
