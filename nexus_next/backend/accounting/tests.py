@@ -1815,3 +1815,126 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(payroll["party_count"], 1)
         self.assertEqual(payroll["party_balances"][0]["code"], "EMP-001")
         self.assertEqual(Decimal(payroll["party_balances"][0]["balance"]), Decimal("9000"))
+
+class HistoricalBalanceAndCashFlowRegressionTests(TestCase):
+    def setUp(self):
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="HIST-FX", name_ar="شركة اختبار التقارير التاريخية",
+            country="EG", activity="commercial", base_currency=self.currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        self.user = User.objects.create_user(
+            username="historical-cashflow-reader", password="test-password",
+        )
+        self.user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="accountant", all_branches=True,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    def make_account(self, code, name, nature):
+        return ChartOfAccount.objects.create(
+            company=self.company, code=code, name_ar=name, nature=nature,
+        )
+
+    def test_balance_sheet_as_of_date_keeps_later_reversal_out_of_earlier_snapshot(self):
+        cash = self.make_account("1000", "النقدية", ChartOfAccount.Nature.ASSET)
+        capital = self.make_account("3000", "رأس المال", ChartOfAccount.Nature.EQUITY)
+        original = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="HIST-OPEN-001", entry_date=date(2026, 1, 15),
+            description="قيد قبل تاريخ التقرير",
+        )
+        JournalLine.objects.create(entry=original, account=cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=original, account=capital, credit=Decimal("100"))
+        post_journal(original.pk)
+
+        reversal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="HIST-REV-001", entry_date=date(2026, 2, 15),
+            description="عكس لاحق لتاريخ التقرير", reversal_of=original,
+        )
+        JournalLine.objects.create(entry=reversal, account=cash, credit=Decimal("100"))
+        JournalLine.objects.create(entry=reversal, account=capital, debit=Decimal("100"))
+        post_journal(reversal.pk)
+
+        january = self.client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={self.company.pk}&as_of=2026-01-31"
+        )
+        february = self.client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={self.company.pk}&as_of=2026-02-28"
+        )
+
+        self.assertEqual(january.status_code, 200, january.data)
+        self.assertEqual(february.status_code, 200, february.data)
+        self.assertEqual(january.data["total_assets"], Decimal("100.0000"))
+        self.assertEqual(january.data["total_equity"], Decimal("100.0000"))
+        self.assertEqual(january.data["difference"], Decimal("0.0000"))
+        self.assertEqual(february.data["total_assets"], Decimal("0.0000"))
+        self.assertEqual(february.data["total_equity"], Decimal("0.0000"))
+        self.assertEqual(february.data["difference"], Decimal("0.0000"))
+
+    def test_indirect_cash_flow_offsets_unrealized_fx_gain_and_loss_once(self):
+        receivables = self.make_account("1100", "العملاء", ChartOfAccount.Nature.ASSET)
+        payables = self.make_account("2100", "الموردون", ChartOfAccount.Nature.LIABILITY)
+        fx_gain = self.make_account("4900", "أرباح فروق عملة غير محققة", ChartOfAccount.Nature.REVENUE)
+        fx_loss = self.make_account("5900", "خسائر فروق عملة غير محققة", ChartOfAccount.Nature.EXPENSE)
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE, account=receivables,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payables,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.UNREALIZED_FX_GAIN, account=fx_gain,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.UNREALIZED_FX_LOSS, account=fx_loss,
+        )
+
+        gain_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CF-FX-GAIN-001", entry_date=date(2026, 3, 15),
+            description="إعادة تقييم عميل - مكسب غير محقق",
+        )
+        JournalLine.objects.create(entry=gain_entry, account=receivables, debit=Decimal("40"))
+        JournalLine.objects.create(entry=gain_entry, account=fx_gain, credit=Decimal("40"))
+        post_journal(gain_entry.pk)
+
+        loss_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CF-FX-LOSS-001", entry_date=date(2026, 3, 16),
+            description="إعادة تقييم مورد - خسارة غير محققة",
+        )
+        JournalLine.objects.create(entry=loss_entry, account=fx_loss, debit=Decimal("25"))
+        JournalLine.objects.create(entry=loss_entry, account=payables, credit=Decimal("25"))
+        post_journal(loss_entry.pk)
+
+        result = self.client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-31"
+        )
+
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["net_profit"], Decimal("15.0000"))
+        self.assertEqual(
+            result.data["non_cash_adjustments"]["unrealized_fx_gain"], Decimal("40.0000"),
+        )
+        self.assertEqual(
+            result.data["non_cash_adjustments"]["unrealized_fx_loss"], Decimal("25.0000"),
+        )
+        self.assertEqual(
+            result.data["non_cash_adjustments"]["unrealized_fx_net_adjustment"], Decimal("-15.0000"),
+        )
+        self.assertEqual(result.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(result.data["ledger_cash_change"], Decimal("0.0000"))
+        self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
+
