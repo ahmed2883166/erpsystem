@@ -156,13 +156,13 @@ function Get-DatabaseNames {
     return @($raw -split "\r?\n" | Where-Object { $_ })
 }
 function Show-DatabaseList {
-    $c = Read-Config
+    $config = Read-Config
     $names = @(Get-DatabaseNames)
     Write-Host ""
     Write-Host "قواعد البيانات الموجودة على خادم PostgreSQL:" -ForegroundColor Cyan
     if ($names.Count -eq 0) { Write-Host "لا توجد قواعد بيانات للتطبيق."; return }
     foreach ($name in $names) {
-        $marker = if ($name -eq $c.POSTGRES_DB) { "  <== قاعدة Admrail النشطة" } else { "" }
+        $marker = if ($name -eq $config.POSTGRES_DB) { "  <== قاعدة Admrail النشطة" } else { "" }
         $escaped = $name.Replace("'","''")
         $size = Invoke-Psql "SELECT pg_size_pretty(pg_database_size('$escaped'));"
         Write-Host (" - {0}   ({1}){2}" -f $name,$size,$marker)
@@ -171,12 +171,12 @@ function Show-DatabaseList {
 }
 function Install-FreshDatabase {
     Assert-AppStopped
-    $c = Read-Config
+    $config = Read-Config
     $names = @(Get-DatabaseNames)
     if ($names.Count -eq 0) { throw "لم يتم العثور على قواعد بيانات يمكن إدارتها." }
     Write-Host "اختر القاعدة القديمة التي تريد استبدالها بعد تجهيز قاعدة جديدة:" -ForegroundColor Cyan
     for ($i = 0; $i -lt $names.Count; $i++) {
-        $marker = if ($names[$i] -eq $c.POSTGRES_DB) { "  <== النشطة حاليًا" } else { "" }
+        $marker = if ($names[$i] -eq $config.POSTGRES_DB) { "  <== النشطة حاليًا" } else { "" }
         Write-Host ("[{0}] {1}{2}" -f ($i + 1),$names[$i],$marker)
     }
     $pick = (Read-Host "رقم القاعدة القديمة (Enter للإلغاء)").Trim()
@@ -258,7 +258,7 @@ try {
         Write-Host "6 - تغيير كلمة مرور مستخدم PostgreSQL الخاص بالبرنامج"
         Write-Host "7 - تغيير كلمة مرور مستخدم Admrail"
         Write-Host "8 - استعادة نسخة إلى قاعدة منفصلة"
-        Write-Host "9 - عرض أسماء قواعد البيانات وتحديد القاعدة النشطة"
+        Write-Host "9 - عرض قواعد البيانات وتحديد القاعدة النشطة"
         Write-Host "10 - تجهيز قاعدة جديدة واختيار قاعدة قديمة لحذفها بعد النجاح"
         Write-Host "0 - خروج"
         Write-Host "ملاحظة: استعادة كلمة مرور postgres المنسية تتطلب إجراء استرداد مسؤول Windows؛ الأداة لا تتجاوز حماية PostgreSQL." -ForegroundColor Yellow
@@ -415,7 +415,7 @@ try {
     Write-Host "سيتم حفظ نسخة مشفرة من [$oldDb] ثم إنشاء [$newDb] وتجهيزها." -ForegroundColor Yellow
     Write-Host "لن تُحذف القاعدة القديمة إلا بعد نجاح التجهيز وتأكيدك مرتين." -ForegroundColor Yellow
     $backup = Save-VerifiedBackup $oldDb
-    $null = Invoke-Psql ("CREATE DATABASE " + (Quote-Name $newDb) + " OWNER " + (Quote-Name $c.POSTGRES_USER) + " ENCODING 'UTF8' TEMPLATE template0;")
+    $null = Invoke-Psql ("CREATE DATABASE " + (Quote-Name $newDb) + " OWNER " + (Quote-Name $config.POSTGRES_USER) + " ENCODING 'UTF8' TEMPLATE template0;")
 
     try {
         Save-ConfigValue "POSTGRES_DB" $newDb
@@ -429,8 +429,8 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "فشل فحص التطبيق بعد تجهيز القاعدة الجديدة." }
         } finally { Pop-Location }
     } catch {
-        Save-ConfigValue "POSTGRES_DB" $c.POSTGRES_DB
-        throw "لم يكتمل تجهيز القاعدة الجديدة. أُعيد اتصال البرنامج إلى [$($c.POSTGRES_DB)]، ولم تُحذف [$oldDb]. القاعدة الجديدة [$newDb] تُركت للفحص. التفاصيل: $($_.Exception.Message)"
+        Save-ConfigValue "POSTGRES_DB" $config.POSTGRES_DB
+        throw "لم يكتمل تجهيز القاعدة الجديدة. أُعيد اتصال البرنامج إلى [$($config.POSTGRES_DB)]، ولم تُحذف [$oldDb]. القاعدة الجديدة [$newDb] تُركت للفحص. التفاصيل: $($_.Exception.Message)"
     }
 
     Write-Host "نجح تجهيز [$newDb] وأصبح البرنامج متصلًا بها." -ForegroundColor Green
