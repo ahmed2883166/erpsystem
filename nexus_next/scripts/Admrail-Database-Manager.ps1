@@ -125,7 +125,7 @@ function Create-Db {
         try {
             Push-Location $Backend
             try { & $Python manage.py migrate --noinput; if ($LASTEXITCODE -ne 0) { throw "فشل الترحيل." }; & $Python manage.py seed_reference_data; if ($LASTEXITCODE -ne 0) { throw "فشل تجهيز العملات." } } finally { Pop-Location }
-        } catch { Save-ConfigValue "POSTGRES_DB" $c.POSTGRES_DB; throw "أُعيد اتصال البرنامج للقاعدة القديمة. القاعدة الجديدة נשארה منفصلة. $($_.Exception.Message)" }
+        } catch { Save-ConfigValue "POSTGRES_DB" $c.POSTGRES_DB; throw "أُعيد اتصال البرنامج للقاعدة القديمة. القاعدة الجديدة تُركت منفصلة. $($_.Exception.Message)" }
         Write-Host "البرنامج متصل الآن بالقاعدة الجديدة. القاعدة القديمة محفوظة ولم تُحذف." -ForegroundColor Green
     }
 }
