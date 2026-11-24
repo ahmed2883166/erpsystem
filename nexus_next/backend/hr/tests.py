@@ -547,7 +547,7 @@ class EmployeePayrollReportApiTests(TestCase):
         self.assertEqual(invalid.status_code, 400)
 
     def test_employee_pay_report_does_not_expose_other_company(self):
-        other_currency = Currency.objects.create(code="SAR", name_ar="ريال سعودي")
+        other_currency = Currency.objects.get_or_create(code="SAR", defaults={"name_ar": "ريال سعودي"})[0]
         other = Company.objects.create(
             code="HR-OTHER", name_ar="شركة أخرى", country="SA",
             activity="service", base_currency=other_currency,
