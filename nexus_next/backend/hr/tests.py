@@ -39,6 +39,35 @@ class EmployeeSalaryHistoryGuardTests(TestCase):
             currency=self.currency,
         )
 
+    def test_employee_salary_currency_defaults_to_company_base_currency(self):
+        sar = Currency.objects.get_or_create(code="SAR", defaults={"name_ar": "ريال سعودي"})[0]
+        company = Company.objects.create(
+            code="HR-SAR-DEFAULT", name_ar="شركة سعودية",
+            country="SA", activity="commercial", base_currency=sar,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        employee = Employee.objects.create(
+            company=company, code="SAR-EMP", full_name_ar="موظف سعودي",
+            branch=branch, hire_date=date(2026, 1, 1), basic_salary=Decimal("8000"),
+        )
+        self.assertEqual(employee.currency_id, sar.pk)
+
+    def test_employee_api_rejects_salary_currency_different_from_company_base(self):
+        sar = Currency.objects.get_or_create(code="SAR", defaults={"name_ar": "ريال سعودي"})[0]
+        serializer = EmployeeSerializer(data={
+            "company": self.company.pk,
+            "code": "EMP-WRONG-CURRENCY",
+            "full_name_ar": "موظف بعملة خاطئة",
+            "branch": self.branch.pk,
+            "hire_date": "2026-01-01",
+            "basic_salary": "5000",
+            "currency": sar.pk,
+        })
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("currency", serializer.errors)
+
     def test_department_can_be_edited_without_employee_salary_field_error(self):
         self.department.name_ar = "الإدارة المالية"
         self.department.save(update_fields=("name_ar",))
