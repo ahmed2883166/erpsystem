@@ -317,8 +317,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             else:
                 invoice_status = "not_invoiced"
             invoice_numbers = [
-                invoice.invoice_number for invoice in receipt_invoices
-                if invoice.status == PurchaseInvoice.Status.POSTED or invoice in draft_invoices
+                invoice.invoice_number for invoice in [*posted_invoices, *draft_invoices]
             ]
             rows.append({
                 "receipt_id": receipt.pk, "receipt_number": receipt.receipt_number,
