@@ -800,7 +800,7 @@ export const importBankStatementCsv = async (id: number, file: File): Promise<{i
 
 
 export type FixedAsset = {
-  id: number; company: number; branch: number; code: string; name_ar: string; description: string;
+  id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;
   acquisition_date: string; depreciation_start_date: string; original_cost: string; salvage_value: string;
   useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
