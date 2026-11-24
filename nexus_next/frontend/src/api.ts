@@ -566,6 +566,22 @@ export const inventoryApi = {
 
 export type WarehouseProductSetting = { id: number; product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; min_stock: string; is_active: boolean; updated_at: string };
 export type InventoryLocation = { id: number; warehouse: number; warehouse_name: string; code: string; name_ar: string; location_type: "floor" | "area" | "rack" | "bin"; parent: number | null; is_active: boolean };
+export type InventoryCountLine = {
+  id: number; count: number; product: number; product_code: string; product_name: string; unit_name: string;
+  location: number | null; location_name: string | null; expiry_date: string | null;
+  system_quantity: string; system_value: string; counted_quantity: string | null; variance_quantity: string | null;
+  adjustment_unit_cost: string; notes: string; counted_by: number | null; counted_by_name: string | null;
+  counted_at: string | null; created_at: string; updated_at: string;
+};
+export type InventoryCount = {
+  id: number; company: number; warehouse: number; warehouse_name: string; count_number: string;
+  count_date: string; status: "draft" | "posted" | "cancelled"; notes: string;
+  lines: InventoryCountLine[]; lines_count: number; created_by: number | null; created_by_name: string | null;
+  posted_by: number | null; posted_by_name: string | null; posted_at: string | null;
+  gain_movement: number | null; gain_movement_number: string | null;
+  loss_movement: number | null; loss_movement_number: string | null;
+  created_at: string; updated_at: string;
+};
 
 
 export type StockMovementLine = { id: number; product: number; product_code: string; product_name: string; source_location: number | null; source_location_name: string | null; destination_location: number | null; destination_location_name: string | null; expiry_date: string | null; quantity: string; unit_cost: string; cost_amount: string; adjustment_direction: "in" | "out" | "" };
@@ -600,6 +616,19 @@ export type StockBalance = {
 export const stockApi = {
   // جلب حركات المخزون مرتبة من الأحدث.
   movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/?company=${companyId}&ordering=-movement_date`),
+  // جلب مستندات الجرد الفعلي للشركة.
+  counts: (companyId: number) => request<InventoryCount[]>(`/api/inventory/counts/?company=${companyId}&ordering=-count_date`),
+  // بدء جرد جديد وأخذ لقطة من أرصدة المخزن الحالية.
+  createCount: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>("/api/inventory/counts/", { method: "POST", body: JSON.stringify(payload) }); },
+  // إدخال صنف ظهر أثناء العد ولم يكن له رصيد دفتري.
+  createCountLine: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCountLine>("/api/inventory/count-lines/", { method: "POST", body: JSON.stringify(payload) }); },
+  // حفظ الكمية الفعلية وتكلفة الزيادة وملاحظات بند الجرد.
+  updateCountLine: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCountLine>(`/api/inventory/count-lines/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
+  // ترحيل فروق الجرد بعد التأكد من عدم تغير المخزون منذ أخذ اللقطة.
+  postCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>(`/api/inventory/counts/${id}/post-count/`, { method: "POST" }); },
+  // إلغاء مستند جرد مسودة.
+  cancelCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<void>(`/api/inventory/counts/${id}/`, { method: "DELETE" }); },
+
   // جلب أرصدة الأصناف حسب المخازن.
   balances: (companyId: number) => request<StockBalance[]>(`/api/inventory/balances/?warehouse__company=${companyId}&ordering=product__code`),
   // إنشاء مستند حركة مخزنية.
