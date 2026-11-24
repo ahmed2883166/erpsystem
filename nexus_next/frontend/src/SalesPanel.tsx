@@ -3,6 +3,7 @@
  * تربط مستندات البيع بالمخزون والإيراد والضريبة والذمم والتحصيلات.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation } from "./api";
 
 type Props = { companyId: number | null };
@@ -35,6 +36,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [showTemplatesPanel, setShowTemplatesPanel] = useState(false);
   const [search, setSearch] = useState("");
   const [deliveryForm, setDeliveryForm] = useState({ customer: "", warehouse: "", delivery_number: "", delivery_date: new Date().toISOString().slice(0, 10) });
   const [deliveryLines, setDeliveryLines] = useState<DeliveryDraftLine[]>([{ product: "", quantity: "1", expiry_date: "" }]);
@@ -238,7 +240,8 @@ const post = async (action: () => Promise<unknown>) => {
 
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر الشركة لعرض دورة المبيعات.</div></section>;
   return <section className="work-panel">
-    <div className="work-panel-head"><div><h2>دورة المبيعات والتحصيل</h2><p>تسليم مخزني، فاتورة مبيعات، ثم سند قبض مرتبط بحساب العميل.</p></div><span className="coming-soon">المبيعات</span></div>
+    <div className="work-panel-head"><div><h2>دورة المبيعات والتحصيل</h2><p>عروض أسعار، تسليم مخزني، فواتير مبيعات، ثم سند قبض مرتبط بحساب العميل.</p></div><div className="table-actions"><button className="subtle-button" type="button" onClick={()=>setShowTemplatesPanel(value=>!value)}>{showTemplatesPanel?"إغلاق قوالب الطباعة":"قوالب الطباعة"}</button><span className="coming-soon">المبيعات</span></div></div>
+     {showTemplatesPanel && <DocumentTemplatesPanel companyId={companyId}/ >}
     {error && <div className="error-banner">{error}</div>}
     <div className="inventory-tabs">
       <button type="button" className={tab === "quotations" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("quotations"); setShowForm(false); setEditingInvoiceId(null); }}>عروض الأسعار <b>{quotations.length}</b></button>
