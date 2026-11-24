@@ -233,9 +233,9 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
     if asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__gt=impairment_date,
     ).exists() or asset.impairment_reversals.filter(
-        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__gt=impairment_date,
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__gte=impairment_date,
     ).exists():
-        raise ValidationError("يوجد اختبار انخفاض أو عكس انخفاض بتاريخ لاحق؛ يجب معالجة الأحداث بترتيبها الزمني.")
+        raise ValidationError("يوجد اختبار انخفاض أو عكس انخفاض بتاريخ لاحق أو في اليوم نفسه؛ يجب معالجة الأحداث بترتيبها الزمني.")
     if asset.depreciations.filter(
         journal_entry__status=JournalEntry.Status.POSTED, period_date__gt=impairment_date,
     ).exists():
