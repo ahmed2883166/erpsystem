@@ -2029,3 +2029,55 @@ class PurchasingWorkflowTests(APITestCase):
             ).aggregate(total=Sum("billed_quantity"))["total"],
             Decimal("1.5000"),
         )
+
+
+    def test_nonrecoverable_tax_waits_for_full_receipt_billing_then_capitalizes_once(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        tax_code = TaxCode.objects.create(
+            company=self.company, country="EG", code="NR14", name_ar="ضريبة غير قابلة للخصم",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-NR-PART-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_code": tax_code.pk,
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        first_posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertFalse(PurchaseInvoiceTaxAllocation.objects.filter(invoice_id=first.data["id"]).exists())
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).inventory_value,
+            Decimal("200.0000"),
+        )
+
+        second = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-NR-PART-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.2500",
+                "unit_price": "100", "tax_code": tax_code.pk,
+            }],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/purchasing/invoices/{second.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.inventory_value, Decimal("228.0000"))
+        allocations = PurchaseInvoiceTaxAllocation.objects.filter(invoice_id=second.data["id"])
+        self.assertEqual(allocations.aggregate(total=Sum("inventory_amount"))["total"], Decimal("28.0000"))
+        clearing = ChartOfAccount.objects.get(company=self.company, code="2190")
+        clearing_totals = JournalLine.objects.filter(account=clearing).aggregate(
+            debit=Sum("debit"), credit=Sum("credit"),
+        )
+        self.assertEqual(clearing_totals["debit"], Decimal("28.0000"))
+        self.assertEqual(clearing_totals["credit"], Decimal("28.0000"))
