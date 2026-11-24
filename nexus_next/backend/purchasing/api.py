@@ -276,7 +276,11 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             branches = accessible_branches(request.user)
             defaults = _default_branch_company_ids(request.user, companies)
             qs = qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
-        qs = qs.exclude(invoice__status=PurchaseInvoice.Status.POSTED).order_by("receipt_date", "receipt_number")
+        # Keep receipts with no invoice or a draft invoice in GRNI; only a posted
+        # supplier invoice clears the receipt from this operational aging view.
+        qs = qs.filter(
+            Q(invoice__isnull=True) | ~Q(invoice__status=PurchaseInvoice.Status.POSTED)
+        ).order_by("receipt_date", "receipt_number")
         rows = []
         aging = {"0_30": Decimal("0"), "31_60": Decimal("0"), "61_90": Decimal("0"), "over_90": Decimal("0")}
         monthly = {}
