@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -925,6 +925,9 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).filter(warehouse_scope).values(
             "product_id", "warehouse_id", "location_id", "expiry_date", "quantity", "inventory_value",
             "product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar",
+        ).order_by(
+            "product_id", "warehouse_id",
+            F("location_id").asc(nulls_first=True), F("expiry_date").asc(nulls_first=True),
         ).iterator(chunk_size=2000)
         layers = StockCostLayer.objects.filter(
             product__company_id=company_id,
@@ -937,14 +940,19 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).annotate(
             quantity=Sum("quantity_remaining"),
             value=Sum(F("quantity_remaining") * F("unit_cost")),
+        ).order_by(
+            "product_id", "warehouse_id",
+            F("location_id").asc(nulls_first=True), F("expiry_date").asc(nulls_first=True),
         ).iterator(chunk_size=2000)
 
         def dimension_key(row):
             return (row["product_id"], row["warehouse_id"], row["location_id"], row["expiry_date"])
 
-        # Keep one side in memory and stream the aggregated FIFO side. This avoids
-        # materializing both full result sets and caps the returned mismatch detail.
-        balance_map = {dimension_key(row): row for row in balance_rows}
+        def dimension_sort_key(key):
+            # Normalize nullable dimensions so the two ordered database streams can
+            # be merged in constant memory without comparing None to integers/dates.
+            return (key[0], key[1], key[2] or 0, key[3] or date.min)
+
         mismatches = []
         mismatch_count = 0
 
@@ -976,11 +984,29 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                         "value_difference": str(value_difference),
                     })
 
-        for layer in layers:
-            key = dimension_key(layer)
-            collect_mismatch(key, balance_map.pop(key, {}), layer)
-        for key, balance in balance_map.items():
-            collect_mismatch(key, balance, {})
+        # Merge two identically ordered server-side streams. Memory use is bounded
+        # by database iterator chunks plus the 200 mismatch details returned.
+        balance_iter, layer_iter = iter(balance_rows), iter(layers)
+        balance_row, layer_row = next(balance_iter, None), next(layer_iter, None)
+        while balance_row is not None or layer_row is not None:
+            if balance_row is None:
+                collect_mismatch(dimension_key(layer_row), {}, layer_row)
+                layer_row = next(layer_iter, None)
+                continue
+            if layer_row is None:
+                collect_mismatch(dimension_key(balance_row), balance_row, {})
+                balance_row = next(balance_iter, None)
+                continue
+            balance_key, layer_key = dimension_key(balance_row), dimension_key(layer_row)
+            if balance_key == layer_key:
+                collect_mismatch(balance_key, balance_row, layer_row)
+                balance_row, layer_row = next(balance_iter, None), next(layer_iter, None)
+            elif dimension_sort_key(balance_key) < dimension_sort_key(layer_key):
+                collect_mismatch(balance_key, balance_row, {})
+                balance_row = next(balance_iter, None)
+            else:
+                collect_mismatch(layer_key, {}, layer_row)
+                layer_row = next(layer_iter, None)
 
         source_scope = Q(source_warehouse__isnull=True) | Q(source_warehouse__branch_id__in=branch_ids)
         destination_scope = Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch_id__in=branch_ids)
