@@ -474,8 +474,10 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         raise ValidationError("توجد قيود إهلاك بتاريخ لاحق لتاريخ الاستبعاد؛ راجعها أولًا.")
     if asset.impairments.filter(
         impairment_date__gt=disposal_date, journal_entry__status=JournalEntry.Status.POSTED,
+    ).exists() or asset.impairment_reversals.filter(
+        reversal_date__gt=disposal_date, journal_entry__status=JournalEntry.Status.POSTED,
     ).exists():
-        raise ValidationError("توجد اختبارات انخفاض بتاريخ لاحق لتاريخ الاستبعاد؛ راجع تسلسل الحركات أولًا.")
+        raise ValidationError("توجد اختبارات انخفاض أو عكوس بتاريخ لاحق لتاريخ الاستبعاد؛ راجع تسلسل الحركات أولًا.")
 
     try:
         year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
@@ -502,9 +504,16 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     latest_impairment = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
     ).order_by("-impairment_date", "-pk").first()
+    latest_reversal = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=disposal_date,
+    ).order_by("-reversal_date", "-pk").first()
+    latest_measurement_date = max(
+        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+        latest_reversal.reversal_date if latest_reversal else asset.depreciation_start_date - timedelta(days=1),
+    )
     previous_date = max(
         last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1),
-        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+        latest_measurement_date,
     )
     elapsed_days = max(0, (disposal_date - previous_date).days)
     posted_total = asset.depreciations.filter(
@@ -513,13 +522,27 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     impairment_total = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
     ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
-    remaining = max(Decimal("0"), asset.original_cost - posted_total - impairment_total - asset.salvage_value)
+    reversal_total = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=disposal_date,
+    ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+    net_impairment = impairment_total - reversal_total
+    remaining = max(Decimal("0"), asset.original_cost - posted_total - net_impairment - asset.salvage_value)
 
     if elapsed_days and remaining:
-        if latest_impairment:
-            life_used_days = max(0, (latest_impairment.impairment_date - asset.depreciation_start_date).days)
+        if latest_measurement_date >= asset.depreciation_start_date:
+            dep_at_measurement = asset.depreciations.filter(
+                journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=latest_measurement_date,
+            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            loss_at_measurement = asset.impairments.filter(
+                journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=latest_measurement_date,
+            ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+            reversal_at_measurement = asset.impairment_reversals.filter(
+                journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=latest_measurement_date,
+            ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+            carrying_at_measurement = asset.original_cost - dep_at_measurement - loss_at_measurement + reversal_at_measurement
+            life_used_days = max(0, (latest_measurement_date - asset.depreciation_start_date).days + 1)
             remaining_life_days = max(1, asset.useful_life_months * 30 - life_used_days)
-            revised_basis = max(Decimal("0"), latest_impairment.recoverable_amount - asset.salvage_value)
+            revised_basis = max(Decimal("0"), carrying_at_measurement - asset.salvage_value)
             daily_rate = revised_basis / Decimal(remaining_life_days)
         else:
             daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
@@ -545,7 +568,11 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     impairment_total = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
     ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
-    net_book_value = asset.original_cost - accumulated - impairment_total
+    reversal_total = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=disposal_date,
+    ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+    net_impairment = impairment_total - reversal_total
+    net_book_value = asset.original_cost - accumulated - net_impairment
     gain = max(Decimal("0"), proceeds - net_book_value)
     loss = max(Decimal("0"), net_book_value - proceeds)
     gain_account = asset.disposal_gain_loss_account
@@ -562,14 +589,23 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     lines = [
         {"account": asset.accumulated_depreciation_account, "debit": accumulated, "credit": 0, "description": f"إقفال مجمع إهلاك {asset.name_ar}"},
     ]
-    impairment_accounts = asset.impairments.filter(
+    impairment_account_balances = {}
+    impairment_rows = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
-    ).values("accumulated_impairment_account_id").annotate(total=Sum("impairment_loss"))
-    for impairment_account in impairment_accounts:
+    ).select_related("accumulated_impairment_account")
+    for impairment in impairment_rows:
+        reversed_amount = impairment.reversal_allocations.filter(
+            reversal__journal_entry__status=JournalEntry.Status.POSTED,
+            reversal__reversal_date__lte=disposal_date,
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        outstanding = impairment.impairment_loss - reversed_amount
+        if outstanding > 0:
+            account_id = impairment.accumulated_impairment_account_id
+            impairment_account_balances[account_id] = impairment_account_balances.get(account_id, Decimal("0")) + outstanding
+    for account_id, balance in impairment_account_balances.items():
         lines.append({
-            "account_id": impairment_account["accumulated_impairment_account_id"],
-            "debit": impairment_account["total"], "credit": 0,
-            "description": f"إقفال مجمع انخفاض قيمة {asset.name_ar}",
+            "account_id": account_id, "debit": balance, "credit": 0,
+            "description": f"إقفال صافي مجمع انخفاض قيمة {asset.name_ar}",
         })
     lines.append({"account": asset.asset_account, "debit": 0, "credit": asset.original_cost, "description": f"استبعاد تكلفة {asset.name_ar}"})
     if proceeds > 0:
