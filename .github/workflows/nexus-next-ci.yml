@@ -53,6 +53,10 @@ jobs:
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run core accounts companies accounting customers inventory suppliers purchasing sales treasury assets audit approvals hr
       - run: python manage.py migrate --noinput
+      - name: Seed and verify required reference currencies
+        run: |
+          python manage.py seed_reference_data
+          python manage.py shell -c "from companies.models import Currency; expected={'EGP','SAR','USD','EUR'}; actual=set(Currency.objects.filter(code__in=expected, is_active=True).values_list('code', flat=True)); assert actual == expected, f'Missing active currencies: {expected - actual}'; print('All four default currencies are available.')"
       - name: Run HR payroll and employee regression tests explicitly
         run: python manage.py test hr --verbosity 2
       - name: Run complete backend test suite
