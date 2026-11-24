@@ -5,7 +5,7 @@ from django.db import migrations, models
 
 FORWARD_SQL = """
 CREATE OR REPLACE FUNCTION nexus_guard_financial_approval_request()
-RETURNS trigger AS $
+RETURNS trigger AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'NEXUS financial approval requests cannot be deleted';
@@ -40,12 +40,12 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 """
 
 REVERSE_SQL = """
 CREATE OR REPLACE FUNCTION nexus_guard_financial_approval_request()
-RETURNS trigger AS $
+RETURNS trigger AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'NEXUS financial approval requests cannot be deleted';
@@ -78,7 +78,7 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 """
 
 
