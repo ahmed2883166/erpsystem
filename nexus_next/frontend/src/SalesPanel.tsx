@@ -5,13 +5,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import SalesDocumentPrint from "./SalesDocumentPrint";
+import { formatMoney } from "./formatters";
 import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type Company } from "./api";
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
 type InvoiceDraftLine = { delivery_line: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string; discount_percent: string };
 type QuotationDraftLine = { product:string; quantity:string; unit_price:string; tax_rate:string; tax_code:string; discount_percent:string };
-const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+const money = (value: string) => formatMoney(value);
 
 // شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
