@@ -11,7 +11,7 @@ from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.models import FiscalYear
 from core.money import round_currency_amount
-from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
+from .models import FixedAsset, AssetDepreciation, AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment
 
 
 MONEY = Decimal("0.0001")
@@ -163,16 +163,35 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.") from None
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
-    last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
-    previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1)
+    last_depreciation = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
+    ).order_by("-period_date", "-pk").first()
+    latest_impairment = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=period_date,
+    ).order_by("-impairment_date", "-pk").first()
+    previous_date = max(
+        last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1),
+        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+    )
     elapsed_days = (period_date - previous_date).days
     if elapsed_days <= 0:
-        raise ValidationError("تاريخ الإهلاك يجب أن يكون بعد آخر فترة إهلاك مسجلة.")
-    posted_total = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
-    remaining = asset.depreciable_amount - posted_total
+        raise ValidationError("تاريخ الإهلاك يجب أن يكون بعد آخر إهلاك أو اختبار انخفاض قيمة.")
+    posted_total = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    impairment_total = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=period_date,
+    ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+    remaining = max(Decimal("0"), asset.original_cost - posted_total - impairment_total - asset.salvage_value)
     if remaining <= 0:
-        raise ValidationError("تم استهلاك كامل القيمة القابلة للإهلاك.")
-    daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
+        raise ValidationError("تم استهلاك أو تخفيض كامل القيمة القابلة للإهلاك.")
+    if latest_impairment:
+        life_used_days = max(0, (latest_impairment.impairment_date - asset.depreciation_start_date).days)
+        remaining_life_days = max(1, asset.useful_life_months * 30 - life_used_days)
+        revised_basis = max(Decimal("0"), latest_impairment.recoverable_amount - asset.salvage_value)
+        daily_rate = revised_basis / Decimal(remaining_life_days)
+    else:
+        daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
     amount = min((daily_rate * Decimal(elapsed_days)).quantize(MONEY, rounding=ROUND_HALF_UP), remaining)
     entry = _post_entry(asset, year, f"FA-DEP-{asset.pk}-{period_date:%Y%m}", period_date,
         f"إهلاك الأصل: {asset.name_ar} - {period_date:%Y-%m}", [
@@ -181,6 +200,95 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         ], user)
     AssetDepreciation.objects.create(asset=asset, period_date=period_date, amount=amount, journal_entry=entry)
     return amount
+
+
+@transaction.atomic
+def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impairment_expense_account_id,
+                            accumulated_impairment_account_id, fiscal_year_id, user=None):
+    """إثبات خسارة انخفاض القيمة وفق IAS 36 بعد ترحيل إهلاك تاريخ الاختبار."""
+    if isinstance(impairment_date, str):
+        impairment_date = dateparse.parse_date(impairment_date)
+    if not impairment_date:
+        raise ValidationError("أدخل تاريخ اختبار انخفاض قيمة صحيحًا.")
+    try:
+        recoverable_amount = Decimal(str(recoverable_amount))
+    except Exception as exc:
+        raise ValidationError("القيمة القابلة للاسترداد غير صحيحة.") from exc
+    if recoverable_amount < 0:
+        raise ValidationError("القيمة القابلة للاسترداد لا يمكن أن تكون سالبة.")
+
+    asset = FixedAsset.objects.select_for_update().select_related(
+        "company", "branch", "asset_account", "accumulated_depreciation_account",
+    ).get(pk=asset_id)
+    if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
+        raise ValidationError("لا يمكن اختبار انخفاض أصل غير نشط أو لم يتم إثبات اقتنائه.")
+    if impairment_date < asset.acquisition_date:
+        raise ValidationError("تاريخ اختبار الانخفاض يسبق تاريخ اقتناء الأصل.")
+    if AssetImpairment.objects.filter(asset=asset, impairment_date=impairment_date).exists():
+        raise ValidationError("تم تسجيل اختبار انخفاض قيمة لهذا الأصل في التاريخ نفسه.")
+    if asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__gt=impairment_date,
+    ).exists():
+        raise ValidationError("يوجد إهلاك بتاريخ لاحق لاختبار الانخفاض؛ راجع التسلسل الزمني أولًا.")
+    last_depreciation = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=impairment_date,
+    ).order_by("-period_date", "-pk").first()
+    if impairment_date >= asset.depreciation_start_date and (
+        not last_depreciation or last_depreciation.period_date < impairment_date
+    ):
+        raise ValidationError("رحّل إهلاك الأصل حتى تاريخ اختبار الانخفاض أولًا.")
+
+    try:
+        year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
+    except (FiscalYear.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة.") from None
+    if not (year.start_date <= impairment_date <= year.end_date):
+        raise ValidationError("تاريخ اختبار الانخفاض خارج السنة المالية المفتوحة.")
+
+    depreciation_total = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=impairment_date,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    previous_impairment_total = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=impairment_date,
+    ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+    carrying_amount = asset.original_cost - depreciation_total - previous_impairment_total
+    if carrying_amount <= 0:
+        raise ValidationError("القيمة الدفترية للأصل لا تسمح بإثبات انخفاض إضافي.")
+    if recoverable_amount >= carrying_amount:
+        raise ValidationError("لا توجد خسارة انخفاض؛ القيمة القابلة للاسترداد تساوي أو تتجاوز القيمة الدفترية.")
+
+    from accounting.models import ChartOfAccount
+    try:
+        expense_account = ChartOfAccount.objects.get(
+            pk=impairment_expense_account_id, company=asset.company, is_active=True,
+            is_group=False, allow_posting=True, nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        contra_account = ChartOfAccount.objects.get(
+            pk=accumulated_impairment_account_id, company=asset.company, is_active=True,
+            is_group=False, allow_posting=True, nature=ChartOfAccount.Nature.ASSET,
+        )
+    except (ChartOfAccount.DoesNotExist, TypeError, ValueError):
+        raise ValidationError("اختر حساب مصروف انخفاض وحساب مجمع انخفاض صالحين من نفس الشركة.") from None
+    if len({asset.asset_account_id, asset.accumulated_depreciation_account_id, expense_account.pk, contra_account.pk}) != 4:
+        raise ValidationError("يجب فصل حساب تكلفة الأصل ومجمع الإهلاك ومصروف ومجمع الانخفاض.")
+
+    loss = carrying_amount - recoverable_amount
+    entry = _post_entry(
+        asset, year, f"FA-IMP-{asset.pk}-{impairment_date:%Y%m%d}", impairment_date,
+        f"إثبات انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}", [
+            {"account": expense_account, "debit": loss, "credit": 0, "description": f"خسارة انخفاض قيمة {asset.name_ar}"},
+            {"account": contra_account, "debit": 0, "credit": loss, "description": f"مجمع انخفاض قيمة {asset.name_ar}"},
+        ], user,
+    )
+    impairment = AssetImpairment(
+        asset=asset, impairment_date=impairment_date,
+        carrying_amount_before=carrying_amount, recoverable_amount=recoverable_amount,
+        impairment_loss=loss, impairment_expense_account=expense_account,
+        accumulated_impairment_account=contra_account, journal_entry=entry,
+    )
+    impairment.full_clean()
+    impairment.save()
+    return impairment
 
 
 @transaction.atomic
@@ -229,14 +337,33 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
             raise ValidationError("الخزينة المختارة لا تتبع فرع الأصل.")
 
-    last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
-    previous_date = last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1)
+    last_depreciation = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=disposal_date,
+    ).order_by("-period_date", "-pk").first()
+    latest_impairment = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
+    ).order_by("-impairment_date", "-pk").first()
+    previous_date = max(
+        last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1),
+        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+    )
     elapsed_days = max(0, (disposal_date - previous_date).days)
-    posted_total = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
-    remaining = max(Decimal("0"), asset.depreciable_amount - posted_total)
+    posted_total = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=disposal_date,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    impairment_total = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
+    ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+    remaining = max(Decimal("0"), asset.original_cost - posted_total - impairment_total - asset.salvage_value)
 
     if elapsed_days and remaining:
-        daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
+        if latest_impairment:
+            life_used_days = max(0, (latest_impairment.impairment_date - asset.depreciation_start_date).days)
+            remaining_life_days = max(1, asset.useful_life_months * 30 - life_used_days)
+            revised_basis = max(Decimal("0"), latest_impairment.recoverable_amount - asset.salvage_value)
+            daily_rate = revised_basis / Decimal(remaining_life_days)
+        else:
+            daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
         partial_amount = min(remaining, (daily_rate * Decimal(elapsed_days)).quantize(MONEY, rounding=ROUND_HALF_UP))
         if partial_amount > 0:
             partial_entry = _post_entry(
@@ -252,9 +379,14 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
                 is_partial_period=True, journal_entry=partial_entry,
             )
 
-    accumulated = asset.depreciations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    accumulated = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=disposal_date,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
     accumulated = min(accumulated, asset.depreciable_amount)
-    net_book_value = asset.original_cost - accumulated
+    impairment_total = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
+    ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+    net_book_value = asset.original_cost - accumulated - impairment_total
     gain = max(Decimal("0"), proceeds - net_book_value)
     loss = max(Decimal("0"), net_book_value - proceeds)
     gain_account = asset.disposal_gain_loss_account
@@ -270,8 +402,17 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
 
     lines = [
         {"account": asset.accumulated_depreciation_account, "debit": accumulated, "credit": 0, "description": f"إقفال مجمع إهلاك {asset.name_ar}"},
-        {"account": asset.asset_account, "debit": 0, "credit": asset.original_cost, "description": f"استبعاد تكلفة {asset.name_ar}"},
     ]
+    impairment_accounts = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=disposal_date,
+    ).values("accumulated_impairment_account_id").annotate(total=Sum("impairment_loss"))
+    for impairment_account in impairment_accounts:
+        lines.append({
+            "account_id": impairment_account["accumulated_impairment_account_id"],
+            "debit": impairment_account["total"], "credit": 0,
+            "description": f"إقفال مجمع انخفاض قيمة {asset.name_ar}",
+        })
+    lines.append({"account": asset.asset_account, "debit": 0, "credit": asset.original_cost, "description": f"استبعاد تكلفة {asset.name_ar}"})
     if proceeds > 0:
         lines.insert(0, {"account": cash_account, "debit": proceeds, "credit": 0, "description": f"متحصلات استبعاد {asset.name_ar}"})
     if gain > 0:
