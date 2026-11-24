@@ -144,6 +144,42 @@ const loadValuationIntegrity = async () => {
     const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
     return { ...row, days };
   }).filter((row) => row.days <= 30).sort((a, b) => a.days - b.days);
+  // تحليل بطء الحركة يعتمد على آخر حركة مخزنية مرحلة لكل صنف ومخزن، وليس تاريخ تحديث السجل فقط.
+  const stockAgingRows = useMemo(() => {
+    const lastMovementByKey = new Map<string, string>();
+    for (const movement of movements) {
+      if (movement.status !== "posted") continue;
+      for (const line of movement.lines) {
+        for (const warehouseId of [movement.source_warehouse, movement.destination_warehouse]) {
+          if (!warehouseId) continue;
+          const key = `${warehouseId}:${line.product}`;
+          const previous = lastMovementByKey.get(key);
+          if (!previous || movement.movement_date > previous) lastMovementByKey.set(key, movement.movement_date);
+        }
+      }
+    }
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const grouped = new Map<string, { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; quantity: number; value: string; last_movement: string | null }>();
+    for (const balance of balances) {
+      const key = `${balance.warehouse}:${balance.product}`;
+      const row = grouped.get(key) ?? { product: balance.product, product_code: balance.product_code, product_name: balance.product_name, warehouse: balance.warehouse, warehouse_name: balance.warehouse_name, quantity: 0, value: "0", last_movement: lastMovementByKey.get(key) ?? null };
+      row.quantity += Number(balance.quantity);
+      row.value = sumDecimalToFixed([row.value, balance.inventory_value], 4);
+      grouped.set(key, row);
+    }
+    return [...grouped.values()].filter((row) => row.quantity > 0).map((row) => {
+      const ageDays = row.last_movement ? Math.max(0, Math.floor((today.getTime() - new Date(row.last_movement + "T00:00:00").getTime()) / 86400000)) : null;
+      const ageBand = ageDays === null ? "unknown" : ageDays <= 30 ? "active" : ageDays <= 90 ? "slow" : ageDays <= 180 ? "very_slow" : "stagnant";
+      return { ...row, ageDays, ageBand };
+    }).sort((a, b) => (b.ageDays ?? -1) - (a.ageDays ?? -1));
+  }, [balances, movements]);
+  const stockAgingCounts = useMemo(() => ({
+    active: stockAgingRows.filter((row) => row.ageBand === "active").length,
+    slow: stockAgingRows.filter((row) => row.ageBand === "slow").length,
+    very_slow: stockAgingRows.filter((row) => row.ageBand === "very_slow").length,
+    stagnant: stockAgingRows.filter((row) => row.ageBand === "stagnant").length,
+    unknown: stockAgingRows.filter((row) => row.ageBand === "unknown").length,
+  }), [stockAgingRows]);
   const totalInventoryValue = sumDecimalToFixed(balances.map((row) => row.inventory_value), 4);
   const totalInventoryQuantity = balances.reduce((sum, row) => sum + Number(row.quantity), 0);
   // حفظ العملية الحالية في تبويب المخزون ثم إعادة تحميل البيانات المرتبطة.
@@ -313,6 +349,17 @@ const submit = async (event: React.FormEvent) => {
         </section>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>أصناف وصلت إلى حد إعادة الطلب</h3><p>مقارنة رصيد كل صنف داخل كل مخزن بحده الخاص، مع استخدام الحد العام للصنف كقيمة افتراضية</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد الحالي</th><th>حد إعادة الطلب</th><th>قيمة المخزون</th></tr></thead><tbody>{reorderAlerts.filter((row) => `${row.product.code} ${row.product.name_ar} ${row.warehouse.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product.id}-${row.warehouse.id}`}><td className="code-cell">{row.product.code}</td><td>{row.product.name_ar}</td><td>{row.warehouse.name_ar}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{row.threshold.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td></tr>)}{!reorderAlerts.length && <tr><td colSpan={6}>لا توجد أصناف عند حد إعادة الطلب.</td></tr>}</tbody></table></div>
+        </section>
+        <section className="activity-panel inventory-report-section">
+          <div className="activity-title"><div><h3>تحليل حركة وأعمار المخزون</h3><p>تصنيف رقابي حسب عدد الأيام منذ آخر حركة مرحلة على الصنف داخل المخزن؛ لا يمثل تاريخ شراء الطبقة أو عمرها المحاسبي</p></div></div>
+          <div className="metrics-grid inventory-report-metrics">
+            <article className="metric-card"><div className="metric-top">نشط · 0–30 يوم</div><strong className="metric-value">{stockAgingCounts.active.toLocaleString("ar-EG")}</strong><small>صنف / مخزن</small></article>
+            <article className="metric-card"><div className="metric-top">بطيء · 31–90 يوم</div><strong className="metric-value">{stockAgingCounts.slow.toLocaleString("ar-EG")}</strong><small>صنف / مخزن</small></article>
+            <article className="metric-card"><div className="metric-top">بطيء جدًا · 91–180 يوم</div><strong className="metric-value">{stockAgingCounts.very_slow.toLocaleString("ar-EG")}</strong><small>صنف / مخزن</small></article>
+            <article className="metric-card"><div className="metric-top">راكد · أكثر من 180 يوم</div><strong className="metric-value">{stockAgingCounts.stagnant.toLocaleString("ar-EG")}</strong><small>صنف / مخزن</small></article>
+          </div>
+          <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد</th><th>القيمة</th><th>آخر حركة مرحلة</th><th>أيام دون حركة</th><th>التصنيف</th></tr></thead><tbody>{stockAgingRows.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product}-${row.warehouse}`}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td><td>{row.last_movement || "لا توجد حركة مسجلة"}</td><td>{row.ageDays === null ? "—" : row.ageDays.toLocaleString("ar-EG")}</td><td><span className={`status-pill ${row.ageBand === "stagnant" ? "reversed" : row.ageBand === "very_slow" ? "slow" : row.ageBand === "slow" ? "draft" : row.ageBand === "active" ? "posted" : "unknown"}`}>{row.ageBand === "active" ? "نشط" : row.ageBand === "slow" ? "بطيء" : row.ageBand === "very_slow" ? "بطيء جدًا" : row.ageBand === "stagnant" ? "راكد" : "غير محدد"}</span></td></tr>)}{!stockAgingRows.length && <tr><td colSpan={8}>لا توجد أرصدة موجبة لتحليلها.</td></tr>}</tbody></table></div>
+          {stockAgingCounts.unknown > 0 && <p className="inventory-report-note">يوجد {stockAgingCounts.unknown.toLocaleString("ar-EG")} صنف/مخزن بلا حركة مرحلة مسجلة في سجل الحركات المتاح؛ لم نفترض لها عمرًا أو نصنفها كراكد.</p>}
         </section>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تنبيهات الصلاحية</h3><p>الأصناف المنتهية أو التي تنتهي خلال 30 يوماً</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الموقع</th><th>تاريخ الصلاحية</th><th>الأيام المتبقية</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{expiryAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_name}</td><td>{row.location_name || "عام"}</td><td>{row.expiry_date}</td><td><span className={row.days < 0 ? "status-pill reversed" : "status-pill draft"}>{row.days < 0 ? `منتهي منذ ${Math.abs(row.days)} يوم` : row.days === 0 ? "ينتهي اليوم" : `${row.days} يوم`}</span></td><td>{Number(row.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.inventory_value)}</td></tr>)}{!expiryAlerts.length && <tr><td colSpan={7}>لا توجد تنبيهات صلاحية خلال الفترة المحددة.</td></tr>}</tbody></table></div>
