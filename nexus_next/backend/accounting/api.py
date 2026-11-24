@@ -1279,7 +1279,7 @@ class JournalEntryViewSet(AccountingViewSet):
         """إعداد التدفقات النقدية بالطريقة غير المباشرة مع إظهار فروق المطابقة."""
         from decimal import Decimal
         from django.db.models import Sum
-        from assets.models import AssetDepreciation, AssetImpairment, FixedAsset
+        from assets.models import AssetDepreciation, AssetImpairment, AssetImpairmentReversal, FixedAsset
         from treasury.models import TreasuryAccount, TreasuryTransaction
 
         company_raw = request.query_params.get("company")
@@ -1480,6 +1480,13 @@ class JournalEntryViewSet(AccountingViewSet):
             asset__branch__in=visible_branches,
         )
         impairment_addback = impairment_qs.aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+        impairment_reversal_qs = AssetImpairmentReversal.objects.filter(
+            asset__company_id=company_id, reversal_date__gte=date_from, reversal_date__lte=date_to,
+            journal_entry__status=JournalEntry.Status.POSTED, asset__branch__in=visible_branches,
+        )
+        impairment_reversal_deduction = impairment_reversal_qs.aggregate(
+            total=Sum("reversal_amount")
+        )["total"] or Decimal("0")
 
         disposals = FixedAsset.objects.filter(
             company_id=company_id, status=FixedAsset.Status.DISPOSED,
@@ -1540,7 +1547,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "cash_flow_adjustment": fx_working_capital_offset,
         })
         non_cash_adjustments = (
-            depreciation_addback + impairment_addback + disposal_loss - disposal_gain + unrealized_fx_adjustment
+            depreciation_addback + impairment_addback - impairment_reversal_deduction + disposal_loss - disposal_gain + unrealized_fx_adjustment
         )
         operating_cash_flow = net_profit + operating_adjustments + non_cash_adjustments
 
@@ -1610,7 +1617,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "company": company_id, "branch": branch_id, "date_from": date_from, "date_to": date_to,
             "net_profit": net_profit,
             "non_cash_adjustments": {
-                "depreciation": depreciation_addback, "impairment_loss": impairment_addback, "disposal_loss": disposal_loss,
+                "depreciation": depreciation_addback, "impairment_loss": impairment_addback, "impairment_reversal": impairment_reversal_deduction, "disposal_loss": disposal_loss,
                 "disposal_gain": disposal_gain,
                 "unrealized_fx_gain": unrealized_fx_gain,
                 "unrealized_fx_loss": unrealized_fx_loss,
