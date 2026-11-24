@@ -423,7 +423,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(
             JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
-            2,
+            3,
         )
 
     def test_supplier_payment_rejects_treasury_account_from_another_branch(self):
@@ -1918,7 +1918,13 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(
             response.data["gl_reconciliation"]["operational_open_receipts"], "200.0000"
         )
-        self.assertEqual(response.data["gl_reconciliation"]["posted_gl_balance"], "200.0000")
+        grni_debug_lines = list(JournalLine.objects.filter(
+            account__code="2100", entry__company=self.company,
+        ).values("entry_id", "debit", "credit", "entry__source_type", "entry__description"))
+        self.assertEqual(
+            response.data["gl_reconciliation"]["posted_gl_balance"], "200.0000",
+            grni_debug_lines,
+        )
         self.assertEqual(response.data["gl_reconciliation"]["difference"], "0.0000")
         self.assertTrue(response.data["gl_reconciliation"]["reconciled"])
 
