@@ -189,7 +189,7 @@ def _branch_and_year(receipt, entry_date):
 @transaction.atomic
 def post_purchase_receipt(receipt_id, user):
     """ترحيل استلام المشتريات إلى المخزون وحساب البضاعة المستلمة غير المفوترة."""
-    receipt = PurchaseReceipt.objects.select_for_update().select_related(
+    receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
         "company", "supplier", "warehouse", "stock_movement"
     ).get(pk=receipt_id)
     if receipt.stock_movement.status != StockMovement.Status.DRAFT:
@@ -291,7 +291,7 @@ def post_purchase_invoice(invoice_id, user):
     ).get(pk=invoice.receipt_id)
     if receipt.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن الاستلام.")
-    lines = list(invoice.lines.select_for_update().select_related(
+    lines = list(invoice.lines.select_for_update(of=("self",)).select_related(
         "receipt_line", "receipt_line__product", "tax_code",
     ).order_by("receipt_line_id", "pk"))
     if not lines:
@@ -301,7 +301,7 @@ def post_purchase_invoice(invoice_id, user):
     tolerance = Decimal("0.0002")
     grni_amount = Decimal("0")
     for invoice_line in lines:
-        receipt_line = StockMovementLine.objects.select_for_update().select_related(
+        receipt_line = StockMovementLine.objects.select_for_update(of=("self",)).select_related(
             "product", "movement",
         ).get(pk=invoice_line.receipt_line_id)
         if receipt_line.movement_id != receipt.stock_movement_id:
