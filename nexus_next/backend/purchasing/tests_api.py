@@ -1521,6 +1521,13 @@ class PurchasingWorkflowTests(APITestCase):
             supplier_credit_balance(self.company.pk, self.supplier.pk, date(2026, 3, 14)),
             Decimal("114.0000"),
         )
+        statement_after_reversal = self.client.get(
+            f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
+        )
+        self.assertEqual(statement_after_reversal.status_code, 200, statement_after_reversal.data)
+        self.assertEqual(statement_after_reversal.data["rows"][-2]["document_type"], "supplier_refund")
+        self.assertEqual(statement_after_reversal.data["rows"][-1]["document_type"], "supplier_refund_reversal")
+        self.assertEqual(statement_after_reversal.data["closing_balance"], "-114.0000")
         repeated = self.client.post(
             f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
             {"entry_date": "2026-03-15"}, format="json",
