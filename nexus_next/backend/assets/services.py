@@ -405,6 +405,26 @@ def post_asset_supplier_payment(payment_id, user=None):
         posted = post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+
+    # Keep bank/cash movements visible in the treasury cash-flow subsystem as well as the GL.
+    from treasury.models import TreasuryAccount, TreasuryTransaction
+    from treasury.services import record_posted_document_bank_movement
+    treasury_account = TreasuryAccount.objects.filter(
+        company=payment.company, account=cash, is_active=True,
+    ).first()
+    if (
+        not treasury_account
+        or (treasury_account.branch_id and treasury_account.branch_id != payment.branch_id)
+        or treasury_account.currency_code != payment.company.base_currency.code
+    ):
+        raise ValidationError("حساب السداد يجب أن يكون مرتبطًا بحساب خزينة/بنك نشط بعملة الشركة ومطابقًا للفرع.")
+    record_posted_document_bank_movement(
+        company=payment.company, branch=payment.branch, fiscal_year=year, account=cash,
+        kind=TreasuryTransaction.Kind.PAYMENT, amount=payment.amount,
+        transaction_date=payment.payment_date, document_number=f"AUTO-FA-PAY-{payment.pk}",
+        description=f"سداد فاتورة أصل {invoice.invoice_number} - سند {payment.payment_number}",
+        counter_account=payable, journal_entry=posted, user=user, reference=payment.reference,
+    )
     payment.journal_entry = posted
     payment.status = AssetSupplierPayment.Status.POSTED
     payment.posted_at = timezone.now()
