@@ -848,21 +848,29 @@ class JournalEntryViewSet(AccountingViewSet):
         current_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=as_of, end_date__gte=as_of
         ).order_by("-start_date").first()
-        has_current_year_opening = bool(current_year and JournalEntry.objects.filter(
-            company_id=company_id, fiscal_year=current_year,
-            status=JournalEntry.Status.POSTED,
-            source_type=JournalEntry.Source.OPENING,
-            entry_date__lte=as_of, branch__in=visible_branches,
-        ).exists())
-        posted_filter = Q(
-            journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-            journal_lines__entry__entry_date__lte=as_of,
-            journal_lines__entry__branch__in=visible_branches,
+        balance_branch_ids = list(visible_branches.values_list("pk", flat=True))
+        opening_snapshot_branch_ids = set()
+        if current_year:
+            opening_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=current_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=as_of, branch_id__in=balance_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        # Opening snapshots are branch-specific: a branch without an opening
+        # journal must continue carrying its prior-year posted balances forward.
+        balance_scope = _branch_aware_balance_filter(
+            balance_branch_ids, opening_snapshot_branch_ids, as_of,
+            current_year.start_date if current_year else as_of,
+            prefix="journal_lines__entry__",
         )
-        # When a fiscal year has a posted opening journal, it is the brought-forward
-        # balance. Do not add the prior year's closing ledger movements a second time.
-        if has_current_year_opening:
-            posted_filter &= Q(journal_lines__entry__entry_date__gte=current_year.start_date)
+        posted_filter = (
+            Q(
+                journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+                journal_lines__entry__branch__in=visible_branches,
+            )
+            & balance_scope
+        )
         accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
             debit_total=Sum("journal_lines__debit", filter=posted_filter),
             credit_total=Sum("journal_lines__credit", filter=posted_filter),
