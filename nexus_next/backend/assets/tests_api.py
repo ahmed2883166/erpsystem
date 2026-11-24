@@ -402,10 +402,11 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(payment.status, AssetSupplierPayment.Status.POSTED)
         self.assertEqual(payment.journal_entry.lines.get(account=payable).debit, Decimal("50000.0000"))
         self.assertEqual(payment.journal_entry.lines.get(account=self.cash_gl).credit, Decimal("50000.0000"))
-        self.assertTrue(TreasuryTransaction.objects.filter(
+        bank_movement = TreasuryTransaction.objects.get(
             document_number=f"AUTO-FA-PAY-{payment.pk}",
             journal_entry=payment.journal_entry, status=TreasuryTransaction.Status.POSTED,
-        ).exists())
+        )
+        self.assertEqual(bank_movement.cash_flow_category, TreasuryTransaction.CashFlowCategory.INVESTING)
 
         statement = self.client.get("/api/purchasing/invoices/supplier-statement/", {
             "company": self.company.pk, "supplier": supplier.pk,
