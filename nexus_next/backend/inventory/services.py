@@ -71,6 +71,8 @@ def post_stock_movement(movement_id, user, *, inventory_count_id=None):
         if movement.source_warehouse_id == movement.destination_warehouse_id:
             raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
     if movement_type == StockMovement.MovementType.ADJUSTMENT:
+        if not movement.adjustment_reason:
+            raise ValidationError("حدد سبب التسوية قبل الترحيل.")
         directions = {line.adjustment_direction for line in lines}
         if len(directions) != 1 or "" in directions:
             raise ValidationError("حدد اتجاهًا موحدًا لكل بنود التسوية.")

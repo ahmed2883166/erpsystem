@@ -67,12 +67,13 @@ class StockPostingServiceTests(TestCase):
 
     def _movement(
         self, number, kind, *, source=None, destination=None, quantity="1", unit_cost="0",
-        direction="", source_location=None, destination_location=None, expiry_date=None,
+        direction="", source_location=None, destination_location=None, expiry_date=None, adjustment_reason="other",
     ):
         movement = StockMovement.objects.create(
             company=self.company, movement_number=number, movement_type=kind,
             movement_date=date(2026, 2, 1), source_warehouse=source,
-            destination_warehouse=destination, created_by=self.user,
+            destination_warehouse=destination, adjustment_reason=adjustment_reason if kind == StockMovement.MovementType.ADJUSTMENT else "",
+            created_by=self.user,
         )
         StockMovementLine.objects.create(
             movement=movement, product=self.product, quantity=Decimal(quantity),

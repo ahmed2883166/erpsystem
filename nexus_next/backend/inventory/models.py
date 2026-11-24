@@ -225,6 +225,13 @@ class StockMovement(models.Model):
         TRANSFER = "transfer", "تحويل"
         ADJUSTMENT = "adjustment", "تسوية جرد"
 
+    class AdjustmentReason(models.TextChoices):
+        COUNT = "count", "جرد فعلي"
+        DAMAGE = "damage", "تالف"
+        EXPIRED = "expired", "منتهي الصلاحية"
+        WRITE_OFF = "write_off", "شطب أو إعدام"
+        OTHER = "other", "أخرى"
+
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
@@ -232,6 +239,7 @@ class StockMovement(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="stock_movements")
     movement_number = models.CharField(max_length=40)
     movement_type = models.CharField(max_length=12, choices=MovementType.choices)
+    adjustment_reason = models.CharField(max_length=16, choices=AdjustmentReason.choices, blank=True)
     movement_date = models.DateField()
     source_warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="outgoing_movements")
     destination_warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="incoming_movements")
@@ -267,6 +275,10 @@ class StockMovement(models.Model):
                 raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
         if self.movement_type == self.MovementType.ADJUSTMENT and bool(self.source_warehouse_id) == bool(self.destination_warehouse_id):
             raise ValidationError("التسوية تتطلب تحديد مخزن واحد فقط.")
+        if self.movement_type == self.MovementType.ADJUSTMENT and not self.adjustment_reason:
+            raise ValidationError({"adjustment_reason": "حدد سبب التسوية."})
+        if self.movement_type != self.MovementType.ADJUSTMENT and self.adjustment_reason:
+            raise ValidationError({"adjustment_reason": "سبب التسوية لا يستخدم إلا مع حركات التسوية."})
 
 
 class StockMovementLine(models.Model):

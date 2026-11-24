@@ -143,11 +143,12 @@ class InventoryApiTests(APITestCase):
     def _warehouse(self, code):
         return Warehouse.objects.create(company=self.company, branch=self.branch, code=code, name_ar=code)
 
-    def _movement(self, number, movement_type, destination=None, source=None, quantity="5", cost="10", source_location=None, destination_location=None, expiry_date=None, adjustment_direction=""):
+    def _movement(self, number, movement_type, destination=None, source=None, quantity="5", cost="10", source_location=None, destination_location=None, expiry_date=None, adjustment_direction="", adjustment_reason="other"):
         return self.client.post("/api/inventory/movements/", {
             "company": self.company.pk,
             "movement_number": number,
             "movement_type": movement_type,
+            "adjustment_reason": adjustment_reason if movement_type == "adjustment" else "",
             "movement_date": "2026-11-21",
             "source_warehouse": source.pk if source else None,
             "destination_warehouse": destination.pk if destination else None,
@@ -610,6 +611,23 @@ class InventoryApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("دقة وحدة القياس", str(response.data))
+
+    def test_adjustment_requires_a_documented_reason(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="ADJ-REASON-1", name_ar="سبب التسوية",
+        )
+        warehouse = self._warehouse("ADJ-REASON-WH")
+        response = self.client.post("/api/inventory/movements/", {
+            "company": self.company.pk, "movement_number": "ADJ-REASON-1",
+            "movement_type": "adjustment", "movement_date": "2026-11-21",
+            "destination_warehouse": warehouse.pk,
+            "lines": [{
+                "product": self.product.pk, "quantity": "1", "unit_cost": "2",
+                "adjustment_direction": "in",
+            }],
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("سبب التسوية", str(response.data))
 
     def test_adjustment_direction_must_match_the_selected_warehouse(self):
         self.product = Product.objects.create(

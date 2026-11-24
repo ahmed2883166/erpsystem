@@ -202,7 +202,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
         fields = (
             "id", "company", "movement_number", "movement_type", "movement_date",
             "source_warehouse", "source_warehouse_name", "destination_warehouse",
-            "destination_warehouse_name", "status", "notes", "lines", "journal_entries", "created_at",
+            "destination_warehouse_name", "adjustment_reason", "status", "notes", "lines", "journal_entries", "created_at",
             "posted_at",
         )
         read_only_fields = ("status", "created_at", "posted_at")
@@ -228,6 +228,11 @@ class StockMovementSerializer(serializers.ModelSerializer):
         lines = attrs.get("lines", [])
         if self.instance and self.instance.status == StockMovement.Status.POSTED:
             raise serializers.ValidationError("لا يمكن تعديل حركة مرحلة.")
+        adjustment_reason = attrs.get("adjustment_reason", getattr(self.instance, "adjustment_reason", ""))
+        if movement_type == StockMovement.MovementType.ADJUSTMENT and not adjustment_reason:
+            raise serializers.ValidationError({"adjustment_reason": "حدد سبب التسوية."})
+        if movement_type != StockMovement.MovementType.ADJUSTMENT and adjustment_reason:
+            raise serializers.ValidationError({"adjustment_reason": "سبب التسوية لا يستخدم إلا مع حركات التسوية."})
         if not lines and not self.instance:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         for warehouse in (source, destination):

@@ -105,6 +105,7 @@ def post_inventory_count(count_id, user):
             company=count.company,
             movement_number=movement_number,
             movement_type=StockMovement.MovementType.ADJUSTMENT,
+            adjustment_reason=StockMovement.AdjustmentReason.COUNT,
             movement_date=count.count_date,
             source_warehouse=warehouse if direction == StockMovementLine.AdjustmentDirection.OUT else None,
             destination_warehouse=warehouse if direction == StockMovementLine.AdjustmentDirection.IN else None,
