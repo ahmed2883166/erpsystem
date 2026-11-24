@@ -99,7 +99,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
         </div>
         <div className="customer-form-actions customer-form-wide"><button type="button" className="subtle-button" onClick={reset}>إلغاء</button><button type="submit" className="primary-button" disabled={busy}>{busy?"جارٍ الحفظ…":editingId?"حفظ التعديلات":"حفظ القالب"}</button></div>
       </form>
-      <div className="grid grid-3">
+      <div className="document-template-preview-grid">
         {(["classic","modern","compact"] as Style[]).map(style=><div className={`document-template-preview ${style}`} key={style} style={{borderTopColor:form.accent_color}}>
           <strong>{style==="classic"?"Classic":style==="modern"?"Modern":"Compact"}</strong>
           <div className="document-template-preview-company">اسم الشركة</div><div className="document-template-preview-line">فاتورة مبيعات / عرض سعر</div>
