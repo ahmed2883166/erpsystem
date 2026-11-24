@@ -3,7 +3,7 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { formatMoney } from "./formatters";
+import { formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
@@ -186,7 +186,7 @@ const savePayment = async (event: React.FormEvent) => {
     setBusy(true); setError("");
     try {
       const baseAmount = invoice.transaction_currency
-        ? (Number(paymentForm.transaction_amount) * Number(paymentForm.exchange_rate)).toFixed(4)
+        ? multiplyDecimalToFixed(paymentForm.transaction_amount, paymentForm.exchange_rate, 4)
         : paymentForm.amount;
       await purchasingApi.createPayment({ company: companyId, supplier: invoice.supplier, invoice: invoice.id, payment_number: paymentForm.payment_number, payment_date: paymentForm.payment_date, method: paymentForm.method, payment_account: paymentForm.payment_account ? Number(paymentForm.payment_account) : null, amount: baseAmount,
         ...(invoice.transaction_currency ? { transaction_currency: invoice.transaction_currency, transaction_amount: paymentForm.transaction_amount, exchange_rate: paymentForm.exchange_rate, exchange_rate_date: paymentForm.exchange_rate_date } : {}),
@@ -399,7 +399,7 @@ const postInvoice = async (id: number) => {
         <label>المبلغ المسدد بالعملة الأجنبية<input required type="number" min="0.0001" step="0.0001" value={paymentForm.transaction_amount} onChange={e => setPaymentForm({...paymentForm, transaction_amount:e.target.value})} /></label>
         <label>تاريخ سعر الصرف<input required type="date" value={paymentForm.exchange_rate_date} onChange={e => { const rate=findRate(paymentForm.transaction_currency,e.target.value); setPaymentForm({...paymentForm, exchange_rate_date:e.target.value, exchange_rate:rate?.rate || paymentForm.exchange_rate}); }} /></label>
         <label>سعر الصرف<input required type="number" min="0.0000000001" step="0.0000000001" value={paymentForm.exchange_rate} onChange={e => setPaymentForm({...paymentForm, exchange_rate:e.target.value})} /></label>
-        <label>المقابل بالعملة الأساسية<input readOnly value={formatMoney(Number(paymentForm.transaction_amount || 0)*Number(paymentForm.exchange_rate || 0))} /></label>
+        <label>المقابل بالعملة الأساسية<input readOnly value={formatMoney(multiplyDecimalToFixed(paymentForm.transaction_amount || "0", paymentForm.exchange_rate || "0", 4))} /></label>
       </>}
       <label>طريقة الصرف<select value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value as "cash" | "bank", payment_account: String(treasuryAccounts.find(x => x.is_active && x.kind === (e.target.value as "cash" | "bank"))?.account || "") })}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
       <label className="inventory-wide">حساب الخزينة / البنك<select value={paymentForm.payment_account} onChange={(e) => setPaymentForm({ ...paymentForm, payment_account: e.target.value })}><option value="">الحساب الافتراضي حسب طريقة الصرف</option>{treasuryAccounts.filter(account => account.is_active && account.kind === paymentForm.method).map((account) => <option key={account.id} value={account.account}>{account.code} - {account.name_ar} ({account.account_code})</option>)}</select></label>
