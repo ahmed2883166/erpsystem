@@ -1,7 +1,7 @@
 """خدمات اقتناء الأصول الثابتة واحتساب الإهلاك والتصرف والبيع مع القيود المحاسبية."""
 
 from datetime import timedelta
-from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN
 from django.core.exceptions import ValidationError, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone, dateparse
@@ -14,7 +14,6 @@ from core.money import round_currency_amount
 from .models import FixedAsset, AssetDepreciation, AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment
 
 
-MONEY = Decimal("0.0001")
 
 
 def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines, user=None):
