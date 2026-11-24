@@ -1,6 +1,6 @@
 """واجهات الأصول الثابتة للاقتناء والإهلاك والاستبعاد وربط الخزينة."""
 
-from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 from rest_framework import decorators, permissions, response, status, viewsets
@@ -440,7 +440,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             invoice.full_clean()
             invoice.save()
             invoice = post_asset_purchase_invoice(invoice.pk, request.user)
-        except (Supplier.DoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
+        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
@@ -486,7 +486,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             payment.full_clean()
             payment.save()
             payment = post_asset_supplier_payment(payment.pk, request.user)
-        except (AssetPurchaseInvoice.DoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
+        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات سند السداد غير صحيحة.") from exc
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
