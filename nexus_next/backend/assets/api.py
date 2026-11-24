@@ -439,6 +439,18 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 raise ValueError("رقم فاتورة المورد مطلوب.")
             invoice.full_clean()
             invoice.save()
+            from approvals.models import FinancialApprovalRequest
+            from approvals.services import refresh_financial_approval
+            approval = refresh_financial_approval(
+                FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE, invoice, request.user,
+            )
+            if approval:
+                return response.Response({
+                    "id": invoice.pk, "asset": asset.pk, "supplier": supplier.pk,
+                    "invoice_number": invoice.invoice_number, "status": invoice.status,
+                    "approval_required": True, "approval_request": approval.pk,
+                    "grand_total": invoice.grand_total,
+                }, status=status.HTTP_201_CREATED)
             invoice = post_asset_purchase_invoice(invoice.pk, request.user)
         except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
@@ -485,6 +497,18 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 raise ValueError("رقم السند وتاريخ السداد مطلوبان.")
             payment.full_clean()
             payment.save()
+            from approvals.models import FinancialApprovalRequest
+            from approvals.services import refresh_financial_approval
+            approval = refresh_financial_approval(
+                FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT, payment, request.user,
+            )
+            if approval:
+                return response.Response({
+                    "id": payment.pk, "invoice": invoice.pk, "payment_number": payment.payment_number,
+                    "payment_date": payment.payment_date, "amount": payment.amount,
+                    "status": payment.status, "approval_required": True,
+                    "approval_request": approval.pk,
+                }, status=status.HTTP_201_CREATED)
             payment = post_asset_supplier_payment(payment.pk, request.user)
         except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات سند السداد غير صحيحة.") from exc
@@ -496,3 +520,43 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "payment_date": payment.payment_date, "amount": payment.amount,
             "status": payment.status, "journal_entry": payment.journal_entry_id,
         }, status=status.HTTP_201_CREATED)
+
+
+    @decorators.action(detail=True, methods=("post",), url_path="post-purchase-invoice")
+    def post_purchase_invoice(self, request, pk=None):
+        """ترحيل فاتورة الأصل بعد استكمال اعتمادها المالي عند اللزوم."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        try:
+            invoice = AssetPurchaseInvoice.objects.get(asset=asset, status=AssetPurchaseInvoice.Status.DRAFT)
+            invoice = post_asset_purchase_invoice(invoice.pk, request.user)
+        except AssetPurchaseInvoice.DoesNotExist as exc:
+            raise ValidationError("لا توجد فاتورة أصل مسودة لهذا الأصل.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": invoice.pk, "status": invoice.status,
+            "journal_entry": invoice.journal_entry_id, "grand_total": invoice.grand_total,
+        }, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=True, methods=("post",), url_path="post-supplier-payment")
+    def post_supplier_payment(self, request, pk=None):
+        """ترحيل سند سداد الأصل بعد استكمال اعتماده المالي عند اللزوم."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        try:
+            payment = AssetSupplierPayment.objects.get(
+                invoice__asset=asset, status=AssetSupplierPayment.Status.DRAFT,
+                pk=request.data.get("payment"),
+            )
+            payment = post_asset_supplier_payment(payment.pk, request.user)
+        except AssetSupplierPayment.DoesNotExist as exc:
+            raise ValidationError("سند السداد المسودة غير موجود لهذا الأصل.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": payment.pk, "status": payment.status,
+            "journal_entry": payment.journal_entry_id, "amount": payment.amount,
+        }, status=status.HTTP_200_OK)
