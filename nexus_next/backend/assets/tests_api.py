@@ -634,6 +634,9 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(partial_cash_flow.data["operating_cash_flow"], Decimal("0.0000"))
         self.assertEqual(partial_cash_flow.data["investing_cash_flow"], Decimal("-50000.0000"))
         self.assertEqual(partial_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(partial_cash_flow.data["non_cash_investing_transactions"][0]["gross_amount"], Decimal("114000.0000"))
+        self.assertEqual(partial_cash_flow.data["non_cash_investing_transactions"][0]["cash_paid_during_period"], Decimal("50000.0000"))
+        self.assertEqual(partial_cash_flow.data["non_cash_investing_transactions"][0]["unpaid_at_period_end"], Decimal("64000.0000"))
 
         full_cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
             "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-20",
@@ -643,6 +646,8 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(full_cash_flow.data["investing_cash_flow"], Decimal("-114000.0000"))
         self.assertEqual(full_cash_flow.data["net_change_in_cash"], Decimal("-114000.0000"))
         self.assertEqual(full_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(full_cash_flow.data["non_cash_investing_transactions"][0]["unpaid_at_period_end"], Decimal("0.0000"))
+        self.assertEqual(full_cash_flow.data["non_cash_investing_transactions"][0]["cash_paid_during_period"], Decimal("114000.0000"))
 
         overpayment = self.client.post(
             f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
