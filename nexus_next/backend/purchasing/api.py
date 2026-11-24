@@ -1082,6 +1082,19 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
             raise ValidationError("العرض الفائز لم يعد صالحًا للتحويل إلى أمر شراء.")
         if PurchaseOrder.objects.filter(company_id=rfq.company_id, order_number=order_number).exists():
             raise ValidationError({"order_number": "رقم أمر الشراء مستخدم بالفعل داخل الشركة."})
+        source_requisition = None
+        if rfq.source_requisition_id:
+            source_requisition = PurchaseRequisition.objects.select_for_update().get(
+                pk=rfq.source_requisition_id, company_id=rfq.company_id,
+            )
+            if (
+                source_requisition.status != PurchaseRequisition.Status.APPROVED
+                or source_requisition.converted_order_id
+            ):
+                raise ValidationError(
+                    "طلب الاحتياج المرتبط لم يعد معتمدًا أو تم تحويله إلى أمر شراء بالفعل."
+                )
+
         order = PurchaseOrder.objects.create(
             company_id=rfq.company_id, supplier=quotation.supplier, warehouse=warehouse,
             order_number=order_number, order_date=order_date, expected_date=expected_date,
@@ -1096,6 +1109,16 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
                 tax_rate=line.tax_rate,
             ) for line in quote_lines
         ])
+        if source_requisition:
+            requisition_updated = PurchaseRequisition.objects.filter(
+                pk=source_requisition.pk,
+                status=PurchaseRequisition.Status.APPROVED,
+                converted_order__isnull=True,
+            ).update(status=PurchaseRequisition.Status.CONVERTED, converted_order=order)
+            if requisition_updated != 1:
+                raise ValidationError(
+                    "تم تحويل طلب الاحتياج بالفعل؛ لم يتم إنشاء أمر شراء إضافي."
+                )
         updated = PurchaseRFQ.objects.filter(pk=rfq.pk, status=PurchaseRFQ.Status.AWARDED, converted_order__isnull=True).update(converted_order=order)
         if updated != 1:
             raise ValidationError("تم تحويل العرض الفائز بالفعل؛ لم يتم إنشاء أمر شراء إضافي.")
