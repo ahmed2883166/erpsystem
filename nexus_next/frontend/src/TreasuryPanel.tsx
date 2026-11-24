@@ -20,7 +20,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [gl,setGl]=useState<Account[]>([]);
   const [currencies,setCurrencies]=useState<Currency[]>([]);
   const [exchangeRates,setExchangeRates]=useState<ExchangeRate[]>([]);
-  const [baseCurrencyCode,setBaseCurrencyCode]=useState("EGP");
+  const [baseCurrencyCode,setBaseCurrencyCode]=useState("");
   const [reval,setReval]=useState({account:"",fiscal_year:"",revaluation_date:today(),rate_date:today()});
   const [fxHistory,setFxHistory]=useState<TreasuryFxRevaluation[]>([]);
   const [fxHistoryAccount,setFxHistoryAccount]=useState("");
