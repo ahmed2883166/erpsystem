@@ -349,10 +349,8 @@ class InventoryApiTests(APITestCase):
 
         receipt = self._movement("COUNT-STALE-R", "receipt", destination=warehouse, quantity="2", cost="4")
         self.assertEqual(receipt.status_code, 201, receipt.data)
-        self.assertEqual(
-            self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code,
-            200,
-        )
+        # A draft created after the snapshot is enough to invalidate the count;
+        # it must not be posted while the count remains open.
         response = self.client.post(
             f"/api/inventory/counts/{started.data['id']}/post-count/", {}, format="json",
         )
