@@ -17,7 +17,7 @@ from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 def _account(company, role):
@@ -284,21 +284,58 @@ def post_purchase_invoice(invoice_id, user):
         require_financial_approval(FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, invoice)
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
-    receipt = invoice.receipt
+    # Serialize postings per receipt. This prevents two concurrent invoices from
+    # consuming the same remaining receipt quantity.
+    receipt = PurchaseReceipt.objects.select_for_update().select_related(
+        "company", "supplier", "warehouse", "stock_movement",
+    ).get(pk=invoice.receipt_id)
     if receipt.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن الاستلام.")
-    lines = list(invoice.lines.select_related("receipt_line", "receipt_line__product", "tax_code"))
-    expected = list(receipt.stock_movement.lines.all())
-    if len(lines) != len(expected) or {x.receipt_line_id for x in lines} != {x.pk for x in expected}:
-        raise ValidationError("أصناف الفاتورة لا تطابق إذن الاستلام.")
-    # Three-way match: invoice line to receipt cost, then receipt to the originating PO line.
+    lines = list(invoice.lines.select_for_update().select_related(
+        "receipt_line", "receipt_line__product", "tax_code",
+    ).order_by("receipt_line_id", "pk"))
+    if not lines:
+        raise ValidationError("لا يمكن ترحيل فاتورة مورد بلا بنود.")
+    # Three-way match is quantity-aware: each invoice consumes only its billed
+    # share of the posted receipt and the originating purchase-order line.
     tolerance = Decimal("0.0002")
+    grni_amount = Decimal("0")
     for invoice_line in lines:
-        receipt_line = invoice_line.receipt_line
-        if abs(invoice_line.net_amount - receipt_line.cost_amount) > tolerance:
+        receipt_line = StockMovementLine.objects.select_for_update().select_related(
+            "product", "movement",
+        ).get(pk=invoice_line.receipt_line_id)
+        if receipt_line.movement_id != receipt.stock_movement_id:
+            raise ValidationError("سطر الفاتورة لا يتبع إذن الاستلام المحدد.")
+        billed_before = PurchaseInvoiceLine.objects.filter(
+            receipt_line_id=receipt_line.pk,
+            invoice__status=PurchaseInvoice.Status.POSTED,
+        ).exclude(invoice_id=invoice.pk).aggregate(total=Sum("billed_quantity"))["total"] or Decimal("0")
+        if billed_before + invoice_line.billed_quantity > receipt_line.quantity:
             raise ValidationError(
-                f"صافي فاتورة الصنف {receipt_line.product.code} لا يطابق تكلفة إذن الاستلام."
+                f"إجمالي الكمية المفوترة يتجاوز الكمية المستلمة للصنف {receipt_line.product.code}."
             )
+        expected_net = (
+            receipt_line.cost_amount * invoice_line.billed_quantity / receipt_line.quantity
+        ).quantize(Decimal("0.0001"))
+        if abs(invoice_line.net_amount - expected_net) > tolerance:
+            raise ValidationError(
+                f"صافي فاتورة الصنف {receipt_line.product.code} لا يطابق تكلفة الكمية المفوترة من إذن الاستلام."
+            )
+        prior_lines = list(PurchaseInvoiceLine.objects.filter(
+            receipt_line_id=receipt_line.pk,
+            invoice__status=PurchaseInvoice.Status.POSTED,
+        ).exclude(invoice_id=invoice.pk).select_related("tax_code"))
+        for prior_line in prior_lines:
+            if prior_line.tax_code_id != invoice_line.tax_code_id or prior_line.tax_rate != invoice_line.tax_rate:
+                raise ValidationError(
+                    f"لا يمكن تغيير المعاملة الضريبية بين فواتير نفس سطر الاستلام للصنف {receipt_line.product.code}."
+                )
+            prior_tax_per_unit = prior_line.tax_amount / prior_line.billed_quantity
+            current_tax_per_unit = invoice_line.tax_amount / invoice_line.billed_quantity
+            if abs(prior_tax_per_unit - current_tax_per_unit) > Decimal("0.0001"):
+                raise ValidationError(
+                    f"ضريبة الوحدة غير متسقة بين الفواتير الجزئية للصنف {receipt_line.product.code}."
+                )
         order_link = PurchaseOrderReceiptLine.objects.select_related("order_line").filter(
             receipt_line_id=receipt_line.pk
         ).first()
@@ -314,7 +351,8 @@ def post_purchase_invoice(invoice_id, user):
                 raise ValidationError(
                     f"معدل ضريبة الصنف {receipt_line.product.code} لا يطابق المعدل المتفق عليه في أمر الشراء."
                 )
-    grni_amount = sum((line.cost_amount for line in expected), Decimal("0")).quantize(Decimal("0.0001"))
+        grni_amount += expected_net
+    grni_amount = grni_amount.quantize(Decimal("0.0001"))
     net_amount = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     tax_amount = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     recoverable_tax = sum(
@@ -361,9 +399,32 @@ def post_purchase_invoice(invoice_id, user):
         "inventory": Decimal("0"), "cogs": Decimal("0"), "loss": Decimal("0"),
     })
     if nonrecoverable_tax:
+        # Non-recoverable input tax is held in the clearing account until the
+        # complete receipt line has been invoiced. At that point capitalize the
+        # cumulative tax once across its remaining stock and consumed cost.
+        from types import SimpleNamespace
         for line in lines:
-            if line.tax_code_id and not line.tax_code.input_tax_recoverable and line.tax_amount:
-                line_allocations = _capitalize_nonrecoverable_stock_tax(line)
+            if not line.tax_code_id or line.tax_code.input_tax_recoverable:
+                continue
+            receipt_line = line.receipt_line
+            prior = PurchaseInvoiceLine.objects.filter(
+                receipt_line_id=receipt_line.pk,
+                invoice__status=PurchaseInvoice.Status.POSTED,
+            ).exclude(invoice_id=invoice.pk).aggregate(
+                quantity=Sum("billed_quantity"), tax=Sum("tax_amount"),
+            )
+            prior_quantity = prior["quantity"] or Decimal("0")
+            cumulative_quantity = prior_quantity + line.billed_quantity
+            if cumulative_quantity < receipt_line.quantity:
+                continue
+            if cumulative_quantity > receipt_line.quantity:
+                raise ValidationError("الكمية المفوترة تجاوزت كمية الاستلام أثناء توزيع الضريبة.")
+            cumulative_tax = (prior["tax"] or Decimal("0")) + line.tax_amount
+            if cumulative_tax:
+                proxy_line = SimpleNamespace(
+                    invoice=invoice, receipt_line=receipt_line, tax_amount=cumulative_tax,
+                )
+                line_allocations = _capitalize_nonrecoverable_stock_tax(proxy_line)
                 for branch_id, amounts in line_allocations.items():
                     for category, amount in amounts.items():
                         allocations_by_branch[branch_id][category] += amount
@@ -915,8 +976,18 @@ def post_supplier_return(return_id, user):
         invoice_line = line.invoice_line
         receipt_line = invoice_line.receipt_line
         already_returned = returned_by_invoice_line.get(invoice_line.pk, Decimal("0"))
-        if already_returned + line.quantity > receipt_line.quantity:
-            raise ValidationError(f"كمية المرتجع تتجاوز الكمية المفوترة للصنف {receipt_line.product.code}.")
+        if already_returned + line.quantity > invoice_line.billed_quantity:
+            raise ValidationError(f"كمية المرتجع تتجاوز الكمية المفوترة في هذه الفاتورة للصنف {receipt_line.product.code}.")
+        if invoice_line.tax_code_id and not invoice_line.tax_code.input_tax_recoverable:
+            billed_total = PurchaseInvoiceLine.objects.filter(
+                receipt_line_id=receipt_line.pk,
+                invoice__status=PurchaseInvoice.Status.POSTED,
+            ).aggregate(total=Sum("billed_quantity"))["total"] or Decimal("0")
+            if billed_total < receipt_line.quantity:
+                raise ValidationError(
+                    f"لا يمكن ترحيل مرتجع الصنف {receipt_line.product.code} قبل اكتمال فوترة إذن الاستلام؛ "
+                    "لم يتم بعد توزيع الضريبة غير القابلة للخصم على تكلفة المخزون."
+                )
         if line.movement_line.product_id != receipt_line.product_id or line.movement_line.quantity != line.quantity:
             raise ValidationError("كمية أو صنف حركة المرتجع لا يطابق بند فاتورة المورد.")
         if line.movement_line.source_location_id != receipt_line.destination_location_id:
@@ -924,7 +995,7 @@ def post_supplier_return(return_id, user):
         if line.movement_line.expiry_date != receipt_line.expiry_date:
             raise ValidationError("تاريخ صلاحية المرتجع يجب أن يطابق دفعة الاستلام الأصلية.")
 
-        ratio = line.quantity / receipt_line.quantity
+        ratio = line.quantity / invoice_line.billed_quantity
         line_net = (invoice_line.net_amount * ratio).quantize(Decimal("0.0001"))
         line_tax = (invoice_line.tax_amount * ratio).quantize(Decimal("0.0001"))
         recoverable = line_tax if (
