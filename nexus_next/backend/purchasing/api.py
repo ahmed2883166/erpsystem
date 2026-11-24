@@ -67,7 +67,7 @@ class PurchaseBaseViewSet(viewsets.ModelViewSet):
 
 class PurchaseOrderViewSet(PurchaseBaseViewSet):
     serializer_class = PurchaseOrderSerializer
-    queryset = PurchaseOrder.objects.select_related("company", "supplier", "warehouse", "warehouse__branch").prefetch_related("lines__product")
+    queryset = PurchaseOrder.objects.select_related("company", "supplier", "warehouse", "warehouse__branch").prefetch_related("lines__product", "approval_requests")
     filterset_fields = ("company", "supplier", "warehouse", "status", "order_date")
     search_fields = ("order_number", "supplier__name_ar")
     ordering_fields = ("order_date", "order_number", "created_at")
