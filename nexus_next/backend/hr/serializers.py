@@ -57,10 +57,17 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "bank_name", "bank_account", "cost_center", "notes", "created_at", "updated_at",
         )
         read_only_fields = ("created_at", "updated_at")
+        extra_kwargs = {"currency": {"required": False}}
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
+        currency = attrs.get("currency", getattr(self.instance, "currency", None))
+        if company and currency is None:
+            currency = company.base_currency
+            attrs["currency"] = currency
+        if company and currency and currency.pk != company.base_currency_id:
+            raise serializers.ValidationError({"currency": "عملة راتب الموظف يجب أن تطابق العملة الأساسية للشركة."})
         employee_user = attrs.get("user", getattr(self.instance, "user", None))
         if employee_user and company and not CompanyMembership.objects.filter(
             user=employee_user, company=company, is_active=True,
