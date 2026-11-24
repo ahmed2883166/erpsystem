@@ -47,7 +47,12 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
       <table className="sales-print-lines"><thead><tr><th>{label("الصنف","Item")}</th><th>{label("الكمية","Qty")}</th><th>{label("سعر الوحدة","Unit price")}</th>{config.show_discount!==false&&<th>{label("الخصم","Discount")}</th>}{config.show_tax!==false&&<th>{label("الضريبة","Tax")}</th>}<th>{label("الإجمالي","Total")}</th></tr></thead>
         <tbody>{lines.map((line,index)=><tr key={index}><td><strong>{line.product_name}</strong><small>{line.product_code}</small></td><td>{line.quantity}</td><td>{money(line.unit_price)}</td>{config.show_discount!==false&&<td>{line.discount_percent}%<small>{money(line.discount_amount)}</small></td>}{config.show_tax!==false&&<td>{line.tax_rate}%<small>{money(line.tax_amount)}</small></td>}<td>{money(line.total_amount)}</td></tr>)}</tbody>
       </table>
-      <section className="sales-print-totals"><div><span>{label("الصافي","Net")}</span><strong>{money(net)}</strong></div>{config.show_discount!==false&&<div><span>{label("إجمالي الخصم","Discount total")}</span><strong>{money(discount)}</strong></div>{config.show_tax!==false&&<div><span>{label("الضريبة","Tax")}</span><strong>{money(tax)}</strong></div>}<div className="grand"><span>{label("الإجمالي النهائي","Grand total")}</span><strong>{money(total)}</strong></div></section>
+      <section className="sales-print-totals">
+        <div><span>{label("الصافي","Net")}</span><strong>{money(net)}</strong></div>
+        {config.show_discount === false ? null : <div><span>{label("إجمالي الخصم","Discount total")}</span><strong>{money(discount)}</strong></div>}
+        {config.show_tax === false ? null : <div><span>{label("الضريبة","Tax")}</span><strong>{money(tax)}</strong></div>}
+        <div className="grand"><span>{label("الإجمالي النهائي","Grand total")}</span><strong>{money(total)}</strong></div>
+      </section>
       {doc.notes&&<section className="sales-print-notes"><strong>{label("ملاحظات","Notes")}</strong><p>{doc.notes}</p></section>}
       {config.show_bank_details&&<p className="sales-print-bank">{label("بيانات التحويل البنكي: وفق بيانات الشركة المعتمدة.","Bank details: refer to the company's approved banking information.")}</p>}
       <footer>{config.footer_text||" "}</footer>
