@@ -204,7 +204,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         if not as_of:
             raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
         assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch").prefetch_related(
-            "depreciations__journal_entry", "impairments__journal_entry"
+            "depreciations__journal_entry", "impairments__journal_entry", "impairment_reversals__journal_entry"
         )
         rows = []
         total_cost = total_accumulated = total_impairment = total_book = 0
@@ -217,21 +217,26 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 item.impairment_loss for item in asset.impairments.all()
                 if item.impairment_date <= as_of and item.journal_entry.status == JournalEntry.Status.POSTED
             ), Decimal("0"))
-            book_value = asset.original_cost - accumulated - impairment_total
+            reversal_total = sum((
+                item.reversal_amount for item in asset.impairment_reversals.all()
+                if item.reversal_date <= as_of and item.journal_entry.status == JournalEntry.Status.POSTED
+            ), Decimal("0"))
+            net_impairment = impairment_total - reversal_total
+            book_value = asset.original_cost - accumulated - net_impairment
             disposed = bool(asset.disposed_at and asset.disposed_at <= as_of)
             rows.append({
                 "asset_id": asset.pk, "code": asset.code, "name_ar": asset.name_ar,
                 "branch_id": asset.branch_id, "branch_name": asset.branch.name_ar,
                 "acquisition_date": asset.acquisition_date, "original_cost": asset.original_cost,
                 "salvage_value": asset.salvage_value, "useful_life_months": asset.useful_life_months,
-                "accumulated_depreciation": accumulated, "accumulated_impairment": impairment_total,
+                "accumulated_depreciation": accumulated, "accumulated_impairment": net_impairment,
                 "net_book_value": book_value,
                 "status": "disposed" if disposed else "active", "disposed_at": asset.disposed_at,
                 "acquisition_journal": asset.acquisition_journal_id, "disposal_journal": asset.disposal_journal_id,
             })
             total_cost += asset.original_cost
             total_accumulated += accumulated
-            total_impairment += impairment_total
+            total_impairment += net_impairment
             total_book += book_value if not disposed else 0
         return response.Response({
             "company": int(request.query_params["company"]), "as_of": as_of,
@@ -280,7 +285,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
     def movement_report(self, request):
         """إعداد تقرير حركة الأصول والإضافات والاستبعادات."""
-        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations__journal_entry", "impairments__journal_entry")
+        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations__journal_entry", "impairments__journal_entry", "impairment_reversals__journal_entry")
         asset_id = request.query_params.get("asset")
         if asset_id:
             if not asset_id.isdigit():
@@ -314,6 +319,13 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                         "date": impairment.impairment_date, "event_type": "impairment",
                         "event_label": "انخفاض قيمة", "amount": impairment.impairment_loss,
                         "journal_entry": impairment.journal_entry_id, "treasury_transaction": None,
+                    })
+            for reversal in asset.impairment_reversals.all():
+                if reversal.journal_entry.status == JournalEntry.Status.POSTED:
+                    candidates.append({
+                        "date": reversal.reversal_date, "event_type": "impairment_reversal",
+                        "event_label": "عكس انخفاض قيمة", "amount": reversal.reversal_amount,
+                        "journal_entry": reversal.journal_entry_id, "treasury_transaction": None,
                     })
             if asset.disposed_at:
                 candidates.append({
