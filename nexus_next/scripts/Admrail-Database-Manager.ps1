@@ -33,16 +33,27 @@ function Save-ConfigValue([string]$Key,[string]$Value) {
     Move-Item $tmp $EnvFile -Force
 }
 function Get-PgTool([string]$Name) {
-    $cmd = Get-Command "$Name.exe" -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $base = Join-Path $env:ProgramFiles "PostgreSQL"
-    if (Test-Path $base) {
-        foreach ($d in (Get-ChildItem $base -Directory | Sort-Object Name -Descending)) {
-            $p = Join-Path $d.FullName "bin\$Name.exe"
-            if (Test-Path $p) { return $p }
+    if ($Name -notmatch '^(pg_dump|pg_restore|psql|createdb)$') { throw "Unsupported PostgreSQL tool: $Name" }
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles "PostgreSQL") }
+    if ($env:ProgramW6432) { }
+    $roots += "C:\Program Files\PostgreSQL"
+    if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) {
+        $roots += (Join-Path $env:ProgramW6432 "PostgreSQL")
+    }
+    $candidates = foreach ($root in ($roots | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $root -PathType Container) {
+            Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+                Sort-Object { [version]($_.Name -replace '[^0-9.]','') } -Descending |
+                ForEach-Object {
+                    $candidate = Join-Path $_.FullName ("bin\$Name.exe")
+                    if (Test-Path -LiteralPath $candidate -PathType Leaf) { Get-Item -LiteralPath $candidate }
+                }
         }
     }
-    throw "أداة PostgreSQL $Name.exe غير موجودة. ثبّت Command Line Tools."
+    $tool = $candidates | Select-Object -First 1
+    if (-not $tool) { throw "Trusted PostgreSQL $Name.exe was not found under Program Files\PostgreSQL. Add the official PostgreSQL 16 client tools." }
+    return $tool.FullName
 }
 function Assert-AppStopped {
     $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
