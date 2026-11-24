@@ -1483,6 +1483,39 @@ class JournalEntryViewSet(AccountingViewSet):
         financing_cash_flow = cash_category_total(financing_rows)
         net_change = operating_cash_flow + investing_cash_flow + financing_cash_flow
 
+        non_cash_investing_transactions = []
+        non_cash_asset_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+            journal_entry__status=JournalEntry.Status.POSTED,
+            invoice_date__gte=date_from, invoice_date__lte=date_to,
+            branch__in=visible_branches,
+        ).select_related("asset", "supplier").prefetch_related("payments")
+        for invoice in non_cash_asset_invoices:
+            paid_in_period = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED
+                and date_from <= payment.payment_date <= date_to
+            ), Decimal("0"))
+            paid_by_end = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED
+                and payment.payment_date <= date_to
+            ), Decimal("0"))
+            non_cash_investing_transactions.append({
+                "document_type": "asset_purchase_invoice",
+                "invoice_number": invoice.invoice_number,
+                "asset_name": invoice.asset.name_ar,
+                "supplier_name": invoice.supplier.name_ar,
+                "recognition_date": invoice.invoice_date,
+                "gross_amount": invoice.grand_total,
+                "recoverable_tax": invoice.recoverable_tax_amount,
+                "nonrecoverable_tax": invoice.nonrecoverable_tax_amount,
+                "cash_paid_during_period": paid_in_period,
+                "unpaid_at_period_end": invoice.grand_total - paid_by_end,
+                "journal_entry": invoice.journal_entry_id,
+                "disclosure": "معاملة استثمارية غير نقدية عند الاعتراف؛ تظهر المدفوعات الفعلية ضمن التدفقات الاستثمارية.",
+            })
+
         treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
         treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
@@ -1517,6 +1550,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "investing_transactions": list(investing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
+            "non_cash_investing_transactions": non_cash_investing_transactions,
             "financing_transactions": list(financing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
