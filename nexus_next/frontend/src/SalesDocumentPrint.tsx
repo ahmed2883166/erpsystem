@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { salesApi, type Company, type SalesInvoice, type SalesQuotation, type SalesDocumentTemplate } from "./api";
+import { formatMoneyEnglish } from "./formatters";
 
 type Props = {
   company:Company|null;
@@ -11,7 +12,7 @@ type PrintLine = {
   product_code:string;product_name:string;quantity:string;unit_price:string;
   discount_percent:string;discount_amount:string;tax_rate:string;tax_amount:string;total_amount:string;
 };
-const money=(value:string,currency:string="")=>Number(value||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+(currency?" "+currency:"");
+const money=(value:string,currency:string="")=>formatMoneyEnglish(value)+(currency?" "+currency:"");
 
 export default function SalesDocumentPrint({company,invoice,quotation,onClose}:Props){
   const doc=invoice||quotation;
