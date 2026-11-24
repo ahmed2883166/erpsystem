@@ -470,3 +470,37 @@ class FixedAssetWorkflowTests(APITestCase):
         invoice.refresh_from_db()
         self.assertEqual(invoice.status, AssetPurchaseInvoice.Status.POSTED)
         self.assertIsNotNone(invoice.journal_entry_id)
+
+
+    def test_nonrecoverable_input_tax_is_capitalized_into_fixed_asset_cost(self):
+        payable = self._account("2100", "الموردون", "liability")
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
+        supplier = Supplier.objects.create(company=self.company, code="SUP-FA-NR", name_ar="مورد ضريبة غير مستردة")
+        tax = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT14-FA-NR",
+            name_ar="ضريبة غير قابلة للاسترداد", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+            input_tax_recoverable=False,
+        )
+        payload = self._payload()
+        payload["acquisition_mode"] = "supplier_invoice"
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        response = self.client.post(
+            f"/api/assets/fixed-assets/{created.data['id']}/purchase-invoice/",
+            {
+                "supplier": supplier.pk, "invoice_number": "FA-SUP-NR-1",
+                "invoice_date": "2026-01-10", "net_amount": "100000.0000",
+                "tax_code": tax.pk, "fiscal_year": self.year.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        asset = FixedAsset.objects.get(pk=created.data["id"])
+        invoice = AssetPurchaseInvoice.objects.get(pk=response.data["id"])
+        self.assertEqual(invoice.nonrecoverable_tax_amount, Decimal("14000.0000"))
+        self.assertEqual(invoice.recoverable_tax_amount, Decimal("0.0000"))
+        self.assertEqual(asset.original_cost, Decimal("114000.0000"))
+        self.assertEqual(invoice.journal_entry.lines.get(account=self.asset_gl).debit, Decimal("114000.0000"))
+        self.assertEqual(invoice.journal_entry.lines.get(account=payable).credit, Decimal("114000.0000"))
+        self.assertEqual(invoice.journal_entry.lines.count(), 2)
