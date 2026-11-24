@@ -4,8 +4,8 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from companies.models import Company, CompanyMembership, Currency
-from inventory.models import Product, UnitOfMeasure
+from companies.models import Branch, Company, CompanyMembership, Currency
+from inventory.models import Product, UnitOfMeasure, Warehouse
 from suppliers.models import Supplier
 
 
@@ -13,6 +13,8 @@ class PurchaseRFQWorkflowTests(APITestCase):
     def setUp(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         self.company = Company.objects.create(code="RFQ", name_ar="شركة عروض", country="EG", activity="commercial", base_currency=currency)
+        self.branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True)
+        self.warehouse = Warehouse.objects.create(company=self.company, branch=self.branch, code="WH1", name_ar="المخزن الرئيسي")
         self.user = get_user_model().objects.create_user(username="rfq-buyer", password="test-password")
         self.manager = get_user_model().objects.create_user(username="rfq-manager", password="test-password")
         CompanyMembership.objects.create(user=self.user, company=self.company, role="accountant", all_branches=True)
@@ -61,6 +63,14 @@ class PurchaseRFQWorkflowTests(APITestCase):
         self.assertEqual(awarded.status_code, 200, awarded.data)
         self.assertEqual(awarded.data["status"], "awarded")
         self.assertEqual(awarded.data["awarded_quotation"], quote_a.data["id"])
+        converted = self.client.post(f"/api/purchasing/rfqs/{rfq_id}/convert-award/", {
+            "warehouse": self.warehouse.pk, "order_number": "PO-RFQ-001",
+            "order_date": "2026-11-24", "expected_date": "2026-12-05",
+        }, format="json")
+        self.assertEqual(converted.status_code, 201, converted.data)
+        order = self.client.get(f"/api/purchasing/orders/{converted.data['purchase_order_id']}/")
+        self.assertEqual(order.status_code, 200, order.data)
+        self.assertEqual(order.data["line_items"][0]["unit_price"], "11.4000")
         second_award = self.client.post(f"/api/purchasing/rfqs/{rfq_id}/award/", {
             "quotation": quote_b.data["id"], "reason": "محاولة ترسية ثانية"
         }, format="json")
