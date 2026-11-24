@@ -630,7 +630,20 @@ def supplier_credit_balance(company_id, supplier_id, as_of):
         revaluation_date__lte=as_of,
         journal_entry__status=JournalEntry.Status.POSTED,
     ).aggregate(total=Sum("difference"))["total"] or Decimal("0")
-    supplier_balance = invoice_total - payment_total - return_total + refund_total + revaluation_total
+    # Direct fixed-asset invoices and their settlements share the supplier AP subledger.
+    from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+    asset_invoice_total = AssetPurchaseInvoice.objects.filter(
+        company_id=company_id, supplier_id=supplier_id,
+        status=AssetPurchaseInvoice.Status.POSTED, invoice_date__lte=as_of,
+    ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    asset_payment_total = AssetSupplierPayment.objects.filter(
+        company_id=company_id, supplier_id=supplier_id,
+        status=AssetSupplierPayment.Status.POSTED, payment_date__lte=as_of,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    supplier_balance = (
+        invoice_total + asset_invoice_total - payment_total - asset_payment_total
+        - return_total + refund_total + revaluation_total
+    )
     return max(Decimal("0"), -supplier_balance).quantize(Decimal("0.0001"))
 
 
