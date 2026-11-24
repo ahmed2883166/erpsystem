@@ -101,8 +101,8 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         if not lines:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         for line in lines:
-            if line["product"].company_id != company.pk:
-                raise serializers.ValidationError({"lines": "كل الأصناف يجب أن تتبع الشركة."})
+            if line["product"].company_id != company.pk or not line["product"].is_active or line["product"].product_type != Product.ProductType.GOODS:
+                raise serializers.ValidationError({"lines": "اختر أصنافًا مخزنية نشطة تتبع الشركة؛ الخدمات غير مدعومة في دورة التسليم الحالية."})
             location_id = line.get("source_location")
             if location_id:
                 location = StorageLocation.objects.filter(
@@ -206,8 +206,8 @@ class SalesQuotationSerializer(serializers.ModelSerializer):
         valid_until = attrs.get("valid_until", instance.valid_until if instance else None)
         if instance and instance.status != SalesQuotation.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل عرض سعر غير مسودة.")
-        if customer and customer.company_id != company.pk:
-            raise serializers.ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if customer and (customer.company_id != company.pk or not customer.is_active):
+            raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
         if quote_date and valid_until and valid_until < quote_date:
             raise serializers.ValidationError({"valid_until": "تاريخ الصلاحية لا يسبق تاريخ العرض."})
         lines = attrs.get("lines")
