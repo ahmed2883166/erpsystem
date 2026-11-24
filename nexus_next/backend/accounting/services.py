@@ -183,6 +183,23 @@ def reverse_operational_journal(entry_id: int, user, entry_date, expected_source
     if entry_date < original.entry_date:
         raise ValidationError("تاريخ القيد العكسي لا يجوز أن يسبق تاريخ القيد الأصلي.")
 
+    # Reversing an impairment after later depreciation has been posted would
+    # silently restore the old depreciation rate while leaving reduced-basis
+    # depreciation in the ledger. Enforce reverse-chronological correction.
+    from assets.models import AssetImpairment, AssetDepreciation
+    impairment = AssetImpairment.objects.select_related("asset").filter(journal_entry=original).first()
+    if impairment:
+        if AssetImpairment.objects.filter(
+            asset=impairment.asset, impairment_date__gt=impairment.impairment_date,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).exists():
+            raise ValidationError("يجب عكس اختبارات انخفاض القيمة الأحدث أولًا.")
+        if AssetDepreciation.objects.filter(
+            asset=impairment.asset, period_date__gt=impairment.impairment_date,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).exists():
+            raise ValidationError("يجب عكس إهلاك الفترات اللاحقة لاختبار الانخفاض أولًا.")
+
     fiscal_year = FiscalYear.objects.filter(
         company=original.company,
         status=FiscalYear.Status.OPEN,
