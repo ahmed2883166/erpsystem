@@ -107,7 +107,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "impairment_loss": impairment.impairment_loss,
             "journal_entry": impairment.journal_entry_id,
             "accounting_model": "cost",
-            "oci_impact": "none",
+            "oci_impact": "none_under_cost_model",\n            "oci_note": "خسارة الانخفاض تُثبت في قائمة الدخل؛ لا يوجد نموذج إعادة تقييم للأصول مفعّل لمعالجة فائض إعادة التقييم ضمن الدخل الشامل الآخر.",
         }, status=status.HTTP_201_CREATED)
 
 
