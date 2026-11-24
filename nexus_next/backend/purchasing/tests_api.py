@@ -309,7 +309,16 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(by_code["2100"].debit-by_code["2100"].credit, Decimal("200.0000"))
 
     def test_purchase_invoice_tax_rounds_to_base_currency_minor_units(self):
-        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-TAX-ROUND", "receipt_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "0.3333"}],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        receipt_id = receipt.data["id"]
+        receipt_line_id = receipt.data["line_items"][0]["id"]
+        receipt_posted = self.client.post(f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json")
+        self.assertEqual(receipt_posted.status_code, 200, receipt_posted.data)
         response = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-TAX-ROUND", "invoice_date": "2026-03-10",
