@@ -720,6 +720,7 @@ export const salesApi = {
   quotations: (companyId:number) => request<SalesQuotation[]>(`/api/sales-documents/quotations/?company=${companyId}&ordering=-quotation_date`),
   createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>("/api/sales-documents/quotations/",{method:"POST",body:JSON.stringify(payload)}); },
   updateQuotation: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/`,{method:"PATCH",body:JSON.stringify(payload)}); },
+  deleteQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<void>(`/api/sales-documents/quotations/${id}/`,{method:"DELETE"}); },
   sendQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/send/`,{method:"POST",body:"{}"}); },
   acceptQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/accept/`,{method:"POST",body:"{}"}); },
   rejectQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/reject/`,{method:"POST",body:"{}"}); },
