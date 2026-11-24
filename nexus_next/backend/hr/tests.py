@@ -21,7 +21,7 @@ from hr.serializers import EmployeeSerializer
 
 class EmployeeSalaryHistoryGuardTests(TestCase):
     def setUp(self):
-        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.currency = Currency.objects.get_or_create(code="EGP", defaults={"name_ar": "جنيه مصري"})[0]
         self.company = Company.objects.create(
             code="HR-SALARY-GUARD", name_ar="شركة اختبار حماية الراتب",
             country="EG", activity="commercial", base_currency=self.currency,
@@ -63,7 +63,7 @@ class EmployeeSalaryHistoryGuardTests(TestCase):
 
 class PayrollTaxPipelineTests(TestCase):
     def test_employee_insurance_is_subtracted_before_progressive_tax_even_if_tax_assignment_is_older(self):
-        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        currency = Currency.objects.get_or_create(code="EGP", defaults={"name_ar": "جنيه مصري"})[0]
         company = Company.objects.create(
             code="HR-TAX-PIPE", name_ar="شركة اختبار وعاء الضريبة",
             country="EG", activity="commercial", base_currency=currency,
@@ -125,7 +125,7 @@ class PayrollTaxPipelineTests(TestCase):
 
 
     def test_payroll_calculation_includes_active_employee_loan_installment(self):
-        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        currency = Currency.objects.get_or_create(code="EGP", defaults={"name_ar": "جنيه مصري"})[0]
         company = Company.objects.create(
             code="HR-LOAN-CALC", name_ar="شركة اختبار قسط السلفة",
             country="EG", activity="commercial", base_currency=currency,
@@ -280,7 +280,7 @@ class PayrollCalculationTests(SimpleTestCase):
 
 class EmployeePayrollReportApiTests(TestCase):
     def setUp(self):
-        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.currency = Currency.objects.get_or_create(code="EGP", defaults={"name_ar": "جنيه مصري"})[0]
         self.company = Company.objects.create(
             code="HR-REPORT", name_ar="شركة تقرير المرتبات", country="EG",
             activity="commercial", base_currency=self.currency,
@@ -747,7 +747,7 @@ class EmployeePayrollReportApiTests(TestCase):
 
 class PayrollTaxPostingTests(TestCase):
     def test_progressive_tax_without_component_account_uses_company_tax_payable_role(self):
-        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        currency = Currency.objects.get_or_create(code="EGP", defaults={"name_ar": "جنيه مصري"})[0]
         company = Company.objects.create(
             code="HR-TAX", name_ar="شركة اختبار ضريبة المرتبات", country="EG",
             activity="commercial", base_currency=currency,
@@ -803,7 +803,7 @@ class PayrollTaxPostingTests(TestCase):
 
 
     def test_prepared_payroll_payment_cannot_be_changed_and_completion_rechecks_amount(self):
-        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        currency = Currency.objects.get_or_create(code="EGP", defaults={"name_ar": "جنيه مصري"})[0]
         company = Company.objects.create(
             code="HR-PAY-GUARD", name_ar="شركة حماية صرف المرتبات", country="EG",
             activity="commercial", base_currency=currency,
