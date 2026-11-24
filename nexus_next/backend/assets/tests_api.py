@@ -352,7 +352,7 @@ class FixedAssetWorkflowTests(APITestCase):
         vat_input = self._account("1180", "ضريبة مدخلات", "asset")
         AccountRole.objects.create(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
         AccountRole.objects.create(company=self.company, role=AccountRole.Role.VAT_INPUT, account=vat_input)
-        supplier = Supplier.objects.create(company=self.company, code="SUP-FA", name_ar="مورد أصول")
+        supplier = Supplier.objects.create(company=self.company, code="SUP-FA", name_ar="مورد أصول", payment_terms_days=30)
         tax = TaxCode.objects.create(
             company=self.company, country="EG", code="VAT14-FA",
             name_ar="ضريبة مدخلات 14%", category=TaxCode.Category.STANDARD,
