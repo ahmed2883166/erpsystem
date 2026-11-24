@@ -111,6 +111,45 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(asset.acquisition_journal.source_type, JournalEntry.Source.ASSETS)
         self.assertEqual(asset.acquisition_journal.status, JournalEntry.Status.POSTED)
 
+    def test_approved_cash_asset_acquisition_posts_recoverable_vat_adjustment(self):
+        vat_input = self._account("1180", "ضريبة مدخلات قابلة للاسترداد", "asset")
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.VAT_INPUT, account=vat_input)
+        tax = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT14-CASH-APP",
+            name_ar="ضريبة أصل نقدي قابلة للاسترداد", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+            input_tax_recoverable=True,
+        )
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_payment_amount=Decimal("50000"),
+            created_by=self.user, updated_by=self.user,
+        )
+        payload = self._payload()
+        payload.update({
+            "original_cost": "100000.0000", "acquisition_net_amount": "100000.0000",
+            "recoverable_tax_amount": "14000.0000", "acquisition_tax_code": tax.pk,
+        })
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        self.assertIsNone(created.data["acquisition_journal"])
+        treasury_doc = TreasuryTransaction.objects.get(pk=created.data["acquisition_treasury_transaction"])
+        self.assertEqual(treasury_doc.amount, Decimal("114000.0000"))
+        approval = FinancialApprovalRequest.objects.get(treasury_transaction=treasury_doc)
+        manager = get_user_model().objects.create_user(username="asset-vat-manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(f"/api/approvals/financial-requests/{approval.pk}/approve/", {}, format="json")
+        self.assertEqual(approved.status_code, 200, approved.data)
+        posted = self.client.post(f"/api/treasury/transactions/{treasury_doc.pk}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        asset = FixedAsset.objects.get(pk=asset_id)
+        self.assertIsNotNone(asset.acquisition_journal_id)
+        self.assertIsNotNone(asset.acquisition_tax_journal_id)
+        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=vat_input).debit, Decimal("14000.0000"))
+        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=self.asset_gl).credit, Decimal("14000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.get(account=self.cash_gl).credit, Decimal("114000.0000"))
+
     def test_asset_acquisition_is_atomic_when_fiscal_year_is_invalid(self):
         payload = self._payload()
         payload["fiscal_year"] = 999999
