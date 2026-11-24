@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatMoney } from "./formatters";
 import { api, bankReconciliationApi, stockApi, treasuryApi, type Branch, type BankReconciliation, type BankReconciliationSummary, type InventoryReconciliation, type InventoryValuationIntegrity, type SubledgerReconciliation, type TreasuryAccount } from "./api";
 
 type Props = { companyId: number | null; currency: string; branches: Branch[] };
 const localToday = () => { const now = new Date(); return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
-const money = (value: string | number | null | undefined, currency: string) => value == null ? "—" : `${Number(value).toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ${currency}`.trim();
+const money = (value: string | number | null | undefined, currency: string) => value == null ? "—" : `${formatMoney(value)} ${currency}`.trim();
 
 export default function OperationalReconciliationPanel({ companyId, currency, branches }: Props) {
   const [branchId, setBranchId] = useState("");
