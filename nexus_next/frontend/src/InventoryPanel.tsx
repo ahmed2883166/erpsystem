@@ -3,7 +3,7 @@
  * تشمل كارت الصنف ونقاط إعادة الطلب والتقارير ومطابقة قيمة المخزون محاسبيًا.
  */
 import { useEffect, useMemo, useState } from "react";
-import { formatMoney } from "./formatters";
+import { formatMoney, sumDecimalToFixed } from "./formatters";
 import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
@@ -110,18 +110,18 @@ const loadValuationIntegrity = async () => {
   };
   const filteredProducts = useMemo(() => products.filter((p) => `${p.code} ${p.barcode} ${p.name_ar}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
   const inventoryIndexes = useMemo(() => {
-    const byWarehouse = new Map<number, { quantity: number; value: number; products: Set<number> }>();
-    const byWarehouseProduct = new Map<string, { quantity: number; value: number }>();
+    const byWarehouse = new Map<number, { quantity: number; value: string; products: Set<number> }>();
+    const byWarehouseProduct = new Map<string, { quantity: number; value: string }>();
     for (const balance of balances) {
-      const warehouse = byWarehouse.get(balance.warehouse) ?? { quantity: 0, value: 0, products: new Set<number>() };
+      const warehouse = byWarehouse.get(balance.warehouse) ?? { quantity: 0, value: "0", products: new Set<number>() };
       warehouse.quantity += Number(balance.quantity);
-      warehouse.value += Number(balance.inventory_value);
+      warehouse.value = sumDecimalToFixed([warehouse.value, balance.inventory_value], 4);
       warehouse.products.add(balance.product);
       byWarehouse.set(balance.warehouse, warehouse);
       const key = `${balance.warehouse}:${balance.product}`;
-      const productBalance = byWarehouseProduct.get(key) ?? { quantity: 0, value: 0 };
+      const productBalance = byWarehouseProduct.get(key) ?? { quantity: 0, value: "0" };
       productBalance.quantity += Number(balance.quantity);
-      productBalance.value += Number(balance.inventory_value);
+      productBalance.value = sumDecimalToFixed([productBalance.value, balance.inventory_value], 4);
       byWarehouseProduct.set(key, productBalance);
     }
     return { byWarehouse, byWarehouseProduct };
@@ -144,7 +144,7 @@ const loadValuationIntegrity = async () => {
     const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
     return { ...row, days };
   }).filter((row) => row.days <= 30).sort((a, b) => a.days - b.days);
-  const totalInventoryValue = balances.reduce((sum, row) => sum + Number(row.inventory_value), 0);
+  const totalInventoryValue = sumDecimalToFixed(balances.map((row) => row.inventory_value), 4);
   const totalInventoryQuantity = balances.reduce((sum, row) => sum + Number(row.quantity), 0);
   // حفظ العملية الحالية في تبويب المخزون ثم إعادة تحميل البيانات المرتبطة.
 const submit = async (event: React.FormEvent) => {
@@ -279,7 +279,7 @@ const submit = async (event: React.FormEvent) => {
           <button type="button" className={movementStatusFilter === "draft" ? "inventory-tab active" : "inventory-tab"} onClick={() => setMovementStatusFilter("draft")}>المعلقة <b>{movements.filter((m) => m.status === "draft").length}</b></button>
           <button type="button" className={movementStatusFilter === "posted" ? "inventory-tab active" : "inventory-tab"} onClick={() => setMovementStatusFilter("posted")}>المرحّلة <b>{movements.filter((m) => m.status === "posted").length}</b></button>
         </div>
-        <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>قيود اليومية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => (movementStatusFilter === "all" || m.status === movementStatusFilter) && `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{formatMoney(m.lines.reduce((sum, line) => sum + Number(line.cost_amount || 0), 0))}</td><td>{m.journal_entries.length ? m.journal_entries.map((entry) => entry.entry_number).join("، ") : "—"}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>
+        <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>قيود اليومية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => (movementStatusFilter === "all" || m.status === movementStatusFilter) && `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{formatMoney(sumDecimalToFixed(m.lines.map((line) => line.cost_amount || "0"), 4))}</td><td>{m.journal_entries.length ? m.journal_entries.map((entry) => entry.entry_number).join("، ") : "—"}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>
       </>}
       {tab === "accounting" && <table><thead><tr><th>الدور المحاسبي</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>{[{ role: "inventory", label: "حساب المخزون" }, { role: "goods_received_not_invoiced", label: "بضاعة مستلمة غير مفوترة" }, { role: "cogs", label: "تكلفة المبيعات" }, { role: "inventory_adjustment_gain", label: "أرباح تسوية المخزون" }, { role: "inventory_adjustment_loss", label: "خسائر تسوية المخزون" }, { role: "inter_branch_clearing", label: "تسوية بين الفروع" }].map((item) => { const assigned = roleAssignments.find((x) => x.role === item.role); const account = accounts.find((x) => x.id === assigned?.account); return <tr key={item.role}><td>{item.label}</td><td>{assigned ? `${account?.code || assigned.account_code} - ${account?.name_ar || ""}` : "غير مربوط"}</td><td>{assigned ? "مربوط" : "مطلوب"}</td></tr>; })}</tbody></table>}
       {tab === "balances" && <table><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>موقع التخزين</th><th>الصلاحية</th><th>الرصيد</th><th>متوسط التكلفة</th><th>قيمة المخزون</th></tr></thead><tbody>{balances.filter((b) => `${b.product_code} ${b.product_name} ${b.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((b) => <tr key={b.id}><td className="code-cell">{b.product_code}</td><td>{b.product_name}</td><td>{b.warehouse_name}</td><td>{b.location_name || "عام"}</td><td>{b.expiry_date || "—"}</td><td>{Number(b.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(b.average_cost)}</td><td>{formatMoney(b.inventory_value)}</td></tr>)}</tbody></table>}
@@ -303,7 +303,7 @@ const submit = async (event: React.FormEvent) => {
       </div>}
       {tab === "reports" && <div className="inventory-reports">
         <div className="metrics-grid inventory-report-metrics">
-          <article className="metric-card"><div className="metric-top">قيمة المخزون</div><strong className="metric-value">{totalInventoryValue.toLocaleString("ar-EG", { maximumFractionDigits: 2 })}</strong><small>حسب تكلفة الأرصدة الحالية</small></article>
+          <article className="metric-card"><div className="metric-top">قيمة المخزون</div><strong className="metric-value">{formatMoney(totalInventoryValue)}</strong><small>حسب تكلفة الأرصدة الحالية</small></article>
           <article className="metric-card"><div className="metric-top">إجمالي الكميات</div><strong className="metric-value">{totalInventoryQuantity.toLocaleString("ar-EG", { maximumFractionDigits: 3 })}</strong><small>مجموع أرصدة جميع المخازن</small></article>
           <article className="metric-card"><div className="metric-top">أصناف عند حد الطلب</div><strong className="metric-value">{reorderAlerts.length.toLocaleString("ar-EG")}</strong><small>وفق حد كل صنف داخل كل مخزن</small></article>
           <article className="metric-card"><div className="metric-top">تنبيهات الصلاحية</div><strong className="metric-value">{expiryAlerts.length.toLocaleString("ar-EG")}</strong><small>منتهية أو خلال 30 يوماً</small></article>
