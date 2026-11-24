@@ -919,6 +919,52 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
         rfq.refresh_from_db()
         return Response(self.get_serializer(rfq).data)
 
+
+    @action(detail=True, methods=("post",), url_path="convert-award")
+    @transaction.atomic
+    def convert_award(self, request, pk=None):
+        rfq = PurchaseRFQ.objects.select_for_update().select_related("awarded_quotation__supplier").get(pk=self.get_object().pk)
+        self._check_write(rfq.company_id)
+        if rfq.status != PurchaseRFQ.Status.AWARDED or not rfq.awarded_quotation_id:
+            raise ValidationError("لا يمكن إصدار أمر شراء قبل ترسية عرض مورد.")
+        if rfq.converted_order_id:
+            raise ValidationError("تم تحويل العرض الفائز إلى أمر شراء بالفعل.")
+        order_number = str(request.data.get("order_number", "")).strip()
+        order_date = parse_date(str(request.data.get("order_date", "")))
+        expected_date = parse_date(str(request.data.get("expected_date", ""))) if request.data.get("expected_date") else None
+        try:
+            warehouse_id = int(request.data.get("warehouse"))
+        except (TypeError, ValueError):
+            warehouse_id = None
+        if not order_number or not order_date or not warehouse_id:
+            raise ValidationError("رقم الأمر وتاريخه ومخزن الاستلام حقول مطلوبة.")
+        if expected_date and expected_date < order_date:
+            raise ValidationError({"expected_date": "تاريخ التوريد المتوقع لا يسبق تاريخ أمر الشراء."})
+        from inventory.models import Warehouse
+        warehouse = Warehouse.objects.filter(pk=warehouse_id, company_id=rfq.company_id, is_active=True).first()
+        if not warehouse or not _purchase_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("المخزن غير متاح للمستخدم أو لا يتبع الشركة.")
+        quotation = rfq.awarded_quotation
+        order = PurchaseOrder.objects.create(
+            company_id=rfq.company_id, supplier=quotation.supplier, warehouse=warehouse,
+            order_number=order_number, order_date=order_date, expected_date=expected_date,
+            notes=f"مصدر أمر الشراء: طلب عروض الأسعار {rfq.rfq_number}، العرض الفائز {quotation.quotation_number}. الأسعار تشمل الخصم الممنوح في العرض.",
+            created_by=request.user,
+        )
+        quote_lines = quotation.lines.select_related("rfq_line").all()
+        PurchaseOrderLine.objects.bulk_create([
+            PurchaseOrderLine(
+                order=order, product=line.rfq_line.product, quantity=line.rfq_line.quantity,
+                unit_price=(line.unit_price * (Decimal("100") - line.discount_percent) / Decimal("100")).quantize(Decimal("0.0001")),
+                tax_rate=line.tax_rate,
+            ) for line in quote_lines
+        ])
+        updated = PurchaseRFQ.objects.filter(pk=rfq.pk, status=PurchaseRFQ.Status.AWARDED, converted_order__isnull=True).update(converted_order=order)
+        if updated != 1:
+            raise ValidationError("تم تحويل العرض الفائز بالفعل؛ لم يتم إنشاء أمر شراء إضافي.")
+        rfq.refresh_from_db()
+        return Response({"rfq": self.get_serializer(rfq).data, "purchase_order_id": order.pk}, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def award(self, request, pk=None):
