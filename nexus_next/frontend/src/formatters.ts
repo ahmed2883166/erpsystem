@@ -137,3 +137,37 @@ export const sumDecimalToFixed = (
   const sign = negative && total !== 0n ? "-" : "";
   return decimalPlaces === 0 ? sign + whole.toString() : sign + whole.toString() + "." + fraction;
 };
+
+/** Exact decimal division for foreign-currency unit-price previews. */
+export const divideDecimalToFixed = (
+  numerator: string | number,
+  denominator: string | number,
+  decimalPlaces = 4,
+): string => {
+  const parse = (value: string | number) => {
+    const match = /^([+-]?)(\d+)(?:\.(\d*))?$/.exec(String(value).trim());
+    if (!match) return null;
+    return {
+      negative: match[1] === "-",
+      digits: BigInt(match[2] + (match[3] || "")),
+      scale: (match[3] || "").length,
+    };
+  };
+  const a = parse(numerator);
+  const b = parse(denominator);
+  if (!a || !b || b.digits === 0n || !Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 12) {
+    const result = Number(numerator) / Number(denominator);
+    return Number.isFinite(result) ? result.toFixed(Math.max(0, Math.min(decimalPlaces, 12))) : "0";
+  }
+
+  const top = a.digits * (10n ** BigInt(b.scale + decimalPlaces));
+  const bottom = b.digits * (10n ** BigInt(a.scale));
+  let rounded = top / bottom;
+  if ((top % bottom) * 2n >= bottom) rounded += 1n;
+  const negative = (a.negative !== b.negative) && rounded !== 0n;
+  const scale = 10n ** BigInt(decimalPlaces);
+  const whole = rounded / scale;
+  const fraction = (rounded % scale).toString().padStart(decimalPlaces, "0");
+  const sign = negative ? "-" : "";
+  return decimalPlaces === 0 ? sign + whole.toString() : sign + whole.toString() + "." + fraction;
+};
