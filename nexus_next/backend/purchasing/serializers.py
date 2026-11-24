@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from rest_framework import serializers
 
 from approvals.models import FinancialApprovalRequest
@@ -729,7 +729,10 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
         if invoice.transaction_currency_id and (
             SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
-            or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).exists()
+            or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).filter(
+                Q(journal_entry__isnull=True)
+                | ~Q(journal_entry__status="reversed")
+            ).exists()
         ):
             raise serializers.ValidationError({
                 "invoice": "المرتجع الأجنبي متاح فقط إذا لم توجد دفعات أو إعادة تقييم سابقة على الفاتورة."
