@@ -766,6 +766,66 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(equity_response.data["closing_equity"], Decimal("250.0000"))
 
 
+    def test_balance_sheet_carries_forward_only_branches_without_opening_snapshots(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="BR-BAL", name_ar="شركة ميزانية الفروع", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        snapshot_branch = Branch.objects.create(
+            company=company, code="SNAP", name_ar="فرع له افتتاحي", is_head_office=True,
+        )
+        carry_branch = Branch.objects.create(
+            company=company, code="CARRY", name_ar="فرع بدون افتتاحي",
+        )
+        prior_year = FiscalYear.objects.create(
+            company=company, name="2025",
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+        )
+        current_year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية", nature=ChartOfAccount.Nature.ASSET,
+        )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3000", name_ar="رأس المال", nature=ChartOfAccount.Nature.EQUITY,
+        )
+
+        prior_entry = JournalEntry.objects.create(
+            company=company, branch=carry_branch, fiscal_year=prior_year,
+            entry_number="BR-PRIOR-001", entry_date=date(2025, 12, 31),
+            description="رصيد مرحل للفرع دون افتتاحي",
+        )
+        JournalLine.objects.create(entry=prior_entry, account=cash, debit=Decimal("75"))
+        JournalLine.objects.create(entry=prior_entry, account=capital, credit=Decimal("75"))
+        post_journal(prior_entry.pk)
+
+        opening_entry = JournalEntry.objects.create(
+            company=company, branch=snapshot_branch, fiscal_year=current_year,
+            entry_number="BR-OPEN-001", entry_date=date(2026, 1, 1),
+            description="افتتاحي الفرع الأول", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening_entry, account=cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=opening_entry, account=capital, credit=Decimal("100"))
+        post_journal(opening_entry.pk)
+
+        user = User.objects.create_user(username="branch_balance_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        result = client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={company.pk}&as_of=2026-01-31"
+        )
+
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["total_assets"], Decimal("175.0000"))
+        self.assertEqual(result.data["total_equity"], Decimal("175.0000"))
+        self.assertEqual(result.data["difference"], Decimal("0.0000"))
+
     def test_income_statement_separates_cost_of_sales_from_operating_expenses(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         company = Company.objects.create(
