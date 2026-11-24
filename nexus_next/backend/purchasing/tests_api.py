@@ -2100,3 +2100,37 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(posted_return.status_code, 200, posted_return.data)
         self.assertEqual(posted_return.data["status"], "posted")
+
+
+    def test_draft_supplier_invoice_reserves_only_its_billed_quantity(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-RESERVE-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.2500",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+
+        remaining_invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-RESERVE-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(remaining_invoice.status_code, 201, remaining_invoice.data)
+
+        over_reserved = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-RESERVE-003", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.1000",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(over_reserved.status_code, 400, over_reserved.data)
+        self.assertFalse(PurchaseInvoice.objects.filter(invoice_number="INV-DRAFT-RESERVE-003").exists())
