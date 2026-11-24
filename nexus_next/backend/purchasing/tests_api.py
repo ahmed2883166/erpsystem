@@ -308,6 +308,19 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(by_code["2200"].credit, Decimal("228.0000"))
         self.assertEqual(by_code["2100"].debit-by_code["2100"].credit, Decimal("200.0000"))
 
+    def test_purchase_invoice_tax_rounds_to_base_currency_minor_units(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-TAX-ROUND", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "0.3333", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        posted = self.client.post(f"/api/purchasing/invoices/{response.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["tax_total"], "0.0900")
+        self.assertEqual(posted.data["grand_total"], "0.7566")
+
     def test_reposting_receipt_or_invoice_does_not_duplicate_stock_or_journals(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         first_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
