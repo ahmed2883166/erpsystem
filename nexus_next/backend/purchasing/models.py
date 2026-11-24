@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
-from accounting.models import ChartOfAccount, TaxCode
+from accounting.models import ChartOfAccount, JournalEntry, TaxCode
 from core.money import round_currency_amount
 from companies.models import Branch, Company, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
@@ -20,6 +20,7 @@ class PurchaseReceipt(models.Model):
     purchase_order = models.ForeignKey("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="receipts")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="purchase_receipts")
     stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="purchase_receipt")
+    journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_receipt")
     receipt_number = models.CharField(max_length=40)
     receipt_date = models.DateField()
     supplier_delivery_ref = models.CharField(max_length=100, blank=True)
