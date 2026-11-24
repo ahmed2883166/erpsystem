@@ -36,6 +36,24 @@ class BankReconciliationOpeningBalanceTests(TestCase):
         )
         self.client = APIClient()
 
+    def test_new_treasury_account_defaults_to_company_base_currency(self):
+        sar = Currency.objects.get_or_create(code="SAR", defaults={"name_ar": "ريال سعودي"})[0]
+        company = Company.objects.create(
+            code="BANK-SAR", name_ar="شركة سعودية", country="SA",
+            activity="commercial", base_currency=sar,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        ledger_account = ChartOfAccount.objects.create(
+            company=company, code="1100", name_ar="البنك", nature="asset",
+        )
+        treasury_account = TreasuryAccount.objects.create(
+            company=company, branch=branch, account=ledger_account,
+            kind=TreasuryAccount.Kind.BANK, code="SAR-BANK", name_ar="البنك السعودي",
+        )
+        self.assertEqual(treasury_account.currency_code, "SAR")
+
     def test_summary_includes_treasury_account_opening_balance(self):
         user = User.objects.create_user(username="bank_viewer", password="test-password")
         CompanyMembership.objects.create(
