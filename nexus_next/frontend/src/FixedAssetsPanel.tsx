@@ -405,7 +405,8 @@ const loadReport = async () => {
         {([
           ["تكلفة الأصول",assetReconciliation.cost_accounts],
           ["مجمع الإهلاك",assetReconciliation.accumulated_depreciation_accounts],
-          ["مجمع انخفاض القيمة",assetReconciliation.accumulated_impairment_accounts],\n          ["مصروف الإهلاك والانخفاض",assetReconciliation.asset_expense_accounts],
+          ["مجمع انخفاض القيمة",assetReconciliation.accumulated_impairment_accounts],
+          ["مصروف الإهلاك والانخفاض",assetReconciliation.asset_expense_accounts],
         ] as [string, AssetAccountReconciliation["cost_accounts"]][]).map(([title,rows])=><div className="data-table-wrap" key={title}><h3>{title}</h3><table><thead><tr><th>الحساب</th><th>رصيد سجل الأصول</th><th>رصيد الأستاذ</th><th>الفرق</th></tr></thead><tbody>{rows.map(row=><tr key={row.account_id}><td>{row.code} · {row.name}</td><td>{Number(row.expected).toLocaleString("ar-EG",{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>{Number(row.actual).toLocaleString("ar-EG",{minimumFractionDigits:2,maximumFractionDigits:2})}</td><td>{Number(row.difference).toLocaleString("ar-EG",{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>)}{!rows.length&&<tr><td colSpan={4}>لا توجد حسابات مرتبطة بأصول ضمن النطاق.</td></tr>}</tbody></table></div>)}
         <p className="asset-report-note">{assetReconciliation.note}</p>
       </>}
