@@ -24,6 +24,11 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
+  const [paymentAssetId, setPaymentAssetId] = useState<number | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentNumber, setPaymentNumber] = useState("");
+  const [paymentAccount, setPaymentAccount] = useState("");
+  const [pendingPaymentId, setPendingPaymentId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [periodDate, setPeriodDate] = useState(today.slice(0, 7) + "-28");
   const [disposalDate, setDisposalDate] = useState(today);
@@ -119,6 +124,49 @@ const create = async (event: FormEvent) => {
       await refresh();
     } finally { setSaving(false); }
   };
+  const postAssetInvoice = async (asset: FixedAsset) => {
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const result = await fixedAssetsApi.postPurchaseInvoice(asset.id);
+      setNotice(`تم ترحيل فاتورة المورد. رقم القيد: ${result.journal_entry}.`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل فاتورة المورد."); }
+    finally { setSaving(false); }
+  };
+
+  const createAssetPayment = async () => {
+    if (!paymentAssetId || !paymentNumber.trim() || !(Number(paymentAmount) > 0) || !paymentAccount) {
+      setError("أدخل رقم السند والمبلغ واختر حساب البنك."); return;
+    }
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const result = await fixedAssetsApi.supplierPayment(paymentAssetId, {
+        payment_number: paymentNumber.trim(), payment_date: today,
+        payment_account: Number(paymentAccount), amount: paymentAmount,
+      });
+      if (result.approval_required) {
+        setPendingPaymentId(result.id);
+        setNotice(`تم حفظ سند السداد كمسودة ويحتاج اعتماد المدير. رقم طلب الاعتماد: ${result.approval_request}.`);
+      } else {
+        setNotice(`تم ترحيل سند السداد. رقم القيد: ${result.journal_entry}.`);
+        setPaymentAssetId(null);
+      }
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء سند السداد."); }
+    finally { setSaving(false); }
+  };
+
+  const postAssetPayment = async () => {
+    if (!paymentAssetId || !pendingPaymentId) return;
+    setSaving(true); setError("");
+    try {
+      const result = await fixedAssetsApi.postSupplierPayment(paymentAssetId, pendingPaymentId);
+      setNotice(`تم ترحيل سند السداد بعد الاعتماد. رقم القيد: ${result.journal_entry}.`);
+      setPendingPaymentId(null); setPaymentAssetId(null); await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل سند السداد."); }
+    finally { setSaving(false); }
+  };
+
   // طلب احتساب وترحيل إهلاك الأصل المحدد وفق الجدول المعتمد.
 const depreciate = async (asset: FixedAsset) => {
     if (!form.fiscal_year) { setError("حدد سنة مالية مفتوحة."); return; }
@@ -185,7 +233,8 @@ const loadReport = async () => {
     {error && <div className="error-banner">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     <form className="asset-form" onSubmit={create}>
-      <div className="asset-form-heading"><strong>تسجيل أصل جديد</strong><small>يتم إنشاء قيد الاقتناء وترحيله تلقائيًا داخل معاملة واحدة.</small></div>
+      <div className="asset-form-heading"><strong>تسجيل أصل جديد</strong><small>يمكن إثبات الاقتناء نقدًا أو من خلال فاتورة مورد مع ربطها بحساب المورد.</small></div>
+      <label>طريقة الاقتناء<select value={form.acquisition_mode} onChange={e=>setForm({...form,acquisition_mode:e.target.value})}><option value="cash">شراء نقدي / بنكي</option><option value="supplier_invoice">فاتورة مورد آجلة</option></select></label>
       <label>كود الأصل<input required value={form.code} onChange={e=>setForm({...form,code:e.target.value})}/></label>
       <label>اسم الأصل<input required value={form.name_ar} onChange={e=>setForm({...form,name_ar:e.target.value})}/></label>
       <label>مجموعة الأصل<select required value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>
@@ -196,12 +245,18 @@ const loadReport = async () => {
       <label>المسؤول أو العهدة<input value={form.custodian} onChange={e=>setForm({...form,custodian:e.target.value})}/></label>
       <label>الرقم التسلسلي<input value={form.serial_number} onChange={e=>setForm({...form,serial_number:e.target.value})}/></label>
       <label>نهاية الضمان<input type="date" value={form.warranty_end_date} onChange={e=>setForm({...form,warranty_end_date:e.target.value})}/></label>
-      <label>المورد<input value={form.supplier_name} onChange={e=>setForm({...form,supplier_name:e.target.value})}/></label>
-      <label>رقم فاتورة المورد<input value={form.supplier_invoice} onChange={e=>setForm({...form,supplier_invoice:e.target.value})}/></label>
+      {form.acquisition_mode === "cash" && <label>المورد (اختياري)<input value={form.supplier_name} onChange={e=>setForm({...form,supplier_name:e.target.value})}/></label>}
+      {form.acquisition_mode === "supplier_invoice" && <>
+        <label>المورد<select required value={form.supplier_id} onChange={e=>{const supplier=suppliers.find(x=>x.id===Number(e.target.value));setForm(old=>({...old,supplier_id:e.target.value,supplier_name:supplier?.name_ar||""}));}}><option value="">اختر المورد</option>{suppliers.map(s=><option key={s.id} value={s.id}>{s.code} · {s.name_ar}</option>)}</select></label>
+        <label>رقم فاتورة المورد<input required value={form.supplier_invoice} onChange={e=>setForm({...form,supplier_invoice:e.target.value})}/></label>
+        <label>صافي الفاتورة قبل الضريبة<input required type="number" min="0.0001" step="0.0001" value={form.supplier_net_amount} onChange={e=>setForm({...form,supplier_net_amount:e.target.value,original_cost:e.target.value})}/></label>
+        <label>كود ضريبة المدخلات<select value={form.supplier_tax_code} onChange={e=>setForm({...form,supplier_tax_code:e.target.value})}><option value="">بدون ضريبة</option>{taxCodes.filter(t=>t.category!=="reverse_charge").map(t=><option key={t.id} value={t.id}>{t.code} · {t.name_ar} · {t.rate}% · {t.input_tax_recoverable?"قابلة للاسترداد":"تُرسمل على الأصل"}</option>)}</select></label>
+      </>}
+      {form.acquisition_mode === "cash" && <label>رقم فاتورة المورد<input value={form.supplier_invoice} onChange={e=>setForm({...form,supplier_invoice:e.target.value})}/></label>}
       <label>الفرع<select required value={form.branch} onChange={e=>setForm({...form,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
       <label>تاريخ الاقتناء<input required type="date" value={form.acquisition_date} onChange={e=>setForm({...form,acquisition_date:e.target.value})}/></label>
       <label>بداية الإهلاك<input required type="date" value={form.depreciation_start_date} onChange={e=>setForm({...form,depreciation_start_date:e.target.value})}/></label>
-      <label>التكلفة<input required type="number" min="0.0001" step="0.0001" value={form.original_cost} onChange={e=>setForm({...form,original_cost:e.target.value})}/></label>
+      {form.acquisition_mode === "cash" && <label>التكلفة<input required type="number" min="0.0001" step="0.0001" value={form.original_cost} onChange={e=>setForm({...form,original_cost:e.target.value})}/></label>}
       <label>القيمة التخريدية<input type="number" min="0" step="0.0001" value={form.salvage_value} onChange={e=>setForm({...form,salvage_value:e.target.value})}/></label>
       <label>العمر (شهر)<input required type="number" min="1" value={form.useful_life_months} onChange={e=>setForm({...form,useful_life_months:e.target.value})}/></label>
       <label>السنة المالية<select required value={form.fiscal_year} onChange={e=>setForm({...form,fiscal_year:e.target.value})}><option value="">اختر السنة</option>{years.map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label>
@@ -212,12 +267,24 @@ const loadReport = async () => {
       {accountSelect("حساب أرباح بيع الأصول","disposal_gain_loss_account",accounts.filter(x=>x.nature==="revenue"))}
       {accountSelect("حساب خسائر بيع الأصول","disposal_loss_account",expenseAccounts)}
       <label className="asset-description">الوصف<input value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label>
-      <div className="asset-form-actions"><button className="primary-button" disabled={saving || !years.length}>{saving ? "جارٍ الحفظ…" : "حفظ الأصل وإثبات الاقتناء"}</button></div>
+      <div className="asset-form-actions"><button className="primary-button" disabled={saving || !years.length}>{saving ? "جارٍ الحفظ…" : form.acquisition_mode === "supplier_invoice" ? "حفظ الأصل وترحيل فاتورة المورد" : "حفظ الأصل وإثبات الاقتناء"}</button></div>
     </form>
     <div className="table-toolbar"><strong>سجل الأصول</strong><span className="module-count">{loading ? "جارٍ التحميل…" : assets.length + " أصل"}</span></div>
     <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الأصل</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة الدفترية</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
-      {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}<small className="table-subtitle">{({land:"أراضٍ",building:"مبانٍ",vehicle:"سيارات",furniture:"أثاث",equipment:"معدات",computers:"تقنية",other:"أخرى"} as Record<string,string>)[a.category]}{a.custodian ? " · العهدة: "+a.custodian : ""}</small></td><td>{a.acquisition_journal ? formatMoney(a.original_cost) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.accumulated_depreciation) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.net_book_value) : "—"}</td><td><span className="status-pill posted">{!a.acquisition_journal ? "بانتظار اعتماد الاقتناء" : a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك / التصرف</button></td></tr>)}
+      {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}<small className="table-subtitle">{({land:"أراضٍ",building:"مبانٍ",vehicle:"سيارات",furniture:"أثاث",equipment:"معدات",computers:"تقنية",other:"أخرى"} as Record<string,string>)[a.category]}{a.custodian ? " · العهدة: "+a.custodian : ""}</small></td><td>{a.acquisition_journal ? formatMoney(a.original_cost) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.accumulated_depreciation) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.net_book_value) : "—"}</td><td><span className="status-pill posted">{!a.acquisition_journal ? "بانتظار اعتماد الاقتناء" : a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك / التصرف</button>
+        {a.vendor_invoice_status === "draft" && <button type="button" className="subtle-button" disabled={saving} onClick={()=>void postAssetInvoice(a)}>ترحيل فاتورة المورد</button>}
+        {a.vendor_invoice_status === "posted" && <button type="button" className="subtle-button" onClick={()=>{setPaymentAssetId(a.id);setPaymentNumber("");setPaymentAmount("");setPaymentAccount(String(treasuryAccounts.find(t=>t.kind==="bank")?.account||""));setPendingPaymentId(null);}}>سداد المورد</button>}
+      </td></tr>)}
     </tbody></table>{!assets.length && !loading && <div className="table-empty">لا توجد أصول مسجلة حتى الآن.</div>}</div>
+    {paymentAssetId !== null && <div className="asset-report-filters">
+      <strong>سداد فاتورة الأصل: {assets.find(a=>a.id===paymentAssetId)?.name_ar}</strong>
+      <label>رقم سند السداد<input value={paymentNumber} onChange={e=>setPaymentNumber(e.target.value)}/></label>
+      <label>المبلغ<input type="number" min="0.0001" step="0.0001" value={paymentAmount} onChange={e=>setPaymentAmount(e.target.value)}/></label>
+      <label>حساب البنك<select value={paymentAccount} onChange={e=>setPaymentAccount(e.target.value)}><option value="">اختر البنك</option>{treasuryAccounts.filter(t=>t.kind==="bank").map(t=><option key={t.id} value={t.account}>{t.account_code} · {t.account_name}</option>)}</select></label>
+      <button type="button" className="primary-button" disabled={saving} onClick={()=>void createAssetPayment()}>{saving?"جارٍ الحفظ…":"إنشاء وترحيل السداد"}</button>
+      {pendingPaymentId !== null && <button type="button" className="subtle-button" disabled={saving} onClick={()=>void postAssetPayment()}>ترحيل السند بعد اعتماد المدير</button>}
+      <button type="button" className="subtle-button" onClick={()=>{setPaymentAssetId(null);setPendingPaymentId(null);}}>إغلاق</button>
+    </div>}
     <div className="asset-reports">
       <div className="table-toolbar"><strong>تقارير الأصول والتدفقات الاستثمارية</strong><span className="module-count">حسب الشركة والفرع والفترة</span></div>
       <div className="asset-report-filters">
