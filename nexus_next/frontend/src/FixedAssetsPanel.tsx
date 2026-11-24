@@ -145,7 +145,9 @@ const create = async (event: FormEvent) => {
           ? `تم حفظ فاتورة المورد كمسودة وتحتاج اعتماد المدير. رقم طلب الاعتماد: ${invoice.approval_request}.`
           : `تم ترحيل فاتورة المورد وربطها بالأصل. رقم القيد: ${invoice.journal_entry}.`);
       } else {
-        setNotice("تم تسجيل الأصل وإثبات الاقتناء.");
+        setNotice(asset.acquisition_journal
+          ? `تم تسجيل الأصل وترحيل الاقتناء. رقم القيد: ${asset.acquisition_journal}.`
+          : "تم حفظ الأصل وحركة الصرف كمسودة؛ يلزم اعتمادها وترحيلها من الخزينة قبل إتاحة الإهلاك.");
       }
       setDraftInvoiceAssetId(null);
       setForm({...emptyForm, branch: form.branch, fiscal_year: form.fiscal_year});
