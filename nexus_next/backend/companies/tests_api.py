@@ -86,6 +86,7 @@ class CompanySetupApiTests(APITestCase):
         manager = get_user_model().objects.get(username="atomic-manager")
         membership = CompanyMembership.objects.get(company=company, user=manager)
         self.assertEqual(membership.role, CompanyMembership.Role.ADMIN)
+        self.assertEqual(response.data["manager"]["display_name"], "مدير الشركة")
         self.assertTrue(membership.all_branches)
         self.assertTrue(Branch.objects.filter(company=company, is_head_office=True).exists())
         self.assertFalse(manager.is_staff)
