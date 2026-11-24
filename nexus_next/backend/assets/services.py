@@ -150,9 +150,16 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
     latest_impairment = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=period_date,
     ).order_by("-impairment_date", "-pk").first()
+    latest_reversal = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=period_date,
+    ).order_by("-reversal_date", "-pk").first()
+    latest_measurement_date = max(
+        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+        latest_reversal.reversal_date if latest_reversal else asset.depreciation_start_date - timedelta(days=1),
+    )
     previous_date = max(
         last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1),
-        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+        latest_measurement_date,
     )
     elapsed_days = (period_date - previous_date).days
     if elapsed_days <= 0:
@@ -163,13 +170,27 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
     impairment_total = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=period_date,
     ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
-    remaining = max(Decimal("0"), asset.original_cost - posted_total - impairment_total - asset.salvage_value)
+    reversal_total = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=period_date,
+    ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+    net_impairment = impairment_total - reversal_total
+    remaining = max(Decimal("0"), asset.original_cost - posted_total - net_impairment - asset.salvage_value)
     if remaining <= 0:
         raise ValidationError("تم استهلاك أو تخفيض كامل القيمة القابلة للإهلاك.")
-    if latest_impairment:
-        life_used_days = max(0, (latest_impairment.impairment_date - asset.depreciation_start_date).days)
+    if latest_measurement_date >= asset.depreciation_start_date:
+        dep_at_measurement = asset.depreciations.filter(
+            journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=latest_measurement_date,
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        loss_at_measurement = asset.impairments.filter(
+            journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=latest_measurement_date,
+        ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+        reversal_at_measurement = asset.impairment_reversals.filter(
+            journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=latest_measurement_date,
+        ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+        carrying_at_measurement = asset.original_cost - dep_at_measurement - loss_at_measurement + reversal_at_measurement
+        life_used_days = max(0, (latest_measurement_date - asset.depreciation_start_date).days + 1)
         remaining_life_days = max(1, asset.useful_life_months * 30 - life_used_days)
-        revised_basis = max(Decimal("0"), latest_impairment.recoverable_amount - asset.salvage_value)
+        revised_basis = max(Decimal("0"), carrying_at_measurement - asset.salvage_value)
         daily_rate = revised_basis / Decimal(remaining_life_days)
     else:
         daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
