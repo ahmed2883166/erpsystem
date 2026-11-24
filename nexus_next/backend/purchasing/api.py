@@ -600,8 +600,13 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                     "description": f"عكس مرتجع المورد {returned.return_number}",
                     "debit": Decimal("0"), "credit": returned.grand_total, "sort": 1,
                 })
+        # Keep refund history inside the same accessible invoice/branch scope.
+        # Reversed refunds remain visible with a balancing reversal event so the
+        # statement reproduces the supplier subledger at any reporting date.
         refunds = SupplierRefund.objects.filter(
-            company_id=company_id, supplier_id=supplier_id, status=SupplierRefund.Status.POSTED,
+            company_id=company_id, supplier_id=supplier_id,
+            return_document__invoice__in=invoices,
+            status__in=(SupplierRefund.Status.POSTED, SupplierRefund.Status.REVERSED),
         ).select_related("return_document")
         for refund in refunds:
             events.append({
@@ -610,6 +615,13 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "description": f"استرداد نقدي من المورد عن المرتجع {refund.return_document.return_number}",
                 "debit": Decimal("0"), "credit": refund.amount, "sort": 1,
             })
+            if refund.status == SupplierRefund.Status.REVERSED and refund.reversal_date:
+                events.append({
+                    "date": refund.reversal_date, "kind": "supplier_refund_reversal",
+                    "number": f"REV-{refund.refund_number}",
+                    "description": f"عكس استرداد المورد {refund.refund_number}",
+                    "debit": refund.amount, "credit": Decimal("0"), "sort": 0,
+                })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
         opening = sum(
