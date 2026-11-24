@@ -50,6 +50,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [aging, setAging] = useState<SupplierAging | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
   const [receiptForm, setReceiptForm] = useState({ supplier: "", warehouse: "", purchase_order: "", receipt_number: "", receipt_date: new Date().toISOString().slice(0, 10), supplier_delivery_ref: "", notes: "" });
@@ -249,8 +250,13 @@ const saveOrder = async (event: React.FormEvent) => {
   };
   // تأكيد أمر الشراء المحدد قبل الانتقال إلى خطوات الاستلام.
 const confirmOrder = async (id: number) => {
-    setBusy(true); setError("");
-    try { await purchasingApi.confirmOrder(id); await refresh(); }
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await purchasingApi.confirmOrder(id);
+      if ("status" in result && result.status === "pending_approval") setNotice(result.detail);
+      else setNotice("تم تأكيد أمر الشراء.");
+      await refresh();
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر اعتماد أمر الشراء."); }
     finally { setBusy(false); }
   };
@@ -436,6 +442,7 @@ const postInvoice = async (id: number) => {
     </div>
     <div className="inventory-tabs"><button className={tab === "sourcing" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("sourcing");setSourcingView("rfqs");setShowForm(false);setSearch("");}}>عروض الموردين <b>{rfqs.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
+    {notice && <div className="success-banner">{notice}</div>}
 
     {tab === "sourcing" && <div className="inventory-tabs"><button className={sourcingView === "rfqs" ? "inventory-tab active" : "inventory-tab"} type="button" onClick={()=>{setSourcingView("rfqs");setShowForm(false);}}>طلبات العروض <b>{rfqs.length}</b></button><button className={sourcingView === "quotations" ? "inventory-tab active" : "inventory-tab"} type="button" onClick={()=>{setSourcingView("quotations");setShowForm(false);}}>مقارنة العروض <b>{quotations.length}</b></button></div>}
     {convertingRFQId !== null && tab === "sourcing" && <form className="inventory-form" onSubmit={e=>void submitAwardConversion(e)}>
