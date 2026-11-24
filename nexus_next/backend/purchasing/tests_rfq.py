@@ -25,8 +25,36 @@ class PurchaseRFQWorkflowTests(APITestCase):
         self.supplier_b = Supplier.objects.create(company=self.company, code="RFQ-S2", name_ar="مورد ب")
 
     def test_rfq_invite_receive_compare_and_award(self):
+        requisition = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk,
+            "request_number": "REQ-RFQ-001",
+            "request_date": "2026-11-24",
+            "required_date": "2026-11-30",
+            "department": "المخازن",
+            "purpose": "طلب احتياج سيتم طرحه للمنافسة",
+            "lines": [{
+                "product": self.product.pk,
+                "requested_quantity": "5",
+                "estimated_unit_price": "10",
+            }],
+        }, format="json")
+        self.assertEqual(requisition.status_code, 201, requisition.data)
+        requisition_id = requisition.data["id"]
+        submitted = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/submit/", {}, format="json"
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.client.force_authenticate(self.manager)
+        reviewed = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "approve", "note": "احتياج معتمد للمنافسة"}, format="json",
+        )
+        self.assertEqual(reviewed.status_code, 200, reviewed.data)
+        self.client.force_authenticate(self.user)
+
         created = self.client.post("/api/purchasing/rfqs/", {
             "company": self.company.pk,
+            "source_requisition": requisition_id,
             "rfq_number": "RFQ-2026-001",
             "issue_date": "2026-11-24",
             "closing_date": "2026-11-30",
@@ -70,6 +98,17 @@ class PurchaseRFQWorkflowTests(APITestCase):
         order = self.client.get(f"/api/purchasing/orders/{converted.data['purchase_order_id']}/")
         self.assertEqual(order.status_code, 200, order.data)
         self.assertEqual(order.data["line_items"][0]["unit_price"], "11.4000")
+        from purchasing.models import PurchaseRequisition
+        saved_requisition = PurchaseRequisition.objects.get(pk=requisition_id)
+        self.assertEqual(saved_requisition.status, PurchaseRequisition.Status.CONVERTED)
+        self.assertEqual(saved_requisition.converted_order_id, order.data["id"])
+        duplicate_requisition_conversion = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/convert/",
+            {"supplier": self.supplier_a.pk, "warehouse": self.warehouse.pk,
+             "order_number": "PO-REQ-DUPLICATE", "order_date": "2026-11-24"},
+            format="json",
+        )
+        self.assertEqual(duplicate_requisition_conversion.status_code, 400)
         second_award = self.client.post(f"/api/purchasing/rfqs/{rfq_id}/award/", {
             "quotation": quote_b.data["id"], "reason": "محاولة ترسية ثانية"
         }, format="json")
