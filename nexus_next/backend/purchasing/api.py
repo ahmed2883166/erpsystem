@@ -395,6 +395,8 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             company_id=company_id, supplier_id=supplier_id,
             status=AssetPurchaseInvoice.Status.POSTED,
         ).select_related("asset")
+        if not request.user.is_superuser or is_platform_owner(request.user):
+            asset_invoices = asset_invoices.filter(branch__in=accessible_branches(request.user))
         for invoice in asset_invoices:
             events.append({
                 "date": invoice.invoice_date, "kind": "asset_invoice",
@@ -406,6 +408,8 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             company_id=company_id, supplier_id=supplier_id,
             status=AssetSupplierPayment.Status.POSTED,
         ).select_related("invoice")
+        if not request.user.is_superuser or is_platform_owner(request.user):
+            asset_payments = asset_payments.filter(branch__in=accessible_branches(request.user))
         for payment in asset_payments:
             events.append({
                 "date": payment.payment_date, "kind": "asset_payment",
