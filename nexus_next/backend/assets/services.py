@@ -179,6 +179,10 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         raise ValidationError("الأصل غير نشط أو لم يتم تسجيل اقتنائه.")
     if period_date < asset.depreciation_start_date:
         raise ValidationError("تاريخ الإهلاك يسبق بداية الإهلاك المحددة.")
+    if asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__gt=period_date,
+    ).exists():
+        raise ValidationError("يوجد اختبار انخفاض قيمة بتاريخ لاحق؛ لا يمكن ترحيل إهلاك بأثر رجعي قبله.")
     if AssetDepreciation.objects.filter(asset=asset, period_date__year=period_date.year, period_date__month=period_date.month).exists():
         raise ValidationError("تم تسجيل إهلاك هذا الأصل لهذا الشهر من قبل.")
     try:
@@ -250,6 +254,10 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
         raise ValidationError("تاريخ اختبار الانخفاض يسبق تاريخ اقتناء الأصل.")
     if AssetImpairment.objects.filter(asset=asset, impairment_date=impairment_date).exists():
         raise ValidationError("تم تسجيل اختبار انخفاض قيمة لهذا الأصل في التاريخ نفسه.")
+    if asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__gt=impairment_date,
+    ).exists():
+        raise ValidationError("توجد خسارة انخفاض بتاريخ لاحق؛ يجب تصحيح التسلسل من آخر اختبار إلى أوله.")
     if asset.depreciations.filter(
         journal_entry__status=JournalEntry.Status.POSTED, period_date__gt=impairment_date,
     ).exists():
@@ -339,8 +347,14 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         raise ValidationError("الأصل غير نشط أو لم يتم إثبات اقتنائه.")
     if disposal_date < asset.depreciation_start_date:
         raise ValidationError("تاريخ الاستبعاد يسبق بداية الإهلاك.")
-    if AssetDepreciation.objects.filter(asset=asset, period_date__gt=disposal_date).exists():
+    if AssetDepreciation.objects.filter(
+        asset=asset, period_date__gt=disposal_date, journal_entry__status=JournalEntry.Status.POSTED,
+    ).exists():
         raise ValidationError("توجد قيود إهلاك بتاريخ لاحق لتاريخ الاستبعاد؛ راجعها أولًا.")
+    if asset.impairments.filter(
+        impairment_date__gt=disposal_date, journal_entry__status=JournalEntry.Status.POSTED,
+    ).exists():
+        raise ValidationError("توجد اختبارات انخفاض بتاريخ لاحق لتاريخ الاستبعاد؛ راجع تسلسل الحركات أولًا.")
 
     try:
         year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
