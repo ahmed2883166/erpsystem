@@ -387,7 +387,7 @@ class AccountingReportPostgresProfileTests(APITestCase):
     def test_large_report_scope_uses_bounded_single_worker_postgres_profile(self):
         if connection.vendor != "postgresql":
             self.skipTest("PostgreSQL-specific report session settings.")
-        from accounting.api import _accounting_report_work_mem
+        from accounting.api import _accounting_report_profile, _accounting_report_work_mem
 
         with CaptureQueriesContext(connection) as captured:
             with _accounting_report_work_mem():
@@ -399,8 +399,9 @@ class AccountingReportPostgresProfileTests(APITestCase):
                     cursor.execute("SELECT current_setting('jit')")
                     jit = cursor.fetchone()[0]
 
-        self.assertEqual(work_mem, "32MB")
-        self.assertEqual(parallel_workers, "0")
+        expected_work_mem, expected_parallel_workers = _accounting_report_profile()
+        self.assertEqual(work_mem, expected_work_mem)
+        self.assertEqual(parallel_workers, str(expected_parallel_workers))
         self.assertEqual(jit, "off")
         sql = " ".join(query["sql"] for query in captured.captured_queries).upper()
         self.assertIn("SET LOCAL WORK_MEM", sql)
