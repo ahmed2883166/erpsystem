@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
@@ -33,6 +33,9 @@ export default function InventoryPanel({ companyId, currency = "" }: { companyId
   const [valuationIntegrity, setValuationIntegrity] = useState<InventoryValuationIntegrity | null>(null);
   const [valuationIntegrityError, setValuationIntegrityError] = useState("");
   const [valuationIntegrityBusy, setValuationIntegrityBusy] = useState(false);
+  const [costAging, setCostAging] = useState<InventoryCostAging | null>(null);
+  const [costAgingError, setCostAgingError] = useState("");
+  const [costAgingBusy, setCostAgingBusy] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [roleAssignments, setRoleAssignments] = useState<AccountRole[]>([]);
   const [search, setSearch] = useState("");
@@ -108,6 +111,14 @@ const loadValuationIntegrity = async () => {
     try { setValuationIntegrity(await stockApi.valuationIntegrity(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
     catch (reason) { setValuationIntegrity(null); setValuationIntegrityError(reason instanceof Error ? reason.message : "تعذر فحص سلامة تقييم المخزون."); }
     finally { setValuationIntegrityBusy(false); }
+  };
+  // تحميل تقرير أعمار طبقات FIFO من تاريخ الاستلام الأصلي، مع احترام نطاق الفرع.
+  const loadCostAging = async () => {
+    if (!companyId) return;
+    setCostAgingBusy(true); setCostAgingError("");
+    try { setCostAging(await stockApi.costAging(companyId, reconciliationBranch ? Number(reconciliationBranch) : undefined)); }
+    catch (reason) { setCostAging(null); setCostAgingError(reason instanceof Error ? reason.message : "تعذر تحميل تقرير أعمار طبقات التكلفة."); }
+    finally { setCostAgingBusy(false); }
   };
   const filteredProducts = useMemo(() => products.filter((p) => `${p.code} ${p.barcode} ${p.name_ar}`.toLowerCase().includes(search.toLowerCase())), [products, search]);
   const inventoryIndexes = useMemo(() => {
@@ -361,6 +372,22 @@ const submit = async (event: React.FormEvent) => {
           </div>
           <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد</th><th>القيمة</th><th>آخر حركة مرحلة</th><th>أيام دون حركة</th><th>التصنيف</th></tr></thead><tbody>{stockAgingRows.filter((row) => (stockAgeFilter === "all" || row.ageBand === stockAgeFilter) && `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product}-${row.warehouse}`}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td><td>{row.last_movement || "لا توجد حركة مسجلة"}</td><td>{row.ageDays === null ? "—" : row.ageDays.toLocaleString("ar-EG")}</td><td><span className={`status-pill ${row.ageBand === "stagnant" ? "reversed" : row.ageBand === "very_slow" ? "slow" : row.ageBand === "slow" ? "draft" : row.ageBand === "active" ? "posted" : "unknown"}`}>{row.ageBand === "active" ? "نشط" : row.ageBand === "slow" ? "بطيء" : row.ageBand === "very_slow" ? "بطيء جدًا" : row.ageBand === "stagnant" ? "راكد" : "غير محدد"}</span></td></tr>)}{!stockAgingRows.length && <tr><td colSpan={8}>لا توجد أرصدة موجبة لتحليلها.</td></tr>}</tbody></table></div>
           {stockAgingCounts.unknown > 0 && <p className="inventory-report-note">يوجد {stockAgingCounts.unknown.toLocaleString("ar-EG")} صنف/مخزن بلا حركة مرحلة مسجلة في سجل الحركات المتاح؛ لم نفترض لها عمرًا أو نصنفها كراكد.</p>}
+        </section>
+        <section className="activity-panel inventory-report-section">
+          <div className="activity-title"><div><h3>أعمار طبقات التكلفة وفق FIFO</h3><p>العمر محسوب من تاريخ الاستلام الأصلي المرتبط بطبقة التكلفة، وليس من آخر حركة مخزنية</p></div><button type="button" className="primary-button" disabled={costAgingBusy} onClick={() => void loadCostAging()}>{costAgingBusy ? "جارٍ التحميل…" : "تحديث تقرير أعمار التكلفة"}</button></div>
+          {costAgingError && <div className="error-banner">{costAgingError}</div>}
+          {costAging && <>
+            <div className="metrics-grid inventory-report-metrics">
+              <article className="metric-card"><div className="metric-top">قيمة طبقات FIFO المتبقية</div><strong className="metric-value">{formatMoney(costAging.totals.value)}</strong><small>حتى {costAging.as_of}</small></article>
+              <article className="metric-card"><div className="metric-top">كمية متبقية</div><strong className="metric-value">{Number(costAging.totals.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</strong><small>{costAging.totals.layers.toLocaleString("ar-EG")} طبقة تكلفة</small></article>
+              <article className="metric-card"><div className="metric-top">بطيء جدًا · 91–180 يوم</div><strong className="metric-value">{formatMoney(costAging.buckets.very_slow.value)}</strong><small>{Number(costAging.buckets.very_slow.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} وحدة</small></article>
+              <article className="metric-card"><div className="metric-top">راكد · أكثر من 180 يوم</div><strong className="metric-value">{formatMoney(costAging.buckets.stagnant.value)}</strong><small>{Number(costAging.buckets.stagnant.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} وحدة</small></article>
+            </div>
+            <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن / الموقع</th><th>رقم الاستلام الأصلي</th><th>تاريخ الاستلام</th><th>العمر بالأيام</th><th>الكمية المتبقية</th><th>تكلفة الوحدة</th><th>قيمة الطبقة</th><th>الصلاحية</th></tr></thead><tbody>{costAging.rows.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name} ${row.source_movement_number}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}{row.location_name ? ` / ${row.location_name}` : ""}</td><td>{row.source_movement_number}</td><td>{row.receipt_date}</td><td>{row.age_days.toLocaleString("ar-EG")}</td><td>{Number(row.quantity_remaining).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.unit_cost)}</td><td>{formatMoney(row.layer_value)}</td><td>{row.expiry_status === "expired" ? <span className="status-pill reversed">منتهي</span> : row.expiry_status === "expiring" ? <span className="status-pill draft">ينتهي خلال 30 يومًا</span> : row.expiry_status === "valid" ? <span className="status-pill posted">ساري</span> : "غير محدد"}</td></tr>)}{!costAging.rows.length && <tr><td colSpan={10}>لا توجد طبقات FIFO متبقية بتاريخ التقرير.</td></tr>}</tbody></table></div>
+            {costAging.truncated && <p className="inventory-report-note">تم عرض أول 500 طبقة فقط لتجنب تحميل مفرط؛ الإجماليات تشمل جميع الطبقات ضمن نطاق صلاحياتك.</p>}
+            <p className="inventory-report-note">{costAging.basis} {costAging.scope_note}</p>
+          </>}
+          {!costAging && !costAgingError && <p className="inventory-report-note">اضغط تحديث التقرير لعرض طبقات FIFO المتبقية. أصناف المتوسط المرجح مستبعدة من أعمار الطبقات لأن توزيعها لا يمثل طبقات تكلفة مستقلة.</p>}
         </section>
         <section className="activity-panel inventory-report-section"><div className="activity-title"><div><h3>تنبيهات الصلاحية</h3><p>الأصناف المنتهية أو التي تنتهي خلال 30 يوماً</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المخزن</th><th>الموقع</th><th>تاريخ الصلاحية</th><th>الأيام المتبقية</th><th>الكمية</th><th>القيمة</th></tr></thead><tbody>{expiryAlerts.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td>{row.product_code} - {row.product_name}</td><td>{row.warehouse_name}</td><td>{row.location_name || "عام"}</td><td>{row.expiry_date}</td><td><span className={row.days < 0 ? "status-pill reversed" : "status-pill draft"}>{row.days < 0 ? `منتهي منذ ${Math.abs(row.days)} يوم` : row.days === 0 ? "ينتهي اليوم" : `${row.days} يوم`}</span></td><td>{Number(row.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.inventory_value)}</td></tr>)}{!expiryAlerts.length && <tr><td colSpan={7}>لا توجد تنبيهات صلاحية خلال الفترة المحددة.</td></tr>}</tbody></table></div>
