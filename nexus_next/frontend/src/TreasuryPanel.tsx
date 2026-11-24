@@ -38,7 +38,7 @@ export default function TreasuryPanel({companyId}: Props) {
     setLoading(true);setError("");
     try {
       const [a,t,b,y,g,rs,cs,xr,companies]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies()]);
-      const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"EGP";
+      const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"";
       setAccounts(a);setTransactions(t);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);
       setAcc(old=>({...old,currency_code:old.currency_code==="EGP"&&companyBase!=="EGP"?companyBase:old.currency_code}));
       setReval(old=>({...old,account:old.account||String(a.find(v=>v.is_active&&v.currency_code!==companyBase)?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||"")}));
