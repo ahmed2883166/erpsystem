@@ -3,7 +3,7 @@
  * تشمل التسوية البنكية ومطابقة كشف البنك مع الحركات المسجلة.
  */
 import { useCallback, useEffect, useState } from "react";
-import { formatMoney } from "./formatters";
+import { formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation } from "./api";
 
 type Props = { companyId: number };
@@ -61,7 +61,7 @@ const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setErr
     const foreign=!!source&&source.currency_code!==baseCurrencyCode;
     const currency=foreign?currencies.find(v=>v.code===source?.currency_code):undefined;
     if(foreign&&(!currency||Number(doc.transaction_amount)<=0||Number(doc.exchange_rate)<=0||!doc.exchange_rate_date))throw new Error("أدخل المبلغ الأجنبي وسعر الصرف وتاريخه المعتمد.");
-    const baseAmount=foreign?(Number(doc.transaction_amount)*Number(doc.exchange_rate)).toFixed(4):doc.amount;
+    const baseAmount=foreign?multiplyDecimalToFixed(doc.transaction_amount, doc.exchange_rate, 4):doc.amount;
     if(foreign&&!exchangeRates.some(v=>v.currency_code===source?.currency_code&&v.rate_date===doc.exchange_rate_date&&Number(v.rate)===Number(doc.exchange_rate)))throw new Error("سعر الصرف غير موجود ضمن الأسعار المعتمدة للشركة في التاريخ المحدد.");
     await treasuryApi.createTransaction({company:companyId,branch:Number(doc.branch),fiscal_year:Number(doc.fiscal_year),source_account:Number(doc.source_account),destination_account:doc.kind==="transfer"?Number(doc.destination_account):null,counter_account:doc.kind==="transfer"?null:Number(doc.counter_account),kind:doc.kind,document_number:doc.document_number,transaction_date:doc.transaction_date,amount:baseAmount,...(foreign?{transaction_currency:currency!.id,transaction_amount:doc.transaction_amount,exchange_rate:doc.exchange_rate,exchange_rate_date:doc.exchange_rate_date}:{}),description:doc.description,reference:doc.reference});
     setDoc(old=>({...old,document_number:"",amount:"",transaction_amount:"",exchange_rate:"",description:"",reference:""}));await load();
