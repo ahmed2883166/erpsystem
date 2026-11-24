@@ -306,6 +306,14 @@ def post_purchase_invoice(invoice_id, user):
         ).get(pk=invoice_line.receipt_line_id)
         if receipt_line.movement_id != receipt.stock_movement_id:
             raise ValidationError("سطر الفاتورة لا يتبع إذن الاستلام المحدد.")
+        reserved_before = PurchaseInvoiceLine.objects.filter(
+            receipt_line_id=receipt_line.pk,
+            invoice__status__in=(PurchaseInvoice.Status.DRAFT, PurchaseInvoice.Status.POSTED),
+        ).exclude(invoice_id=invoice.pk).aggregate(total=Sum("billed_quantity"))["total"] or Decimal("0")
+        if reserved_before + invoice_line.billed_quantity > receipt_line.quantity:
+            raise ValidationError(
+                f"إجمالي الكميات المحجوزة بالفواتير يتجاوز الكمية المستلمة للصنف {receipt_line.product.code}."
+            )
         prior_totals = PurchaseInvoiceLine.objects.filter(
             receipt_line_id=receipt_line.pk,
             invoice__status=PurchaseInvoice.Status.POSTED,
@@ -315,10 +323,6 @@ def post_purchase_invoice(invoice_id, user):
         billed_before = prior_totals["quantity"] or Decimal("0")
         net_before = prior_totals["net"] or Decimal("0")
         billed_after = billed_before + invoice_line.billed_quantity
-        if billed_after > receipt_line.quantity:
-            raise ValidationError(
-                f"إجمالي الكمية المفوترة يتجاوز الكمية المستلمة للصنف {receipt_line.product.code}."
-            )
         if billed_after == receipt_line.quantity:
             # The final invoice consumes the exact residual, avoiding rounding
             # drift across multiple partial invoices.
