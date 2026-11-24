@@ -248,7 +248,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 status=FiscalYear.Status.OPEN,
             )
         except (FiscalYear.DoesNotExist, TypeError, ValueError):
-            raise ValidationError({"fiscal_year": "حدد سنة مالية مفتوحة وصحيحة."})
+            raise ValidationError({"fiscal_year": "حدد سنة مالية مفتوحة وصحيحة."}) from None
         if not (year.start_date <= period_date <= year.end_date):
             raise ValidationError({"period_date": "تاريخ الإهلاك خارج السنة المالية المحددة."})
         processed, skipped = [], []
