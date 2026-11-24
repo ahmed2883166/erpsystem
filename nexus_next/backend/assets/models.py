@@ -111,8 +111,12 @@ class FixedAsset(models.Model):
         return self.depreciations.aggregate(total=models.Sum("amount"))["total"] or 0
 
     @property
+    def accumulated_impairment(self):
+        return self.impairments.aggregate(total=models.Sum("impairment_loss"))["total"] or 0
+
+    @property
     def net_book_value(self):
-        return self.original_cost - self.accumulated_depreciation
+        return self.original_cost - self.accumulated_depreciation - self.accumulated_impairment
 
     @property
     def depreciable_amount(self):
@@ -134,6 +138,55 @@ class AssetDepreciation(models.Model):
     class Meta:
         ordering = ("period_date",)
         constraints = [models.UniqueConstraint(fields=("asset", "period_date"), condition=Q(is_partial_period=False), name="uq_asset_depr_period")]
+
+
+class AssetImpairment(models.Model):
+    """سجل اختبار انخفاض قيمة الأصل وفق IAS 36 مع قيد مستقل قابل للمطابقة."""
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="impairments")
+    impairment_date = models.DateField()
+    carrying_amount_before = models.DecimalField(max_digits=20, decimal_places=4)
+    recoverable_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    impairment_loss = models.DecimalField(max_digits=20, decimal_places=4)
+    impairment_expense_account = models.ForeignKey(
+        ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_impairment_expenses",
+    )
+    accumulated_impairment_account = models.ForeignKey(
+        ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_accumulated_impairments",
+    )
+    journal_entry = models.OneToOneField(
+        JournalEntry, on_delete=models.PROTECT, related_name="asset_impairment",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("impairment_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("asset", "impairment_date"), name="uq_asset_impairment_date"),
+            models.CheckConstraint(condition=Q(carrying_amount_before__gt=0), name="ck_asset_impairment_carrying_positive"),
+            models.CheckConstraint(condition=Q(recoverable_amount__gte=0), name="ck_asset_impairment_recoverable_nonnegative"),
+            models.CheckConstraint(condition=Q(impairment_loss__gt=0), name="ck_asset_impairment_loss_positive"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.impairment_loss != self.carrying_amount_before - self.recoverable_amount:
+            raise ValidationError({"impairment_loss": "خسارة الانخفاض يجب أن تساوي القيمة الدفترية قبل الانخفاض ناقص القيمة القابلة للاسترداد."})
+        if self.impairment_expense_account_id and (
+            self.impairment_expense_account.company_id != self.asset.company_id
+            or self.impairment_expense_account.nature != "expense"
+            or self.impairment_expense_account.is_group
+            or not self.impairment_expense_account.allow_posting
+        ):
+            raise ValidationError({"impairment_expense_account": "اختر حساب مصروف انخفاض قيمة تفصيليًا من نفس الشركة."})
+        if self.accumulated_impairment_account_id and (
+            self.accumulated_impairment_account.company_id != self.asset.company_id
+            or self.accumulated_impairment_account.nature != "asset"
+            or self.accumulated_impairment_account.is_group
+            or not self.accumulated_impairment_account.allow_posting
+        ):
+            raise ValidationError({"accumulated_impairment_account": "اختر حسابًا مقابلًا للأصل من نفس الشركة."})
+        if self.impairment_expense_account_id == self.accumulated_impairment_account_id:
+            raise ValidationError("يجب فصل حساب مصروف الانخفاض عن حساب مجمع الانخفاض.")
 
 
 class AssetPurchaseInvoice(models.Model):
