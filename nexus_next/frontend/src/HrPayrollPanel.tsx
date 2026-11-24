@@ -42,6 +42,7 @@ export default function HrPayrollPanel({ companyId, baseCurrencyId, country }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [employeeSearch,setEmployeeSearch]=useState("");
   const [employeeDraft, setEmployeeDraft] = useState({code:"",full_name_ar:"",branch:"",currency:"",hire_date:new Date().toISOString().slice(0,10),basic_salary:"0"});
   const [componentDraft, setComponentDraft] = useState({code:"",name_ar:"",kind:"earning" as HrPayrollComponent["kind"],method:"fixed" as HrPayrollComponent["method"],default_value:"0",expense_account:"",payable_account:"",affects_taxable_base:false,affects_insurance_base:false,requires_approval:false});
   const [attendanceDraft, setAttendanceDraft] = useState({employee:"",work_date:new Date().toISOString().slice(0,10),status:"present" as HrAttendance["status"],worked_hours:"8",overtime_hours:"0",friday_worked:false,late_minutes:"0"});
@@ -351,7 +352,7 @@ const exportEmployeePayReport = () => {
       <div className="section-heading" style={{marginTop:24}}><div><h2>سجل الموظفين</h2><p>البيانات الأساسية والحالة الوظيفية</p></div><span className="module-count">{employees.length} موظف</span></div>
       <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الموظف</th><th>الفرع</th><th>تاريخ التعيين</th><th>الأساسي</th><th>الحالة</th></tr></thead><tbody>
         {employees.map(e=><tr key={e.id}><td className="code-cell">{e.code}</td><td>{e.full_name_ar}</td><td>{e.branch_name}</td><td>{e.hire_date}</td><td>{money(e.basic_salary)} {e.currency_code}</td><td><span className="status-pill">{statusLabels[e.status]||e.status}</span></td></tr>)}
-      </tbody></table>{!employees.length&&<div className="table-empty">{busy?"جارٍ التحميل…":"لا يوجد موظفون مسجلون."}</div>}</div>
+      </tbody></table>{!employees.length&&<div className="table-empty">{busy?"جارٍ التحميل…":"لا يوجد موظفون مسجلون."}</div>}{employees.length>0&&!employees.some(e=>`${e.code} ${e.full_name_ar} ${e.branch_name}`.toLocaleLowerCase("ar").includes(employeeSearch.trim().toLocaleLowerCase("ar")))&&<div className="table-empty">لا يوجد موظفون مطابقون للبحث.</div>}</div>
     </>}
     {tab==="components"&&<>
       <form className="journal-form" onSubmit={submitComponent}>
