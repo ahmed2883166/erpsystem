@@ -147,7 +147,11 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             "company", "requested_by", "decided_by", "purchase_invoice",
             "purchase_invoice__supplier", "supplier_payment", "supplier_payment__supplier",
             "treasury_transaction", "treasury_transaction__source_account",
-            "treasury_transaction__counter_account",
+            "treasury_transaction__counter_account", "asset_purchase_invoice",
+            "asset_purchase_invoice__supplier", "asset_purchase_invoice__asset",
+            "asset_purchase_invoice__tax_code", "asset_supplier_payment",
+            "asset_supplier_payment__supplier", "asset_supplier_payment__invoice",
+            "asset_supplier_payment__payment_account",
         )
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             companies = accessible_companies(self.request.user)
@@ -171,6 +175,10 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
                     supplier_payment__invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
                     treasury_transaction__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE,
+                    asset_purchase_invoice__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT,
+                    asset_supplier_payment__branch__in=branches)
             )
         company_id = parse_company_param(self.request)
         if company_id:
@@ -192,6 +200,16 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             return SupplierPayment.objects.select_for_update().select_related(
                 "supplier", "invoice"
             ).get(pk=approval.supplier_payment_id)
+        if approval.document_type == FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE:
+            from assets.models import AssetPurchaseInvoice
+            return AssetPurchaseInvoice.objects.select_for_update().select_related(
+                "supplier", "asset", "tax_code", "branch", "fiscal_year",
+            ).get(pk=approval.asset_purchase_invoice_id)
+        if approval.document_type == FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT:
+            from assets.models import AssetSupplierPayment
+            return AssetSupplierPayment.objects.select_for_update().select_related(
+                "supplier", "invoice", "payment_account", "branch",
+            ).get(pk=approval.asset_supplier_payment_id)
         from treasury.models import TreasuryTransaction
         return TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
             "source_account", "counter_account"
@@ -209,6 +227,8 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "purchase_invoice",
             FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "supplier_payment",
             FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "treasury_transaction",
+            FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE: "asset_purchase_invoice",
+            FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT: "asset_supplier_payment",
         }[approval.document_type]
         latest = FinancialApprovalRequest.objects.filter(
             document_type=approval.document_type, **{f"{relation}_id": document.pk}
@@ -218,12 +238,14 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         if document.status != "draft":
             raise ValidationError("لا يمكن اعتماد مستند ليس مسودة.")
         snapshot = financial_document_snapshot(approval.document_type, document)
-        amount = document.grand_total if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE else document.amount
+        amount = document.grand_total if approval.document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount
         policy = DiscountApprovalPolicy.objects.filter(company_id=approval.company_id).first()
         field = {
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "max_purchase_invoice_amount",
             FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "max_payment_amount",
             FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "max_payment_amount",
+            FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE: "max_purchase_invoice_amount",
+            FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT: "max_payment_amount",
         }[approval.document_type]
         limit = getattr(policy, field, None) if policy else None
         if approval.document_type == FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT:
