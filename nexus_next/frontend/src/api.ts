@@ -813,7 +813,8 @@ export type FixedAsset = {
 };
 export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; accumulated_impairment:string; net_book_value: string;
   rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];
-  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;status:string}[] };
+  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;status:string}[];
+  impairment_reversals:{id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;status:string}[] };
 export type AssetRegisterReport = {
   company:number;as_of:string;
   totals:{original_cost:string;accumulated_depreciation:string;accumulated_impairment:string;net_book_value_active:string;asset_count:number};
@@ -829,6 +830,7 @@ export type AssetAccountReconciliation = {
   depreciation_expense_accounts:AssetReconciliationRow[];
   accumulated_impairment_accounts:AssetReconciliationRow[];
   asset_expense_accounts:(AssetReconciliationRow & {expected_depreciation:string;expected_impairment:string})[];
+  impairment_reversal_income_accounts?:AssetReconciliationRow[];
   is_reconciled:boolean;difference_count:number;note:string;
 };
 export type AssetDepreciationRunResult = {
@@ -896,6 +898,11 @@ export const fixedAssetsApi = {
   impair: async (id:number, payload:{impairment_date:string;recoverable_amount:string;impairment_expense_account:number;accumulated_impairment_account:number;fiscal_year:number}) => {
     await request<{detail:string}>("/api/csrf/");
     return request<{id:number;asset_id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model";oci_note:string}>(`/api/assets/fixed-assets/${id}/impair/`, {method:"POST",body:JSON.stringify(payload)});
+  },
+  // عكس خسارة انخفاض القيمة وفق سقف IAS 36 للقيمة الدفترية الافتراضية.
+  reverseImpairment: async (id:number, payload:{reversal_date:string;recoverable_amount:string;reversal_income_account:number;fiscal_year:number}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;asset_id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model"}>(`/api/assets/fixed-assets/${id}/reverse-impairment/`, {method:"POST",body:JSON.stringify(payload)});
   },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
   dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
