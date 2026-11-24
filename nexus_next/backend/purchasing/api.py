@@ -17,6 +17,7 @@ from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from inventory.models import StockMovement
+from suppliers.models import Supplier
 
 from companies.models import Branch
 
