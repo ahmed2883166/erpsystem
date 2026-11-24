@@ -12,7 +12,7 @@ function Get-PgTool([string]$Name) {
     $roots = @()
     if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles 'PostgreSQL') }
     if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) { $roots += (Join-Path $env:ProgramW6432 'PostgreSQL') }
-    $versions = @('18', '17', '16', '15', '14')
+    $versions = @('16', '17', '18', '15', '14')
     foreach ($root in $roots) {
         foreach ($version in $versions) {
             $candidate = Join-Path $root ($version + '\bin\' + $Name + '.exe')
