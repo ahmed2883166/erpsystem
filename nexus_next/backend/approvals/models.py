@@ -134,6 +134,8 @@ class FinancialApprovalRequest(models.Model):
         PURCHASE_INVOICE = "purchase_invoice", "فاتورة مشتريات"
         SUPPLIER_PAYMENT = "supplier_payment", "سند صرف مورد"
         TREASURY_PAYMENT = "treasury_payment", "سند صرف خزينة"
+        ASSET_PURCHASE_INVOICE = "asset_purchase_invoice", "فاتورة شراء أصل ثابت"
+        ASSET_SUPPLIER_PAYMENT = "asset_supplier_payment", "سند سداد أصل ثابت"
 
     class Status(models.TextChoices):
         PENDING = "pending", "بانتظار الموافقة"
@@ -146,6 +148,8 @@ class FinancialApprovalRequest(models.Model):
     purchase_invoice = models.ForeignKey("purchasing.PurchaseInvoice", null=True, blank=True, on_delete=models.PROTECT, related_name="approval_requests")
     supplier_payment = models.ForeignKey("purchasing.SupplierPayment", null=True, blank=True, on_delete=models.PROTECT, related_name="approval_requests")
     treasury_transaction = models.ForeignKey("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="approval_requests")
+    asset_purchase_invoice = models.ForeignKey("assets.AssetPurchaseInvoice", null=True, blank=True, on_delete=models.PROTECT, related_name="approval_requests")
+    asset_supplier_payment = models.ForeignKey("assets.AssetSupplierPayment", null=True, blank=True, on_delete=models.PROTECT, related_name="approval_requests")
     requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="created_financial_approval_requests")
     requested_limit = models.DecimalField(max_digits=20, decimal_places=4)
     requested_amount = models.DecimalField(max_digits=20, decimal_places=4)
@@ -164,7 +168,9 @@ class FinancialApprovalRequest(models.Model):
                 condition=(
                     models.Q(document_type="purchase_invoice", purchase_invoice__isnull=False, supplier_payment__isnull=True, treasury_transaction__isnull=True)
                     | models.Q(document_type="supplier_payment", purchase_invoice__isnull=True, supplier_payment__isnull=False, treasury_transaction__isnull=True)
-                    | models.Q(document_type="treasury_payment", purchase_invoice__isnull=True, supplier_payment__isnull=True, treasury_transaction__isnull=False)
+                    | models.Q(document_type="treasury_payment", purchase_invoice__isnull=True, supplier_payment__isnull=True, treasury_transaction__isnull=False, asset_purchase_invoice__isnull=True, asset_supplier_payment__isnull=True)
+                    | models.Q(document_type="asset_purchase_invoice", purchase_invoice__isnull=True, supplier_payment__isnull=True, treasury_transaction__isnull=True, asset_purchase_invoice__isnull=False, asset_supplier_payment__isnull=True)
+                    | models.Q(document_type="asset_supplier_payment", purchase_invoice__isnull=True, supplier_payment__isnull=True, treasury_transaction__isnull=True, asset_purchase_invoice__isnull=True, asset_supplier_payment__isnull=False)
                 ),
                 name="financial_approval_one_document",
             ),
@@ -175,6 +181,8 @@ class FinancialApprovalRequest(models.Model):
             self.DocumentType.PURCHASE_INVOICE: ("purchase_invoice", self.purchase_invoice_id),
             self.DocumentType.SUPPLIER_PAYMENT: ("supplier_payment", self.supplier_payment_id),
             self.DocumentType.TREASURY_PAYMENT: ("treasury_transaction", self.treasury_transaction_id),
+            self.DocumentType.ASSET_PURCHASE_INVOICE: ("asset_purchase_invoice", self.asset_purchase_invoice_id),
+            self.DocumentType.ASSET_SUPPLIER_PAYMENT: ("asset_supplier_payment", self.asset_supplier_payment_id),
         }
         selected = relations.get(self.document_type)
         if not selected or selected[1] is None:
@@ -182,7 +190,7 @@ class FinancialApprovalRequest(models.Model):
         expected_relation = selected[0]
         if any(
             getattr(self, f"{field}_id") is not None
-            for field in ("purchase_invoice", "supplier_payment", "treasury_transaction")
+            for field in ("purchase_invoice", "supplier_payment", "treasury_transaction", "asset_purchase_invoice", "asset_supplier_payment")
             if field != expected_relation
         ):
             raise ValidationError("طلب الموافقة يجب أن يرتبط بمستند واحد فقط.")
@@ -194,7 +202,7 @@ class FinancialApprovalRequest(models.Model):
             if old.status != self.Status.PENDING:
                 raise ValidationError("قرار الموافقة نهائي ولا يمكن تغييره.")
             immutable = ("company_id", "document_type", "purchase_invoice_id", "supplier_payment_id",
-                         "treasury_transaction_id", "requested_by_id", "requested_limit",
+                         "treasury_transaction_id", "asset_purchase_invoice_id", "asset_supplier_payment_id", "requested_by_id", "requested_limit",
                          "requested_amount", "requested_snapshot", "requested_at")
             if any(getattr(old, field) != getattr(self, field) for field in immutable):
                 raise ValidationError("بيانات ولقطة طلب الموافقة لا يمكن تعديلها.")
