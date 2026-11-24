@@ -1,7 +1,7 @@
 """خدمات اقتناء الأصول الثابتة واحتساب الإهلاك والتصرف والبيع مع القيود المحاسبية."""
 
 from datetime import timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_DOWN
 from django.core.exceptions import ValidationError, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone, dateparse
