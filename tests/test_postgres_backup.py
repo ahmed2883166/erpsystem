@@ -192,6 +192,18 @@ class PostgreSQLBackupRoundTripIntegrationTests(unittest.TestCase):
                 checked = postgres_backup.validate_postgres_backup_archive(archive)
                 self.assertEqual(checked["database_name"], source_db)
                 self.assertEqual(checked["schema_name"], "nexus")
+                # The distributable archive contains only the database dump and
+                # non-secret manifest; backend/.env and connection credentials
+                # must never be copied into backup artifacts.
+                with zipfile.ZipFile(archive, "r") as verified_archive:
+                    self.assertEqual(
+                        set(verified_archive.namelist()),
+                        {"nexus.dump", "manifest.json"},
+                    )
+                    manifest_text = verified_archive.read("manifest.json").decode("utf-8")
+                    self.assertNotIn("password", manifest_text.lower())
+                    self.assertNotIn("secret", manifest_text.lower())
+                    self.assertNotIn("connection_string", manifest_text.lower())
 
                 restored = postgres_backup.restore_postgres_backup_to_new_database(
                     archive, admin_dsn, database_name=restored_db
