@@ -1786,3 +1786,64 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
         self.assertEqual(reversed_return.data["status"], "reversed")
+
+
+    def test_purchase_requisition_requires_separate_review_and_converts_once(self):
+        from purchasing.models import PurchaseRequisition
+
+        created = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk,
+            "request_number": "REQ-001",
+            "request_date": "2026-03-10",
+            "required_date": "2026-03-20",
+            "department": "المخازن",
+            "purpose": "تغطية احتياج التشغيل",
+            "lines": [{
+                "product": self.product.pk,
+                "requested_quantity": "5",
+                "estimated_unit_price": "90",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        requisition_id = created.data["id"]
+
+        submitted = self.client.post(f"/api/purchasing/requisitions/{requisition_id}/submit/", {}, format="json")
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(submitted.data["status"], PurchaseRequisition.Status.SUBMITTED)
+
+        self_review = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "approve"}, format="json",
+        )
+        self.assertEqual(self_review.status_code, 403)
+
+        reviewer = get_user_model().objects.create_user(username="buyer-reviewer", password="test-password")
+        CompanyMembership.objects.create(user=reviewer, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(reviewer)
+        approved = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "approve", "note": "تمت مراجعة الاحتياج"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["status"], PurchaseRequisition.Status.APPROVED)
+
+        converted = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/convert/",
+            {"supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+             "order_number": "PO-REQ-001", "order_date": "2026-03-11",
+             "expected_date": "2026-03-20"}, format="json",
+        )
+        self.assertEqual(converted.status_code, 201, converted.data)
+        order = PurchaseOrder.objects.get(pk=converted.data["purchase_order_id"])
+        self.assertEqual(order.lines.get().quantity, Decimal("5"))
+        self.assertEqual(order.lines.get().unit_price, Decimal("90"))
+        requisition = PurchaseRequisition.objects.get(pk=requisition_id)
+        self.assertEqual(requisition.status, PurchaseRequisition.Status.CONVERTED)
+        self.assertEqual(requisition.converted_order_id, order.pk)
+
+        duplicate_conversion = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/convert/",
+            {"supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+             "order_number": "PO-REQ-002", "order_date": "2026-03-11"}, format="json",
+        )
+        self.assertEqual(duplicate_conversion.status_code, 400)
