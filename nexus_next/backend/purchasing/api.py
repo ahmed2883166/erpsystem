@@ -198,13 +198,32 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
+        """قفل أمر الشراء وبنوده قبل فحص حجوزات أذون الاستلام المسودة."""
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
             raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
+        purchase_order_id = request.data.get("purchase_order")
+        if purchase_order_id not in (None, ""):
+            try:
+                purchase_order_id = int(purchase_order_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"purchase_order": "أمر الشراء المحدد غير صالح."}) from None
+            order = PurchaseOrder.objects.select_for_update(of=("self",)).select_related(
+                "warehouse", "warehouse__branch",
+            ).filter(pk=purchase_order_id, company_id=company_id).first()
+            if not order:
+                raise ValidationError({"purchase_order": "أمر الشراء غير موجود داخل الشركة المحددة."})
+            if not _purchase_warehouse_accessible(request.user, order.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+            # Lock all order lines in a stable order so concurrent draft receipts
+            # cannot reserve the same remaining quantity.
+            list(PurchaseOrderLine.objects.select_for_update().filter(
+                order=order,
+            ).order_by("pk"))
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
