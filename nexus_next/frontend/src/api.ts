@@ -729,7 +729,7 @@ export type SalesQuotation = {
 };
 export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; movement_status:string; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;cost_amount:string}[]; created_at:string; posted_at:string|null };
 
-export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
+export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_purchase_order_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
   delivery_line_id: number; product_id: number; product_code: string; product_name: string;
   quantity: string; unit_price: string; tax_code_id: number | null; tax_code: string | null;
@@ -746,8 +746,8 @@ export type SalesInvoiceApproval = {
 };
 export type FinancialApprovalRequest = {
   id: number; company: number;
-  document_type: "purchase_invoice" | "supplier_payment" | "treasury_payment" | "asset_purchase_invoice" | "asset_supplier_payment";
-  purchase_invoice: number | null; supplier_payment: number | null; treasury_transaction: number | null;
+  document_type: "purchase_invoice" | "purchase_order" | "supplier_payment" | "treasury_payment" | "asset_purchase_invoice" | "asset_supplier_payment";
+  purchase_invoice: number | null; purchase_order: number | null; supplier_payment: number | null; treasury_transaction: number | null;
   asset_purchase_invoice: number | null; asset_supplier_payment: number | null;
   document_number: string; document_total: string;
   requested_by: number; requested_by_name: string; requested_limit: string; requested_amount: string;
