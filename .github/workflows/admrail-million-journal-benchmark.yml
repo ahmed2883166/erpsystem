@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - fix/audit-performance-and-owner-toolkit-2026-11
     paths:
       - "nexus_next/backend/scripts/benchmark_million_journals.py"
       - ".github/workflows/admrail-million-journal-benchmark.yml"
@@ -50,11 +51,11 @@ jobs:
       - run: python manage.py migrate --noinput
       - name: Load one million balanced journal entries and two million lines
         run: python scripts/benchmark_million_journals.py --entries 1000000 --batch-size 5000
-      - name: Upload benchmark measurements
+      - name: Capture real API EXPLAIN ANALYZE plans\n        run: python scripts/explain_accounting_reports.py\n      - name: Upload benchmark measurements
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Admrail-Million-Journal-Benchmark
-          path: nexus_next/backend/million-journal-benchmark.json
+          path: |\n            nexus_next/backend/million-journal-benchmark.json\n            nexus_next/backend/accounting-report-explain.json
           if-no-files-found: warn
           retention-days: 14
