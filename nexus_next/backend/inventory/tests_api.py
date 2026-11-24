@@ -363,6 +363,20 @@ class InventoryApiTests(APITestCase):
             InventoryCount.Status.DRAFT,
         )
 
+    def test_only_one_open_inventory_count_is_allowed_per_warehouse(self):
+        warehouse = self._warehouse("COUNT-ONE-WH")
+        payload = {
+            "company": self.company.pk, "warehouse": warehouse.pk,
+            "count_number": "COUNT-ONE-001", "count_date": "2026-11-21",
+        }
+        first = self.client.post("/api/inventory/counts/", payload, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post("/api/inventory/counts/", {
+            **payload, "count_number": "COUNT-ONE-002",
+        }, format="json")
+        self.assertEqual(second.status_code, 400, second.data)
+        self.assertIn("جرد مفتوح", str(second.data))
+
     def test_inventory_count_cannot_start_while_draft_movement_exists(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="COUNT-PENDING-1", name_ar="جرد مع مسودة",

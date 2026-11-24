@@ -415,6 +415,10 @@ class InventoryCount(models.Model):
         ordering = ("-count_date", "-id")
         constraints = [
             models.UniqueConstraint(fields=("company", "count_number"), name="uq_inventory_count_company_number"),
+            models.UniqueConstraint(
+                fields=("warehouse",), condition=Q(status="draft"),
+                name="uq_inventory_count_open_warehouse",
+            ),
         ]
         indexes = [
             models.Index(fields=("company", "status", "count_date"), name="inv_count_status_date_idx"),

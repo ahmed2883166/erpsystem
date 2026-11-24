@@ -574,6 +574,10 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         if not _can_access_warehouse(self.request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         warehouse = Warehouse.objects.select_for_update().get(pk=warehouse.pk)
+        if InventoryCount.objects.filter(
+            warehouse=warehouse, status=InventoryCount.Status.DRAFT,
+        ).exists():
+            raise ValidationError("يوجد مستند جرد مفتوح بالفعل على هذا المخزن.")
         pending = StockMovement.objects.filter(
             status=StockMovement.Status.DRAFT,
         ).filter(
