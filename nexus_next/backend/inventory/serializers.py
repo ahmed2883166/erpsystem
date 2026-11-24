@@ -302,6 +302,16 @@ class StockMovementSerializer(serializers.ModelSerializer):
             if len(directions) != 1 or "" in directions:
                 raise serializers.ValidationError({"lines": "افصل زيادات الجرد عن العجز في حركتين مستقلتين."})
             direction = next(iter(directions))
+            if (
+                attrs.get("adjustment_reason", getattr(self.instance, "adjustment_reason", ""))
+                in (
+                    StockMovement.AdjustmentReason.DAMAGE,
+                    StockMovement.AdjustmentReason.EXPIRED,
+                    StockMovement.AdjustmentReason.WRITE_OFF,
+                )
+                and direction != StockMovementLine.AdjustmentDirection.OUT
+            ):
+                raise serializers.ValidationError({"adjustment_reason": "أسباب التلف والانتهاء والشطب يجب أن تكون تسوية عجز."})
             if direction == StockMovementLine.AdjustmentDirection.IN and (not destination or source):
                 raise serializers.ValidationError({"destination_warehouse": "زيادة الجرد تتطلب مخزن وجهة فقط."})
             if direction == StockMovementLine.AdjustmentDirection.OUT and (not source or destination):

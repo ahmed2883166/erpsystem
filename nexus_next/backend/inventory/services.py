@@ -77,6 +77,15 @@ def post_stock_movement(movement_id, user, *, inventory_count_id=None):
         if len(directions) != 1 or "" in directions:
             raise ValidationError("حدد اتجاهًا موحدًا لكل بنود التسوية.")
         direction = next(iter(directions))
+        if (
+            movement.adjustment_reason in (
+                StockMovement.AdjustmentReason.DAMAGE,
+                StockMovement.AdjustmentReason.EXPIRED,
+                StockMovement.AdjustmentReason.WRITE_OFF,
+            )
+            and direction != StockMovementLine.AdjustmentDirection.OUT
+        ):
+            raise ValidationError("أسباب التلف والانتهاء والشطب يجب أن تكون تسوية عجز.")
         if direction == StockMovementLine.AdjustmentDirection.IN:
             if not movement.destination_warehouse_id or movement.source_warehouse_id:
                 raise ValidationError("زيادة الجرد تتطلب مخزن وجهة فقط.")

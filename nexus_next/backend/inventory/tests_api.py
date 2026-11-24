@@ -612,6 +612,18 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn("دقة وحدة القياس", str(response.data))
 
+    def test_damage_and_writeoff_adjustments_must_reduce_stock(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="ADJ-DAMAGE-1", name_ar="تسوية تالف",
+        )
+        warehouse = self._warehouse("ADJ-DAMAGE-WH")
+        response = self._movement(
+            "ADJ-DAMAGE-1", "adjustment", destination=warehouse,
+            quantity="1", cost="2", adjustment_direction="in", adjustment_reason="damage",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("تسوية عجز", str(response.data))
+
     def test_adjustment_requires_a_documented_reason(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="ADJ-REASON-1", name_ar="سبب التسوية",
