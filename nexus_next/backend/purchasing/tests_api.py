@@ -1190,6 +1190,11 @@ class PurchasingWorkflowTests(APITestCase):
             entry_id=final_posted.data["journal_entry"], account__code="6160",
             credit=Decimal("9.0000"),
         ).exists())
+        blocked_reversal = self.client.post(
+            f"/api/accounting/journal-entries/{revalued.data['journal_entry']}/reverse/",
+            {}, format="json",
+        )
+        self.assertEqual(blocked_reversal.status_code, 400, blocked_reversal.data)
 
     def test_purchase_order_can_be_cancelled_before_receipt(self):
         created = self.client.post("/api/purchasing/orders/", {
