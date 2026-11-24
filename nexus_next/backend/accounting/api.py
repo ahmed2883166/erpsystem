@@ -37,10 +37,10 @@ def _accounting_report_work_mem():
     if connection.vendor != "postgresql":
         yield
         return
-    # Keep report memory bounded per request and avoid multiplying hash/sort
-    # memory across PostgreSQL parallel workers under concurrent LAN load.
-    # The benchmark showed large hash-join spills at 8MB with parallel workers;
-    # validate this 16MB single-worker profile against the same load test.
+    # Keep enough bounded per-request memory for in-memory hash aggregation,
+    # while disabling parallel workers so concurrent LAN reports do not multiply
+    # worker memory or spill large sorts. JIT compilation is also disabled only
+    # inside this report transaction to avoid repeated compilation overhead.
     with transaction.atomic():
         with connection.cursor() as cursor:
             cursor.execute("SET LOCAL work_mem = '32MB'")
