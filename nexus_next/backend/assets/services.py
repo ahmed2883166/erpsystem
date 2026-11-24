@@ -327,6 +327,7 @@ def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, revers
     ).get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("لا يمكن عكس انخفاض أصل غير نشط أو لم يتم إثبات اقتنائه.")
+    recoverable_amount = round_currency_amount(recoverable_amount, asset.company.base_currency)
     if not asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lt=reversal_date,
     ).exists():
