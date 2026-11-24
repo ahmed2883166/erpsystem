@@ -257,6 +257,7 @@ class StockMovement(models.Model):
         ]
         indexes = [
             models.Index(fields=("company", "status", "movement_date"), name="inv_move_status_date_idx"),
+            models.Index(fields=("status", "movement_date", "posted_at", "id"), name="inv_move_card_order_idx"),
         ]
 
     def clean(self):
