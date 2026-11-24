@@ -3,7 +3,7 @@
  * تشمل بيانات التعريف والاتصال والحد الائتماني وشروط السداد.
  */
 import { useEffect, useMemo, useState } from "react";
-import { api, inventoryApi, type Customer, type CustomerStatement, type CustomerDiscountRule, type Product, type InventoryCategory } from "./api";
+import { api, inventoryApi, salesApi, type Customer, type CustomerStatement, type CustomerDiscountRule, type Product, type InventoryCategory } from "./api";
 
 type Props = { companyId: number | null };
 
