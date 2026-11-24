@@ -28,7 +28,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [selectedRecon,setSelectedRecon]=useState("");
   const [summary,setSummary]=useState<BankReconciliationSummary|null>(null);
   const [loading,setLoading]=useState(true), [busy,setBusy]=useState(false), [error,setError]=useState("");
-  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});
+  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"",opening_balance:"0"});
   const [doc,setDoc]=useState({branch:"",fiscal_year:"",source_account:"",destination_account:"",counter_account:"",kind:"receipt",document_number:"",transaction_date:today(),amount:"",transaction_amount:"",exchange_rate:"",exchange_rate_date:today(),description:"",reference:""});
   const [rec,setRec]=useState({bank_account:"",statement_number:"",statement_date:today(),opening_balance:"0",closing_balance:"0"});
   const [line,setLine]=useState({line_number:"1",transaction_date:today(),description:"",reference:"",amount:""});
