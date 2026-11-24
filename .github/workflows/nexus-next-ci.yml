@@ -50,7 +50,7 @@ jobs:
           python -m pip install pip-audit
           pip-audit -r requirements.txt
       - name: Enforce high-signal Ruff checks
-        run: ruff check . --select F841,F401,BLE001,B023 --output-format concise
+        run: ruff check . --select F841,F401,F811,BLE001,B023,B904 --output-format concise
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run core accounts companies accounting customers inventory suppliers purchasing sales treasury assets audit approvals hr
       - run: python manage.py migrate --noinput
