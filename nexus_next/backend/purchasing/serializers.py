@@ -111,8 +111,13 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                 line["destination_location_obj"] = location
         for order_line_id, requested in requested_by_line.items():
             order_line = next(x["purchase_order_line_obj"] for x in attrs["lines"] if x.get("purchase_order_line_obj") and x["purchase_order_line_obj"].pk == order_line_id)
-            if requested > order_line.remaining_quantity:
-                raise serializers.ValidationError({"lines": f"الكمية المطلوبة تتجاوز المتبقي في أمر الشراء للصنف {order_line.product.code}."})
+            reserved_drafts = PurchaseOrderReceiptLine.objects.filter(
+                order_line_id=order_line_id,
+                receipt_line__movement__status=StockMovement.Status.DRAFT,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            available = order_line.remaining_quantity - reserved_drafts
+            if requested > available:
+                raise serializers.ValidationError({"lines": f"الكمية المطلوبة تتجاوز المتبقي بعد حجوزات أذون الاستلام المسودة للصنف {order_line.product.code}."})
         return attrs
 
     @transaction.atomic
