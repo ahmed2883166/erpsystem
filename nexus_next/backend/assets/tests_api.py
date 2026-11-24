@@ -588,6 +588,23 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(aging_after_full_settlement.status_code, 200, aging_after_full_settlement.data)
         self.assertEqual(aging_after_full_settlement.data["totals"]["total_due"], "0.0000")
 
+        partial_cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-15",
+        })
+        self.assertEqual(partial_cash_flow.status_code, 200, partial_cash_flow.data)
+        self.assertEqual(partial_cash_flow.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(partial_cash_flow.data["investing_cash_flow"], Decimal("-50000.0000"))
+        self.assertEqual(partial_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+
+        full_cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-20",
+        })
+        self.assertEqual(full_cash_flow.status_code, 200, full_cash_flow.data)
+        self.assertEqual(full_cash_flow.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(full_cash_flow.data["investing_cash_flow"], Decimal("-114000.0000"))
+        self.assertEqual(full_cash_flow.data["net_change_in_cash"], Decimal("-114000.0000"))
+        self.assertEqual(full_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+
         overpayment = self.client.post(
             f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
             {
