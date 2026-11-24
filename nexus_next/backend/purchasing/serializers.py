@@ -7,7 +7,7 @@ from rest_framework import serializers
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
-from accounting.models import ChartOfAccount, FxSubledgerRevaluation, TaxCode
+from accounting.models import ChartOfAccount, FxSubledgerRevaluation, JournalEntry, TaxCode
 from companies.access import resolve_warehouse_branch
 from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
@@ -731,7 +731,7 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
             SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
             or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).filter(
                 Q(journal_entry__isnull=True)
-                | ~Q(journal_entry__status="reversed")
+                | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
             ).exists()
         ):
             raise serializers.ValidationError({
