@@ -1,4 +1,5 @@
-import type { Company, SalesInvoice, SalesQuotation } from "./api";
+import { useEffect, useState } from "react";
+import { salesApi, type Company, type SalesInvoice, type SalesQuotation, type SalesDocumentTemplate } from "./api";
 
 type Props = {
   company:Company|null;
@@ -14,9 +15,21 @@ const money=(value:string)=>Number(value||0).toLocaleString("en-US",{minimumFrac
 
 export default function SalesDocumentPrint({company,invoice,quotation,onClose}:Props){
   const doc=invoice||quotation;
-  if(!doc)return null;
+  const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
   const isInvoice=Boolean(invoice);
-  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=doc.print_template_snapshot||{template_id:null,name:"Classic",style:"classic",config:{}};
+  useEffect(()=>{
+    if(!company?.id||doc?.print_template_snapshot)return;
+    let active=true;
+    void salesApi.documentTemplates(company.id).then(rows=>{
+      if(active)setDefaultTemplate(rows.find(row=>row.document_type===(isInvoice?"invoice":"quotation")&&row.is_active&&row.is_default)||null);
+    }).catch(()=>{if(active)setDefaultTemplate(null);});
+    return ()=>{active=false;};
+  },[company?.id,doc?.id,isInvoice,doc?.print_template_snapshot]);
+  if(!doc)return null;
+  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=doc.print_template_snapshot||{
+    template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",
+    style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{},
+  };
   const config=snapshot.config||{};
   const language=config.language||"ar";
   const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
