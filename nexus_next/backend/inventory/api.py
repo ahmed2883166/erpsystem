@@ -604,25 +604,29 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
             for balance in balances
         ])
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        count = serializer.instance
+        count = InventoryCount.objects.select_for_update().get(pk=serializer.instance.pk)
         self._check_count_write(count)
         if count.status != InventoryCount.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل جرد مرحّل أو ملغي.")
         serializer.save()
 
+    @transaction.atomic
     def perform_destroy(self, instance):
-        self._check_count_write(instance)
-        if instance.status != InventoryCount.Status.DRAFT:
+        count = InventoryCount.objects.select_for_update().get(pk=instance.pk)
+        self._check_count_write(count)
+        if count.status != InventoryCount.Status.DRAFT:
             raise PermissionDenied("لا يمكن حذف جرد مرحّل أو ملغي.")
-        if not has_company_role(self.request.user, instance.company_id, ("admin",)):
+        if not has_company_role(self.request.user, count.company_id, ("admin",)):
             raise PermissionDenied("إلغاء مستند الجرد متاح لمدير الشركة فقط.")
-        instance.status = InventoryCount.Status.CANCELLED
-        instance.save(update_fields=("status", "updated_at"))
+        count.status = InventoryCount.Status.CANCELLED
+        count.save(update_fields=("status", "updated_at"))
 
     @action(detail=True, methods=("post",), url_path="cancel")
+    @transaction.atomic
     def cancel_count(self, request, pk=None):
-        count = self.get_object()
+        count = InventoryCount.objects.select_for_update().get(pk=self.get_object().pk)
         self._check_count_write(count)
         if count.status != InventoryCount.Status.DRAFT:
             raise ValidationError("لا يمكن إلغاء جرد مرحّل أو ملغي.")
@@ -673,19 +677,23 @@ class InventoryCountLineViewSet(viewsets.ModelViewSet):
         if count.status != InventoryCount.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل بنود جرد مرحّل أو ملغي.")
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        count = serializer.validated_data["count"]
+        count = InventoryCount.objects.select_for_update().get(pk=serializer.validated_data["count"].pk)
         self._check_line_write(count)
-        serializer.save(counted_by=self.request.user, counted_at=timezone.now())
+        serializer.save(count=count, counted_by=self.request.user, counted_at=timezone.now())
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        count = serializer.instance.count
+        count = InventoryCount.objects.select_for_update().get(pk=serializer.instance.count_id)
         self._check_line_write(count)
         serializer.save(counted_by=self.request.user, counted_at=timezone.now())
 
+    @transaction.atomic
     def perform_destroy(self, instance):
-        self._check_line_write(instance.count)
-        if not has_company_role(self.request.user, instance.count.company_id, ("admin",)):
+        count = InventoryCount.objects.select_for_update().get(pk=instance.count_id)
+        self._check_line_write(count)
+        if not has_company_role(self.request.user, count.company_id, ("admin",)):
             raise PermissionDenied("حذف بند الجرد متاح لمدير الشركة فقط.")
         instance.delete()
 
