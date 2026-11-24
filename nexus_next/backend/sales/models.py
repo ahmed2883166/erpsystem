@@ -162,7 +162,7 @@ class SalesQuotationLine(models.Model):
         gross = (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
         self.discount_amount = (gross * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
         self.net_amount = gross - self.discount_amount
-        self.tax_amount = round_currency_amount(self.net_amount * self.tax_rate / Decimal("100"), self.invoice.company.base_currency)
+        self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
         self.total_amount = self.net_amount + self.tax_amount
 
 
