@@ -92,7 +92,7 @@ const refresh = async () => {
   useEffect(() => { void refresh(); }, [companyId]);
 
   const billedReceiptLineQuantity = (receiptId: number, receiptLineId: number) => invoices
-    .filter((invoice) => invoice.receipt === receiptId && invoice.status === "posted")
+    .filter((invoice) => invoice.receipt === receiptId)
     .reduce((total, invoice) => total + invoice.invoice_lines
       .filter((line) => line.receipt_line === receiptLineId)
       .reduce((lineTotal, line) => lineTotal + Number(line.quantity), 0), 0);
