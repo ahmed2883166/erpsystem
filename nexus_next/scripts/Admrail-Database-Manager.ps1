@@ -163,7 +163,8 @@ function Show-DatabaseList {
     if ($names.Count -eq 0) { Write-Host "لا توجد قواعد بيانات للتطبيق."; return }
     foreach ($name in $names) {
         $marker = if ($name -eq $c.POSTGRES_DB) { "  <== قاعدة Admrail النشطة" } else { "" }
-        $size = Invoke-Psql "SELECT pg_size_pretty(pg_database_size('$($name.Replace("'","''"))'));"
+        $escaped = $name.Replace("'","''")
+        $size = Invoke-Psql "SELECT pg_size_pretty(pg_database_size('$escaped'));"
         Write-Host (" - {0}   ({1}){2}" -f $name,$size,$marker)
     }
     Write-Host ""
@@ -173,12 +174,12 @@ function Install-FreshDatabase {
     $c = Read-Config
     $names = @(Get-DatabaseNames)
     if ($names.Count -eq 0) { throw "لم يتم العثور على قواعد بيانات يمكن إدارتها." }
-    Write-Host "اختر القاعدة التي تريد حذفها بعد تجهيز قاعدة جديدة:" -ForegroundColor Cyan
-    for ($i=0; $i -lt $names.Count; $i++) {
+    Write-Host "اختر القاعدة القديمة التي تريد استبدالها بعد تجهيز قاعدة جديدة:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $names.Count; $i++) {
         $marker = if ($names[$i] -eq $c.POSTGRES_DB) { "  <== النشطة حاليًا" } else { "" }
-        Write-Host ("[{0}] {1}{2}" -f ($i+1),$names[$i],$marker)
+        Write-Host ("[{0}] {1}{2}" -f ($i + 1),$names[$i],$marker)
     }
-    $pick = Read-Host "رقم القاعدة المراد استبدالها (Enter للإلغاء)"
+    $pick = (Read-Host "رقم القاعدة القديمة (Enter للإلغاء)").Trim()
     if (-not $pick) { return }
     if ($pick -notmatch '^\d+
     Assert-AppStopped
@@ -291,8 +292,10 @@ try {
     [void](Read-Host "اضغط Enter للإغلاق")
     exit 1
 } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue; $script:AdminPassword = $null }
- -or [int]$pick -lt 1 -or [int]$pick -gt $names.Count) { throw "اختيار قاعدة البيانات غير صحيح." }
-    $oldDb = $names[[int]$pick-1]
+ -or [int]$pick -lt 1 -or [int]$pick -gt $names.Count) {
+        throw "اختيار قاعدة البيانات غير صحيح."
+    }
+    $oldDb = $names[[int]$pick - 1]
     $newDb = (Read-Host "اكتب اسم قاعدة البيانات الجديدة").Trim()
     if ($newDb -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}
     Assert-AppStopped
@@ -401,13 +404,19 @@ try {
     [void](Read-Host "اضغط Enter للإغلاق")
     exit 1
 } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue; $script:AdminPassword = $null }
-) { throw "اسم غير صالح: استخدم حروفًا إنجليزية وأرقامًا و _." }
-    if ($names -contains $newDb) { throw "قاعدة البيانات الجديدة موجودة بالفعل؛ اختر اسمًا مختلفًا." }
+ -or $newDb -eq $oldDb) {
+        throw "اسم القاعدة الجديدة غير صالح أو مطابق لاسم القاعدة القديمة."
+    }
+    $escapedNew = $newDb.Replace("'","''")
+    $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname = '$escapedNew';"
+    if ($exists) { throw "قاعدة البيانات الجديدة موجودة بالفعل؛ اختر اسمًا مختلفًا." }
+
     Write-Host ""
-    Write-Host "سيتم أخذ نسخة مشفرة من [$oldDb] أولًا، ثم إنشاء [$newDb] وتجهيز جداولها." -ForegroundColor Yellow
-    Write-Host "لن يتم حذف أي قاعدة قبل نجاح تجهيز القاعدة الجديدة." -ForegroundColor Yellow
+    Write-Host "سيتم حفظ نسخة مشفرة من [$oldDb] ثم إنشاء [$newDb] وتجهيزها." -ForegroundColor Yellow
+    Write-Host "لن تُحذف القاعدة القديمة إلا بعد نجاح التجهيز وتأكيدك مرتين." -ForegroundColor Yellow
     $backup = Save-VerifiedBackup $oldDb
     $null = Invoke-Psql ("CREATE DATABASE " + (Quote-Name $newDb) + " OWNER " + (Quote-Name $c.POSTGRES_USER) + " ENCODING 'UTF8' TEMPLATE template0;")
+
     try {
         Save-ConfigValue "POSTGRES_DB" $newDb
         Push-Location $Backend
@@ -423,11 +432,11 @@ try {
         Save-ConfigValue "POSTGRES_DB" $c.POSTGRES_DB
         throw "لم يكتمل تجهيز القاعدة الجديدة. أُعيد اتصال البرنامج إلى [$($c.POSTGRES_DB)]، ولم تُحذف [$oldDb]. القاعدة الجديدة [$newDb] تُركت للفحص. التفاصيل: $($_.Exception.Message)"
     }
-    Write-Host "نجح تجهيز [$newDb]، والبرنامج أصبح متصلًا بها." -ForegroundColor Green
-    Write-Host "النسخة الاحتياطية المشفرة للقاعدة المختارة: $backup" -ForegroundColor Green
-    if ($oldDb -eq $newDb) { return }
-    Write-Host "القاعدة القديمة [$oldDb] ما زالت موجودة ولم تُحذف." -ForegroundColor Yellow
-    if ((Read-Host "لحذف [$oldDb] الآن بعد نجاح القاعدة الجديدة، اكتب نعم") -cne "نعم") {
+
+    Write-Host "نجح تجهيز [$newDb] وأصبح البرنامج متصلًا بها." -ForegroundColor Green
+    Write-Host "النسخة الاحتياطية المشفرة: $backup" -ForegroundColor Green
+    Write-Host "القاعدة القديمة [$oldDb] ما زالت موجودة." -ForegroundColor Yellow
+    if ((Read-Host "لحذف القاعدة القديمة بعد نجاح الجديدة، اكتب نعم") -cne "نعم") {
         Write-Host "تم الاحتفاظ بالقاعدة القديمة كما هي." -ForegroundColor Cyan
         return
     }
@@ -435,9 +444,9 @@ try {
         Write-Host "تم إلغاء الحذف؛ القاعدة القديمة محفوظة." -ForegroundColor Cyan
         return
     }
-    $active = (Read-Config).POSTGRES_DB
-    if ($active -eq $oldDb) { throw "رفض الحذف لأن القاعدة المختارة ما زالت نشطة." }
-    $null = Invoke-Psql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$($oldDb.Replace("'","''"))' AND pid <> pg_backend_pid();"
+    if ((Read-Config).POSTGRES_DB -eq $oldDb) { throw "رفض الحذف لأن القاعدة المختارة ما زالت نشطة." }
+    $escapedOld = $oldDb.Replace("'","''")
+    $null = Invoke-Psql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$escapedOld' AND pid <> pg_backend_pid();"
     $null = Invoke-Psql ("DROP DATABASE " + (Quote-Name $oldDb) + " WITH (FORCE);")
     Write-Host "تم حذف [$oldDb] بعد نجاح القاعدة الجديدة وحفظ النسخة المشفرة." -ForegroundColor Green
 }
