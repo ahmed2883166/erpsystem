@@ -800,9 +800,9 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
                 invoice_line=invoice_line,
                 return_document__status=SupplierReturn.Status.POSTED,
             ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
-            if returned + line["quantity"] > invoice_line.receipt_line.quantity:
+            if returned + line["quantity"] > invoice_line.billed_quantity:
                 raise serializers.ValidationError({
-                    "lines": f"كمية المرتجع تتجاوز المتبقي للصنف {invoice_line.receipt_line.product.code}."
+                    "lines": f"كمية المرتجع تتجاوز الكمية المفوترة المتبقية للصنف {invoice_line.receipt_line.product.code}."
                 })
         return attrs
 
