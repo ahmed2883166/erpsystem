@@ -2,6 +2,8 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from accounting.models import ChartOfAccount, JournalEntry
@@ -161,6 +163,40 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         entry.refresh_from_db()
         self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+    def test_posting_row_lock_does_not_lock_related_company_or_branch_rows(self):
+        from accounting.models import JournalLine
+
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="LOCK-SCOPE-001", entry_date="2026-06-01",
+            description="اختبار نطاق قفل الترحيل",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.asset, debit="100.0000", credit="0",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.equity, debit="0", credit="100.0000",
+        )
+
+        with CaptureQueriesContext(connection) as captured:
+            posted = self.client.post(
+                f"/api/accounting/journal-entries/{entry.pk}/post/", {}, format="json"
+            )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], JournalEntry.Status.POSTED)
+
+        if connection.vendor == "postgresql":
+            lock_queries = [
+                query["sql"] for query in captured
+                if "FOR UPDATE" in query["sql"].upper()
+                and "accounting_journalentry" in query["sql"]
+            ]
+            self.assertTrue(lock_queries, "Expected the journal posting row lock query.")
+            self.assertTrue(
+                all("FOR UPDATE OF" in sql.upper() for sql in lock_queries),
+                lock_queries,
+            )
 
     def create_and_post(self, source_type, number, date, lines):
         payload = {
