@@ -381,3 +381,28 @@ class FiscalYearJournalSafetyTests(APITestCase):
             f"/api/setup/fiscal-years/{self.year.pk}/close/", {}, format="json"
         )
         self.assertEqual(closed.status_code, 200, closed.content)
+
+
+class AccountingReportPostgresProfileTests(APITestCase):
+    def test_large_report_scope_uses_bounded_single_worker_postgres_profile(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("PostgreSQL-specific report session settings.")
+        from accounting.api import _accounting_report_work_mem
+
+        with CaptureQueriesContext(connection) as captured:
+            with _accounting_report_work_mem():
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT current_setting('work_mem')")
+                    work_mem = cursor.fetchone()[0]
+                    cursor.execute("SELECT current_setting('max_parallel_workers_per_gather')")
+                    parallel_workers = cursor.fetchone()[0]
+                    cursor.execute("SELECT current_setting('jit')")
+                    jit = cursor.fetchone()[0]
+
+        self.assertEqual(work_mem, "32MB")
+        self.assertEqual(parallel_workers, "0")
+        self.assertEqual(jit, "off")
+        sql = " ".join(query["sql"] for query in captured.captured_queries).upper()
+        self.assertIn("SET LOCAL WORK_MEM", sql)
+        self.assertIn("SET LOCAL MAX_PARALLEL_WORKERS_PER_GATHER", sql)
+        self.assertIn("SET LOCAL JIT", sql)
