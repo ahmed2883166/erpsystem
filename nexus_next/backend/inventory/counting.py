@@ -8,7 +8,7 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from .models import (
-    InventoryCount, InventoryCountLine, Product, StockBalance, StockMovement,
+    InventoryCount, Product, StockBalance, StockMovement,
     StockMovementLine, Warehouse,
 )
 

@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class InventoryApiTests(APITestCase):
