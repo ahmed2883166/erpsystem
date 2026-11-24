@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from assets.models import AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
+from assets.models import AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
@@ -346,6 +346,133 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(asset.custodian, "مدير الحركة")
 
 
+
+    def test_cash_asset_purchase_recoverable_vat_is_investing_and_balances_all_statements(self):
+        vat_input = self._account("1180", "ضريبة مدخلات قابلة للاسترداد", "asset")
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.VAT_INPUT, account=vat_input)
+        tax = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT14-CASH-FA",
+            name_ar="ضريبة شراء أصل قابلة للاسترداد", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+            input_tax_recoverable=True,
+        )
+        payload = self._payload()
+        payload.update({
+            "original_cost": "100000.0000",
+            "acquisition_net_amount": "100000.0000",
+            "recoverable_tax_amount": "14000.0000",
+            "nonrecoverable_tax_amount": "0.0000",
+            "acquisition_tax_code": tax.pk,
+        })
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset = FixedAsset.objects.get(pk=created.data["id"])
+        self.assertEqual(asset.original_cost, Decimal("100000.0000"))
+        self.assertEqual(asset.recoverable_tax_amount, Decimal("14000.0000"))
+        self.assertIsNotNone(asset.acquisition_tax_journal_id)
+        cash_document = TreasuryTransaction.objects.get(pk=asset.acquisition_treasury_transaction_id)
+        self.assertEqual(cash_document.amount, Decimal("114000.0000"))
+        self.assertEqual(cash_document.cash_flow_category, TreasuryTransaction.CashFlowCategory.INVESTING)
+        self.assertEqual(asset.acquisition_journal.lines.get(account=self.asset_gl).debit, Decimal("114000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.get(account=self.cash_gl).credit, Decimal("114000.0000"))
+        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=vat_input).debit, Decimal("14000.0000"))
+        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=self.asset_gl).credit, Decimal("14000.0000"))
+        for journal in (asset.acquisition_journal, asset.acquisition_tax_journal):
+            totals = journal.lines.aggregate(debit=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
+                                             credit=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"))
+            self.assertEqual(totals["debit"], totals["credit"])
+
+        income = self.client.get("/api/accounting/journal-entries/income-statement/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-31",
+        })
+        self.assertEqual(income.status_code, 200, income.data)
+        self.assertEqual(income.data["net_profit"], Decimal("0.0000"))
+
+        balance = self.client.get("/api/accounting/journal-entries/balance-sheet/", {
+            "company": self.company.pk, "as_of": "2026-01-10",
+        })
+        self.assertEqual(balance.status_code, 200, balance.data)
+        self.assertEqual(balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(next(row["balance"] for row in balance.data["assets"] if row["account_id"] == self.asset_gl.pk), Decimal("100000.0000"))
+        self.assertEqual(next(row["balance"] for row in balance.data["assets"] if row["account_id"] == vat_input.pk), Decimal("14000.0000"))
+
+        cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-31",
+        })
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(cash_flow.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(cash_flow.data["investing_cash_flow"], Decimal("-114000.0000"))
+        self.assertEqual(cash_flow.data["net_change_in_cash"], Decimal("-114000.0000"))
+        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+
+    def test_asset_impairment_updates_income_balance_sheet_and_indirect_cash_flow(self):
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        depreciation = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(depreciation.status_code, 201, depreciation.data)
+        impairment_expense = self._account("6200", "خسائر انخفاض قيمة الأصول", "expense")
+        accumulated_impairment = self._account("1595", "مجمع انخفاض قيمة الأصول", "asset")
+        response = self.client.post(f"/api/assets/fixed-assets/{asset_id}/impair/", {
+            "impairment_date": "2026-02-28", "recoverable_amount": "90000.0000",
+            "impairment_expense_account": impairment_expense.pk,
+            "accumulated_impairment_account": accumulated_impairment.pk,
+            "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        impairment = AssetImpairment.objects.get(pk=response.data["id"])
+        self.assertEqual(impairment.carrying_amount_before, Decimal("115000.0000"))
+        self.assertEqual(impairment.impairment_loss, Decimal("25000.0000"))
+        self.assertEqual(impairment.journal_entry.lines.get(account=impairment_expense).debit, Decimal("25000.0000"))
+        self.assertEqual(impairment.journal_entry.lines.get(account=accumulated_impairment).credit, Decimal("25000.0000"))
+        self.assertEqual(response.data["oci_impact"], "none")
+
+        schedule = self.client.get(f"/api/assets/fixed-assets/{asset_id}/schedule/")
+        self.assertEqual(schedule.status_code, 200, schedule.data)
+        self.assertEqual(schedule.data["accumulated_impairment"], Decimal("25000.0000"))
+        self.assertEqual(schedule.data["net_book_value"], Decimal("90000.0000"))
+
+        income = self.client.get("/api/accounting/journal-entries/income-statement/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(income.status_code, 200, income.data)
+        self.assertEqual(income.data["expenses_total"], Decimal("30000.0000"))
+        self.assertEqual(income.data["net_profit"], Decimal("-30000.0000"))
+
+        balance = self.client.get("/api/accounting/journal-entries/balance-sheet/", {
+            "company": self.company.pk, "as_of": "2026-02-28",
+        })
+        self.assertEqual(balance.status_code, 200, balance.data)
+        self.assertEqual(balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(balance.data["current_year_profit"], Decimal("-30000.0000"))
+        self.assertEqual(next(row["balance"] for row in balance.data["assets"] if row["account_id"] == accumulated_impairment.pk), Decimal("-25000.0000"))
+
+        cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(cash_flow.data["net_profit"], Decimal("-30000.0000"))
+        self.assertEqual(cash_flow.data["non_cash_adjustments"]["depreciation"], Decimal("5000.0000"))
+        self.assertEqual(cash_flow.data["non_cash_adjustments"]["impairment_loss"], Decimal("25000.0000"))
+        self.assertEqual(cash_flow.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(cash_flow.data["investing_cash_flow"], Decimal("-120000.0000"))
+        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+
+        reconciliation = self.client.get("/api/assets/fixed-assets/account-reconciliation/", {
+            "company": self.company.pk, "as_of": "2026-02-28",
+            "date_from": "2026-01-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        self.assertTrue(reconciliation.data["is_reconciled"], reconciliation.data)
+
+        next_depreciation = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-03-31", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(next_depreciation.status_code, 201, next_depreciation.data)
+        self.assertGreater(next_depreciation.data["depreciation_amount"], Decimal("0"))
+        self.assertLess(next_depreciation.data["depreciation_amount"], Decimal("5000.0000"))
 
     def test_direct_asset_vendor_invoice_posts_to_supplier_subledger_and_bank_payment(self):
         payable = self._account("2100", "الموردون", "liability")
