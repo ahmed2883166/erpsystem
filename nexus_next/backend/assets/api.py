@@ -58,7 +58,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         if serializer.instance.acquisition_journal_id or serializer.instance.acquisition_treasury_transaction_id or getattr(serializer.instance, "vendor_invoice", None):
-            raise ValidationError("الأصل المرتبط بفاتورة مورد أو المثبت محاسبيًا لا يمكن تعديل بياناته أو حساباته.")
+            raise ValidationError("الأصل المرتبط بحركة اقتناء أو فاتورة مورد أو المثبت محاسبيًا لا يمكن تعديل بياناته أو حساباته.")
         self._write(serializer.instance.company_id)
         serializer.save()
 
@@ -66,7 +66,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
         if instance.acquisition_journal_id or instance.acquisition_treasury_transaction_id or instance.depreciations.exists() or instance.impairments.exists() or getattr(instance, "vendor_invoice", None):
-            raise ValidationError("لا يمكن حذف أصل مرتبط بفاتورة مورد أو له أثر محاسبي؛ استخدم إجراء الاستبعاد.")
+            raise ValidationError("لا يمكن حذف أصل مرتبط بحركة اقتناء أو فاتورة مورد أو له أثر محاسبي؛ استخدم إجراء الاستبعاد.")
         instance.delete()
 
     @decorators.action(detail=True, methods=("post",))
