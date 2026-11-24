@@ -1685,3 +1685,61 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(vat.data["purchases"]["tax_amount"], "28.0000", vat.data)
         self.assertEqual(vat.data["input_tax"], "28.0000")
         self.assertEqual(Decimal(vat.data["ledger_reconciliation"]["input_tax_difference"]), Decimal("0"))
+
+    def test_reversed_supplier_fx_revaluation_allows_foreign_currency_return(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        for rate_date, rate in (
+            (date(2026, 3, 10), "50"),
+            (date(2026, 3, 31), "53"),
+        ):
+            ExchangeRate.objects.create(
+                company=self.company, currency=usd,
+                rate_date=rate_date, rate=Decimal(rate),
+            )
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "receipt": receipt_id, "invoice_number": "INV-AP-FX-RETURN-REV",
+            "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id,
+                "transaction_unit_price": "2", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        revalued = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/revalue/",
+            {"revaluation_date": "2026-03-31", "rate_date": "2026-03-31", "rate": "53"},
+            format="json",
+        )
+        self.assertEqual(revalued.status_code, 201, revalued.data)
+        reversed_entry = self.client.post(
+            f"/api/accounting/journal-entries/{revalued.data['journal_entry']}/reverse/",
+            {"entry_date": "2026-04-01"}, format="json",
+        )
+        self.assertEqual(reversed_entry.status_code, 201, reversed_entry.data)
+
+        draft = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "return_number": "RET-AP-FX-REV",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(draft.status_code, 201, draft.data)
+        returned = self.client.post(
+            f"/api/purchasing/returns/{draft.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(returned.status_code, 200, returned.data)
+        self.assertEqual(returned.data["status"], "posted")
+        self.assertEqual(returned.data["transaction_currency_code"], "USD")
+        self.assertEqual(returned.data["transaction_grand_total"], "2.2800")
