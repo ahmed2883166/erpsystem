@@ -4,6 +4,9 @@ from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.db import connection, DatabaseError, transaction
+from django.db.models.query import QuerySet
+from unittest.mock import patch
+
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
@@ -1329,11 +1332,20 @@ class SalesWorkflowTests(APITestCase):
         accepted = self.client.post(f"/api/sales-documents/quotations/{quote_id}/accept/", {}, format="json")
         self.assertEqual(accepted.status_code, 200, accepted.data)
 
-        converted = self.client.post(f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/", {
-            "warehouse": self.warehouse.pk,
-            "delivery_number": "DEL-FROM-Q-001",
-            "delivery_date": "2027-01-11",
-        }, format="json")
+        original_select_for_update = QuerySet.select_for_update
+        lock_calls = []
+
+        def track_row_lock(queryset, *args, **kwargs):
+            lock_calls.append(kwargs)
+            return original_select_for_update(queryset, *args, **kwargs)
+
+        with patch.object(QuerySet, "select_for_update", track_row_lock):
+            converted = self.client.post(f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/", {
+                "warehouse": self.warehouse.pk,
+                "delivery_number": "DEL-FROM-Q-001",
+                "delivery_date": "2027-01-11",
+            }, format="json")
+        self.assertIn({"of": ("self",)}, lock_calls)
         self.assertEqual(converted.status_code, 201, converted.data)
         self.assertEqual(converted.data["movement_status"], "draft")
         self.assertEqual(converted.data["quotation_snapshot"]["quotation_number"], "Q-2026-001")
