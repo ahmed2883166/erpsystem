@@ -48,7 +48,10 @@ def get_account_for_role(company, role):
 @transaction.atomic
 def post_journal(entry_id: int, actor=None) -> JournalEntry:
     """ترحيل القيد اليومي بعد التحقق من توازنه وصلاحية حساباته."""
-    entry = JournalEntry.objects.select_for_update().select_related(
+    # Lock only the journal row. Locking select_related rows (company/branch/
+    # fiscal year) creates a lock cycle with FK KEY SHARE checks when the audit
+    # trail inserts its company/branch references during concurrent postings.
+    entry = JournalEntry.objects.select_for_update(of=("self",)).select_related(
         "company", "company__base_currency", "branch", "fiscal_year"
     ).get(pk=entry_id)
     # Shared transaction lock allows independent postings to proceed together,
@@ -166,7 +169,9 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
 @transaction.atomic
 def reverse_operational_journal(entry_id: int, user, entry_date, expected_source: str) -> JournalEntry:
     """Create and post a full, linked reversal for an approved operational source document."""
-    original = JournalEntry.objects.select_for_update().select_related(
+    # Keep related rows readable without taking write locks on company/branch;
+    # the journal row alone protects this reversal workflow from duplicate work.
+    original = JournalEntry.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "fiscal_year"
     ).get(pk=entry_id)
     if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
