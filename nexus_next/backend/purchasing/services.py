@@ -13,8 +13,8 @@ from accounting.models import AccountRole, ChartOfAccount, FxSubledgerRevaluatio
 from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
-from companies.models import Branch, ExchangeRate, FiscalYear
-from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
+from companies.models import ExchangeRate
+from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
 from inventory.services import post_stock_movement
 
 from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
@@ -169,23 +169,6 @@ def _capitalize_nonrecoverable_stock_tax(invoice_line):
     return result
 
 
-def _branch_and_year(receipt, entry_date):
-    """تحديد فرع المستند والسنة المالية التي سيُسجل فيها القيد."""
-    warehouse = receipt.warehouse
-    branch = resolve_warehouse_branch(receipt.company, warehouse)
-    if branch and not branch.is_active:
-        raise ValidationError("فرع المخزن موقوف.")
-    if not branch:
-        raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المشتريات.")
-    year = FiscalYear.objects.filter(
-        company=receipt.company, status=FiscalYear.Status.OPEN,
-        start_date__lte=entry_date, end_date__gte=entry_date,
-    ).order_by("-start_date").first()
-    if not year:
-        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ إذن الاستلام.")
-    return branch, year
-
-
 @transaction.atomic
 def post_purchase_receipt(receipt_id, user):
     """ترحيل استلام المشتريات إلى المخزون وحساب البضاعة المستلمة غير المفوترة."""
@@ -231,40 +214,26 @@ def post_purchase_receipt(receipt_id, user):
         remaining_exists = order.lines.filter(received_quantity__lt=F("quantity")).exists()
         PurchaseOrder.objects.filter(pk=order.pk).update(status=PurchaseOrder.Status.PARTIALLY_RECEIVED if remaining_exists else PurchaseOrder.Status.RECEIVED)
 
-    # Recognize the receipt in the GRNI control account at the same time the
-    # stock receipt is posted. The supplier invoice later clears this liability.
-    receipt_lines = list(receipt.stock_movement.lines.select_related("product"))
-    grni_amount = sum((line.cost_amount for line in receipt_lines), Decimal("0")).quantize(Decimal("0.0001"))
-    if grni_amount <= 0:
-        raise ValidationError("قيمة إذن الاستلام يجب أن تكون موجبة قبل إثبات GRNI.")
-    inventory_account = _account(receipt.company, AccountRole.Role.INVENTORY)
-    grni_account = _account(receipt.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
-    if inventory_account.pk == grni_account.pk:
-        raise ValidationError("يجب فصل حساب المخزون عن حساب البضاعة المستلمة غير المفوترة.")
-    branch, year = _branch_and_year(receipt, receipt.receipt_date)
-    entry = JournalEntry.objects.create(
-        company=receipt.company, branch=branch, fiscal_year=year,
-        entry_number=f"PUR-GR-{receipt.pk}", entry_date=receipt.receipt_date,
-        description=f"إثبات استلام مشتريات {receipt.receipt_number} من {receipt.supplier.name_ar}"[:500],
-        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    # Inventory posting already creates the balanced Dr Inventory / Cr GRNI
+    # journal and links it to this stock movement. Reuse that posted journal;
+    # creating another purchase journal here would double the GRNI liability.
+    movement_journals = list(
+        StockMovementJournalLink.objects.filter(
+            movement_id=receipt.stock_movement_id,
+        ).select_related("journal_entry").order_by("id")
     )
-    JournalLine.objects.bulk_create([
-        JournalLine(
-            entry=entry, account=inventory_account,
-            description=f"إضافة مخزون من إذن الاستلام {receipt.receipt_number}"[:300],
-            debit=grni_amount, credit=0,
-        ),
-        JournalLine(
-            entry=entry, account=grni_account,
-            description=f"بضاعة مستلمة غير مفوترة - {receipt.receipt_number}"[:300],
-            debit=0, credit=grni_amount,
-        ),
-    ])
-    try:
-        posted_entry = post_journal(entry.pk, actor=user)
-    except DjangoValidationError as exc:
-        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
-        raise ValidationError(detail) from exc
+    if len(movement_journals) != 1:
+        raise ValidationError(
+            "يجب أن ينتج عن ترحيل إذن الاستلام قيد مخزون واحد فقط؛ "
+            "أوقفنا الترحيل لحماية حساب GRNI."
+        )
+    posted_entry = movement_journals[0].journal_entry
+    if (
+        posted_entry.status != JournalEntry.Status.POSTED
+        or posted_entry.source_type != JournalEntry.Source.INVENTORY
+        or posted_entry.company_id != receipt.company_id
+    ):
+        raise ValidationError("قيد المخزون المرتبط بإذن الاستلام غير صالح لإثبات GRNI.")
     PurchaseReceipt.objects.filter(pk=receipt.pk).update(journal_entry=posted_entry)
 
     return PurchaseReceipt.objects.select_related("stock_movement", "journal_entry").get(pk=receipt.pk)
