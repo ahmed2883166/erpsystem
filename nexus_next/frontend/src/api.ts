@@ -113,6 +113,20 @@ export type PurchaseRequisition = {
     requested_quantity: string; estimated_unit_price: string | null; notes: string }[];
   created_at: string;
 };
+
+export type PurchaseRFQ = {
+  id: number; company: number; source_requisition: number | null; rfq_number: string; issue_date: string; closing_date: string;
+  status: "draft" | "open" | "closed" | "awarded" | "cancelled"; terms: string;
+  line_items: {id:number;product:number;product_code:string;product_name:string;quantity:string;notes:string}[];
+  supplier_list: {id:number;code:string;name:string;status:string}[];
+  awarded_quotation: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
+};
+export type SupplierQuotation = {
+  id:number; rfq:number; supplier:number; supplier_name:string; quotation_number:string; quotation_date:string;
+  valid_until:string; delivery_days:number; payment_terms:string; notes:string; status:"submitted"|"withdrawn";
+  line_items:{id:number;rfq_line:number;product_code:string;product_name:string;quantity:string;unit_price:string;discount_percent:string;tax_rate:string;net_amount:string;tax_amount:string;total_amount:string}[];
+  total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
+};
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
 export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
@@ -175,6 +189,14 @@ export const purchasingApi = {
   reviewRequisition: async (id: number, decision: "approve" | "reject", note = "") => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/review/`, { method: "POST", body: JSON.stringify({ decision, note }) }); },
   convertRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<{ requisition: PurchaseRequisition; purchase_order_id: number }>(`/api/purchasing/requisitions/${id}/convert/`, { method: "POST", body: JSON.stringify(payload) }); },
   cancelRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/cancel/`, { method: "POST" }); },
+
+  rfqs: (companyId: number) => request<PurchaseRFQ[]>(`/api/purchasing/rfqs/?company=${companyId}&ordering=-issue_date`),
+  quotations: (companyId: number) => request<SupplierQuotation[]>(`/api/purchasing/quotations/?rfq__company=${companyId}&ordering=-quotation_date`),
+  createRFQ: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRFQ>("/api/purchasing/rfqs/", { method:"POST", body:JSON.stringify(payload) }); },
+  openRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/open/`, {method:"POST"}); },
+  closeRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/close/`, {method:"POST"}); },
+  awardRFQ: async (id:number, quotation:number, reason:string) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/award/`, {method:"POST",body:JSON.stringify({quotation,reason})}); },
+  createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
