@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone, dateparse
 from django.db.models import Sum
