@@ -1743,3 +1743,10 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(returned.data["status"], "posted")
         self.assertEqual(returned.data["transaction_currency_code"], "USD")
         self.assertEqual(returned.data["transaction_grand_total"], "2.2800")
+
+        reversed_return = self.client.post(
+            f"/api/purchasing/returns/{draft.data['id']}/reverse/",
+            {"entry_date": "2026-04-02"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
