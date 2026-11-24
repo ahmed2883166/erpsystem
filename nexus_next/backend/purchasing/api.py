@@ -45,8 +45,8 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
@@ -857,6 +857,118 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         data["reversal_journal_entry"] = reversal.pk
         data["reversal_journal_number"] = reversal.entry_number
         return Response(data, status=status.HTTP_200_OK)
+
+
+
+class PurchaseRFQViewSet(PurchaseBaseViewSet):
+    serializer_class = PurchaseRFQSerializer
+    queryset = PurchaseRFQ.objects.select_related("company", "source_requisition", "awarded_quotation__supplier", "awarded_by").prefetch_related("lines__product", "invitations__supplier", "quotations__lines")
+    filterset_fields = ("company", "status", "issue_date", "closing_date")
+    search_fields = ("rfq_number", "terms", "invitations__supplier__name_ar")
+    ordering_fields = ("issue_date", "closing_date", "rfq_number", "created_at")
+
+    def get_queryset(self):
+        return self.queryset.filter(company__in=accessible_companies(self.request.user)).distinct()
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        self._check_write(serializer.validated_data["company"].pk)
+        serializer.save()
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        rfq = PurchaseRFQ.objects.select_for_update().get(pk=instance.pk)
+        self._check_write(rfq.company_id)
+        if rfq.status != PurchaseRFQ.Status.DRAFT or rfq.quotations.exists():
+            raise ValidationError("لا يمكن حذف طلب عروض مفتوح أو مرتبط بعروض موردين.")
+        rfq.invitations.all().delete()
+        rfq.lines.all().delete()
+        rfq.delete()
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def open(self, request, pk=None):
+        rfq = PurchaseRFQ.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(rfq.company_id)
+        if rfq.status != PurchaseRFQ.Status.DRAFT or not rfq.lines.exists() or not rfq.invitations.exists():
+            raise ValidationError("لا يمكن فتح الطلب قبل إضافة الأصناف والموردين المدعوين.")
+        if rfq.closing_date < timezone.localdate():
+            raise ValidationError("موعد إغلاق طلب العروض انتهى.")
+        PurchaseRFQ.objects.filter(pk=rfq.pk, status=PurchaseRFQ.Status.DRAFT).update(status=PurchaseRFQ.Status.OPEN)
+        rfq.refresh_from_db()
+        return Response(self.get_serializer(rfq).data)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def close(self, request, pk=None):
+        rfq = PurchaseRFQ.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(rfq.company_id)
+        if rfq.status != PurchaseRFQ.Status.OPEN:
+            raise ValidationError("طلب العروض ليس مفتوحًا.")
+        PurchaseRFQ.objects.filter(pk=rfq.pk, status=PurchaseRFQ.Status.OPEN).update(status=PurchaseRFQ.Status.CLOSED)
+        rfq.refresh_from_db()
+        return Response(self.get_serializer(rfq).data)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def award(self, request, pk=None):
+        rfq = PurchaseRFQ.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(rfq.company_id)
+        if rfq.status not in (PurchaseRFQ.Status.OPEN, PurchaseRFQ.Status.CLOSED):
+            raise ValidationError("لا يمكن ترسية طلب العروض في حالته الحالية.")
+        quotation_id = request.data.get("quotation")
+        reason = str(request.data.get("reason", "")).strip()
+        if not reason:
+            raise ValidationError({"reason": "سبب الترسية مطلوب لحفظ مبرر الاختيار."})
+        quotation = SupplierQuotation.objects.filter(pk=quotation_id, rfq=rfq, status=SupplierQuotation.Status.SUBMITTED).first()
+        if not quotation:
+            raise ValidationError({"quotation": "اختر عرضًا صالحًا تابعًا لطلب العروض."})
+        if quotation.valid_until < timezone.localdate():
+            raise ValidationError({"quotation": "صلاحية العرض المختار منتهية."})
+        PurchaseRFQ.objects.filter(pk=rfq.pk, awarded_quotation__isnull=True).update(
+            awarded_quotation=quotation, award_reason=reason, awarded_by=request.user,
+            awarded_at=timezone.now(), status=PurchaseRFQ.Status.AWARDED,
+        )
+        rfq.refresh_from_db()
+        if not rfq.awarded_quotation_id:
+            raise ValidationError("تمت ترسية طلب العروض بالفعل.")
+        return Response(self.get_serializer(rfq).data)
+
+
+class SupplierQuotationViewSet(PurchaseBaseViewSet):
+    serializer_class = SupplierQuotationSerializer
+    queryset = SupplierQuotation.objects.select_related("rfq", "supplier").prefetch_related("lines__rfq_line__product")
+    filterset_fields = ("rfq", "supplier", "status")
+    search_fields = ("quotation_number", "supplier__name_ar", "rfq__rfq_number")
+    ordering_fields = ("quotation_date", "valid_until", "submitted_at")
+
+    def get_queryset(self):
+        return self.queryset.filter(rfq__company__in=accessible_companies(self.request.user))
+
+    def create(self, request, *args, **kwargs):
+        try:
+            rfq = PurchaseRFQ.objects.get(pk=request.data.get("rfq"), company__in=accessible_companies(request.user))
+        except (PurchaseRFQ.DoesNotExist, TypeError, ValueError):
+            raise NotFound("طلب عروض الأسعار غير موجود.") from None
+        self._check_write(rfq.company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        self._check_write(serializer.validated_data["rfq"].company_id)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        raise ValidationError("عرض المورد المقدم لا يعدل؛ اطلب سحبه وإصدار عرض جديد.")
+
+    def perform_destroy(self, instance):
+        raise ValidationError("لا يمكن حذف عرض مورد مقدم حفاظًا على سجل المنافسة.")
 
 
 class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
