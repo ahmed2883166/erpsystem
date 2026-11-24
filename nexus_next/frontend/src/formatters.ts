@@ -92,3 +92,48 @@ export const multiplyDecimalToFixed = (
     ? sign + whole.toString()
     : sign + whole.toString() + "." + fraction;
 };
+
+/** Sum decimal strings without converting financial values to IEEE-754 numbers. */
+export const sumDecimalToFixed = (
+  values: Array<string | number>,
+  decimalPlaces = 4,
+): string => {
+  const parsed = values.map((value) => {
+    const match = /^([+-]?)(\d+)(?:\.(\d*))?$/.exec(String(value).trim());
+    if (!match) return null;
+    return {
+      negative: match[1] === "-",
+      digits: BigInt(match[2] + (match[3] || "")),
+      scale: (match[3] || "").length,
+    };
+  });
+  if (parsed.some((value) => value === null)
+    || !Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 12) {
+    const total = values.reduce((sum, value) => sum + Number(value), 0);
+    return Number.isFinite(total) ? total.toFixed(Math.max(0, Math.min(decimalPlaces, 12))) : "0";
+  }
+
+  const entries = parsed as Array<{ negative: boolean; digits: bigint; scale: number }>;
+  const sourceScale = Math.max(0, ...entries.map((value) => value.scale));
+  let total = entries.reduce((sum, value) => {
+    const scaled = value.digits * (10n ** BigInt(sourceScale - value.scale));
+    return sum + (value.negative ? -scaled : scaled);
+  }, 0n);
+  const negative = total < 0n;
+  if (negative) total = -total;
+
+  if (sourceScale > decimalPlaces) {
+    const divisor = 10n ** BigInt(sourceScale - decimalPlaces);
+    const remainder = total % divisor;
+    total /= divisor;
+    if (remainder * 2n >= divisor) total += 1n;
+  } else {
+    total *= 10n ** BigInt(decimalPlaces - sourceScale);
+  }
+
+  const scale = 10n ** BigInt(decimalPlaces);
+  const whole = total / scale;
+  const fraction = (total % scale).toString().padStart(decimalPlaces, "0");
+  const sign = negative && total !== 0n ? "-" : "";
+  return decimalPlaces === 0 ? sign + whole.toString() : sign + whole.toString() + "." + fraction;
+};
