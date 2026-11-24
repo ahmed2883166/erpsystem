@@ -156,6 +156,14 @@ class AssetPurchaseInvoice(models.Model):
             models.CheckConstraint(condition=Q(net_amount__gt=0), name="ck_asset_invoice_net_positive"),
             models.CheckConstraint(condition=Q(tax_amount__gte=0) & Q(recoverable_tax_amount__gte=0) & Q(nonrecoverable_tax_amount__gte=0), name="ck_asset_invoice_tax_nonnegative"),
             models.CheckConstraint(condition=Q(grand_total__gt=0), name="ck_asset_invoice_total_positive"),
+            models.CheckConstraint(
+                condition=Q(tax_amount=models.F("recoverable_tax_amount") + models.F("nonrecoverable_tax_amount")),
+                name="ck_asset_invoice_tax_split",
+            ),
+            models.CheckConstraint(
+                condition=Q(grand_total=models.F("net_amount") + models.F("tax_amount")),
+                name="ck_asset_invoice_total_math",
+            ),
         ]
         indexes = [models.Index(fields=("company", "supplier", "status", "invoice_date"), name="asset_inv_supplier_idx")]
 
