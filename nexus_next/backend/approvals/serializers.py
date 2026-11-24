@@ -39,7 +39,7 @@ class DiscountApprovalPolicySerializer(serializers.ModelSerializer):
         )
         if all(value is None for value in (discount_limit, sales_amount_limit, purchase_amount_limit, purchase_order_amount_limit, payment_amount_limit)):
             raise serializers.ValidationError(
-                "يجب تحديد حد للخصم أو حد لقيمة فاتورة المبيعات على الأقل."
+                "يجب تحديد حد مالي واحد على الأقل."
             )
         return attrs
 
