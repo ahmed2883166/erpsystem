@@ -28,6 +28,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
   const [returns, setReturns] = useState<SalesReturn[]>([]);
   const [quotations, setQuotations] = useState<SalesQuotation[]>([]);
+  const [editingQuotationId,setEditingQuotationId]=useState<number|null>(null);
   const [companyProfile, setCompanyProfile] = useState<Company|null>(null);
   const [printTarget, setPrintTarget] = useState<{kind:"invoice"|"quotation";id:number}|null>(null);
   const [quoteLines, setQuoteLines] = useState<QuotationDraftLine[]>([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]);
@@ -85,7 +86,7 @@ const refresh = async () => {
     event.preventDefault(); if (!companyId) return;
     setBusy(true); setError("");
     try {
-      await salesApi.createQuotation({
+      const payload = {
         company:companyId, customer:Number(quoteForm.customer),
         quotation_number:quoteForm.quotation_number, quotation_date:quoteForm.quotation_date,
         valid_until:quoteForm.valid_until, notes:quoteForm.notes,
@@ -94,14 +95,30 @@ const refresh = async () => {
           tax_rate:line.tax_rate,tax_code:line.tax_code?Number(line.tax_code):null,
           ...(line.discount_percent!==""?{discount_percent:line.discount_percent}:{})
         })),
-      });
-      setShowForm(false); setQuoteForm(old=>({...old,quotation_number:"",notes:""}));
+      };
+      if(editingQuotationId) await salesApi.updateQuotation(editingQuotationId,payload);
+      else await salesApi.createQuotation(payload);
+      setEditingQuotationId(null); setShowForm(false); setQuoteForm(old=>({...old,quotation_number:"",notes:""}));
       setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]);
       await refresh();
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إنشاء عرض السعر."); }
     finally { setBusy(false); }
   };
-  const quoteAction = async (action:"send"|"accept"|"reject", id:number) => {
+
+  const beginEditQuotation = (quote:SalesQuotation) => {
+    setEditingQuotationId(quote.id);
+    setQuoteForm({customer:String(quote.customer),quotation_number:quote.quotation_number,quotation_date:quote.quotation_date,valid_until:quote.valid_until,notes:quote.notes||""});
+    setQuoteLines(quote.quotation_lines.map(line=>({product:String(line.product),quantity:line.quantity,unit_price:line.unit_price,tax_rate:line.tax_rate,tax_code:line.tax_code?String(line.tax_code):"",discount_percent:line.discount_percent})));
+    setTab("quotations");setShowForm(true);
+  };
+  const deleteQuotation = async (quote:SalesQuotation) => {
+    if(!window.confirm("سيتم حذف مسودة عرض السعر فقط. هل تريد المتابعة؟"))return;
+    setBusy(true);setError("");
+    try{await salesApi.deleteQuotation(quote.id);await refresh();}
+    catch(reason){setError(reason instanceof Error?reason.message:"تعذر حذف مسودة عرض السعر.");}
+    finally{setBusy(false);}
+  };
+\n  const quoteAction = async (action:"send"|"accept"|"reject", id:number) => {
     setBusy(true); setError("");
     try {
       if(action==="send") await salesApi.sendQuotation(id);
@@ -290,7 +307,7 @@ const post = async (action: () => Promise<unknown>) => {
         </div>)}
       </div>
       <label className="inventory-wide">ملاحظات<textarea rows={2} value={quoteForm.notes} onChange={e=>setQuoteForm({...quoteForm,notes:e.target.value})}/></label>
-      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy?"جارٍ الحفظ…":"حفظ عرض السعر كمسودة"}</button></div>
+      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy?"جارٍ الحفظ…":editingQuotationId?"حفظ تعديلات العرض":"حفظ عرض السعر كمسودة"}</button></div>
     </form>}
     {convertingQuoteId && <form className="inventory-form" onSubmit={convertQuotation}>
       <strong className="inventory-wide">تحويل عرض السعر إلى إذن تسليم مسودة</strong>
@@ -366,7 +383,7 @@ const post = async (action: () => Promise<unknown>) => {
         <td className="code-cell">{q.quotation_number}</td><td>{q.customer_name}</td><td>{q.quotation_date}</td><td>{q.valid_until}</td><td>{money(q.discount_total)}</td><td>{money(q.grand_total)}</td>
         <td>{q.status==="draft"?"مسودة":q.status==="sent"?"مرسل":q.status==="accepted"?"مقبول":q.status==="rejected"?"مرفوض":q.status==="expired"?"منتهي":"تم التحويل"}</td>
         <td><div className="table-actions"><button className="subtle-button" type="button" onClick={()=>setPrintTarget({kind:"quotation",id:q.id})}>معاينة / طباعة</button>
-          {q.status==="draft" && <button className="primary-button" type="button" disabled={busy} onClick={()=>void quoteAction("send",q.id)}>إرسال</button>}
+          {q.status==="draft" && <><button className="subtle-button" type="button" disabled={busy} onClick={()=>beginEditQuotation(q)}>تعديل</button><button className="subtle-button" type="button" disabled={busy} onClick={()=>void deleteQuotation(q)}>حذف</button><button className="primary-button" type="button" disabled={busy} onClick={()=>void quoteAction("send",q.id)}>إرسال</button></>}
           {q.status==="sent" && <><button className="primary-button" type="button" disabled={busy} onClick={()=>void quoteAction("accept",q.id)}>قبول</button><button className="subtle-button" type="button" disabled={busy} onClick={()=>void quoteAction("reject",q.id)}>رفض</button></>}
           {q.status==="accepted" && <button className="primary-button" type="button" disabled={busy} onClick={()=>{setConvertingQuoteId(q.id);setQuoteDeliveryForm(old=>({...old,delivery_number:("SD-"+q.quotation_number).slice(0,37),expiry_dates:{}}));}}>تحويل لإذن تسليم</button>}
           {q.converted_delivery_number && <span>{q.converted_delivery_number}</span>}
