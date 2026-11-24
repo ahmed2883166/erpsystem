@@ -1333,6 +1333,61 @@ class JournalEntryViewSet(AccountingViewSet):
                 "change": movement, "cash_flow_adjustment": adjustment,
             })
 
+        # Capital-asset invoices and their recoverable VAT are investing-related,
+        # not operating working-capital movements. Remove their net contribution
+        # from the indirect operating section; the actual cash settlement remains
+        # in investing cash flow through the linked treasury transaction.
+        from datetime import timedelta
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+
+        def asset_supplier_balance(as_of_date):
+            if as_of_date is None:
+                return Decimal("0")
+            invoices = AssetPurchaseInvoice.objects.filter(
+                company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+                journal_entry__status=JournalEntry.Status.POSTED,
+                invoice_date__lte=as_of_date, branch__in=visible_branches,
+            ).prefetch_related("payments")
+            balance = Decimal("0")
+            for invoice in invoices:
+                paid = sum((
+                    payment.amount for payment in invoice.payments.all()
+                    if payment.status == AssetSupplierPayment.Status.POSTED
+                    and payment.payment_date <= as_of_date
+                ), Decimal("0"))
+                balance += invoice.grand_total - paid
+            return balance
+
+        def asset_recoverable_input_vat(as_of_date):
+            if as_of_date is None:
+                return Decimal("0")
+            supplier_vat = AssetPurchaseInvoice.objects.filter(
+                company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+                journal_entry__status=JournalEntry.Status.POSTED,
+                invoice_date__lte=as_of_date, branch__in=visible_branches,
+            ).aggregate(total=Sum("recoverable_tax_amount"))["total"] or Decimal("0")
+            cash_asset_vat = FixedAsset.objects.filter(
+                company_id=company_id, acquisition_date__lte=as_of_date,
+                acquisition_tax_journal__status=JournalEntry.Status.POSTED,
+                branch__in=visible_branches,
+            ).aggregate(total=Sum("recoverable_tax_amount"))["total"] or Decimal("0")
+            return supplier_vat + cash_asset_vat
+
+        opening_date = date_from - timedelta(days=1)
+        asset_ap_change = asset_supplier_balance(date_to) - asset_supplier_balance(opening_date)
+        asset_vat_change = asset_recoverable_input_vat(date_to) - asset_recoverable_input_vat(opening_date)
+        asset_capex_working_capital_offset = -asset_ap_change + asset_vat_change
+        operating_adjustments += asset_capex_working_capital_offset
+        working_capital.append({
+            "role": "fixed_asset_acquisition_non_cash_offset",
+            "account_code": None,
+            "account_name": "استبعاد مشتريات الأصول وضريبة مدخلاتها من رأس المال العامل التشغيلي",
+            "opening_balance": Decimal("0"),
+            "closing_balance": Decimal("0"),
+            "change": asset_ap_change - asset_vat_change,
+            "cash_flow_adjustment": asset_capex_working_capital_offset,
+        })
+
         depreciation_qs = AssetDepreciation.objects.filter(
             asset__company_id=company_id, period_date__gte=date_from, period_date__lte=date_to,
             journal_entry__status=JournalEntry.Status.POSTED,
