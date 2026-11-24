@@ -45,7 +45,7 @@ class SalesReturnViewSet(SalesBaseViewSet):
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
