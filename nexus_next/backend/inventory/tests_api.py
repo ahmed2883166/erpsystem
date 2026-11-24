@@ -348,7 +348,6 @@ class InventoryApiTests(APITestCase):
             "counted_quantity": "0",
         }, format="json")
         self.assertEqual(line.status_code, 201, line.data)
-
         receipt = self._movement("COUNT-STALE-R", "receipt", destination=warehouse, quantity="2", cost="4")
         self.assertEqual(receipt.status_code, 201, receipt.data)
         # A draft created after the snapshot is enough to invalidate the count;
@@ -697,8 +696,7 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(issue.status_code, 201, issue.data)
         issue_record = StockMovement.objects.get(pk=issue.data["id"])
         issue_record.movement_date = date(2026, 11, 23)
-        issue_record.save(update_fields=("movement_date",))
-        self.assertEqual(self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code, 200)
+        issue_record.save(update_fields=("movement_date",))        self.assertEqual(self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code, 200)
 
         response = self.client.get(
             f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={warehouse.pk}&date_from=2026-11-22&date_to=2026-11-30"
@@ -1016,6 +1014,9 @@ class InventoryApiTests(APITestCase):
         restricted_branch = Branch.objects.create(
             company=self.company, code="B3", name_ar="فرع غير مصرح به",
         )
+        product = Product.objects.create(
+            company=self.company, unit=self.unit, code="REPORT-SCOPE-PROD", name_ar="صنف اختبار الصلاحيات",
+        )
         restricted_warehouse = Warehouse.objects.create(
             company=self.company, branch=restricted_branch,
             code="REPORT-HIDDEN-WH", name_ar="مخزن فرع غير مصرح به",
@@ -1036,7 +1037,7 @@ class InventoryApiTests(APITestCase):
             self.assertEqual(response.status_code, 403, (report, response.data))
 
         card = self.client.get(
-            f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={restricted_warehouse.pk}",
+            f"/api/inventory/movements/stock-card/?product={product.pk}&warehouse={restricted_warehouse.pk}",
         )
         self.assertEqual(card.status_code, 404, card.data)
 
@@ -1057,4 +1058,3 @@ class InventoryApiTests(APITestCase):
             f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}&branch={restricted_branch.pk}",
         )
         self.assertEqual(response.status_code, 403, response.data)
-
