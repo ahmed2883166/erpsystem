@@ -126,7 +126,7 @@ def post_inventory_count(count_id, user):
             )
             for line, variance in rows
         ])
-        return post_stock_movement(movement.pk, user)
+        return post_stock_movement(movement.pk, user, inventory_count_id=count.pk)
 
     gain_movement = create_adjustment("G", StockMovementLine.AdjustmentDirection.IN, gains)
     loss_movement = create_adjustment("L", StockMovementLine.AdjustmentDirection.OUT, losses)

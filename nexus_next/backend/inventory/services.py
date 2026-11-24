@@ -6,11 +6,11 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, Warehouse
+from .models import InventoryCount, Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, Warehouse
 
 
 @transaction.atomic
-def post_stock_movement(movement_id, user):
+def post_stock_movement(movement_id, user, *, inventory_count_id=None):
     """ترحيل حركة المخزون وتحديث الأرصدة وطبقات التكلفة وأثرها المحاسبي."""
     # Lock only the movement row; nullable warehouse joins cannot be locked in PostgreSQL.
     movement = StockMovement.objects.select_for_update().get(pk=movement_id)
@@ -40,6 +40,16 @@ def post_stock_movement(movement_id, user):
     # Warehouse locks serialize postings with stock-count snapshots and with
     # other movements that touch the same warehouse.
     list(Warehouse.objects.select_for_update().filter(pk__in=warehouse_ids).order_by("pk"))
+    active_counts = InventoryCount.objects.filter(
+        warehouse_id__in=warehouse_ids,
+        status=InventoryCount.Status.DRAFT,
+    )
+    if inventory_count_id is not None:
+        active_counts = active_counts.exclude(pk=inventory_count_id)
+    if active_counts.exists():
+        raise ValidationError(
+            "لا يمكن ترحيل حركة أثناء وجود جرد فعلي مفتوح على المخزن. أكمل الجرد أو ألغِه أولاً."
+        )
 
     movement_type = movement.movement_type
     source_required = movement_type in (

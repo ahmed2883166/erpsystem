@@ -404,8 +404,8 @@ class InventoryCountLineSerializer(serializers.ModelSerializer):
 
 class InventoryCountSerializer(serializers.ModelSerializer):
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
-    created_by_name = serializers.CharField(source="created_by.get_full_name", read_only=True)
-    posted_by_name = serializers.CharField(source="posted_by.get_full_name", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.get_full_name", read_only=True, allow_null=True)
+    posted_by_name = serializers.CharField(source="posted_by.get_full_name", read_only=True, allow_null=True)
     gain_movement_number = serializers.CharField(source="gain_movement.movement_number", read_only=True, allow_null=True)
     loss_movement_number = serializers.CharField(source="loss_movement.movement_number", read_only=True, allow_null=True)
     lines = InventoryCountLineSerializer(many=True, read_only=True)

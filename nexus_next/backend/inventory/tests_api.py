@@ -309,6 +309,28 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(balance.quantity, Decimal("3.0000"))
         self.assertEqual(balance.inventory_value, Decimal("7.5000"))
 
+    def test_manual_movement_cannot_post_while_inventory_count_is_open(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="COUNT-LOCK-1", name_ar="قفل الجرد",
+        )
+        warehouse = self._warehouse("COUNT-LOCK-WH")
+        started = self.client.post("/api/inventory/counts/", {
+            "company": self.company.pk, "warehouse": warehouse.pk,
+            "count_number": "COUNT-LOCK-001", "count_date": "2026-11-21",
+        }, format="json")
+        self.assertEqual(started.status_code, 201, started.data)
+        receipt = self._movement("COUNT-LOCK-R", "receipt", destination=warehouse, quantity="1", cost="3")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        response = self.client.post(
+            f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("جرد فعلي مفتوح", str(response.data))
+        self.assertEqual(
+            StockMovement.objects.get(pk=receipt.data["id"]).status,
+            StockMovement.Status.DRAFT,
+        )
+
     def test_inventory_count_rejects_unfinished_or_stale_snapshot(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="COUNT-STALE-1", name_ar="جرد قديم",
