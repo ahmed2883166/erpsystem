@@ -77,7 +77,9 @@ class PurchasingWorkflowTests(APITestCase):
         receipt_line_id = response.data["line_items"][0]["id"]
         response = self.client.post(f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["journal_number"], f"PUR-GR-{receipt_id}")
+        receipt_journal = JournalEntry.objects.get(entry_number=response.data["journal_number"])
+        self.assertEqual(receipt_journal.source_type, JournalEntry.Source.INVENTORY)
+        self.assertEqual(receipt_journal.status, JournalEntry.Status.POSTED)
         return receipt_id, receipt_line_id
 
     def test_posted_purchase_receipt_update_is_rejected_without_partial_changes(self):
