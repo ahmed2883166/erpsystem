@@ -91,6 +91,8 @@ const unmatch=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setE
   // اعتماد التسوية البنكية بعد استكمال المطابقات والتحقق من الفروق.
 const finalize=async()=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.reconcile(Number(selectedRecon));await load();await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر اعتماد التسوية.");}finally{setBusy(false);}};
   const active=accounts.filter(a=>a.is_active);
+  const visibleAccounts=accounts.filter(a=>`${a.code} ${a.name_ar} ${a.bank_name||""} ${a.account_number||""} ${a.iban||""}`.toLocaleLowerCase("ar").includes(accountSearch.trim().toLocaleLowerCase("ar")));
+  const visibleTransactions=transactions.filter(t=>`${t.document_number} ${t.transaction_date} ${t.kind} ${t.source_name} ${t.destination_name||""} ${t.journal_number||""} ${t.status}`.toLocaleLowerCase("ar").includes(transactionSearch.trim().toLocaleLowerCase("ar")));
   const bankAccounts=active.filter(a=>a.kind==="bank");
   // حساب الرصيد الجاري لحساب الخزينة من الرصيد الافتتاحي والحركات المرحلة.
 const balance=(id:number)=>{const account=accounts.find(a=>a.id===id);if(account&&account.currency_code!==baseCurrencyCode)return Number(account.fx_position_foreign_amount||0);return transactions.filter(t=>t.status==="posted").reduce((n,t)=>n+(t.source_account===id?(t.kind==="receipt"?Number(t.amount):-Number(t.amount)):t.kind==="transfer"&&t.destination_account===id?Number(t.amount):0),Number(account?.opening_balance||0));};
