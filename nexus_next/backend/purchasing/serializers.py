@@ -977,8 +977,13 @@ class SupplierQuotationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"quotation_date": "تاريخ العرض بعد موعد إغلاق الطلب."})
         if attrs["valid_until"] < attrs["quotation_date"]:
             raise serializers.ValidationError({"valid_until": "صلاحية العرض لا تسبق تاريخ العرض."})
-        if supplier.company_id != rfq.company_id or not rfq.invitations.filter(supplier=supplier, status=PurchaseRFQInvitation.Status.INVITED).exists():
+        invitation = rfq.invitations.filter(supplier=supplier).first()
+        if supplier.company_id != rfq.company_id or not invitation:
             raise serializers.ValidationError({"supplier": "المورد غير مدعو لهذا الطلب."})
+        if invitation.status != PurchaseRFQInvitation.Status.INVITED or SupplierQuotation.objects.filter(rfq=rfq, supplier=supplier).exists():
+            raise serializers.ValidationError({"supplier": "تم تسجيل عرض لهذا المورد بالفعل أو لم يعد مدعوًا."})
+        if SupplierQuotation.objects.filter(supplier=supplier, quotation_number=attrs["quotation_number"]).exists():
+            raise serializers.ValidationError({"quotation_number": "رقم العرض مستخدم من قبل لهذا المورد."})
         required = set(rfq.lines.values_list("id", flat=True))
         provided = [x["rfq_line"].pk for x in lines]
         if set(provided) != required or len(provided) != len(required):
