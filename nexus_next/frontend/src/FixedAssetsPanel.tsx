@@ -48,6 +48,9 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [impairmentRecoverable, setImpairmentRecoverable] = useState("");
   const [impairmentExpenseAccount, setImpairmentExpenseAccount] = useState("");
   const [accumulatedImpairmentAccount, setAccumulatedImpairmentAccount] = useState("");
+  const [reversalDate, setReversalDate] = useState(today);
+  const [reversalRecoverable, setReversalRecoverable] = useState("");
+  const [reversalIncomeAccount, setReversalIncomeAccount] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [schedule, setSchedule] = useState<AssetSchedule | null>(null);
   const [loading, setLoading] = useState(false);
@@ -92,6 +95,7 @@ const refresh = async () => {
 
   const assetAccounts = useMemo(() => accounts.filter(x => x.nature === "asset"), [accounts]);
   const expenseAccounts = useMemo(() => accounts.filter(x => x.nature === "expense"), [accounts]);
+  const revenueAccounts = useMemo(() => accounts.filter(x => x.nature === "revenue"), [accounts]);
   // إنشاء قائمة اختيار موحدة للحسابات المرتبطة ببطاقة الأصل.
 const accountSelect = (label: string, key: keyof typeof emptyForm, rows: Account[]) => (
     <label>{label}<select required value={form[key]} onChange={e => setForm(old => ({...old,[key]:e.target.value}))}>
@@ -252,6 +256,27 @@ const create = async (event: FormEvent) => {
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر إثبات انخفاض قيمة الأصل.");
+    } finally { setSaving(false); }
+  };
+
+
+  const reverseSelectedImpairment = async () => {
+    if (!selected || !form.fiscal_year || !(Number(reversalRecoverable) >= 0) || !reversalIncomeAccount) {
+      setError("أدخل القيمة القابلة للاسترداد واختر حساب إيراد عكس الانخفاض والسنة المالية."); return;
+    }
+    if (!window.confirm("سيتم احتساب الحد الأقصى المسموح لعكس الانخفاض وفق IAS 36 وترحيل قيد مستقل. هل تريد المتابعة؟")) return;
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const result = await fixedAssetsApi.reverseImpairment(selected, {
+        reversal_date: reversalDate, recoverable_amount: reversalRecoverable,
+        reversal_income_account: Number(reversalIncomeAccount), fiscal_year: Number(form.fiscal_year),
+      });
+      setNotice(`تم عكس انخفاض القيمة بمبلغ ${formatMoney(result.reversal_amount)} وفق سقف IAS 36. رقم القيد: ${result.journal_entry}.`);
+      setReversalRecoverable("");
+      setSchedule(await fixedAssetsApi.schedule(selected));
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر عكس انخفاض قيمة الأصل.");
     } finally { setSaving(false); }
   };
 
@@ -422,6 +447,7 @@ const loadReport = async () => {
       {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-depreciation-action"><label>تاريخ الإهلاك<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label><button className="primary-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void depreciate(a);}}>تسجيل إهلاك الفترة</button></div>}
       <div className="data-table-wrap"><table><thead><tr><th>تاريخ الفترة</th><th>قيمة الإهلاك</th><th>النوع</th><th>رقم القيد</th></tr></thead><tbody>{schedule.rows.map(row=><tr key={row.id}><td>{row.period_date}</td><td>{formatMoney(row.amount)}</td><td>{row.is_partial_period ? "حتى تاريخ الاستبعاد" : "شهري"}</td><td>{row.journal_entry}</td></tr>)}</tbody></table></div>
       {schedule.impairments.length > 0 && <div className="data-table-wrap"><h3>سجل انخفاض القيمة</h3><table><thead><tr><th>تاريخ الاختبار</th><th>القيمة قبل الانخفاض</th><th>القيمة القابلة للاسترداد</th><th>خسارة الانخفاض</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{schedule.impairments.map(row=><tr key={row.id}><td>{row.impairment_date}</td><td>{formatMoney(row.carrying_amount_before)}</td><td>{formatMoney(row.recoverable_amount)}</td><td>{formatMoney(row.impairment_loss)}</td><td>{row.journal_entry}</td><td>{row.status==="posted"?"مرحل":"معكوس"}</td></tr>)}</tbody></table></div>}
+      {schedule.impairment_reversals?.length > 0 && <div className="data-table-wrap"><h3>سجل عكس انخفاض القيمة</h3><table><thead><tr><th>تاريخ العكس</th><th>القيمة قبل العكس</th><th>القيمة القابلة للاسترداد</th><th>سقف IAS 36</th><th>مبلغ العكس</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{schedule.impairment_reversals.map(row=><tr key={row.id}><td>{row.reversal_date}</td><td>{formatMoney(row.carrying_amount_before)}</td><td>{formatMoney(row.recoverable_amount)}</td><td>{formatMoney(row.hypothetical_carrying_amount)}</td><td>{formatMoney(row.reversal_amount)}</td><td>{row.journal_entry}</td><td>{row.status==="posted"?"مرحل":"معكوس"}</td></tr>)}</tbody></table></div>}
       {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-disposal-form">
         <strong>اختبار انخفاض قيمة الأصل (IAS 36)</strong>
         <p className="asset-report-note">أدخل القيمة القابلة للاسترداد = الأعلى من القيمة العادلة ناقص تكاليف البيع والقيمة الاستخدامية. يجب ترحيل الإهلاك حتى تاريخ الاختبار أولًا.</p>
@@ -431,6 +457,16 @@ const loadReport = async () => {
           <label>حساب مصروف انخفاض القيمة<select value={impairmentExpenseAccount} onChange={e=>setImpairmentExpenseAccount(e.target.value)}><option value="">اختر حساب المصروف</option>{expenseAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
           <label>حساب مجمع انخفاض القيمة<select value={accumulatedImpairmentAccount} onChange={e=>setAccumulatedImpairmentAccount(e.target.value)}><option value="">اختر الحساب المقابل للأصل</option>{assetAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
           <button type="button" className="primary-button" disabled={saving} onClick={()=>void impairSelectedAsset()}>{saving?"جارٍ الترحيل…":"احتساب وترحيل انخفاض القيمة"}</button>
+        </div>
+      </div>}
+      {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && schedule.impairments.some(row=>row.status==="posted") && <div className="asset-disposal-form">
+        <strong>عكس انخفاض القيمة (IAS 36)</strong>
+        <p className="asset-report-note">يُثبت العكس في قائمة الدخل وفق نموذج التكلفة، ولا يجوز أن تتجاوز القيمة الدفترية بعد العكس القيمة التي كانت ستظهر لو لم يُثبت الانخفاض أصلًا. يجب ترحيل الإهلاك حتى تاريخ العكس.</p>
+        <div className="asset-disposal-fields">
+          <label>تاريخ العكس<input type="date" value={reversalDate} onChange={e=>setReversalDate(e.target.value)}/></label>
+          <label>القيمة القابلة للاسترداد<input type="number" min="0" step="0.0001" value={reversalRecoverable} onChange={e=>setReversalRecoverable(e.target.value)}/></label>
+          <label>حساب إيراد عكس الانخفاض<select value={reversalIncomeAccount} onChange={e=>setReversalIncomeAccount(e.target.value)}><option value="">اختر حساب الإيراد</option>{revenueAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+          <button type="button" className="primary-button" disabled={saving} onClick={()=>void reverseSelectedImpairment()}>{saving?"جارٍ الترحيل…":"احتساب وترحيل عكس الانخفاض"}</button>
         </div>
       </div>}
       {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-disposal-form">
