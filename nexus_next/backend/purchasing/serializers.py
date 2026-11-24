@@ -355,7 +355,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 })
             if line["billed_quantity"] > receipt_line.quantity - previous:
                 raise serializers.ValidationError({
-                    "lines": f"الكمية المفوترة تتجاوز المتبقي من استلام الصنف {receipt_line.product.code}."
+                    "lines": f"الكمية المفوترة أو المحجوزة تتجاوز المتبقي من استلام الصنف {receipt_line.product.code}."
                 })
             if transaction_currency and line.get("transaction_unit_price") is None:
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
