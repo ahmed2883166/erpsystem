@@ -418,6 +418,17 @@ class FixedAssetWorkflowTests(APITestCase):
             {"asset_invoice", "asset_payment"},
         )
 
+        # The same asset payable must be visible in the shared supplier aging report.
+        aging = self.client.get("/api/purchasing/invoices/supplier-aging/", {
+            "company": self.company.pk, "as_of": "2026-01-20",
+        })
+        self.assertEqual(aging.status_code, 200, aging.data)
+        self.assertEqual(aging.data["totals"]["total_due"], "64000.0000")
+        self.assertEqual(aging.data["totals"]["not_due"], "64000.0000")
+        asset_aging_line = aging.data["suppliers"][0]["invoices"][0]
+        self.assertEqual(asset_aging_line["document_type"], "asset_purchase_invoice")
+        self.assertEqual(asset_aging_line["asset_name"], "سيارة الشركة")
+
         overpayment = self.client.post(
             f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
             {
