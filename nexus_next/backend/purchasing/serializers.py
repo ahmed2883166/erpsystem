@@ -913,8 +913,11 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invited_suppliers": "اختر موردين نشطين مختلفين."})
         if any(x.company_id != company.pk for x in suppliers):
             raise serializers.ValidationError({"invited_suppliers": "كل الموردين يجب أن يتبعوا الشركة."})
-        if any(x["product"].company_id != company.pk or x["product"].product_type != Product.ProductType.GOODS for x in lines):
-            raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية من نفس الشركة."})
+        product_ids = [x["product"].pk for x in lines]
+        if len(product_ids) != len(set(product_ids)):
+            raise serializers.ValidationError({"lines": "لا تكرر الصنف داخل طلب العروض؛ اجمع الكمية في بند واحد."})
+        if any(x["product"].company_id != company.pk or x["product"].product_type != Product.ProductType.GOODS or not x["product"].is_active for x in lines):
+            raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة من نفس الشركة."})
         source = attrs.get("source_requisition")
         if source and (source.company_id != company.pk or source.status != "approved"):
             raise serializers.ValidationError({"source_requisition": "اختر طلب احتياج معتمدًا من نفس الشركة."})
@@ -973,8 +976,8 @@ class SupplierQuotationSerializer(serializers.ModelSerializer):
         rfq, supplier, lines = attrs["rfq"], attrs["supplier"], attrs["lines"]
         if rfq.status != PurchaseRFQ.Status.OPEN:
             raise serializers.ValidationError({"rfq": "طلب العروض غير مفتوح لاستقبال عروض."})
-        if attrs["quotation_date"] > rfq.closing_date:
-            raise serializers.ValidationError({"quotation_date": "تاريخ العرض بعد موعد إغلاق الطلب."})
+        if attrs["quotation_date"] < rfq.issue_date or attrs["quotation_date"] > rfq.closing_date:
+            raise serializers.ValidationError({"quotation_date": "تاريخ العرض يجب أن يقع بين إصدار طلب العروض وموعد إغلاقه."})
         if attrs["valid_until"] < attrs["quotation_date"]:
             raise serializers.ValidationError({"valid_until": "صلاحية العرض لا تسبق تاريخ العرض."})
         invitation = rfq.invitations.filter(supplier=supplier).first()
