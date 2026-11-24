@@ -3,11 +3,12 @@
  * تشمل التسوية البنكية ومطابقة كشف البنك مع الحركات المسجلة.
  */
 import { useCallback, useEffect, useState } from "react";
+import { formatMoney } from "./formatters";
 import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
-const money = (v: string | number) => Number(v || 0).toLocaleString("ar-EG", {maximumFractionDigits:2});
+const money = (v: string | number) => formatMoney(v);
 
 // شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
