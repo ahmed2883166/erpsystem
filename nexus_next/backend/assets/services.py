@@ -43,6 +43,41 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     if not (year.start_date <= asset.acquisition_date <= year.end_date):
         raise ValidationError("تاريخ الاقتناء خارج السنة المالية المفتوحة.")
 
+    recoverable_tax = asset.recoverable_tax_amount or Decimal("0")
+    nonrecoverable_tax = asset.nonrecoverable_tax_amount or Decimal("0")
+    if recoverable_tax < 0 or nonrecoverable_tax < 0:
+        raise ValidationError("ضريبة اقتناء الأصل لا يمكن أن تكون سالبة.")
+    if asset.acquisition_tax_code_id:
+        tax_code = asset.acquisition_tax_code
+        if (
+            not tax_code.is_active or tax_code.company_id != asset.company_id
+            or tax_code.country != asset.company.country or tax_code.category != "standard"
+            or tax_code.effective_from > asset.acquisition_date
+            or (tax_code.effective_to and tax_code.effective_to < asset.acquisition_date)
+        ):
+            raise ValidationError("كود ضريبة اقتناء الأصل غير صالح بتاريخ الاقتناء.")
+        if asset.acquisition_net_amount is None:
+            raise ValidationError("يجب تحديد صافي تكلفة الأصل قبل الضريبة.")
+        expected_tax = round_currency_amount(
+            asset.acquisition_net_amount * tax_code.rate / Decimal("100"), asset.company.base_currency,
+        )
+        expected_recoverable = expected_tax if tax_code.input_tax_recoverable else Decimal("0")
+        expected_nonrecoverable = expected_tax - expected_recoverable
+        if recoverable_tax != expected_recoverable or nonrecoverable_tax != expected_nonrecoverable:
+            raise ValidationError("مبالغ ضريبة الاقتناء لا تطابق كود الضريبة.")
+        if asset.original_cost != asset.acquisition_net_amount + nonrecoverable_tax:
+            raise ValidationError("تكلفة الأصل لا تطابق الصافي والضريبة غير القابلة للاسترداد.")
+    elif recoverable_tax or nonrecoverable_tax:
+        raise ValidationError("لا يمكن ترحيل ضريبة اقتناء دون كود ضريبي.")
+    vat_input = get_account_for_role(asset.company, AccountRole.Role.VAT_INPUT) if recoverable_tax else None
+    if vat_input and (
+        vat_input.pk in (asset.asset_account_id, asset.acquisition_counter_account_id)
+        or vat_input.nature != "asset" or not vat_input.is_active
+        or vat_input.is_group or not vat_input.allow_posting
+    ):
+        raise ValidationError("حساب ضريبة المدخلات غير صالح أو غير مستقل عن حسابات الأصل والبنك.")
+    cash_amount = asset.original_cost + recoverable_tax
+
     from treasury.models import TreasuryAccount, TreasuryTransaction
     treasury_account = TreasuryAccount.objects.filter(
         company=asset.company, account=asset.acquisition_counter_account, is_active=True
@@ -60,7 +95,7 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
                 source_account=treasury_account, counter_account=asset.asset_account,
                 kind=TreasuryTransaction.Kind.PAYMENT,
                 document_number=f"FA-ACQ-{asset.pk}", transaction_date=asset.acquisition_date,
-                amount=asset.original_cost, description=f"سداد تكلفة اقتناء الأصل: {asset.name_ar}",
+                amount=cash_amount, description=f"سداد تكلفة اقتناء الأصل: {asset.name_ar}",
                 cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
                 created_by=user,
             )
@@ -78,14 +113,30 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
         treasury_doc = post_treasury_transaction(treasury_doc.pk, user)
         asset.acquisition_journal = treasury_doc.journal_entry
         asset.save(update_fields=("acquisition_journal",))
+        if recoverable_tax and not asset.acquisition_tax_journal_id:
+            tax_entry = _post_entry(
+                asset, year, f"FA-ACQ-TAX-{asset.pk}", asset.acquisition_date,
+                f"فصل ضريبة المدخلات القابلة للاسترداد عن تكلفة الأصل: {asset.name_ar}", [
+                    {"account": vat_input, "debit": recoverable_tax, "credit": 0, "description": "ضريبة مدخلات قابلة للاسترداد"},
+                    {"account": asset.asset_account, "debit": 0, "credit": recoverable_tax, "description": "تخفيض تكلفة الأصل بالضريبة المستردة"},
+                ], user,
+            )
+            asset.acquisition_tax_journal = tax_entry
+            asset.save(update_fields=("acquisition_tax_journal",))
         return asset
 
+    lines = [
+        {"account": asset.asset_account, "debit": asset.original_cost, "credit": 0, "description": asset.name_ar},
+    ]
+    if recoverable_tax:
+        lines.append({"account": vat_input, "debit": recoverable_tax, "credit": 0, "description": "ضريبة مدخلات قابلة للاسترداد"})
+    lines.append({
+        "account": asset.acquisition_counter_account, "debit": 0, "credit": cash_amount,
+        "description": asset.name_ar,
+    })
     entry = _post_entry(
         asset, year, f"FA-ACQ-{asset.pk}", asset.acquisition_date,
-        f"إثبات اقتناء الأصل: {asset.name_ar}", [
-            {"account": asset.asset_account, "debit": asset.original_cost, "credit": 0, "description": asset.name_ar},
-            {"account": asset.acquisition_counter_account, "debit": 0, "credit": asset.original_cost, "description": asset.name_ar},
-        ], user,
+        f"إثبات اقتناء الأصل: {asset.name_ar}", lines, user,
     )
     asset.acquisition_journal = entry
     asset.save(update_fields=("acquisition_journal",))
