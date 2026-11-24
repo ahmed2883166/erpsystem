@@ -65,6 +65,53 @@ class CompanySetupApiTests(APITestCase):
         self.assertFalse(CompanyMembership.objects.filter(user=system_admin, company_id=company_id).exists())
         self.assertTrue(Company.objects.filter(pk=company_id).exists())
 
+    def test_platform_owner_creates_company_and_manager_in_one_request(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-create", password="test-password", is_staff=True,
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.post("/api/setup/companies/create-with-admin/", {
+            "company": {
+                "code": "ATOMIC-CO", "name_ar": "شركة متكاملة", "country": "EG",
+                "activity": "commercial", "base_currency": self.currency.pk, "is_active": True,
+            },
+            "manager": {
+                "username": "atomic-manager", "display_name": "مدير الشركة",
+                "email": "manager@example.test", "password": "Strong-Company-Admin-2026!xQ",
+            },
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        company = Company.objects.get(code="ATOMIC-CO")
+        manager = get_user_model().objects.get(username="atomic-manager")
+        membership = CompanyMembership.objects.get(company=company, user=manager)
+        self.assertEqual(membership.role, CompanyMembership.Role.ADMIN)
+        self.assertTrue(membership.all_branches)
+        self.assertTrue(Branch.objects.filter(company=company, is_head_office=True).exists())
+        self.assertFalse(manager.is_staff)
+        self.assertFalse(manager.is_superuser)
+        self.assertFalse(CompanyMembership.objects.filter(user=owner, company=company).exists())
+
+    def test_company_and_manager_creation_roll_back_together_on_invalid_password(self):
+        owner = get_user_model().objects.create_user(
+            username="platform-owner-rollback", password="test-password", is_staff=True,
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.post("/api/setup/companies/create-with-admin/", {
+            "company": {
+                "code": "ROLLBACK-CO", "name_ar": "شركة لا تحفظ", "country": "EG",
+                "activity": "commercial", "base_currency": self.currency.pk, "is_active": True,
+            },
+            "manager": {
+                "username": "rollback-manager", "display_name": "مدير",
+                "email": "rollback@example.test", "password": "123",
+            },
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(Company.objects.filter(code="ROLLBACK-CO").exists())
+        self.assertFalse(get_user_model().objects.filter(username="rollback-manager").exists())
+
     def test_non_staff_user_cannot_create_first_company(self):
         self.client.force_authenticate(self.user)
         response = self.client.post("/api/setup/companies/", {
