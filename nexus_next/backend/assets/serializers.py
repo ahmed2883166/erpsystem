@@ -22,10 +22,10 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                   "recoverable_tax_amount", "nonrecoverable_tax_amount", "acquisition_tax_code", "salvage_value", "useful_life_months",
                   "depreciation_method", "asset_account", "accumulated_depreciation_account",
                   "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account",
-                  "acquisition_journal", "acquisition_tax_journal", "acquisition_treasury_transaction", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
+                  "acquisition_journal", "acquisition_treasury_transaction", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
                   "accumulated_depreciation", "accumulated_impairment", "net_book_value", "vendor_invoice_id", "vendor_invoice_status", "vendor_payments", "created_at")
         read_only_fields = ("acquisition_journal", "status", "disposed_at", "disposal_proceeds",
-                            "disposal_journal", "disposal_treasury_transaction", "acquisition_tax_journal", "acquisition_treasury_transaction", "accumulated_depreciation", "accumulated_impairment", "net_book_value", "created_at")
+                            "disposal_journal", "disposal_treasury_transaction", "acquisition_treasury_transaction", "accumulated_depreciation", "accumulated_impairment", "net_book_value", "created_at")
 
     def get_vendor_invoice_id(self, obj):
         """Return the linked direct supplier invoice without failing for manual acquisitions."""
