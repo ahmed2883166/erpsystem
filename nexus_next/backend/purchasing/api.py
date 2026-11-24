@@ -269,24 +269,35 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         qs = self.queryset.filter(
             company__in=companies, receipt_date__lte=as_of,
             stock_movement__status=StockMovement.Status.POSTED,
-        ).select_related("invoice")
+        ).prefetch_related("invoices__lines")
         if branch_id:
             qs = qs.filter(warehouse__branch_id=branch_id)
         else:
             branches = accessible_branches(request.user)
             defaults = _default_branch_company_ids(request.user, companies)
             qs = qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
-        # Keep receipts with no invoice or a draft invoice in GRNI; only a posted
-        # supplier invoice clears the receipt from this operational aging view.
-        qs = qs.filter(
-            Q(invoice__isnull=True) | ~Q(invoice__status=PurchaseInvoice.Status.POSTED)
-        ).order_by("receipt_date", "receipt_number")
+        # Partial invoices reduce GRNI by their posted net amount only. Draft
+        # invoices never clear the operational liability.
+        qs = qs.order_by("receipt_date", "receipt_number")
         rows = []
         aging = {"0_30": Decimal("0"), "31_60": Decimal("0"), "61_90": Decimal("0"), "over_90": Decimal("0")}
         monthly = {}
         grand_total = Decimal("0")
         for receipt in qs:
-            amount = sum((line.cost_amount for line in receipt.stock_movement.lines.all()), Decimal("0")).quantize(Decimal("0.0001"))
+            receipt_total = sum(
+                (line.cost_amount for line in receipt.stock_movement.lines.all()),
+                Decimal("0"),
+            ).quantize(Decimal("0.0001"))
+            receipt_invoices = list(receipt.invoices.all())
+            posted_invoices = [
+                invoice for invoice in receipt_invoices
+                if invoice.status == PurchaseInvoice.Status.POSTED and invoice.invoice_date <= as_of
+            ]
+            invoiced_net = sum(
+                (line.net_amount for invoice in posted_invoices for line in invoice.lines.all()),
+                Decimal("0"),
+            ).quantize(Decimal("0.0001"))
+            amount = max(receipt_total - invoiced_net, Decimal("0")).quantize(Decimal("0.0001"))
             if amount <= 0:
                 continue
             age_days = max((as_of - receipt.receipt_date).days, 0)
@@ -295,7 +306,20 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             grand_total += amount
             month = receipt.receipt_date.strftime("%Y-%m")
             monthly[month] = monthly.get(month, Decimal("0")) + amount
-            invoice = getattr(receipt, "invoice", None)
+            draft_invoices = [
+                invoice for invoice in receipt_invoices
+                if invoice.status == PurchaseInvoice.Status.DRAFT
+            ]
+            if invoiced_net > 0:
+                invoice_status = "partially_invoiced"
+            elif draft_invoices:
+                invoice_status = "draft"
+            else:
+                invoice_status = "not_invoiced"
+            invoice_numbers = [
+                invoice.invoice_number for invoice in receipt_invoices
+                if invoice.status == PurchaseInvoice.Status.POSTED or invoice in draft_invoices
+            ]
             rows.append({
                 "receipt_id": receipt.pk, "receipt_number": receipt.receipt_number,
                 "receipt_date": receipt.receipt_date.isoformat(), "age_days": age_days,
@@ -303,8 +327,9 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
                 "supplier_name": receipt.supplier.name_ar, "warehouse_id": receipt.warehouse_id,
                 "warehouse_name": receipt.warehouse.name_ar,
                 "branch_id": receipt.warehouse.branch_id,
-                "amount": str(amount), "invoice_status": invoice.status if invoice else "not_invoiced",
-                "invoice_number": invoice.invoice_number if invoice else None,
+                "amount": str(amount), "invoice_status": invoice_status,
+                "invoice_number": ", ".join(invoice_numbers) or None,
+                "invoiced_amount": str(invoiced_net),
             })
         # Reconcile the operational receipt subledger with the posted GRNI
         # control-account balance as of the same date and branch scope.
