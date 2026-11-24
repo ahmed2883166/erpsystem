@@ -1484,15 +1484,9 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(len(response.data["existing"]), 1)
 
 
-from datetime import date
-from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
-from accounting.services import post_journal
 from inventory.models import StockMovement
 from django.utils import timezone
 
