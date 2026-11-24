@@ -47,6 +47,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
   const [requisitionForm, setRequisitionForm] = useState({ request_number: "", request_date: new Date().toISOString().slice(0, 10), required_date: "", department: "", purpose: "" });
   const [requisitionLines, setRequisitionLines] = useState<{ product: string; requested_quantity: string; estimated_unit_price: string }[]>([{ product: "", requested_quantity: "1", estimated_unit_price: "" }]);
+  const [convertingReqId, setConvertingReqId] = useState<number | null>(null);
+  const [conversionForm, setConversionForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10) });
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
   const [fxInvoice, setFxInvoice] = useState<PurchaseInvoice | null>(null);
@@ -147,18 +149,30 @@ const loadAging = async () => {
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذرت مراجعة طلب الاحتياج."); }
     finally { setBusy(false); }
   };
-  const convertRequisition = async (row: PurchaseRequisition) => {
-    const supplier = window.prompt("أدخل رقم المورد (Supplier ID)");
-    const warehouse = window.prompt("أدخل رقم المخزن (Warehouse ID)");
-    const orderNumber = window.prompt("رقم أمر الشراء");
-    if (!supplier || !warehouse || !orderNumber) return;
+  const openRequisitionConversion = (row: PurchaseRequisition) => {
+    setConvertingReqId(row.id);
+    setConversionForm({
+      supplier: String(suppliers[0]?.id || ""),
+      warehouse: String(warehouses[0]?.id || ""),
+      order_number: `PO-${row.request_number}`,
+      order_date: new Date().toISOString().slice(0, 10),
+    });
+    setError("");
+  };
+  const convertRequisition = async (event: FormEvent) => {
+    event.preventDefault();
+    const row = requisitions.find(item => item.id === convertingReqId);
+    if (!row || !conversionForm.supplier || !conversionForm.warehouse || !conversionForm.order_number.trim()) {
+      setError("حدد المورد والمخزن ورقم أمر الشراء."); return;
+    }
     setBusy(true); setError("");
     try {
       await purchasingApi.convertRequisition(row.id, {
-        supplier: Number(supplier), warehouse: Number(warehouse), order_number: orderNumber.trim(),
-        order_date: new Date().toISOString().slice(0, 10), expected_date: row.required_date,
+        supplier: Number(conversionForm.supplier), warehouse: Number(conversionForm.warehouse),
+        order_number: conversionForm.order_number.trim(), order_date: conversionForm.order_date,
+        expected_date: row.required_date,
       });
-      setTab("orders"); setShowForm(false); await refresh();
+      setConvertingReqId(null); setTab("orders"); setShowForm(false); await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحويل الطلب إلى أمر شراء."); }
     finally { setBusy(false); }
   };
@@ -364,6 +378,14 @@ const postInvoice = async (id: number) => {
     </div>
     <div className="inventory-tabs"><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
+    {convertingReqId !== null && tab === "requisitions" && <form className="inventory-form" onSubmit={(event) => void convertRequisition(event)}>
+      <div className="inventory-wide"><h3>تحويل طلب الاحتياج إلى أمر شراء</h3><p>اختيار المورد والمخزن يتم بعد اعتماد الاحتياج.</p></div>
+      <label>المورد<select required value={conversionForm.supplier} onChange={e => setConversionForm({ ...conversionForm, supplier: e.target.value })}><option value="">اختر المورد</option>{suppliers.map(x => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+      <label>مخزن الاستلام<select required value={conversionForm.warehouse} onChange={e => setConversionForm({ ...conversionForm, warehouse: e.target.value })}><option value="">اختر المخزن</option>{warehouses.map(x => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+      <label>رقم أمر الشراء<input required value={conversionForm.order_number} onChange={e => setConversionForm({ ...conversionForm, order_number: e.target.value })} /></label>
+      <label>تاريخ أمر الشراء<input required type="date" value={conversionForm.order_date} onChange={e => setConversionForm({ ...conversionForm, order_date: e.target.value })} /></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>إنشاء أمر الشراء</button><button className="subtle-button" type="button" onClick={() => setConvertingReqId(null)}>إلغاء</button></div>
+    </form>}
     {showForm && tab === "requisitions" && <form className="inventory-form" onSubmit={(event) => void saveRequisition(event)}>
       <label>رقم طلب الاحتياج<input required value={requisitionForm.request_number} onChange={e => setRequisitionForm({ ...requisitionForm, request_number: e.target.value })} /></label>
       <label>تاريخ الطلب<input required type="date" value={requisitionForm.request_date} onChange={e => setRequisitionForm({ ...requisitionForm, request_date: e.target.value })} /></label>
@@ -385,7 +407,7 @@ const postInvoice = async (id: number) => {
         <td className="table-actions">
           {row.status === "draft" && <button className="subtle-button" disabled={busy} onClick={() => void submitRequisition(row.id)}>إرسال للاعتماد</button>}
           {row.status === "submitted" && <><button className="subtle-button" disabled={busy} onClick={() => void reviewRequisition(row.id,"approve")}>اعتماد</button><button className="subtle-button" disabled={busy} onClick={() => void reviewRequisition(row.id,"reject")}>رفض</button></>}
-          {row.status === "approved" && <button className="subtle-button" disabled={busy} onClick={() => void convertRequisition(row)}>تحويل لأمر شراء</button>}
+          {row.status === "approved" && <button className="subtle-button" disabled={busy} onClick={() => openRequisitionConversion(row)}>تحويل لأمر شراء</button>}
           {row.review_note && <small>{row.review_note}</small>}
         </td>
       </tr>)}
