@@ -1,5 +1,7 @@
 """نموذج العملاء وبيانات الاتصال والائتمان الخاصة بكل شركة."""
 
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
@@ -82,7 +84,7 @@ class CustomerDiscountRule(models.Model):
     )
     min_quantity = models.DecimalField(
         max_digits=18, decimal_places=4, null=True, blank=True,
-        validators=[MinValueValidator(0)],
+        validators=[MinValueValidator(Decimal("0.0001"))],
     )
     min_invoice_amount = models.DecimalField(
         max_digits=20, decimal_places=4, null=True, blank=True,
