@@ -230,8 +230,10 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
         raise ValidationError("تم تسجيل اختبار انخفاض قيمة لهذا الأصل في التاريخ نفسه.")
     if asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__gt=impairment_date,
+    ).exists() or asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__gt=impairment_date,
     ).exists():
-        raise ValidationError("توجد خسارة انخفاض بتاريخ لاحق؛ يجب تصحيح التسلسل من آخر اختبار إلى أوله.")
+        raise ValidationError("يوجد اختبار انخفاض أو عكس انخفاض بتاريخ لاحق؛ يجب معالجة الأحداث بترتيبها الزمني.")
     if asset.depreciations.filter(
         journal_entry__status=JournalEntry.Status.POSTED, period_date__gt=impairment_date,
     ).exists():
@@ -257,7 +259,10 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
     previous_impairment_total = asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=impairment_date,
     ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
-    carrying_amount = asset.original_cost - depreciation_total - previous_impairment_total
+    previous_reversal_total = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=impairment_date,
+    ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+    carrying_amount = asset.original_cost - depreciation_total - previous_impairment_total + previous_reversal_total
     if carrying_amount <= 0:
         raise ValidationError("القيمة الدفترية للأصل لا تسمح بإثبات انخفاض إضافي.")
     if recoverable_amount >= carrying_amount:
