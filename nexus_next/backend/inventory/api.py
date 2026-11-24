@@ -765,7 +765,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
         def bucket_summary(queryset):
             totals = queryset.aggregate(
-                layers=Count("id"),
+                layers=Count("id", distinct=True),
                 quantity=Sum("quantity_as_of"),
                 value=Sum(F("quantity_as_of") * F("unit_cost")),
             )

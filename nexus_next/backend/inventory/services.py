@@ -231,6 +231,11 @@ def post_stock_movement(movement_id, user):
                 for part_quantity, unit_cost, _source_layer in cost_parts
             )
             balance.quantity -= quantity
+            if amount > balance.inventory_value + Decimal("0.0001"):
+                raise ValidationError(
+                    f"قيمة طبقات التكلفة للصنف {product.code} تتجاوز قيمة رصيد المخزون؛ "
+                    "أوقفنا الصرف بدلًا من إخفاء فرق التقييم."
+                )
             balance.inventory_value = max(Decimal("0"), balance.inventory_value - amount)
             if balance.quantity == 0:
                 balance.inventory_value = Decimal("0")
