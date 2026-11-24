@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
@@ -262,7 +263,13 @@ class SalesQuotationViewSet(SalesBaseViewSet):
     @action(detail=True, methods=("post",), url_path="convert-to-delivery")
     @transaction.atomic
     def convert_to_delivery(self, request, pk=None):
-        quotation = self.get_object()
+        # Lock only the quotation row. Concurrent conversion requests wait here,
+        # then observe converted_delivery_id written by the first transaction.
+        quotation = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)),
+            pk=self.kwargs["pk"],
+        )
+        self.check_object_permissions(request, quotation)
         self._check_write(quotation.company_id)
         if quotation.converted_delivery_id:
             return Response({
