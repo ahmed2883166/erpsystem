@@ -298,7 +298,12 @@ class StockMovementSerializer(serializers.ModelSerializer):
             if movement_type != StockMovement.MovementType.ADJUSTMENT and line.get("adjustment_direction"):
                 raise serializers.ValidationError({"lines": "اتجاه التسوية لا يستخدم إلا في حركات التسوية."})
         if movement_type == StockMovement.MovementType.ADJUSTMENT:
-            directions = {item.get("adjustment_direction") for item in lines}
+            if "lines" in attrs:
+                directions = {item.get("adjustment_direction") for item in lines}
+            elif self.instance:
+                directions = set(self.instance.lines.values_list("adjustment_direction", flat=True))
+            else:
+                directions = set()
             if len(directions) != 1 or "" in directions:
                 raise serializers.ValidationError({"lines": "افصل زيادات الجرد عن العجز في حركتين مستقلتين."})
             direction = next(iter(directions))
