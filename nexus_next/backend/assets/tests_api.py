@@ -317,3 +317,30 @@ class FixedAssetWorkflowTests(APITestCase):
         rejected_expense = self.client.post("/api/assets/fixed-assets/", expense_counter, format="json")
         self.assertEqual(rejected_expense.status_code, 400, rejected_expense.data)
         self.assertFalse(FixedAsset.objects.filter(code="FA-001").exists())
+    def test_asset_classification_and_custody_details_are_saved_and_returned(self):
+        payload = self._payload()
+        payload.update({
+            "category": "vehicle",
+            "location": "المقر الرئيسي",
+            "custodian": "مدير الحركة",
+            "serial_number": "VIN-TEST-001",
+            "warranty_end_date": "2027-01-10",
+            "supplier_name": "مورد السيارات",
+            "supplier_invoice": "INV-2026-77",
+        })
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        for field, expected in (
+            ("category", "vehicle"),
+            ("location", "المقر الرئيسي"),
+            ("custodian", "مدير الحركة"),
+            ("serial_number", "VIN-TEST-001"),
+            ("warranty_end_date", "2027-01-10"),
+            ("supplier_name", "مورد السيارات"),
+            ("supplier_invoice", "INV-2026-77"),
+        ):
+            self.assertEqual(created.data[field], expected)
+        asset = FixedAsset.objects.get(pk=created.data["id"])
+        self.assertEqual(asset.category, FixedAsset.Category.VEHICLE)
+        self.assertEqual(asset.custodian, "مدير الحركة")
+
