@@ -676,6 +676,93 @@ class IndirectCashFlowApiTests(TestCase):
         self.assertEqual(response.data["reconciliation_difference"], Decimal("0.0000"))
 
 
+    def test_cash_flow_and_equity_use_branch_specific_opening_snapshots(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="BR-CF-EQ", name_ar="شركة افتتاحيات الفروع",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        snapshot_branch = Branch.objects.create(
+            company=company, code="SNAP", name_ar="فرع افتتاحيه", is_head_office=True,
+        )
+        carry_branch = Branch.objects.create(
+            company=company, code="CARRY", name_ar="فرع مرحل",
+        )
+        prior_year = FiscalYear.objects.create(
+            company=company, name="2025",
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+        )
+        current_year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية", nature=ChartOfAccount.Nature.ASSET,
+        )
+        receivable = ChartOfAccount.objects.create(
+            company=company, code="1100", name_ar="العملاء", nature=ChartOfAccount.Nature.ASSET,
+        )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3000", name_ar="رأس المال", nature=ChartOfAccount.Nature.EQUITY,
+        )
+        AccountRole.objects.create(
+            company=company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE, account=receivable,
+        )
+        TreasuryAccount.objects.create(
+            company=company, account=cash, kind="cash", code="CASH",
+            name_ar="الخزينة الرئيسية",
+        )
+
+        prior_entry = JournalEntry.objects.create(
+            company=company, branch=carry_branch, fiscal_year=prior_year,
+            entry_number="BR-CARRY-OPEN", entry_date=date(2025, 12, 31),
+            description="أرصدة الفرع المرحل",
+        )
+        JournalLine.objects.create(entry=prior_entry, account=cash, debit=Decimal("50"))
+        JournalLine.objects.create(entry=prior_entry, account=receivable, debit=Decimal("25"))
+        JournalLine.objects.create(entry=prior_entry, account=capital, credit=Decimal("75"))
+        post_journal(prior_entry.pk)
+
+        opening_entry = JournalEntry.objects.create(
+            company=company, branch=snapshot_branch, fiscal_year=current_year,
+            entry_number="BR-SNAPSHOT-OPEN", entry_date=date(2026, 1, 1),
+            description="أرصدة افتتاحية للفرع", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening_entry, account=cash, debit=Decimal("70"))
+        JournalLine.objects.create(entry=opening_entry, account=receivable, debit=Decimal("30"))
+        JournalLine.objects.create(entry=opening_entry, account=capital, credit=Decimal("100"))
+        post_journal(opening_entry.pk)
+
+        user = User.objects.create_user(username="branch_statement_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        cash_flow = client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        equity = client.get(
+            f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(equity.status_code, 200, equity.data)
+        receivable_row = next(
+            row for row in cash_flow.data["working_capital"]
+            if row["role"] == AccountRole.Role.ACCOUNTS_RECEIVABLE
+        )
+        self.assertEqual(receivable_row["opening_balance"], Decimal("55.0000"))
+        self.assertEqual(receivable_row["closing_balance"], Decimal("55.0000"))
+        self.assertEqual(receivable_row["cash_flow_adjustment"], Decimal("0.0000"))
+        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(equity.data["opening_equity"], Decimal("175.0000"))
+        self.assertEqual(equity.data["period_net_profit"], Decimal("0.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("175.0000"))
+
+
 class FinancialStatementsApiTests(TestCase):
     def test_balance_sheet_includes_unclosed_profit_and_income_statement_excludes_opening(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
