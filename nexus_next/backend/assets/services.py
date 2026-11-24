@@ -422,7 +422,7 @@ def post_asset_supplier_payment(payment_id, user=None):
     from treasury.models import TreasuryAccount, TreasuryTransaction
     from treasury.services import record_posted_document_bank_movement
     treasury_account = TreasuryAccount.objects.filter(
-        company=payment.company, account=cash, is_active=True,
+        company=payment.company, account=cash, kind=TreasuryAccount.Kind.BANK, is_active=True,
     ).first()
     if (
         not treasury_account
