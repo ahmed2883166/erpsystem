@@ -212,7 +212,7 @@ const save = async (event: FormEvent) => {
           <li>تغيير كلمة مرور مستخدم قاعدة البيانات أو كلمة مرور مستخدم Admrail.</li>
           <li>استعادة نسخة احتياطية إلى قاعدة منفصلة دون الكتابة فوق القاعدة الحالية.</li>
         </ul>
-        <p className="asset-report-note">راجع دليل docs/database-manager-ar.md للتفاصيل. تنبيه: كلمة مرور مستخدم PostgreSQL (postgres) مختلفة عن كلمة مرور Admrail. إذا نسيت كلمة مرور postgres نفسها، يلزم إجراء استرداد بصلاحية مسؤول Windows؛ لا تحاول حذف القاعدة أو إعادة تثبيت PostgreSQL لحل المشكلة.</p>
+        <p className="asset-report-note">راجع ملف DATABASE-MANAGER-AR.md الموجود بجوار ملفات البرنامج للتفاصيل. تنبيه: كلمة مرور مستخدم PostgreSQL (postgres) مختلفة عن كلمة مرور Admrail. إذا نسيت كلمة مرور postgres نفسها، يلزم إجراء استرداد بصلاحية مسؤول Windows؛ لا تحاول حذف القاعدة أو إعادة تثبيت PostgreSQL لحل المشكلة.</p>
       </section>}
     </>}
   </section>;
