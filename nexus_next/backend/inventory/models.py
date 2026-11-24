@@ -360,3 +360,119 @@ class StockMovementJournalLink(models.Model):
             models.UniqueConstraint(fields=("movement", "journal_entry"), name="uq_stock_movement_journal_link"),
         ]
         ordering = ("id",)
+
+
+class InventoryCount(models.Model):
+    """مستند جرد فعلي يثبت لقطة الرصيد قبل اعتماد فروق الجرد."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "قيد العد"
+        POSTED = "posted", "مرحّل"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="inventory_counts")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="inventory_counts")
+    count_number = models.CharField(max_length=40)
+    count_date = models.DateField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_inventory_counts",
+    )
+    posted_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="posted_inventory_counts",
+    )
+    posted_at = models.DateTimeField(null=True, blank=True)
+    gain_movement = models.ForeignKey(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="gain_inventory_counts",
+    )
+    loss_movement = models.ForeignKey(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="loss_inventory_counts",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-count_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "count_number"), name="uq_inventory_count_company_number"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "count_date"), name="inv_count_status_date_idx"),
+        ]
+        verbose_name = "مستند جرد مخزني"
+        verbose_name_plural = "مستندات الجرد المخزني"
+
+    def clean(self):
+        super().clean()
+        if self.warehouse_id and self.company_id != self.warehouse.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+
+
+class InventoryCountLine(models.Model):
+    """سطر جرد يحتفظ برصيد الدفاتر وقت بدء الجرد والكمية الفعلية المعدودة."""
+    count = models.ForeignKey(InventoryCount, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="inventory_count_lines")
+    location = models.ForeignKey(
+        StorageLocation, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="inventory_count_lines",
+    )
+    expiry_date = models.DateField(null=True, blank=True)
+    system_quantity = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    system_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    counted_quantity = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    adjustment_unit_cost = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    counted_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="counted_inventory_lines",
+    )
+    counted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("product__code", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("count", "product", "location", "expiry_date"),
+                nulls_distinct=False,
+                name="uq_inventory_count_line_dimension",
+            ),
+            models.CheckConstraint(condition=Q(system_quantity__gte=0), name="ck_inv_count_system_qty_nonnegative"),
+            models.CheckConstraint(condition=Q(system_value__gte=0), name="ck_inv_count_system_value_nonnegative"),
+            models.CheckConstraint(condition=Q(counted_quantity__isnull=True) | Q(counted_quantity__gte=0), name="ck_inv_count_counted_qty_nonnegative"),
+            models.CheckConstraint(condition=Q(adjustment_unit_cost__gte=0), name="ck_inv_count_unit_cost_nonnegative"),
+        ]
+        indexes = [
+            models.Index(fields=("count", "product"), name="inv_count_line_product_idx"),
+        ]
+        verbose_name = "بند جرد مخزني"
+        verbose_name_plural = "بنود الجرد المخزني"
+
+    @property
+    def variance_quantity(self):
+        if self.counted_quantity is None:
+            return None
+        return self.counted_quantity - self.system_quantity
+
+    def clean(self):
+        super().clean()
+        if self.count_id and self.product_id:
+            if self.product.company_id != self.count.company_id:
+                raise ValidationError({"product": "الصنف لا يتبع شركة مستند الجرد."})
+            if self.product.product_type != Product.ProductType.GOODS:
+                raise ValidationError({"product": "لا يمكن جرد خدمة غير مخزنية."})
+            if self.location_id and self.location.warehouse_id != self.count.warehouse_id:
+                raise ValidationError({"location": "موقع الجرد لا يتبع مخزن المستند."})
+            if self.product.track_expiry and not self.expiry_date:
+                raise ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب للصنف المتتبع."})
+            if not self.product.track_expiry and self.expiry_date:
+                raise ValidationError({"expiry_date": "الصنف لا يتطلب تتبع الصلاحية."})
+            if self.counted_quantity is not None:
+                quantum = Decimal("1").scaleb(-self.product.unit.decimal_places)
+                if self.counted_quantity != self.counted_quantity.quantize(quantum):
+                    raise ValidationError({"counted_quantity": "الكمية تتجاوز دقة وحدة قياس الصنف."})
