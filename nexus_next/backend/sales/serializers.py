@@ -293,6 +293,7 @@ class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "company_name", "document_type", "name", "style",
                   "config", "is_default", "is_active", "created_at", "updated_at")
         read_only_fields = ("created_at", "updated_at")
+        validators = []
 
     def validate_config(self, value):
         if not isinstance(value, dict):
@@ -327,6 +328,13 @@ class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
         company = attrs.get("company", self.instance.company if self.instance else None)
         if self.instance and company.pk != self.instance.company_id:
             raise serializers.ValidationError({"company": "لا يمكن نقل القالب إلى شركة أخرى."})
+        document_type = attrs.get("document_type", self.instance.document_type if self.instance else None)
+        name = attrs.get("name", self.instance.name if self.instance else None)
+        duplicate = SalesDocumentTemplate.objects.filter(company=company, document_type=document_type, name=name)
+        if self.instance:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise serializers.ValidationError({"name": "يوجد قالب بنفس الاسم لهذا النوع من المستندات."})
         is_default = attrs.get("is_default", self.instance.is_default if self.instance else False)
         is_active = attrs.get("is_active", self.instance.is_active if self.instance else True)
         if is_default and not is_active:
