@@ -802,21 +802,21 @@ export const importBankStatementCsv = async (id: number, file: File): Promise<{i
 
 export type FixedAsset = {
   id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;
-  acquisition_date: string; depreciation_start_date: string; original_cost: string; salvage_value: string;
+  acquisition_date: string; depreciation_start_date: string; original_cost: string; acquisition_net_amount: string|null; recoverable_tax_amount:string; nonrecoverable_tax_amount:string; acquisition_tax_code:number|null; salvage_value: string;
   useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
-  acquisition_counter_account: number; disposal_gain_loss_account: number; disposal_loss_account: number | null; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
+  acquisition_counter_account: number; disposal_gain_loss_account: number; disposal_loss_account: number | null; acquisition_journal: number | null; acquisition_tax_journal:number|null; acquisition_treasury_transaction: number | null;
   status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null; disposal_journal: number | null; disposal_treasury_transaction: number | null;
   vendor_invoice_id: number | null; vendor_invoice_status: "draft" | "posted" | null;
   vendor_payments: {id:number;payment_number:string;payment_date:string;amount:string;status:"draft"|"posted"|"reversed";journal_entry:number|null}[];
-  accumulated_depreciation: string; net_book_value: string; created_at: string;
+  accumulated_depreciation: string; accumulated_impairment?:string; net_book_value: string; created_at: string;
 };
-export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; net_book_value: string;
-  rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[] };
+export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; accumulated_impairment:string; net_book_value: string;
+  rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];\n  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number}[] };
 export type AssetRegisterReport = {
   company:number;as_of:string;
-  totals:{original_cost:string;accumulated_depreciation:string;net_book_value_active:string;asset_count:number};
-  rows:{asset_id:number;code:string;name_ar:string;branch_id:number;branch_name:string;acquisition_date:string;original_cost:string;salvage_value:string;useful_life_months:number;accumulated_depreciation:string;net_book_value:string;status:"active"|"disposed";disposed_at:string|null;acquisition_journal:number|null;disposal_journal:number|null}[];
+  totals:{original_cost:string;accumulated_depreciation:string;accumulated_impairment:string;net_book_value_active:string;asset_count:number};
+  rows:{asset_id:number;code:string;name_ar:string;branch_id:number;branch_name:string;acquisition_date:string;original_cost:string;salvage_value:string;useful_life_months:number;accumulated_depreciation:string;accumulated_impairment:string;net_book_value:string;status:"active"|"disposed";disposed_at:string|null;acquisition_journal:number|null;disposal_journal:number|null}[];
 };
 export type AssetDepreciationReport = {company:number;date_from:string|null;date_to:string|null;total_depreciation:string;branch_totals:{branch_name:string;amount:string}[];rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;period_date:string;amount:string;is_partial_period:boolean;journal_entry:number}[]};
 export type AssetMovementReport = {company:number;date_from:string|null;date_to:string|null;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;date:string;event_type:string;event_label:string;amount:string;journal_entry:number|null;treasury_transaction:number|null}[]};
@@ -887,8 +887,13 @@ export const fixedAssetsApi = {
   },
   // احتساب وترحيل إهلاك الأصل عن الفترة والسنة المالية.
   depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
-  // جلب جدول الإهلاك التفصيلي للأصل.
+  // جلب جدول الإهلاك والانخفاض والقيمة الدفترية للأصل.
   schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
+  // إثبات خسارة انخفاض القيمة بعد تحديد القيمة القابلة للاسترداد وحسابات القيد.
+  impair: async (id:number, payload:{impairment_date:string;recoverable_amount:string;impairment_expense_account:number;accumulated_impairment_account:number;fiscal_year:number}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;asset_id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;accounting_model:"cost";oci_impact:"none"}>(`/api/assets/fixed-assets/${id}/impair/`, {method:"POST",body:JSON.stringify(payload)});
+  },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
   dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
 };
