@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type SupplierQuotation } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type SupplierQuotation, type GRNIAgingReport } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -47,6 +47,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [statementTo, setStatementTo] = useState("");
   const [statement, setStatement] = useState<SupplierStatement | null>(null);
   const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
+  const [agingView, setAgingView] = useState<"supplier" | "grni">("supplier");
+  const [grniReport, setGrniReport] = useState<GRNIAgingReport | null>(null);
   const [aging, setAging] = useState<SupplierAging | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -118,6 +120,15 @@ const loadStatement = async () => {
   };
 
   // تحميل تقرير أعمار أرصدة الموردين.
+
+const loadGrni = async () => {
+    if(!companyId)return;
+    setBusy(true);setError("");
+    try{setGrniReport(await purchasingApi.grniAging(companyId,agingAsOf));}
+    catch(e){setError(e instanceof Error?e.message:"تعذر تحميل تقرير GRNI.");}
+    finally{setBusy(false);}
+  };
+
 const loadAging = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
@@ -627,7 +638,8 @@ const postInvoice = async (id: number) => {
         <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>نوع المستند</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statement.rows.map((row, index) => <tr key={row.document_type + row.document_number + index}><td>{row.date}</td><td>{row.document_type === "invoice" ? "فاتورة مورد" : row.document_type === "supplier_return" ? "مرتجع مورد" : row.document_type === "supplier_return_reversal" ? "عكس مرتجع" : "سداد"}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table>{statement.rows.length === 0 && <div className="table-empty">لا توجد حركة خلال الفترة المحددة.</div>}</div>
       </div>}
     </div>}
-    {tab === "aging" && <div className="inventory-form">
+    {tab === "aging" && <div className="inventory-tabs"><button type="button" className={agingView==="supplier"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("supplier")}>أعمار مديونية الموردين</button><button type="button" className={agingView==="grni"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("grni")}>مطابقة GRNI</button></div>}
+    {tab === "aging" && agingView === "supplier" && <div className="inventory-form">
       <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={(e) => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={() => void loadAging()}>{busy ? "جارٍ التحميل…" : "عرض أعمار المديونية"}</button></div>
       {aging && <div className="inventory-wide">
@@ -645,6 +657,23 @@ const postInvoice = async (id: number) => {
         <p className="inventory-report-note">يُحسب تاريخ الاستحقاق من تاريخ الفاتورة مضافًا إليه أجل السداد المسجل للمورد، وتُخصم السدادات المرحلة فقط.</p>
       </div>}
     </div>}
+    {tab === "aging" && agingView === "grni" && <div className="inventory-form">
+      <label>تاريخ المطابقة<input type="date" value={agingAsOf} onChange={e=>{setAgingAsOf(e.target.value);setGrniReport(null);}}/></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadGrni()}>{busy?"جارٍ التحميل…":"عرض تقرير GRNI"}</button></div>
+      {grniReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>0–30 يوم</span><strong>{money(grniReport.aging["0_30"])}</strong></div>
+          <div><span>31–60 يوم</span><strong>{money(grniReport.aging["31_60"])}</strong></div>
+          <div><span>61–90 يوم</span><strong>{money(grniReport.aging["61_90"])}</strong></div>
+          <div><span>أكثر من 90 يوم</span><strong>{money(grniReport.aging.over_90)}</strong></div>
+          <div><span>إجمالي GRNI المفتوح</span><strong>{money(grniReport.grand_total)}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>إذن الاستلام</th><th>التاريخ</th><th>عمر الرصيد</th><th>المورد</th><th>المخزن</th><th>الفاتورة</th><th>القيمة</th></tr></thead><tbody>{grniReport.rows.map(row=><tr key={row.receipt_id}><td className="code-cell">{row.receipt_number}</td><td>{row.receipt_date}</td><td>{row.age_days} يوم</td><td>{row.supplier_name}</td><td>{row.warehouse_name}</td><td>{row.invoice_number||"لم تفوتر"}</td><td><strong>{money(row.amount)}</strong></td></tr>)}</tbody></table>{grniReport.rows.length===0&&<div className="table-empty">لا توجد استلامات غير مفوترة في تاريخ التقرير.</div>}</div>
+        <div className="data-table-wrap"><h3>ملخص شهري حسب تاريخ الاستلام</h3><table><thead><tr><th>الشهر</th><th>قيمة الاستلامات المفتوحة</th></tr></thead><tbody>{grniReport.monthly_summary.map(row=><tr key={row.month}><td>{row.month}</td><td>{money(row.amount)}</td></tr>)}</tbody></table></div>
+        <p className="inventory-report-note">يعرض التقرير الاستلامات المرحلة التي لم تُرحّل فاتورتها بعد. ترحيل فاتورة المورد المطابقة يصفّر رصيد GRNI لذلك الاستلام.</p>
+      </div>}
+    </div>}
+
     <div className="customer-toolbar"><div className="customer-count">{tab === "sourcing" ? "عدد طلبات عروض الأسعار" : tab === "requisitions" ? "عدد طلبات الاحتياج" : tab === "orders" ? "عدد أوامر الشراء" : tab === "receipts" ? "عدد أذون الاستلام" : tab === "invoices" ? "عدد فواتير الموردين" : tab === "returns" ? "عدد مرتجعات الموردين" : "عدد سندات الصرف"} <strong>{(tab === "orders" ? orders : tab === "receipts" ? receipts : tab === "invoices" ? invoices : tab === "returns" ? returns : payments).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو المورد…" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="subtle-button" type="button" onClick={() => void refresh()} disabled={busy}>{busy ? "تحديث…" : "تحديث"}</button></div>
     {tab === "orders" && <div className="data-table-wrap"><table><thead><tr><th>رقم الأمر</th><th>المورد</th><th>المخزن</th><th>تاريخ الأمر</th><th>التوريد المتوقع</th><th>البنود المستلمة/المطلوبة</th><th>الإجمالي</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{orders.filter((row) => [row.order_number, row.supplier_name, row.warehouse_name].join(" ").toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td className="code-cell">{row.order_number}</td><td>{row.supplier_name}</td><td>{row.warehouse_name}</td><td>{row.order_date}</td><td>{row.expected_date || "—"}</td><td>{row.line_items.map((line) => <div key={line.id}>{line.product_code}: {line.received_quantity}/{line.quantity}</div>)}</td><td><strong>{money(row.grand_total)}</strong></td><td><span className={statusPill(row.status)}>{row.status === "draft" ? (row.approval_status === "pending" ? "بانتظار موافقة المدير" : row.approval_status === "rejected" ? "مرفوض - يحتاج إعادة إرسال" : "مسودة") : row.status === "confirmed" ? "معتمد" : row.status === "partially_received" ? "استلام جزئي" : row.status === "received" ? "مستلم بالكامل" : "ملغي"}</span></td><td><div className="form-actions">{row.status === "draft" && row.approval_status === "pending" ? "بانتظار موافقة المدير" : row.status === "draft" && <button className="primary-button" type="button" disabled={busy} onClick={() => void confirmOrder(row.id)}>{row.approval_status === "rejected" ? "إعادة الإرسال للاعتماد" : "اعتماد الأمر"}</button>}{(row.status === "confirmed" || row.status === "partially_received") && <button className="subtle-button" type="button" onClick={() => { setTab("receipts"); setShowForm(true); setReceiptForm((old) => ({ ...old, supplier: String(row.supplier), warehouse: String(row.warehouse), purchase_order: String(row.id), receipt_number: "" })); setReceiptLines(row.line_items.filter((line) => Number(line.remaining_quantity) > 0).map((line) => ({ product: String(line.product), quantity: line.remaining_quantity, unit_cost: line.unit_price, expiry_date: "", purchase_order_line: String(line.id) }))); }}>إنشاء إذن استلام</button>}{(row.status === "draft" || row.status === "confirmed") && <button className="subtle-button" type="button" disabled={busy} onClick={() => void cancelOrder(row.id)}>إلغاء الأمر</button>}{(row.status === "received" || row.status === "cancelled") && "—"}</div></td></tr>)}</tbody></table>{!busy && orders.length === 0 && <div className="table-empty">لا توجد أوامر شراء.</div>}</div>}
     {tab === "receipts" && <div className="data-table-wrap"><table><thead><tr><th>رقم الإذن</th><th>المورد</th><th>المخزن</th><th>التاريخ</th><th>مرجع المورد</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{filteredReceipts.map((x) => <tr key={x.id}><td className="code-cell">{x.receipt_number}</td><td>{x.supplier_name}</td><td>{x.warehouse_name}</td><td>{x.receipt_date}</td><td>{x.supplier_delivery_ref || "—"}</td><td><span className={statusPill(x.movement_status)}>{x.movement_status === "posted" ? "مرحّل" : "مسودة"}</span></td><td>{x.movement_status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postReceipt(x.id)}>ترحيل الاستلام</button> : "تم تحديث المخزون"}</td></tr>)}</tbody></table>{!busy && filteredReceipts.length === 0 && <div className="table-empty">لا توجد أذون استلام مطابقة.</div>}</div>}
