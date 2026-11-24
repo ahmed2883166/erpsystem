@@ -813,7 +813,7 @@ export type FixedAsset = {
 };
 export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; accumulated_impairment:string; net_book_value: string;
   rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];
-  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number}[] };
+  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;status:string}[] };
 export type AssetRegisterReport = {
   company:number;as_of:string;
   totals:{original_cost:string;accumulated_depreciation:string;accumulated_impairment:string;net_book_value_active:string;asset_count:number};
