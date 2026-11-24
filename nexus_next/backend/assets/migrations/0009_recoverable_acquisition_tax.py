@@ -14,13 +14,5 @@ class Migration(migrations.Migration):
             name="recoverable_tax_amount",
             field=models.DecimalField(decimal_places=4, default=0, max_digits=20),
         ),
-        migrations.AddField(
-            model_name="fixedasset",
-            name="acquisition_tax_journal",
-            field=models.OneToOneField(
-                blank=True, null=True, on_delete=django.db.models.deletion.PROTECT,
-                related_name="fixed_asset_acquisition_tax_adjustment",
-                to="accounting.journalentry",
-            ),
         ),
     ]
