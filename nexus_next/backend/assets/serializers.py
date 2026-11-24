@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from core.money import round_currency_amount
 from .models import FixedAsset, AssetDepreciation
 
 
@@ -107,7 +108,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                 })
             if net_amount is None:
                 raise serializers.ValidationError({"acquisition_net_amount": "أدخل صافي تكلفة الأصل قبل الضريبة."})
-            expected_tax = (net_amount * tax_code.rate / Decimal("100")).quantize(Decimal("0.0001"))
+            expected_tax = round_currency_amount(net_amount * tax_code.rate / Decimal("100"), company.base_currency)
             expected_recoverable = expected_tax if tax_code.input_tax_recoverable else Decimal("0")
             expected_nonrecoverable = expected_tax - expected_recoverable
             if recoverable_tax != expected_recoverable or nonrecoverable_tax != expected_nonrecoverable:
