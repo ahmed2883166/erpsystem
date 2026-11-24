@@ -586,7 +586,7 @@ export type InventoryCount = {
 
 export type StockMovementLine = { id: number; product: number; product_code: string; product_name: string; source_location: number | null; source_location_name: string | null; destination_location: number | null; destination_location_name: string | null; expiry_date: string | null; quantity: string; unit_cost: string; cost_amount: string; adjustment_direction: "in" | "out" | "" };
 export type StockMovement = {
-  id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "sup_return" | "sup_rev" | "transfer" | "adjustment"; adjustment_reason: "count" | "damage" | "expired" | "write_off" | "other" | "";
+  id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "sup_return" | "sup_rev" | "sal_rev" | "transfer" | "adjustment"; adjustment_reason: "count" | "damage" | "expired" | "write_off" | "other" | "";
   movement_date: string; source_warehouse: number | null; source_warehouse_name: string | null;
   destination_warehouse: number | null; destination_warehouse_name: string | null;
   status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
