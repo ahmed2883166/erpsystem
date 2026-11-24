@@ -966,13 +966,17 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
         if not warehouse or not _purchase_warehouse_accessible(request.user, warehouse):
             raise PermissionDenied("المخزن غير متاح للمستخدم أو لا يتبع الشركة.")
         quotation = rfq.awarded_quotation
+        if quotation.status != SupplierQuotation.Status.SUBMITTED or quotation.valid_until < timezone.localdate():
+            raise ValidationError("العرض الفائز لم يعد صالحًا للتحويل إلى أمر شراء.")
+        if PurchaseOrder.objects.filter(company_id=rfq.company_id, order_number=order_number).exists():
+            raise ValidationError({"order_number": "رقم أمر الشراء مستخدم بالفعل داخل الشركة."})
         order = PurchaseOrder.objects.create(
             company_id=rfq.company_id, supplier=quotation.supplier, warehouse=warehouse,
             order_number=order_number, order_date=order_date, expected_date=expected_date,
             notes=f"مصدر أمر الشراء: طلب عروض الأسعار {rfq.rfq_number}، العرض الفائز {quotation.quotation_number}. الأسعار تشمل الخصم الممنوح في العرض.",
             created_by=request.user,
         )
-        quote_lines = quotation.lines.select_related("rfq_line").all()
+        quote_lines = quotation.lines.select_related("rfq_line__product").all()
         PurchaseOrderLine.objects.bulk_create([
             PurchaseOrderLine(
                 order=order, product=line.rfq_line.product, quantity=line.rfq_line.quantity,
