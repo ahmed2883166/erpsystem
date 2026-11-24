@@ -136,6 +136,18 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             raise ValidationError("أمر الشراء ليس مسودة.")
         if not order.lines.exists():
             raise ValidationError("أمر الشراء لا يحتوي على أصناف.")
+        from approvals.models import FinancialApprovalRequest
+        from approvals.services import refresh_financial_approval
+        approval_request = refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.PURCHASE_ORDER, order, request.user
+        )
+        if approval_request:
+            return Response({
+                "status": "pending_approval",
+                "detail": "قيمة أمر الشراء تجاوزت الحد المعتمد؛ أُرسل إلى مدير الشركة للموافقة قبل التأكيد.",
+                "approval_request_id": approval_request.pk,
+                "order": self.get_serializer(order).data,
+            }, status=status.HTTP_202_ACCEPTED)
         from django.utils import timezone
         PurchaseOrder.objects.filter(pk=order.pk, status=PurchaseOrder.Status.DRAFT).update(
             status=PurchaseOrder.Status.CONFIRMED, confirmed_at=timezone.now()
