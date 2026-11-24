@@ -210,6 +210,13 @@ class SalesQuotationSerializer(serializers.ModelSerializer):
         valid_until = attrs.get("valid_until", instance.valid_until if instance else None)
         if instance and instance.status != SalesQuotation.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل عرض سعر غير مسودة.")
+        if instance and (
+            customer.pk != instance.customer_id
+            or quote_date != instance.quotation_date
+        ) and "lines" not in attrs:
+            raise serializers.ValidationError({
+                "lines": "عند تغيير العميل أو تاريخ العرض، أعد إرسال البنود لإعادة احتساب الخصومات والضرائب."
+            })
         if customer and (customer.company_id != company.pk or not customer.is_active):
             raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
         if quote_date and valid_until and valid_until < quote_date:
