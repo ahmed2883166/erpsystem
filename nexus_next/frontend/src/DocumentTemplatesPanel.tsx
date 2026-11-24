@@ -17,7 +17,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
   const [error,setError]=useState("");
   const [form,setForm]=useState({
     name:"",style:"classic" as Style,accent_color:"#1F4E79",
-    show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,
+    show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,bank_details:"",
     language:"ar" as "ar"|"en"|"bilingual",font_scale:"normal" as "small"|"normal"|"large",
     footer_text:"شكراً لتعاملكم معنا",is_default:false,
   });
@@ -33,14 +33,14 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
 
   const reset=()=>{
     setEditingId(null);
-    setForm({name:"",style:"classic",accent_color:"#1F4E79",show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,language:"ar",font_scale:"normal",footer_text:"شكراً لتعاملكم معنا",is_default:false});
+    setForm({name:"",style:"classic",accent_color:"#1F4E79",show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,bank_details:"",language:"ar",font_scale:"normal",footer_text:"شكراً لتعاملكم معنا",is_default:false});
   };
   const edit=(row:SalesDocumentTemplate)=>{
     setEditingId(row.id);setDocumentType(row.document_type);
     setForm({
       name:row.name,style:row.style,accent_color:row.config.accent_color||"#1F4E79",
       show_tax_number:row.config.show_tax_number??true,show_discount:row.config.show_discount??true,
-      show_tax:row.config.show_tax??true,show_bank_details:row.config.show_bank_details??false,
+      show_tax:row.config.show_tax??true,show_bank_details:row.config.show_bank_details??false,bank_details:row.config.bank_details||"",
       language:row.config.language||"ar",font_scale:row.config.font_scale||"normal",
       footer_text:row.config.footer_text||"",is_default:row.is_default,
     });
@@ -52,7 +52,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
       company:companyId,document_type:documentType,name:form.name,style:form.style,
       is_default:form.is_default,is_active:true,
       config:{accent_color:form.accent_color,show_tax_number:form.show_tax_number,
-        show_discount:form.show_discount,show_tax:form.show_tax,show_bank_details:form.show_bank_details,
+        show_discount:form.show_discount,show_tax:form.show_tax,show_bank_details:form.show_bank_details,bank_details:form.bank_details,
         language:form.language,font_scale:form.font_scale,footer_text:form.footer_text},
     };
     try{if(editingId)await salesApi.updateDocumentTemplate(editingId,payload);else await salesApi.createDocumentTemplate(payload);reset();await refresh();}
@@ -89,6 +89,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
         <label>لون الهوية<input type="color" value={form.accent_color} onChange={e=>setForm({...form,accent_color:e.target.value})}/></label>
         <label>لغة الطباعة<select value={form.language} onChange={e=>setForm({...form,language:e.target.value as typeof form.language})}><option value="ar">العربية</option><option value="en">English</option><option value="bilingual">عربي / English</option></select></label>
         <label>حجم الخط<select value={form.font_scale} onChange={e=>setForm({...form,font_scale:e.target.value as typeof form.font_scale})}><option value="small">صغير</option><option value="normal">عادي</option><option value="large">كبير</option></select></label>
+        <label className="customer-form-wide">بيانات البنك<input maxLength={500} value={form.bank_details} onChange={e=>setForm({...form,bank_details:e.target.value})} placeholder="اسم البنك، رقم الحساب، IBAN"/></label>
         <label className="customer-form-wide">نص التذييل<input maxLength={500} value={form.footer_text} onChange={e=>setForm({...form,footer_text:e.target.value})}/></label>
         <div className="customer-form-wide table-actions">
           <label><input type="checkbox" checked={form.show_tax_number} onChange={e=>setForm({...form,show_tax_number:e.target.checked})}/> إظهار الرقم الضريبي</label>
