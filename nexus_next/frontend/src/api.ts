@@ -121,6 +121,14 @@ export type PurchaseRFQ = {
   supplier_list: {id:number;code:string;name:string;status:string}[];
   awarded_quotation: number | null; converted_order: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
 };
+
+export type GRNIAgingReport = {
+  company:number; as_of:string; grand_total:string;
+  aging: { "0_30":string; "31_60":string; "61_90":string; over_90:string };
+  monthly_summary:{month:string;amount:string}[];
+  rows:{receipt_id:number;receipt_number:string;receipt_date:string;age_days:number;aging_bucket:string;supplier_id:number;supplier_name:string;warehouse_id:number;warehouse_name:string;branch_id:number|null;amount:string;invoice_status:string;invoice_number:string|null}[];
+};
+
 export type SupplierQuotation = {
   id:number; rfq:number; supplier:number; supplier_name:string; quotation_number:string; quotation_date:string;
   valid_until:string; delivery_days:number; payment_terms:string; notes:string; status:"submitted"|"withdrawn";
@@ -190,6 +198,7 @@ export const purchasingApi = {
   convertRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<{ requisition: PurchaseRequisition; purchase_order_id: number }>(`/api/purchasing/requisitions/${id}/convert/`, { method: "POST", body: JSON.stringify(payload) }); },
   cancelRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/cancel/`, { method: "POST" }); },
 
+  grniAging: (companyId:number, asOf:string) => request<GRNIAgingReport>(`/api/purchasing/receipts/grni-aging/?company=${companyId}&as_of=${asOf}`),
   rfqs: (companyId: number) => request<PurchaseRFQ[]>(`/api/purchasing/rfqs/?company=${companyId}&ordering=-issue_date`),
   quotations: (companyId: number) => request<SupplierQuotation[]>(`/api/purchasing/quotations/?rfq__company=${companyId}&ordering=-quotation_date`),
   createRFQ: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRFQ>("/api/purchasing/rfqs/", { method:"POST", body:JSON.stringify(payload) }); },
