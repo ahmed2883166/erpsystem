@@ -955,7 +955,8 @@ class JournalEntryViewSet(AccountingViewSet):
             "company": company_id, "as_of": as_of,
             "assets": sections["asset"], "liabilities": sections["liability"], "equity": sections["equity"],
             "total_assets": totals["asset"], "total_liabilities": totals["liability"],
-            "total_equity": totals["equity"], "current_year_profit": current_profit,
+            "total_equity": totals["equity"], "prior_unclosed_profit": prior_unclosed_profit,
+            "current_year_profit": current_profit,
             "liabilities_and_equity": totals["liability"] + totals["equity"],
             "difference": totals["asset"] - totals["liability"] - totals["equity"],
         })
