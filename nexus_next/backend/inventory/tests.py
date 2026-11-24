@@ -113,31 +113,25 @@ class StockPostingServiceTests(TestCase):
     def test_issue_rolls_back_when_cost_layers_exceed_stock_balance_value(self):
         self.product.costing_method = Product.CostingMethod.FIFO
         self.product.save(update_fields=("costing_method",))
-        StockBalance.objects.create(
-            product=self.product, warehouse=self.warehouse,
-            quantity=Decimal("5"), inventory_value=Decimal("10"),
-            average_cost=Decimal("2"),
-        )
         receipt = self._movement(
             "FIFO-MISMATCH-SOURCE", StockMovement.MovementType.RECEIPT,
             destination=self.warehouse, quantity="5", unit_cost="3",
         )
-        from .models import StockCostLayer
-        StockCostLayer.objects.create(
-            product=self.product, warehouse=self.warehouse, source_line=receipt.lines.get(),
-            root_source_line=receipt.lines.get(), quantity_remaining=Decimal("5"),
-            unit_cost=Decimal("3"),
-        )
+        post_stock_movement(receipt.pk, self.user)
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        balance.inventory_value = Decimal("10")
+        balance.average_cost = Decimal("2")
+        balance.save(update_fields=("inventory_value", "average_cost"))
+
         issue = self._movement(
             "FIFO-MISMATCH-ISSUE", StockMovement.MovementType.ISSUE,
             source=self.warehouse, quantity="1",
         )
-
         with self.assertRaises(ValidationError):
             post_stock_movement(issue.pk, self.user)
 
         issue.refresh_from_db()
-        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        balance.refresh_from_db()
         self.assertEqual(issue.status, StockMovement.Status.DRAFT)
         self.assertEqual(balance.quantity, Decimal("5"))
         self.assertEqual(balance.inventory_value, Decimal("10"))

@@ -162,6 +162,7 @@ def post_stock_movement(movement_id, user):
             layer_query = StockCostLayer.objects.select_for_update().filter(
                 product=product, warehouse=balance.warehouse, location=balance.location,
                 expiry_date=balance.expiry_date, quantity_remaining__gt=0,
+                source_line__movement__status=StockMovement.Status.POSTED,
             )
             if source_root_line_id is not None:
                 layer_query = layer_query.filter(root_source_line_id=source_root_line_id)
