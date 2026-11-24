@@ -113,16 +113,9 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
         treasury_doc = post_treasury_transaction(treasury_doc.pk, user)
         asset.acquisition_journal = treasury_doc.journal_entry
         asset.save(update_fields=("acquisition_journal",))
-        if recoverable_tax and not asset.acquisition_tax_journal_id:
-            tax_entry = _post_entry(
-                asset, year, f"FA-ACQ-TAX-{asset.pk}", asset.acquisition_date,
-                f"فصل ضريبة المدخلات القابلة للاسترداد عن تكلفة الأصل: {asset.name_ar}", [
-                    {"account": vat_input, "debit": recoverable_tax, "credit": 0, "description": "ضريبة مدخلات قابلة للاسترداد"},
-                    {"account": asset.asset_account, "debit": 0, "credit": recoverable_tax, "description": "تخفيض تكلفة الأصل بالضريبة المستردة"},
-                ], user,
-            )
-            asset.acquisition_tax_journal = tax_entry
-            asset.save(update_fields=("acquisition_tax_journal",))
+        if recoverable_tax:
+            post_asset_acquisition_tax_adjustment(asset.pk, user)
+            asset.refresh_from_db()
         return asset
 
     lines = [
@@ -140,6 +133,37 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     )
     asset.acquisition_journal = entry
     asset.save(update_fields=("acquisition_journal",))
+    return asset
+
+
+@transaction.atomic
+def post_asset_acquisition_tax_adjustment(asset_id, user=None):
+    """فصل ضريبة المدخلات المستردة عن تكلفة الأصل بعد ترحيل حركة البنك."""
+    asset = FixedAsset.objects.select_for_update().select_related(
+        "company", "branch", "asset_account", "acquisition_journal",
+    ).get(pk=asset_id)
+    amount = asset.recoverable_tax_amount or Decimal("0")
+    if amount <= 0 or asset.acquisition_tax_journal_id:
+        return asset
+    if not asset.acquisition_journal_id or asset.acquisition_journal.status != JournalEntry.Status.POSTED:
+        raise ValidationError("يجب ترحيل حركة اقتناء الأصل قبل فصل ضريبة المدخلات.")
+    vat_input = get_account_for_role(asset.company, AccountRole.Role.VAT_INPUT)
+    if (
+        vat_input.pk in (asset.asset_account_id, asset.acquisition_counter_account_id)
+        or vat_input.nature != "asset" or not vat_input.is_active
+        or vat_input.is_group or not vat_input.allow_posting
+    ):
+        raise ValidationError("حساب ضريبة المدخلات غير صالح أو غير مستقل عن حساب الأصل والبنك.")
+    year = asset.acquisition_journal.fiscal_year
+    tax_entry = _post_entry(
+        asset, year, f"FA-ACQ-TAX-{asset.pk}", asset.acquisition_date,
+        f"فصل ضريبة المدخلات القابلة للاسترداد عن تكلفة الأصل: {asset.name_ar}", [
+            {"account": vat_input, "debit": amount, "credit": 0, "description": "ضريبة مدخلات قابلة للاسترداد"},
+            {"account": asset.asset_account, "debit": 0, "credit": amount, "description": "تخفيض تكلفة الأصل بالضريبة المستردة"},
+        ], user,
+    )
+    asset.acquisition_tax_journal = tax_entry
+    asset.save(update_fields=("acquisition_tax_journal",))
     return asset
 
 
