@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -13,7 +13,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: 
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"orders" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"requisitions" | "orders" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -21,7 +21,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);\n  const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -44,6 +44,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [receiptLines, setReceiptLines] = useState<ReceiptDraftLine[]>([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
   const [orderForm, setOrderForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10), expected_date: "", notes: "" });
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
+  const [requisitionForm, setRequisitionForm] = useState({ request_number: "", request_date: new Date().toISOString().slice(0, 10), required_date: "", department: "", purpose: "" });
+  const [requisitionLines, setRequisitionLines] = useState<{ product: string; requested_quantity: string; estimated_unit_price: string }[]>([{ product: "", requested_quantity: "1", estimated_unit_price: "" }]);
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
   const [fxInvoice, setFxInvoice] = useState<PurchaseInvoice | null>(null);
@@ -55,12 +57,12 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, ret, ref, t, ta, cur, fx] = await Promise.all([
+      const [s, p, w, o, r, i, pay, ret, ref, t, ta, cur, fx, rq] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setRequisitions(rq); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -306,10 +308,38 @@ const postInvoice = async (id: number) => {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
+    <div className="inventory-tabs"><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
+    {showForm && tab === "requisitions" && <form className="inventory-form" onSubmit={(event) => void saveRequisition(event)}>
+      <label>رقم طلب الاحتياج<input required value={requisitionForm.request_number} onChange={e => setRequisitionForm({ ...requisitionForm, request_number: e.target.value })} /></label>
+      <label>تاريخ الطلب<input required type="date" value={requisitionForm.request_date} onChange={e => setRequisitionForm({ ...requisitionForm, request_date: e.target.value })} /></label>
+      <label>تاريخ الاحتياج<input type="date" value={requisitionForm.required_date} onChange={e => setRequisitionForm({ ...requisitionForm, required_date: e.target.value })} /></label>
+      <label>القسم الطالب<input value={requisitionForm.department} onChange={e => setRequisitionForm({ ...requisitionForm, department: e.target.value })} /></label>
+      <label className="inventory-wide">الغرض من الطلب<textarea value={requisitionForm.purpose} onChange={e => setRequisitionForm({ ...requisitionForm, purpose: e.target.value })} /></label>
+      <div className="inventory-wide"><div className="work-panel-head"><div><h3>الأصناف المطلوبة</h3><p>طلب احتياج داخلي قبل تحديد المورد والسعر النهائي.</p></div><button className="subtle-button" type="button" onClick={() => setRequisitionLines(old => [...old, { product: "", requested_quantity: "1", estimated_unit_price: "" }])}>＋ إضافة صنف</button></div></div>
+      {requisitionLines.map((line, index) => <div className="inventory-form-row inventory-wide" key={index}>
+        <label>الصنف<select required value={line.product} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, product: e.target.value } : x))}><option value="">اختر الصنف</option>{products.map(x => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+        <label>الكمية المطلوبة<input required type="number" min="0.0001" step="0.0001" value={line.requested_quantity} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, requested_quantity: e.target.value } : x))} /></label>
+        <label>سعر تقديري للوحدة<input type="number" min="0" step="0.0001" value={line.estimated_unit_price} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, estimated_unit_price: e.target.value } : x))} /></label>
+        <button className="subtle-button" type="button" disabled={requisitionLines.length===1} onClick={() => setRequisitionLines(old => old.filter((_,i)=>i!==index))}>حذف</button>
+      </div>)}
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ طلب الاحتياج كمسودة"}</button></div>
+    </form>}
+    {tab === "requisitions" && <div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>رقم الطلب</th><th>القسم</th><th>تاريخ الاحتياج</th><th>الأصناف</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>
+      {requisitions.filter(row => [row.request_number,row.department,row.purpose].join(" ").toLowerCase().includes(search.toLowerCase())).map(row => <tr key={row.id}>
+        <td>{row.request_number}</td><td>{row.department || "—"}</td><td>{row.required_date || "—"}</td><td>{row.line_items.map(line => line.product_name + " × " + line.requested_quantity).join("، ")}</td><td><span className={statusPill(row.status)}>{({draft:"مسودة",submitted:"بانتظار الاعتماد",approved:"معتمد",rejected:"مرفوض",converted:"تم التحويل",cancelled:"ملغي"} as Record<string,string>)[row.status]}</span></td>
+        <td className="table-actions">
+          {row.status === "draft" && <button className="subtle-button" disabled={busy} onClick={() => void submitRequisition(row.id)}>إرسال للاعتماد</button>}
+          {row.status === "submitted" && <><button className="subtle-button" disabled={busy} onClick={() => void reviewRequisition(row.id,"approve")}>اعتماد</button><button className="subtle-button" disabled={busy} onClick={() => void reviewRequisition(row.id,"reject")}>رفض</button></>}
+          {row.status === "approved" && <button className="subtle-button" disabled={busy} onClick={() => void convertRequisition(row)}>تحويل لأمر شراء</button>}
+          {row.review_note && <small>{row.review_note}</small>}
+        </td>
+      </tr>)}
+      {!requisitions.length && <tr><td colSpan={6} className="table-empty">لا توجد طلبات احتياج حتى الآن.</td></tr>}
+    </tbody></table></div>}
+
     {showForm && tab === "returns" && <form className="inventory-form" onSubmit={(event) => void saveReturn(event)}>
       <label className="inventory-wide">فاتورة المورد المرحّلة<select required value={returnForm.invoice} onChange={(e) => {
         const invoiceId = e.target.value;
