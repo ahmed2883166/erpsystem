@@ -98,7 +98,7 @@ export type Customer = {
 };
 export type PurchaseOrder = {
   id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string;
-  order_number: string; order_date: string; expected_date: string | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
+  order_number: string; order_date: string; expected_date: string | null; grand_total: string; approval_status: "pending" | "approved" | "rejected" | "superseded" | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
   notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string;
     received_quantity: string; remaining_quantity: string; unit_price: string; tax_rate: string }[];
   created_at: string; confirmed_at: string | null;
