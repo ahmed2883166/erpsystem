@@ -258,7 +258,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
 @transaction.atomic
 def post_asset_purchase_invoice(invoice_id, user=None):
     """ترحيل فاتورة شراء أصل مباشر: تكلفة الأصل والضريبة القابلة للاسترداد مقابل حساب الموردين."""
-    invoice = AssetPurchaseInvoice.objects.select_for_update().select_related(
+    invoice = AssetPurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "asset", "supplier", "fiscal_year", "tax_code",
     ).get(pk=invoice_id)
     if invoice.status != AssetPurchaseInvoice.Status.DRAFT:
@@ -372,7 +372,7 @@ def post_asset_purchase_invoice(invoice_id, user=None):
 @transaction.atomic
 def post_asset_supplier_payment(payment_id, user=None):
     """ترحيل سداد فاتورة الأصل على حساب الموردين مع منع تجاوز الرصيد المستحق."""
-    payment = AssetSupplierPayment.objects.select_for_update().select_related(
+    payment = AssetSupplierPayment.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "invoice", "supplier", "payment_account",
     ).get(pk=payment_id)
     if payment.status != AssetSupplierPayment.Status.DRAFT:
