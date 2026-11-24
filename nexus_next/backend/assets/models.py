@@ -21,7 +21,23 @@ class FixedAsset(models.Model):
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="fixed_assets")
     code = models.CharField(max_length=40)
     name_ar = models.CharField(max_length=180)
+    class Category(models.TextChoices):
+        LAND = "land", "أراضٍ"
+        BUILDING = "building", "مبانٍ"
+        VEHICLE = "vehicle", "سيارات ووسائل نقل"
+        FURNITURE = "furniture", "أثاث وتجهيزات"
+        EQUIPMENT = "equipment", "معدات وآلات"
+        COMPUTERS = "computers", "أجهزة حاسب وتقنية"
+        OTHER = "other", "أخرى"
+
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.OTHER)
     description = models.TextField(blank=True)
+    location = models.CharField(max_length=180, blank=True)
+    custodian = models.CharField(max_length=180, blank=True)
+    serial_number = models.CharField(max_length=100, blank=True)
+    warranty_end_date = models.DateField(null=True, blank=True)
+    supplier_name = models.CharField(max_length=180, blank=True)
+    supplier_invoice = models.CharField(max_length=100, blank=True)
     acquisition_date = models.DateField()
     depreciation_start_date = models.DateField()
     original_cost = models.DecimalField(max_digits=20, decimal_places=4)
