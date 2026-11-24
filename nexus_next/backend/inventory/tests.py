@@ -125,7 +125,7 @@ class StockPostingServiceTests(TestCase):
 
         issue = self._movement(
             "FIFO-MISMATCH-ISSUE", StockMovement.MovementType.ISSUE,
-            source=self.warehouse, quantity="1",
+            source=self.warehouse, quantity="5",
         )
         with self.assertRaises(ValidationError):
             post_stock_movement(issue.pk, self.user)
