@@ -29,6 +29,7 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [paymentNumber, setPaymentNumber] = useState("");
   const [paymentAccount, setPaymentAccount] = useState("");
   const [pendingPaymentId, setPendingPaymentId] = useState<number | null>(null);
+  const [draftInvoiceAssetId, setDraftInvoiceAssetId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [periodDate, setPeriodDate] = useState(today.slice(0, 7) + "-28");
   const [disposalDate, setDisposalDate] = useState(today);
@@ -91,6 +92,7 @@ const create = async (event: FormEvent) => {
       setError("اختر المورد وأدخل رقم الفاتورة وصافي قيمتها قبل الضريبة."); return;
     }
     setSaving(true); setError(""); setNotice("");
+    let createdAsset: FixedAsset | null = null;
     try {
       const asset = await fixedAssetsApi.create({
         company: companyId, branch: Number(form.branch), code: form.code, name_ar: form.name_ar, category: form.category, description: form.description, location: form.location, custodian: form.custodian, serial_number: form.serial_number, warranty_end_date: form.warranty_end_date || null, supplier_name: form.supplier_name, supplier_invoice: form.supplier_invoice,
@@ -104,6 +106,7 @@ const create = async (event: FormEvent) => {
         disposal_gain_loss_account: Number(form.disposal_gain_loss_account), disposal_loss_account: Number(form.disposal_loss_account), fiscal_year: Number(form.fiscal_year),
         acquisition_mode: form.acquisition_mode,
       });
+      createdAsset = asset;
       if (form.acquisition_mode === "supplier_invoice") {
         const invoice = await fixedAssetsApi.purchaseInvoice(asset.id, {
           supplier: Number(form.supplier_id), invoice_number: form.supplier_invoice.trim(),
@@ -117,13 +120,35 @@ const create = async (event: FormEvent) => {
       } else {
         setNotice("تم تسجيل الأصل وإثبات الاقتناء.");
       }
+      setDraftInvoiceAssetId(null);
       setForm({...emptyForm, branch: form.branch, fiscal_year: form.fiscal_year});
       await refresh();
     } catch (reason) {
+      if (createdAsset && form.acquisition_mode === "supplier_invoice") setDraftInvoiceAssetId(createdAsset.id);
       setError(reason instanceof Error ? reason.message : "تعذر تسجيل الأصل أو فاتورة المورد.");
       await refresh();
     } finally { setSaving(false); }
   };
+  const retryDraftAssetInvoice = async () => {
+    if (!draftInvoiceAssetId) return;
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const invoice = await fixedAssetsApi.purchaseInvoice(draftInvoiceAssetId, {
+        supplier: Number(form.supplier_id), invoice_number: form.supplier_invoice.trim(),
+        invoice_date: form.acquisition_date, net_amount: form.supplier_net_amount,
+        tax_code: form.supplier_tax_code ? Number(form.supplier_tax_code) : null,
+        fiscal_year: Number(form.fiscal_year),
+      });
+      setNotice(invoice.approval_required
+        ? `تم حفظ فاتورة المورد كمسودة وتحتاج اعتماد المدير. رقم طلب الاعتماد: ${invoice.approval_request}.`
+        : `تم ترحيل فاتورة المورد وربطها بالأصل. رقم القيد: ${invoice.journal_entry}.`);
+      setDraftInvoiceAssetId(null);
+      setForm({...emptyForm, branch: form.branch, fiscal_year: form.fiscal_year});
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إعادة حفظ فاتورة المورد."); }
+    finally { setSaving(false); }
+  };
+
   const postAssetInvoice = async (asset: FixedAsset) => {
     setSaving(true); setError(""); setNotice("");
     try {
@@ -267,7 +292,7 @@ const loadReport = async () => {
       {accountSelect("حساب أرباح بيع الأصول","disposal_gain_loss_account",accounts.filter(x=>x.nature==="revenue"))}
       {accountSelect("حساب خسائر بيع الأصول","disposal_loss_account",expenseAccounts)}
       <label className="asset-description">الوصف<input value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/></label>
-      <div className="asset-form-actions"><button className="primary-button" disabled={saving || !years.length}>{saving ? "جارٍ الحفظ…" : form.acquisition_mode === "supplier_invoice" ? "حفظ الأصل وترحيل فاتورة المورد" : "حفظ الأصل وإثبات الاقتناء"}</button></div>
+      <div className="asset-form-actions"><button className="primary-button" disabled={saving || !years.length}>{saving ? "جارٍ الحفظ…" : form.acquisition_mode === "supplier_invoice" ? "حفظ الأصل وترحيل فاتورة المورد" : "حفظ الأصل وإثبات الاقتناء"}</button>{draftInvoiceAssetId !== null && <button type="button" className="subtle-button" disabled={saving} onClick={()=>void retryDraftAssetInvoice()}>إعادة محاولة ربط فاتورة المورد بالأصل المحفوظ</button>}</div>
     </form>
     <div className="table-toolbar"><strong>سجل الأصول</strong><span className="module-count">{loading ? "جارٍ التحميل…" : assets.length + " أصل"}</span></div>
     <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الأصل</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة الدفترية</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
