@@ -93,7 +93,7 @@ function Get-WindowsPowerShellPath {
 function Get-PostgresTools {
     $root = Join-Path $env:ProgramFiles "PostgreSQL"
     $found = @{}
-    foreach ($version in @("18","17","16","15","14")) {
+    foreach ($version in @("16","17","18","15","14")) {
         $bin = Join-Path $root ($version + "\bin")
         foreach ($name in @("psql.exe","pg_dump.exe","pg_restore.exe")) {
             $path = Join-Path $bin $name
