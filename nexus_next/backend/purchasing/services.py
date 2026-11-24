@@ -254,6 +254,29 @@ def post_purchase_invoice(invoice_id, user):
     expected = list(receipt.stock_movement.lines.all())
     if len(lines) != len(expected) or {x.receipt_line_id for x in lines} != {x.pk for x in expected}:
         raise ValidationError("أصناف الفاتورة لا تطابق إذن الاستلام.")
+    # Three-way match: invoice line to receipt cost, then receipt to the originating PO line.
+    tolerance = Decimal("0.0002")
+    for invoice_line in lines:
+        receipt_line = invoice_line.receipt_line
+        if abs(invoice_line.net_amount - receipt_line.cost_amount) > tolerance:
+            raise ValidationError(
+                f"صافي فاتورة الصنف {receipt_line.product.code} لا يطابق تكلفة إذن الاستلام."
+            )
+        order_link = PurchaseOrderReceiptLine.objects.select_related("order_line").filter(
+            receipt_line_id=receipt_line.pk
+        ).first()
+        if order_link:
+            order_line = order_link.order_line
+            if order_link.quantity != receipt_line.quantity:
+                raise ValidationError("كمية ربط الاستلام بأمر الشراء غير متطابقة.")
+            if order_line.unit_price > 0 and abs(invoice_line.unit_price - order_line.unit_price) > tolerance:
+                raise ValidationError(
+                    f"سعر فاتورة الصنف {receipt_line.product.code} لا يطابق سعر أمر الشراء بعد الخصم."
+                )
+            if order_line.tax_rate > 0 and abs(invoice_line.tax_rate - order_line.tax_rate) > tolerance:
+                raise ValidationError(
+                    f"معدل ضريبة الصنف {receipt_line.product.code} لا يطابق المعدل المتفق عليه في أمر الشراء."
+                )
     grni_amount = sum((line.cost_amount for line in expected), Decimal("0")).quantize(Decimal("0.0001"))
     net_amount = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     tax_amount = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
