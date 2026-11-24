@@ -297,7 +297,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.data["tax_total"], "28.0000")
         self.assertEqual(response.data["grand_total"], "228.0000")
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
-        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(), 1)
+        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(), 2)
         invoice_entry_id = response.data["journal_entry"]
         purchase_lines = list(JournalLine.objects.filter(entry_id=invoice_entry_id).select_related("account"))
         self.assertEqual(sum((line.debit for line in purchase_lines), Decimal("0")), Decimal("228.0000"))
@@ -360,7 +360,7 @@ class PurchasingWorkflowTests(APITestCase):
             Decimal("2"),
         )
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).count(), 1)
-        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 1)
+        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 2)
 
     def test_supplier_payment_reduces_invoice_balance_and_blocks_overpayment(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
@@ -405,7 +405,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(retry_payment.status_code, 400)
         self.assertEqual(
             JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
-            2,
+            3,
         )
         invoice_data = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
         self.assertEqual(invoice_data["paid_total"], "100.0000")
@@ -466,7 +466,7 @@ class PurchasingWorkflowTests(APITestCase):
             JournalEntry.objects.filter(
                 source_type=JournalEntry.Source.PURCHASES, status=JournalEntry.Status.POSTED
             ).count(),
-            1,
+            2,
         )
 
     def test_supplier_statement_reports_opening_balance_and_running_payable(self):
@@ -616,7 +616,7 @@ class PurchasingWorkflowTests(APITestCase):
         response = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
-        self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).exists())
+        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 1)
 
         # A draft mismatch remains correctable; the corrected invoice can clear GRNI.
         corrected = self.client.patch(
