@@ -230,6 +230,14 @@ class AssetImpairmentReversal(models.Model):
         ):
             raise ValidationError({"reversal_income_account": "اختر حساب إيراد تفصيليًا نشطًا وقابلًا للترحيل من نفس الشركة."})
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("سجل عكس انخفاض القيمة بعد ترحيله غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف عكس انخفاض قيمة مرتبط بقيد؛ استخدم إجراءً محاسبيًا معتمدًا.")
+
 
 class AssetImpairmentReversalAllocation(models.Model):
     """Tracks the exact impairment layer and contra-account reduced by each reversal."""
@@ -250,6 +258,13 @@ class AssetImpairmentReversalAllocation(models.Model):
         if self.amount <= 0:
             raise ValidationError({"amount": "قيمة التخصيص يجب أن تكون أكبر من صفر."})
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("تخصيص عكس الانخفاض غير قابل للتعديل بعد إنشائه.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف تخصيص عكس انخفاض مرتبط بقيد مرحّل.")
 
 
 class AssetPurchaseInvoice(models.Model):
