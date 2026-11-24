@@ -3,7 +3,7 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { formatMoney, multiplyDecimalToFixed } from "./formatters";
+import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
@@ -170,7 +170,7 @@ const saveInvoice = async (event: React.FormEvent) => {
         transaction_currency: invoiceForm.transaction_currency ? Number(invoiceForm.transaction_currency) : null,
         exchange_rate: invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
         exchange_rate_date: invoiceForm.transaction_currency ? invoiceForm.exchange_rate_date : null,
-        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, ...(invoiceForm.transaction_currency ? { transaction_unit_price: (Number(line.unit_cost) / Number(invoiceForm.exchange_rate)).toFixed(4) } : { unit_price: line.unit_cost }), tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null })),
+        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, ...(invoiceForm.transaction_currency ? { transaction_unit_price: divideDecimalToFixed(line.unit_cost, invoiceForm.exchange_rate, 4) } : { unit_price: line.unit_cost }), tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null })),
       });
       setShowForm(false); setInvoiceForm((old) => ({ ...old, receipt: "", invoice_number: "", notes: "" }));
       await refresh();
