@@ -2,7 +2,6 @@
 
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
-from types import SimpleNamespace
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
