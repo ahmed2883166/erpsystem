@@ -69,6 +69,7 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root "Setup-Admrail.cmd") -Destination (Join-Path $Stage "Setup-Admrail.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Remove-Old-Admrail-Database.cmd") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Admrail-Database-Manager.cmd") -Destination (Join-Path $Stage "Admrail-Database-Manager.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Admrail-Owner-Toolkit") -Destination (Join-Path $Stage "Admrail-Owner-Toolkit") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $Root "docs\database-manager-ar.md") -Destination (Join-Path $Stage "DATABASE-MANAGER-AR.md") -Force
   Copy-Item -LiteralPath (Join-Path $Root "scripts\Remove-Old-Admrail-Database.ps1") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.ps1") -Force
   Copy-Item -LiteralPath (Join-Path $Root "setup-admrail.ps1") -Destination (Join-Path $Stage "setup-admrail.ps1") -Force
