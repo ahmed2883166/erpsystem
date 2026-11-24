@@ -89,6 +89,8 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"company": "لا يمكن نقل إذن التسليم إلى شركة أخرى."})
             if hasattr(instance, "invoice") and "lines" in attrs:
                 raise serializers.ValidationError({"lines": "لا يمكن تغيير أصناف إذن تسليم مرتبط بفاتورة."})
+        if instance and company.pk != instance.company_id:
+            raise serializers.ValidationError({"company": "لا يمكن نقل عرض السعر إلى شركة أخرى."})
         if customer and (customer.company_id != company.pk or not customer.is_active):
             raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
         if warehouse and (warehouse.company_id != company.pk or not warehouse.is_active):
