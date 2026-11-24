@@ -9,7 +9,7 @@ import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type Purch
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
 const money = (value: string) => formatMoney(value);
-const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: "posted", reversed: "reversed", confirmed: "sent", partially_received: "partial", received: "accepted", cancelled: "cancelled" } as Record<string, string>}[status] || "unknown"}`;
+const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: "posted", reversed: "reversed", confirmed: "sent", partially_received: "partial", received: "accepted", cancelled: "cancelled", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
