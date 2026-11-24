@@ -363,10 +363,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number",
                   "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
-                  "invoice_lines", "lines", "print_template_snapshot", "created_at", "posted_at", "print_template_snapshot")
+                  "invoice_lines", "lines", "print_template_snapshot", "created_at", "posted_at")
         read_only_fields = ("status", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
-                            "created_at", "posted_at")
+                            "created_at", "posted_at", "print_template_snapshot")
 
     def get_paid_total(self, obj):
         """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""
