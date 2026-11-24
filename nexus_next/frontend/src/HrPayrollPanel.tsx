@@ -343,7 +343,7 @@ const exportEmployeePayReport = () => {
         <label>كود الموظف<input required maxLength={30} value={employeeDraft.code} onChange={e=>setEmployeeDraft({...employeeDraft,code:e.target.value})}/></label>
         <label>اسم الموظف<input required value={employeeDraft.full_name_ar} onChange={e=>setEmployeeDraft({...employeeDraft,full_name_ar:e.target.value})}/></label>
         <label>الفرع<select required value={employeeDraft.branch} onChange={e=>setEmployeeDraft({...employeeDraft,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.map(x=><option key={x.id} value={x.id}>{x.name_ar} ({x.code})</option>)}</select></label>
-        <label>العملة<select required value={employeeDraft.currency} onChange={e=>setEmployeeDraft({...employeeDraft,currency:e.target.value})}>{currencies.map(x=><option key={x.id} value={x.id}>{x.code} — {x.name_ar}</option>)}</select></label>
+        <label>عملة الراتب (عملة الشركة الأساسية)<select required disabled value={String(baseCurrencyId||employeeDraft.currency)}>{currencies.filter(x=>x.id===Number(baseCurrencyId||employeeDraft.currency)).map(x=><option key={x.id} value={x.id}>{x.code} — {x.name_ar}</option>)}</select></label>
         <label>تاريخ التعيين<input required type="date" value={employeeDraft.hire_date} onChange={e=>setEmployeeDraft({...employeeDraft,hire_date:e.target.value})}/></label>
         <label>الراتب الأساسي<input required type="number" min="0" step="0.01" value={employeeDraft.basic_salary} onChange={e=>setEmployeeDraft({...employeeDraft,basic_salary:e.target.value})}/></label>
         <div className="form-actions form-wide"><button className="primary-button" disabled={busy||!branches.length||!currencies.length}>{busy?"جارٍ الحفظ…":"حفظ ملف الموظف"}</button></div>
