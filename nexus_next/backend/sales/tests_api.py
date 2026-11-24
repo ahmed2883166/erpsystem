@@ -1309,6 +1309,32 @@ class SalesWorkflowTests(APITestCase):
         self.assertIsNone(response.data["invoice_lines"][0]["discount_rule"])
         self.assertEqual(response.data["discount_total"], "4.0000")
 
+    def test_quotation_customer_change_requires_lines_for_repricing(self):
+        another_customer = Customer.objects.create(
+            company=self.company, code="CUS-2", name_ar="عميل ثان",
+            default_discount_percent=Decimal("5"),
+        )
+        created = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "quotation_number": "Q-REPRICE",
+            "quotation_date": "2027-01-10",
+            "valid_until": "2027-01-20",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        response = self.client.patch(
+            f"/api/sales-documents/quotations/{created.data['id']}/",
+            {"customer": another_customer.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("lines", response.data)
+        quotation = SalesQuotation.objects.get(pk=created.data["id"])
+        self.assertEqual(quotation.customer_id, self.customer.pk)
+        self.assertEqual(quotation.discount_total, Decimal("0.0000"))
+
     def test_quotation_cannot_be_moved_to_another_company(self):
         other_company = Company.objects.create(
             code="OTHER-SELL", name_ar="شركة أخرى", country="EG",
