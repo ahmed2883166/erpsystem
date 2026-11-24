@@ -12,7 +12,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 
 from accounting.permissions import CompanyRolePermission
-from accounting.models import FxSubledgerRevaluation, JournalEntry
+from accounting.models import AccountRole, FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
@@ -306,11 +306,53 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
                 "amount": str(amount), "invoice_status": invoice.status if invoice else "not_invoiced",
                 "invoice_number": invoice.invoice_number if invoice else None,
             })
+        # Reconcile the operational receipt subledger with the posted GRNI
+        # control-account balance as of the same date and branch scope.
+        role = AccountRole.objects.filter(
+            company_id=company_id,
+            role=AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED,
+        ).select_related("account").first()
+        gl_balance = None
+        reconciliation_difference = None
+        reconciled = None
+        if role:
+            ledger_lines = JournalLine.objects.filter(
+                account_id=role.account_id,
+                entry__company_id=company_id,
+                entry__status=JournalEntry.Status.POSTED,
+                entry__entry_date__lte=as_of,
+            )
+            if branch_id:
+                ledger_lines = ledger_lines.filter(entry__branch_id=branch_id)
+            else:
+                ledger_lines = ledger_lines.filter(
+                    Q(entry__branch__in=accessible_branches(request.user))
+                    | Q(entry__company_id__in=defaults, entry__branch__isnull=True)
+                )
+            ledger_totals = ledger_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+            gl_balance = (
+                (ledger_totals["credit"] or Decimal("0"))
+                - (ledger_totals["debit"] or Decimal("0"))
+            ).quantize(Decimal("0.0001"))
+            reconciliation_difference = (
+                grand_total.quantize(Decimal("0.0001")) - gl_balance
+            ).quantize(Decimal("0.0001"))
+            reconciled = abs(reconciliation_difference) <= Decimal("0.0001")
+
         return Response({
             "company": company_id, "as_of": as_of.isoformat(),
             "grand_total": str(grand_total.quantize(Decimal("0.0001"))),
             "aging": {key: str(value.quantize(Decimal("0.0001"))) for key, value in aging.items()},
             "monthly_summary": [{"month": key, "amount": str(value.quantize(Decimal("0.0001")))} for key, value in sorted(monthly.items())],
+            "gl_reconciliation": {
+                "account_id": role.account_id if role else None,
+                "account_code": role.account.code if role else None,
+                "account_name": role.account.name_ar if role else None,
+                "operational_open_receipts": str(grand_total.quantize(Decimal("0.0001"))),
+                "posted_gl_balance": str(gl_balance) if gl_balance is not None else None,
+                "difference": str(reconciliation_difference) if reconciliation_difference is not None else None,
+                "reconciled": reconciled,
+            },
             "rows": rows,
         })
 
