@@ -230,11 +230,11 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertNotIn(reconciliation.pk, [row["id"] for row in reconciliation_rows])
         self.assertEqual(
             self.client.get(f"/api/treasury/reconciliations/{reconciliation.pk}/").status_code,
-            404,
+            403,
         )
         self.assertEqual(
             self.client.get(f"/api/treasury/reconciliations/{reconciliation.pk}/summary/").status_code,
-            404,
+            403,
         )
 
         statement_lines = self.client.get("/api/treasury/statement-lines/")
