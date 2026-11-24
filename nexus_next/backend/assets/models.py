@@ -108,11 +108,11 @@ class FixedAsset(models.Model):
 
     @property
     def accumulated_depreciation(self):
-        return self.depreciations.aggregate(total=models.Sum("amount"))["total"] or 0
+        return self.depreciations.filter(journal_entry__status=JournalEntry.Status.POSTED).aggregate(total=models.Sum("amount"))["total"] or 0
 
     @property
     def accumulated_impairment(self):
-        return self.impairments.aggregate(total=models.Sum("impairment_loss"))["total"] or 0
+        return self.impairments.filter(journal_entry__status=JournalEntry.Status.POSTED).aggregate(total=models.Sum("impairment_loss"))["total"] or 0
 
     @property
     def net_book_value(self):
