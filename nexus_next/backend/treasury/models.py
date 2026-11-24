@@ -181,6 +181,8 @@ class TreasuryTransaction(models.Model):
             raise ValidationError("سند القبض أو الصرف يتطلب حسابًا مقابلًا فقط.")
 
     def save(self, *args, **kwargs):
+        if not self.currency_code and self.company_id:
+            self.currency_code = self.company.base_currency.code
         if self.pk:
             old = type(self).objects.filter(pk=self.pk).first()
             if old and old.status == self.Status.POSTED:
