@@ -128,9 +128,10 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         order.delete()
 
     @action(detail=True, methods=("post",))
+    @transaction.atomic
     def confirm(self, request, pk=None):
         """اعتماد المستند ونقله إلى الحالة التالية وفق دورة العمل."""
-        order = self.get_object()
+        order = PurchaseOrder.objects.select_for_update().get(pk=self.get_object().pk)
         self._check_write(order.company_id)
         if order.status != PurchaseOrder.Status.DRAFT:
             raise ValidationError("أمر الشراء ليس مسودة.")
