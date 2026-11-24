@@ -181,6 +181,19 @@ const create = async (event: FormEvent) => {
     finally { setSaving(false); }
   };
 
+  const postSavedAssetPayment = async (assetId:number, paymentId:number) => {
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const result = await fixedAssetsApi.postSupplierPayment(assetId, paymentId);
+      setNotice(`تم ترحيل سند السداد بعد الاعتماد. رقم القيد: ${result.journal_entry}.`);
+      if (paymentAssetId === assetId && pendingPaymentId === paymentId) {
+        setPendingPaymentId(null); setPaymentAssetId(null);
+      }
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل سند السداد."); }
+    finally { setSaving(false); }
+  };
+
   const postAssetPayment = async () => {
     if (!paymentAssetId || !pendingPaymentId) return;
     setSaving(true); setError("");
@@ -299,6 +312,7 @@ const loadReport = async () => {
       {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}<small className="table-subtitle">{({land:"أراضٍ",building:"مبانٍ",vehicle:"سيارات",furniture:"أثاث",equipment:"معدات",computers:"تقنية",other:"أخرى"} as Record<string,string>)[a.category]}{a.custodian ? " · العهدة: "+a.custodian : ""}</small></td><td>{a.acquisition_journal ? formatMoney(a.original_cost) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.accumulated_depreciation) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.net_book_value) : "—"}</td><td><span className="status-pill posted">{!a.acquisition_journal ? "بانتظار اعتماد الاقتناء" : a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك / التصرف</button>
         {a.vendor_invoice_status === "draft" && <button type="button" className="subtle-button" disabled={saving} onClick={()=>void postAssetInvoice(a)}>ترحيل فاتورة المورد</button>}
         {a.vendor_invoice_status === "posted" && <button type="button" className="subtle-button" onClick={()=>{setPaymentAssetId(a.id);setPaymentNumber("");setPaymentAmount("");setPaymentAccount(String(treasuryAccounts.find(t=>t.kind==="bank")?.account||""));setPendingPaymentId(null);}}>سداد المورد</button>}
+        {a.vendor_payments?.map(p=><div key={p.id} className="table-subtitle">{p.payment_number} · {formatMoney(p.amount)} · {p.status === "posted" ? "مرحّل" : p.status === "draft" ? <button type="button" className="subtle-button" disabled={saving} onClick={()=>void postSavedAssetPayment(a.id,p.id)}>ترحيل بعد الاعتماد</button> : "معكوس"}</div>)}
       </td></tr>)}
     </tbody></table>{!assets.length && !loading && <div className="table-empty">لا توجد أصول مسجلة حتى الآن.</div>}</div>
     {paymentAssetId !== null && <div className="asset-report-filters">
