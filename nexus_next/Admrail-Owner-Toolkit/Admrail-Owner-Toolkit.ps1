@@ -82,6 +82,11 @@ function Test-OwnerAuthentication {
         $pin = $null
     }
 }
+function Get-WindowsPowerShellPath {
+    $candidate = Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Windows PowerShell executable was not found in System32." }
+    return $candidate
+}
 function Get-PostgresTools {
     $root = Join-Path $env:ProgramFiles "PostgreSQL"
     $found = @{}
@@ -146,7 +151,7 @@ function Invoke-Backup {
     $null = Read-AppConfig
     $scriptPath = Join-Path $script:AppRoot "scripts\backup-postgres.ps1"
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "ملف النسخ الاحتياطي غير موجود." }
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $scriptPath
+    & (Get-WindowsPowerShellPath) -NoLogo -NoProfile -ExecutionPolicy Bypass -File $scriptPath
     if ($LASTEXITCODE -ne 0) { throw "فشل النسخ الاحتياطي. راجع سجل البرنامج." }
     Write-Log "Backup script completed."
 }
@@ -198,7 +203,8 @@ try {
     $script:AppRoot = Find-AppRoot
     Test-OwnerAuthentication
     Write-Log "Toolkit started. AppRoot=$script:AppRoot"
-    while ($true) {
+    $script:ExitRequested = $false
+    while (-not $script:ExitRequested) {
         Clear-Host
         Write-Host "ADMRAIL OWNER TOOLKIT - Vendor maintenance only" -ForegroundColor Cyan
         Write-Host "Application: $script:AppRoot"
@@ -217,7 +223,7 @@ try {
                 "3" { Invoke-Restore }
                 "4" { Invoke-Migrations }
                 "5" { Show-Logs }
-                "0" { break }
+                "0" { $script:ExitRequested = $true }
                 default { Write-Host "اختيار غير صحيح." -ForegroundColor Yellow }
             }
         } catch {
