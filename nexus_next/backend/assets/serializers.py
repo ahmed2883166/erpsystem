@@ -12,7 +12,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FixedAsset
-        fields = ("id", "company", "branch", "code", "name_ar", "description", "acquisition_date",
+        fields = ("id", "company", "branch", "code", "name_ar", "category", "description", "location", "custodian", "serial_number", "warranty_end_date", "supplier_name", "supplier_invoice", "acquisition_date",
                   "depreciation_start_date", "original_cost", "acquisition_net_amount",
                   "nonrecoverable_tax_amount", "acquisition_tax_code", "salvage_value", "useful_life_months",
                   "depreciation_method", "asset_account", "accumulated_depreciation_account",
