@@ -47,15 +47,7 @@ def _powershell_executable():
         if candidate.is_file():
             return str(candidate)
 
-    # PATH lookup is acceptable only when it resolves to an absolute existing file.
-    from shutil import which
-
-    resolved = which("powershell.exe")
-    if resolved:
-        executable = Path(resolved).resolve()
-        if executable.is_absolute() and executable.is_file():
-            return str(executable)
-    raise FileNotFoundError("Windows PowerShell executable was not found in a trusted system location.")
+    raise FileNotFoundError("Windows PowerShell executable was not found in System32 or Sysnative.")
 
 _BACKUP_THREAD_LOCK = threading.Lock()
 
