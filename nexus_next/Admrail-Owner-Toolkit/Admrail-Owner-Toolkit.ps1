@@ -56,6 +56,9 @@ function Test-OwnerAuthentication {
             try { $rng.GetBytes($salt) } finally { $rng.Dispose() }
             $record = [ordered]@{ version = 1; iterations = 220000; salt = [Convert]::ToBase64String($salt); hash = (Get-PinHash $pin $salt) }
             $record | ConvertTo-Json | Set-Content -LiteralPath $authPath -Encoding ASCII
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            & (Join-Path $env:SystemRoot "System32\\icacls.exe") $authPath /inheritance:r /grant:r "$($identity):(R,W)" "SYSTEM:(R,W)" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "تعذر تقييد صلاحيات ملف PIN على حساب المالك وSYSTEM." }
             Write-Log "Owner PIN initialized."
         } finally {
             if ($ptr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
