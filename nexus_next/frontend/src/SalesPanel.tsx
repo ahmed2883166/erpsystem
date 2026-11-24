@@ -118,7 +118,8 @@ const refresh = async () => {
     catch(reason){setError(reason instanceof Error?reason.message:"تعذر حذف مسودة عرض السعر.");}
     finally{setBusy(false);}
   };
-\n  const quoteAction = async (action:"send"|"accept"|"reject", id:number) => {
+
+  const quoteAction = async (action:"send"|"accept"|"reject", id:number) => {
     setBusy(true); setError("");
     try {
       if(action==="send") await salesApi.sendQuotation(id);
