@@ -185,7 +185,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
 
 class PurchaseReceiptViewSet(PurchaseBaseViewSet):
     serializer_class = PurchaseReceiptSerializer
-    queryset = PurchaseReceipt.objects.select_related("company", "supplier", "warehouse", "stock_movement").prefetch_related("stock_movement__lines__product")
+    queryset = PurchaseReceipt.objects.select_related("company", "supplier", "warehouse", "stock_movement", "journal_entry").prefetch_related("stock_movement__lines__product")
     filterset_fields = ("company", "supplier", "warehouse", "receipt_date")
     search_fields = ("receipt_number", "supplier_delivery_ref", "supplier__name_ar")
     ordering_fields = ("receipt_date", "receipt_number", "created_at")
