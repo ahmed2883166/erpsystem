@@ -472,6 +472,18 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(schedule.status_code, 200, schedule.data)
         self.assertEqual(schedule.data["accumulated_impairment"], Decimal("25000.0000"))
         self.assertEqual(schedule.data["net_book_value"], Decimal("90000.0000"))
+        register = self.client.get("/api/assets/fixed-assets/register/", {
+            "company": self.company.pk, "as_of": "2026-02-28",
+        })
+        self.assertEqual(register.status_code, 200, register.data)
+        self.assertEqual(register.data["rows"][0]["accumulated_impairment"], Decimal("25000.0000"))
+        self.assertEqual(register.data["rows"][0]["net_book_value"], Decimal("90000.0000"))
+        movements = self.client.get("/api/assets/fixed-assets/movement-report/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(movements.status_code, 200, movements.data)
+        impairment_event = next(row for row in movements.data["rows"] if row["event_type"] == "impairment")
+        self.assertEqual(impairment_event["amount"], Decimal("25000.0000"))
 
         income = self.client.get("/api/accounting/journal-entries/income-statement/", {
             "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-02-28",
