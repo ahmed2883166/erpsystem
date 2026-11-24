@@ -296,7 +296,7 @@ class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("إعدادات القالب يجب أن تكون كائنًا.")
         allowed = {"accent_color", "show_logo", "show_tax_number", "show_discount",
-                   "show_tax", "show_bank_details", "footer_text", "language", "font_scale"}
+                   "show_tax", "show_bank_details", "bank_details", "footer_text", "language", "font_scale"}
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError("توجد إعدادات غير مدعومة: " + ", ".join(sorted(unknown)))
@@ -311,6 +311,8 @@ class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"language": "لغة الطباعة غير مدعومة."})
         if value.get("font_scale", "normal") not in ("small", "normal", "large"):
             raise serializers.ValidationError({"font_scale": "حجم الخط غير مدعوم."})
+        if "bank_details" in value and (not isinstance(value["bank_details"], str) or len(value["bank_details"]) > 500):
+            raise serializers.ValidationError({"bank_details": "بيانات البنك يجب ألا تتجاوز 500 حرف."})
         if "footer_text" in value and (not isinstance(value["footer_text"], str) or len(value["footer_text"]) > 500):
             raise serializers.ValidationError({"footer_text": "نص التذييل يجب ألا يتجاوز 500 حرف."})
         for flag in ("show_logo", "show_tax_number", "show_discount", "show_tax", "show_bank_details"):
