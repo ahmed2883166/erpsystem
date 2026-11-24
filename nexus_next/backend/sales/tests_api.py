@@ -11,7 +11,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
-from sales.models import SalesQuotation
+from sales.models import SalesQuotation, SalesDocumentTemplate
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -1363,3 +1363,58 @@ class SalesWorkflowTests(APITestCase):
         response = self.client.post(f"/api/sales-documents/quotations/{created.data['id']}/send/", {}, format="json")
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(SalesQuotation.objects.get(pk=created.data["id"]).status, SalesQuotation.Status.EXPIRED)
+
+    def test_quotation_send_captures_company_default_print_template_snapshot(self):
+        template = SalesDocumentTemplate.objects.create(
+            company=self.company,
+            document_type=SalesDocumentTemplate.DocumentType.QUOTATION,
+            name="Quotation Modern",
+            style=SalesDocumentTemplate.Style.MODERN,
+            config={"accent_color": "#224466", "show_discount": True},
+            is_default=True,
+        )
+        created = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "quotation_number": "Q-TEMPLATE-001", "quotation_date": "2027-01-10",
+            "valid_until": "2027-01-20",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        sent = self.client.post(
+            f"/api/sales-documents/quotations/{created.data['id']}/send/", {}, format="json"
+        )
+        self.assertEqual(sent.status_code, 200, sent.data)
+        self.assertEqual(sent.data["print_template_snapshot"]["template_id"], template.pk)
+        self.assertEqual(sent.data["print_template_snapshot"]["style"], "modern")
+        template.config = {"accent_color": "#AA0000"}
+        template.save(update_fields=("config", "updated_at"))
+        refreshed = self.client.get(f"/api/sales-documents/quotations/{created.data['id']}/")
+        self.assertEqual(refreshed.data["print_template_snapshot"]["config"]["accent_color"], "#224466")
+
+    def test_only_company_admin_can_manage_document_templates_and_default_is_unique(self):
+        admin = get_user_model().objects.create_user(username="sales_template_admin", password="test-password")
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True
+        )
+        self.client.force_authenticate(admin)
+        first = self.client.post("/api/sales-documents/document-templates/", {
+            "company": self.company.pk, "document_type": "invoice",
+            "name": "Classic Invoice", "style": "classic", "is_default": True,
+            "config": {"show_tax": True},
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post("/api/sales-documents/document-templates/", {
+            "company": self.company.pk, "document_type": "invoice",
+            "name": "Modern Invoice", "style": "modern", "is_default": True,
+            "config": {"accent_color": "#123456"},
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertFalse(SalesDocumentTemplate.objects.get(pk=first.data["id"]).is_default)
+        self.assertTrue(SalesDocumentTemplate.objects.get(pk=second.data["id"]).is_default)
+
+        self.client.force_authenticate(self.user)
+        denied = self.client.post("/api/sales-documents/document-templates/", {
+            "company": self.company.pk, "document_type": "invoice",
+            "name": "Accountant Template", "style": "compact",
+        }, format="json")
+        self.assertEqual(denied.status_code, 403)
