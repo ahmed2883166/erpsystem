@@ -85,7 +85,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
         return super().create(request, *args, **kwargs)
 
@@ -182,7 +182,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
         return super().create(request, *args, **kwargs)
 
@@ -254,7 +254,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
         return super().create(request, *args, **kwargs)
 
@@ -352,7 +352,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             company_id = int(request.query_params.get("company", ""))
             supplier_id = int(request.query_params.get("supplier", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"detail": "حدد الشركة والمورد لعرض كشف الحساب."})
+            raise ValidationError({"detail": "حدد الشركة والمورد لعرض كشف الحساب."}) from None
 
         date_from_raw = request.query_params.get("date_from")
         date_to_raw = request.query_params.get("date_to")
@@ -458,7 +458,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة لعرض أعمار المديونية."})
+            raise ValidationError({"company": "حدد الشركة لعرض أعمار المديونية."}) from None
         if not can_access_company(request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
         branch_raw = request.query_params.get("branch")
@@ -467,7 +467,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
             try:
                 branch_id = int(branch_raw)
             except (TypeError, ValueError):
-                raise ValidationError({"branch": "معرّف الفرع غير صالح."})
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
             if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
         as_of_raw = request.query_params.get("as_of")
@@ -576,7 +576,7 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
         return super().create(request, *args, **kwargs)
 
@@ -642,7 +642,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
         return super().create(request, *args, **kwargs)
 
@@ -710,7 +710,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         try:
             company_id = int(request.data.get("company"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
         return super().create(request, *args, **kwargs)
 
