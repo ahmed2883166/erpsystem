@@ -10,6 +10,7 @@ from django.db.models import Sum
 from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.models import FiscalYear
+from core.money import round_currency_amount
 from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
 
 
@@ -292,6 +293,11 @@ def post_asset_purchase_invoice(invoice_id, user=None):
             or (code.effective_to and code.effective_to < invoice.invoice_date)
         ):
             raise ValidationError("كود الضريبة غير صالح لهذه الشركة أو تاريخ الفاتورة.")
+        expected_tax = round_currency_amount(
+            invoice.net_amount * code.rate / Decimal("100"), invoice.company.base_currency,
+        )
+        if invoice.tax_amount != expected_tax:
+            raise ValidationError("قيمة الضريبة لا تطابق نسبة كود الضريبة وصافي الفاتورة.")
         expected_recoverable = invoice.tax_amount if code.input_tax_recoverable else Decimal("0")
         expected_nonrecoverable = invoice.tax_amount - expected_recoverable
         if (
