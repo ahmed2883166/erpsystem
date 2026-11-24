@@ -44,7 +44,12 @@ class TreasuryAccountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"account": "اختر حسابًا تفصيليًا نشطًا."})
         if account and account.nature != account.Nature.ASSET:
             raise serializers.ValidationError({"account": "يجب أن يكون حساب الخزينة من طبيعة الأصول."})
-        currency_code = attrs.get("currency_code", getattr(self.instance, "currency_code", "EGP"))
+        currency_code = attrs.get(
+            "currency_code",
+            getattr(self.instance, "currency_code", None) or (company.base_currency.code if company else ""),
+        )
+        if not self.instance and company and "currency_code" not in attrs:
+            attrs["currency_code"] = company.base_currency.code
         if not Currency.objects.filter(code=currency_code, is_active=True).exists():
             raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة من قائمة العملات المعتمدة."})
         opening_balance = attrs.get("opening_balance", getattr(self.instance, "opening_balance", 0))
