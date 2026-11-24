@@ -3,6 +3,7 @@
  * يمنع تجاهل الطلبات القديمة حتى لا تختلط نتائج الشركات أو الفروع عند سرعة التنقل.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatMoney } from "./formatters";
 import { api, salesApi, purchasingApi, type BalanceSheetReport, type IncomeStatementReport, type CustomerAging, type SupplierAging, type Branch } from "./api";
 
 type Props = {
@@ -14,7 +15,7 @@ type Props = {
 
 const money = (value?: string | number | null, currency = "") => {
   if (value === undefined || value === null || value === "") return "—";
-  return `${Number(value).toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ${currency}`.trim();
+  return `${formatMoney(value)} ${currency}`.trim();
 };
 const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const monthStart = (date: Date) => localDate(new Date(date.getFullYear(), date.getMonth(), 1));
