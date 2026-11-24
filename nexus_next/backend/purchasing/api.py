@@ -212,7 +212,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
                 purchase_order_id = int(purchase_order_id)
             except (TypeError, ValueError):
                 raise ValidationError({"purchase_order": "أمر الشراء المحدد غير صالح."}) from None
-            order = PurchaseOrder.objects.select_for_update().select_related(
+            order = PurchaseOrder.objects.select_for_update(of=("self",)).select_related(
                 "warehouse", "warehouse__branch",
             ).filter(pk=purchase_order_id, company_id=company_id).first()
             if not order:
