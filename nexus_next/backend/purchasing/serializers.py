@@ -896,7 +896,7 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseRFQ
         fields = ("id", "company", "source_requisition", "rfq_number", "issue_date", "closing_date", "status", "terms", "lines", "invited_suppliers", "line_items", "supplier_list", "awarded_quotation", "converted_order", "award_reason", "awarded_by", "awarded_at", "created_at")
-        read_only_fields = ("status", "line_items", "supplier_list", "awarded_quotation", "award_reason", "awarded_by", "awarded_at", "created_at")
+        read_only_fields = ("status", "line_items", "supplier_list", "awarded_quotation", "converted_order", "award_reason", "awarded_by", "awarded_at", "created_at")
 
     def get_line_items(self, obj):
         return [{"id": x.pk, "product": x.product_id, "product_code": x.product.code, "product_name": x.product.name_ar, "quantity": str(x.quantity), "notes": x.notes} for x in obj.lines.select_related("product")]
