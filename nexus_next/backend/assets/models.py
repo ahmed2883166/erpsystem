@@ -257,6 +257,12 @@ class AssetImpairmentReversalAllocation(models.Model):
             raise ValidationError("طبقة الانخفاض لا تتبع الأصل المرتبط بعكس الانخفاض.")
         if self.amount <= 0:
             raise ValidationError({"amount": "قيمة التخصيص يجب أن تكون أكبر من صفر."})
+        if self.impairment_id:
+            already_allocated = self.impairment.reversal_allocations.filter(
+                reversal__journal_entry__status=JournalEntry.Status.POSTED,
+            ).exclude(pk=self.pk).aggregate(total=models.Sum("amount"))["total"] or 0
+            if already_allocated + self.amount > self.impairment.impairment_loss:
+                raise ValidationError({"amount": "إجمالي عكوس طبقة الانخفاض لا يجوز أن يتجاوز خسارة الانخفاض الأصلية."})
 
     def save(self, *args, **kwargs):
         if self.pk:
