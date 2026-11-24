@@ -19,7 +19,7 @@ function cashTaxPreview(form: typeof emptyForm, taxCodes: TaxCode[]) {
   const code = taxCodes.find(item => item.id === Number(form.cash_tax_code));
   if (!code || !(Number(form.original_cost) > 0)) return null;
   const net = Number(form.original_cost);
-  const tax = Number((net * Number(code.rate) / 100).toFixed(4));
+  const tax = Number((net * Number(code.rate) / 100).toFixed(2));
   const capitalized = net + (code.input_tax_recoverable ? 0 : tax);
   return <div className="asset-report-note">ضريبة المدخلات: {formatMoney(tax)} · {code.input_tax_recoverable ? "تُثبت كضريبة مدخلات قابلة للاسترداد" : "تُضاف إلى تكلفة الأصل"} · تكلفة الأصل بعد المعالجة: {formatMoney(capitalized)} · إجمالي المدفوع: {formatMoney(net + tax)}</div>;
 }
@@ -110,7 +110,7 @@ const create = async (event: FormEvent) => {
     if (form.acquisition_mode === "cash" && cashTaxCode && !(cashNetAmount > 0)) {
       setError("أدخل صافي تكلفة الأصل قبل الضريبة."); return;
     }
-    const cashTaxAmount = cashTaxCode ? Number((cashNetAmount * Number(cashTaxCode.rate) / 100).toFixed(4)) : 0;
+    const cashTaxAmount = cashTaxCode ? Number((cashNetAmount * Number(cashTaxCode.rate) / 100).toFixed(2)) : 0;
     const cashRecoverableTax = cashTaxCode?.input_tax_recoverable ? cashTaxAmount : 0;
     const cashNonrecoverableTax = cashTaxCode && !cashTaxCode.input_tax_recoverable ? cashTaxAmount : 0;
     const cashCapitalizedCost = Number((cashNetAmount + cashNonrecoverableTax).toFixed(4));
