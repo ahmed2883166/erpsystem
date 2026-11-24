@@ -348,7 +348,10 @@ class StockCostConsumption(models.Model):
 
     class Meta:
         ordering = ("id",)
-        indexes = [models.Index(fields=("movement_line", "source_layer"), name="inv_cost_consume_idx")]
+        indexes = [
+            models.Index(fields=("movement_line", "source_layer"), name="inv_cost_consume_idx"),
+            models.Index(fields=("source_layer", "movement_line"), name="inv_consume_source_move_idx"),
+        ]
 
 
 class StockMovementJournalLink(models.Model):

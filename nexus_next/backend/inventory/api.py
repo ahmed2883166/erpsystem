@@ -2,7 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Case, Count, DateField, DecimalField, ExpressionWrapper, F, Q, Sum, Value, When
+from django.db.models import Case, Count, DateField, DecimalField, ExpressionWrapper, F, OuterRef, Q, Subquery, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -16,7 +16,7 @@ from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 
-from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
@@ -856,6 +856,14 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         # on the report date are eligible. This prevents a past "as of" report from
         # showing today's remaining quantity as if it were historical.
         decimal_quantity = DecimalField(max_digits=20, decimal_places=4)
+        later_consumption_total = StockCostConsumption.objects.filter(
+            source_layer_id=OuterRef("pk"),
+            movement_line__movement__status=StockMovement.Status.POSTED,
+            movement_line__movement__movement_date__gt=as_of,
+        ).order_by().values("source_layer_id").annotate(
+            total=Sum("quantity"),
+        ).values("total")[:1]
+
         layers = StockCostLayer.objects.filter(
             product__company_id=company_id,
             product__costing_method=Product.CostingMethod.FIFO,
@@ -878,10 +886,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 output_field=DateField(),
             ),
             consumed_after_as_of=Coalesce(
-                Sum(
-                    "consumptions__quantity",
-                    filter=Q(consumptions__movement_line__movement__movement_date__gt=as_of),
-                ),
+                Subquery(later_consumption_total, output_field=decimal_quantity),
                 Value(Decimal("0.0000")),
                 output_field=decimal_quantity,
             ),
@@ -904,8 +909,18 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             parent_layer__isnull=False,
             source_line__movement__status=StockMovement.Status.POSTED,
             source_line__movement__movement_date__lte=as_of,
-            quantity_remaining__gt=0,
-        ).filter(warehouse_scope).count()
+        ).filter(warehouse_scope).annotate(
+            consumed_after_as_of=Coalesce(
+                Subquery(later_consumption_total, output_field=decimal_quantity),
+                Value(Decimal("0.0000")),
+                output_field=decimal_quantity,
+            )
+        ).annotate(
+            quantity_as_of=ExpressionWrapper(
+                F("quantity_remaining") + F("consumed_after_as_of"),
+                output_field=decimal_quantity,
+            )
+        ).filter(quantity_as_of__gt=0).count()
 
         cut_30 = as_of - timedelta(days=30)
         cut_90 = as_of - timedelta(days=90)

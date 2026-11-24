@@ -200,12 +200,18 @@ class InventoryApiTests(APITestCase):
         )
         self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
 
-        issue = self._movement("FIFO-HIST-I", "issue", source=warehouse, quantity="4")
-        StockMovement.objects.filter(pk=issue.data["id"]).update(movement_date=date(2026, 3, 1))
-        posted_issue = self.client.post(
-            f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json",
+        issue_one = self._movement("FIFO-HIST-I1", "issue", source=warehouse, quantity="2")
+        StockMovement.objects.filter(pk=issue_one.data["id"]).update(movement_date=date(2026, 3, 1))
+        posted_issue_one = self.client.post(
+            f"/api/inventory/movements/{issue_one.data['id']}/post/", {}, format="json",
         )
-        self.assertEqual(posted_issue.status_code, 200, posted_issue.data)
+        self.assertEqual(posted_issue_one.status_code, 200, posted_issue_one.data)
+        issue_two = self._movement("FIFO-HIST-I2", "issue", source=warehouse, quantity="3")
+        StockMovement.objects.filter(pk=issue_two.data["id"]).update(movement_date=date(2026, 4, 1))
+        posted_issue_two = self.client.post(
+            f"/api/inventory/movements/{issue_two.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_issue_two.status_code, 200, posted_issue_two.data)
 
         report = self.client.get(
             f"/api/inventory/balances/cost-aging/?company={self.company.pk}&as_of=2026-02-01",
