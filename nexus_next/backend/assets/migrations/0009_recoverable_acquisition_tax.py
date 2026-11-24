@@ -14,5 +14,4 @@ class Migration(migrations.Migration):
             name="recoverable_tax_amount",
             field=models.DecimalField(decimal_places=4, default=0, max_digits=20),
         ),
-        ),
     ]
