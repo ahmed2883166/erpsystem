@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
+from types import SimpleNamespace
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -13,7 +14,7 @@ from accounting.models import AccountRole, ChartOfAccount, FxSubledgerRevaluatio
 from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
-from companies.models import ExchangeRate
+from companies.models import ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
 from inventory.services import post_stock_movement
 
@@ -23,6 +24,22 @@ from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllo
 def _account(company, role):
     """استخراج الحساب التفصيلي المرتبط بدور المشتريات المطلوب."""
     return get_account_for_role(company, role)
+
+
+def _branch_and_year(receipt, entry_date):
+    """تحديد فرع المخزن والسنة المالية لقيد فاتورة المشتريات."""
+    branch = resolve_warehouse_branch(receipt.company, receipt.warehouse)
+    if branch and not branch.is_active:
+        raise ValidationError("فرع مخزن المشتريات موقوف.")
+    if not branch:
+        raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المشتريات.")
+    year = FiscalYear.objects.filter(
+        company=receipt.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=entry_date, end_date__gte=entry_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ مستند المشتريات.")
+    return branch, year
 
 
 def _branch_for_stock_warehouse(company, warehouse):
