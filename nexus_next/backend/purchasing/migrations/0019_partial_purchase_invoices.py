@@ -2,6 +2,7 @@ import django.core.validators
 import django.db.models.deletion
 from decimal import Decimal
 from django.db import migrations, models
+from django.db.models import Count
 
 
 def backfill_billed_quantity(apps, schema_editor):
@@ -11,6 +12,23 @@ def backfill_billed_quantity(apps, schema_editor):
     for row in rows:
         PurchaseInvoiceLine.objects.using(database).filter(pk=row.pk).update(
             billed_quantity=row.receipt_line.quantity
+        )
+
+
+def ensure_legacy_one_to_one_can_be_restored(apps, schema_editor):
+    PurchaseInvoice = apps.get_model("purchasing", "PurchaseInvoice")
+    PurchaseInvoiceLine = apps.get_model("purchasing", "PurchaseInvoiceLine")
+    database = schema_editor.connection.alias
+    duplicate_receipts = PurchaseInvoice.objects.using(database).values(
+        "receipt_id"
+    ).annotate(total=Count("pk")).filter(total__gt=1).exists()
+    duplicate_receipt_lines = PurchaseInvoiceLine.objects.using(database).values(
+        "receipt_line_id"
+    ).annotate(total=Count("pk")).filter(total__gt=1).exists()
+    if duplicate_receipts or duplicate_receipt_lines:
+        raise RuntimeError(
+            "Cannot reverse partial-invoice migration: multiple invoices now reference "
+            "the same receipt or receipt line. Keep the forward schema to avoid data loss."
         )
 
 
@@ -46,7 +64,7 @@ class Migration(migrations.Migration):
                 validators=[django.core.validators.MinValueValidator(Decimal("0.0001"))],
             ),
         ),
-        migrations.RunPython(backfill_billed_quantity, migrations.RunPython.noop),
+        migrations.RunPython(backfill_billed_quantity, ensure_legacy_one_to_one_can_be_restored),
         migrations.AlterField(
             model_name="purchaseinvoiceline",
             name="billed_quantity",
