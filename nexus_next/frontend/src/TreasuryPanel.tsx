@@ -2,7 +2,7 @@
  * الخزينة والبنوك: إدارة حسابات النقدية والبنوك وحركات القبض والصرف والتحويل.
  * تشمل التسوية البنكية ومطابقة كشف البنك مع الحركات المسجلة.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation } from "./api";
 
