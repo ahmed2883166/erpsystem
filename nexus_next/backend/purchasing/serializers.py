@@ -96,6 +96,8 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                 order_line = PurchaseOrderLine.objects.filter(pk=order_line_id, order=order).select_related("product").first()
                 if not order_line or order_line.product_id != line["product"].pk:
                     raise serializers.ValidationError({"lines": "بند أمر الشراء لا يطابق الصنف المحدد."})
+                if order_line.unit_price > 0 and line["unit_cost"] != order_line.unit_price:
+                    raise serializers.ValidationError({"lines": f"تكلفة استلام الصنف {order_line.product.code} يجب أن تطابق سعر أمر الشراء المعتمد."})
                 line["purchase_order_line_obj"] = order_line
                 requested_by_line[order_line.pk] = requested_by_line.get(order_line.pk, Decimal("0")) + line["quantity"]
             location_id = line.get("destination_location")
