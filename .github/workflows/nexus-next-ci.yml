@@ -91,7 +91,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "psycopg[binary,pool]>=3.2,<4"
       - name: Run real pg_dump and pg_restore round-trip
-        run: python -m unittest tests.test_postgres_backup -v
+        run: python -m unittest discover -s tests -p 'test_postgres_backup.py' -v
 
   frontend:
     runs-on: ubuntu-latest
