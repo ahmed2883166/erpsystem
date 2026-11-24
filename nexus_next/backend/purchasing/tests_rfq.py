@@ -14,7 +14,9 @@ class PurchaseRFQWorkflowTests(APITestCase):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         self.company = Company.objects.create(code="RFQ", name_ar="شركة عروض", country="EG", activity="commercial", base_currency=currency)
         self.user = get_user_model().objects.create_user(username="rfq-buyer", password="test-password")
+        self.manager = get_user_model().objects.create_user(username="rfq-manager", password="test-password")
         CompanyMembership.objects.create(user=self.user, company=self.company, role="accountant", all_branches=True)
+        CompanyMembership.objects.create(user=self.manager, company=self.company, role="admin", all_branches=True)
         self.client.force_authenticate(self.user)
         self.unit = UnitOfMeasure.objects.create(company=self.company, code="PCS", name_ar="قطعة")
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="RFQ-1", name_ar="صنف منافسة", purchase_price=Decimal("10"))
@@ -52,6 +54,7 @@ class PurchaseRFQWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(quote_b.status_code, 201, quote_b.data)
         self.assertEqual(quote_a.data["grand_total"], "64.9800")
+        self.client.force_authenticate(self.manager)
         awarded = self.client.post(f"/api/purchasing/rfqs/{rfq_id}/award/", {
             "quotation": quote_a.data["id"], "reason": "أفضل تكلفة إجمالية مع شروط سداد مناسبة"
         }, format="json")
