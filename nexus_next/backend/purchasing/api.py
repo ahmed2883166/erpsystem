@@ -885,6 +885,14 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
         self._check_write(serializer.instance.company_id)
         serializer.save()
 
+    def perform_destroy(self, instance):
+        requisition = PurchaseRequisition.objects.select_for_update().get(pk=instance.pk)
+        self._check_write(requisition.company_id)
+        if requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف طلب شراء تم إرساله أو اعتماده.")
+        requisition.lines.all().delete()
+        requisition.delete()
+
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def submit(self, request, pk=None):
@@ -939,6 +947,8 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
         expected_date = parse_date(str(request.data.get("expected_date", ""))) if request.data.get("expected_date") else None
         if not supplier_id or not warehouse_id or not order_number or not order_date:
             raise ValidationError("المورد والمخزن ورقم الأمر وتاريخه حقول مطلوبة للتحويل.")
+        if expected_date and expected_date < order_date:
+            raise ValidationError({"expected_date": "تاريخ التوريد المتوقع لا يمكن أن يسبق تاريخ أمر الشراء."})
         from suppliers.models import Supplier
         from inventory.models import Warehouse
         supplier = Supplier.objects.filter(pk=supplier_id, company_id=requisition.company_id, is_active=True).first()
@@ -958,9 +968,11 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
                               unit_price=line.estimated_unit_price or Decimal("0"))
             for line in requisition.lines.select_related("product").all()
         ])
-        PurchaseRequisition.objects.filter(pk=requisition.pk, status=PurchaseRequisition.Status.APPROVED, converted_order__isnull=True).update(
+        converted = PurchaseRequisition.objects.filter(pk=requisition.pk, status=PurchaseRequisition.Status.APPROVED, converted_order__isnull=True).update(
             status=PurchaseRequisition.Status.CONVERTED, converted_order=order
         )
+        if converted != 1:
+            raise ValidationError("تم تحويل طلب الاحتياج بالفعل؛ لم يتم إنشاء أمر شراء إضافي.")
         requisition.refresh_from_db()
         return Response({"requisition": self.get_serializer(requisition).data, "purchase_order_id": order.pk}, status=status.HTTP_201_CREATED)
 
