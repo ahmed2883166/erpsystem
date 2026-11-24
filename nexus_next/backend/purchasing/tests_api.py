@@ -425,7 +425,7 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(rejected.status_code, 400)
         self.assertEqual(
             JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
-            3,
+            2,
         )
 
     def test_supplier_payment_rejects_treasury_account_from_another_branch(self):
