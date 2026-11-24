@@ -9,6 +9,8 @@ from .models import FixedAsset, AssetDepreciation
 class FixedAssetSerializer(serializers.ModelSerializer):
     accumulated_depreciation = serializers.DecimalField(max_digits=20, decimal_places=4, read_only=True)
     net_book_value = serializers.DecimalField(max_digits=20, decimal_places=4, read_only=True)
+    vendor_invoice_id = serializers.SerializerMethodField()
+    vendor_invoice_status = serializers.SerializerMethodField()
 
     class Meta:
         model = FixedAsset
@@ -18,9 +20,19 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                   "depreciation_method", "asset_account", "accumulated_depreciation_account",
                   "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account",
                   "acquisition_journal", "acquisition_treasury_transaction", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
-                  "accumulated_depreciation", "net_book_value", "created_at")
+                  "accumulated_depreciation", "net_book_value", "vendor_invoice_id", "vendor_invoice_status", "created_at")
         read_only_fields = ("acquisition_journal", "status", "disposed_at", "disposal_proceeds",
                             "disposal_journal", "disposal_treasury_transaction", "acquisition_treasury_transaction", "accumulated_depreciation", "net_book_value", "created_at")
+
+    def get_vendor_invoice_id(self, obj):
+        """Return the linked direct supplier invoice without failing for manual acquisitions."""
+        invoice = getattr(obj, "vendor_invoice", None)
+        return invoice.pk if invoice else None
+
+    def get_vendor_invoice_status(self, obj):
+        """Expose whether the direct supplier invoice is awaiting approval or already posted."""
+        invoice = getattr(obj, "vendor_invoice", None)
+        return invoice.status if invoice else None
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
