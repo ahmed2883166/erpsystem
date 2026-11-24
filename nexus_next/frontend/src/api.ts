@@ -812,7 +812,8 @@ export type FixedAsset = {
   accumulated_depreciation: string; accumulated_impairment?:string; net_book_value: string; created_at: string;
 };
 export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; accumulated_impairment:string; net_book_value: string;
-  rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];\n  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number}[] };
+  rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];
+  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number}[] };
 export type AssetRegisterReport = {
   company:number;as_of:string;
   totals:{original_cost:string;accumulated_depreciation:string;accumulated_impairment:string;net_book_value_active:string;asset_count:number};
@@ -826,6 +827,8 @@ export type AssetAccountReconciliation = {
   cost_accounts:AssetReconciliationRow[];
   accumulated_depreciation_accounts:AssetReconciliationRow[];
   depreciation_expense_accounts:AssetReconciliationRow[];
+  accumulated_impairment_accounts:AssetReconciliationRow[];
+  asset_expense_accounts:(AssetReconciliationRow & {expected_depreciation:string;expected_impairment:string})[];
   is_reconciled:boolean;difference_count:number;note:string;
 };
 export type AssetDepreciationRunResult = {
