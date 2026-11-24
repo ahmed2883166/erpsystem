@@ -269,7 +269,7 @@ class FixedAssetWorkflowTests(APITestCase):
         first = self.client.post(url, payload, format="json")
         self.assertEqual(first.status_code, 200, first.data)
         self.assertEqual(first.data["processed_count"], 1)
-        self.assertEqual(first.data["processed_total"], "5000.0000")
+        self.assertEqual(first.data["processed_total"], "5000.00")
         second = self.client.post(url, payload, format="json")
         self.assertEqual(second.status_code, 200, second.data)
         self.assertEqual(second.data["processed_count"], 0)
@@ -324,7 +324,7 @@ class FixedAssetWorkflowTests(APITestCase):
             format="json",
         )
         self.assertEqual(depreciation.status_code, 201, depreciation.data)
-        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("4722.2222"))
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("4722.22"))
 
     def test_asset_acquisition_rejects_recoverable_tax_as_nonrecoverable_cost(self):
         code = TaxCode.objects.create(
