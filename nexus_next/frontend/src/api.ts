@@ -103,6 +103,16 @@ export type PurchaseOrder = {
     received_quantity: string; remaining_quantity: string; unit_price: string; tax_rate: string }[];
   created_at: string; confirmed_at: string | null;
 };
+export type PurchaseRequisition = {
+  id: number; company: number; request_number: string; request_date: string; required_date: string | null;
+  department: string; purpose: string; notes: string;
+  status: "draft" | "submitted" | "approved" | "rejected" | "converted" | "cancelled";
+  requested_by: number; requested_by_name: string; reviewed_by: number | null; reviewed_by_name: string | null;
+  reviewed_at: string | null; review_note: string; converted_order: number | null;
+  line_items: { id: number; product: number; product_code: string; product_name: string;
+    requested_quantity: string; estimated_unit_price: string | null; notes: string }[];
+  created_at: string;
+};
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
 export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
