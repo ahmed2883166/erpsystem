@@ -230,7 +230,45 @@ def post_purchase_receipt(receipt_id, user):
             PurchaseOrderLine.objects.filter(pk=line_id).update(received_quantity=line.received_quantity + quantity)
         remaining_exists = order.lines.filter(received_quantity__lt=F("quantity")).exists()
         PurchaseOrder.objects.filter(pk=order.pk).update(status=PurchaseOrder.Status.PARTIALLY_RECEIVED if remaining_exists else PurchaseOrder.Status.RECEIVED)
-    return PurchaseReceipt.objects.select_related("stock_movement").get(pk=receipt.pk)
+
+    # Recognize the receipt in the GRNI control account at the same time the
+    # stock receipt is posted. The supplier invoice later clears this liability.
+    receipt_lines = list(receipt.stock_movement.lines.select_related("product"))
+    grni_amount = sum((line.cost_amount for line in receipt_lines), Decimal("0")).quantize(Decimal("0.0001"))
+    if grni_amount <= 0:
+        raise ValidationError("قيمة إذن الاستلام يجب أن تكون موجبة قبل إثبات GRNI.")
+    inventory_account = _account(receipt.company, AccountRole.Role.INVENTORY)
+    grni_account = _account(receipt.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
+    if inventory_account.pk == grni_account.pk:
+        raise ValidationError("يجب فصل حساب المخزون عن حساب البضاعة المستلمة غير المفوترة.")
+    branch, year = _branch_and_year(receipt, receipt.receipt_date)
+    entry = JournalEntry.objects.create(
+        company=receipt.company, branch=branch, fiscal_year=year,
+        entry_number=f"PUR-GR-{receipt.pk}", entry_date=receipt.receipt_date,
+        description=f"إثبات استلام مشتريات {receipt.receipt_number} من {receipt.supplier.name_ar}"[:500],
+        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    )
+    JournalLine.objects.bulk_create([
+        JournalLine(
+            entry=entry, account=inventory_account,
+            description=f"إضافة مخزون من إذن الاستلام {receipt.receipt_number}"[:300],
+            debit=grni_amount, credit=0,
+        ),
+        JournalLine(
+            entry=entry, account=grni_account,
+            description=f"بضاعة مستلمة غير مفوترة - {receipt.receipt_number}"[:300],
+            debit=0, credit=grni_amount,
+        ),
+    ])
+    try:
+        posted_entry = post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+    receipt.journal_entry = posted_entry
+    receipt.save(update_fields=("journal_entry",))
+
+    return PurchaseReceipt.objects.select_related("stock_movement", "journal_entry").get(pk=receipt.pk)
 
 
 @transaction.atomic
