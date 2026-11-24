@@ -15,7 +15,7 @@ class Migration(migrations.Migration):
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("customer_type", models.CharField(blank=True, choices=[("company", "شركة"), ("individual", "فرد")], max_length=12)),
-                ("min_quantity", models.DecimalField(blank=True, decimal_places=4, max_digits=18, null=True, validators=[django.core.validators.MinValueValidator(0)])),
+                ("min_quantity", models.DecimalField(blank=True, decimal_places=4, max_digits=18, null=True, validators=[django.core.validators.MinValueValidator(0.0001)])),
                 ("min_invoice_amount", models.DecimalField(blank=True, decimal_places=4, help_text="Minimum invoice amount in the company's base currency.", max_digits=20, null=True, validators=[django.core.validators.MinValueValidator(0)])),
                 ("discount_percent", models.DecimalField(decimal_places=4, max_digits=7, validators=[django.core.validators.MinValueValidator(0), django.core.validators.MaxValueValidator(100)])),
                 ("priority", models.PositiveSmallIntegerField(default=100)),
