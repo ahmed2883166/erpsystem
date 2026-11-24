@@ -535,6 +535,46 @@ class InventoryApiTests(APITestCase):
         self.assertTrue(card.data["rows"][0]["posted_at"])
         self.assertGreaterEqual(Decimal(card.data["rows"][0]["balance_quantity"]), Decimal("0"))
 
+    def test_stock_card_paginates_without_losing_running_balance(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="CARD-PAGE-1", name_ar="ترقيم بطاقة الصنف",
+        )
+        warehouse = self._warehouse("CARD-PAGE-WH")
+        opening = self._movement(
+            "CARD-PAGE-OPEN", "receipt", destination=warehouse, quantity="4", cost="2",
+        )
+        self.assertEqual(opening.status_code, 201, opening.data)
+        StockMovement.objects.filter(pk=opening.data["id"]).update(movement_date=date(2026, 1, 1))
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{opening.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        for index in range(3):
+            movement = self._movement(
+                f"CARD-PAGE-{index}", "receipt", destination=warehouse, quantity="1", cost="2",
+            )
+            self.assertEqual(movement.status_code, 201, movement.data)
+            self.assertEqual(
+                self.client.post(f"/api/inventory/movements/{movement.data['id']}/post/", {}, format="json").status_code,
+                200,
+            )
+
+        url = f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={warehouse.pk}&date_from=2026-02-01&page_size=2"
+        first = self.client.get(url + "&page=1")
+        second = self.client.get(url + "&page=2")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(len(first.data["rows"]), 2)
+        self.assertEqual(len(second.data["rows"]), 1)
+        self.assertEqual(first.data["pagination"]["total_rows"], 3)
+        self.assertTrue(first.data["pagination"]["has_next"])
+        self.assertFalse(second.data["pagination"]["has_next"])
+        self.assertEqual(Decimal(first.data["opening_quantity"]), Decimal("4"))
+        self.assertEqual(Decimal(first.data["rows"][0]["balance_quantity"]), Decimal("5"))
+        self.assertEqual(Decimal(first.data["rows"][1]["balance_quantity"]), Decimal("6"))
+        self.assertEqual(Decimal(second.data["rows"][0]["balance_quantity"]), Decimal("7"))
+        self.assertEqual(Decimal(second.data["closing_quantity"]), Decimal("7"))
+
     def test_recent_movements_endpoint_returns_only_requested_limit(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="RECENT-API-1", name_ar="حركات حديثة",
