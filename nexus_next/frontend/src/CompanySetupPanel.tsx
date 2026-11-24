@@ -24,6 +24,8 @@ const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
 // شاشة تأسيس الشركة وإدارة الفروع والسنوات المالية والعملات والنشاط.
 export default function CompanySetupPanel({ companies, companyId, onCompanyCreated, onCompanyUpdated, onStructureChanged }: Props) {
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [currencyLoading, setCurrencyLoading] = useState(true);
+  const [currencyError, setCurrencyError] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
   const [years, setYears] = useState<FiscalYear[]>([]);
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
@@ -88,14 +90,24 @@ const refreshStructure = async (id: number) => {
     setExchangeRates(rows.filter(item => item.company === id));
   };
 
-  useEffect(() => {
-    api.currencies().then(items => {
-      const active = items.filter(item => item.is_active);
+  const loadCurrencies = async () => {
+    setCurrencyLoading(true);
+    setCurrencyError("");
+    try {
+      const active = (await api.currencies()).filter(item => item.is_active);
       setCurrencies(active);
-      const preferred = active.find(item => item.code === "EGP") || active[0];
-      if (preferred) setCurrencyId(String(preferred.id));
-    }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل العملات المرجعية."));
-  }, []);
+      const preferredCode = country === "EG" ? "EGP" : "SAR";
+      const preferred = active.find(item => item.code === preferredCode) || active[0];
+      setCurrencyId(preferred ? String(preferred.id) : "");
+      if (!active.length) setCurrencyError("لا توجد عملات مفعّلة. أعد تحميل العملات أو راجع تهيئة قاعدة البيانات.");
+    } catch (reason) {
+      setCurrencies([]);
+      setCurrencyId("");
+      setCurrencyError(reason instanceof Error ? reason.message : "تعذر تحميل العملات المرجعية.");
+    } finally { setCurrencyLoading(false); }
+  };
+
+  useEffect(() => { void loadCurrencies(); }, []);
 
   useEffect(() => {
     if (!companyId) { setBranches([]); setYears([]); setExchangeRates([]); return; }
