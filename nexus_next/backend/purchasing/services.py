@@ -13,7 +13,7 @@ from accounting.models import AccountRole, ChartOfAccount, FxSubledgerRevaluatio
 from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
-from companies.models import ExchangeRate, FiscalYear
+from companies.models import Branch, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
 from inventory.services import post_stock_movement
 
