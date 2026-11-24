@@ -106,7 +106,7 @@ class CompanyViewSet(viewsets.ModelViewSet):
         try:
             validate_password(password)
         except DjangoValidationError as exc:
-            raise APIValidationError({"manager": {"password": list(exc.messages)}})
+            raise APIValidationError({"manager": {"password": list(exc.messages)}}) from exc
 
         company_serializer = CompanySerializer(data=company_data, context=self.get_serializer_context())
         company_serializer.is_valid(raise_exception=True)
@@ -195,7 +195,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         try:
             company_id = int(request.data.get("company", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة أولًا."})
+            raise ValidationError({"company": "حدد الشركة أولًا."}) from None
         self._require_admin(company_id)
         return super().create(request, *args, **kwargs)
 
@@ -221,7 +221,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         try:
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة أولًا."})
+            raise ValidationError({"company": "حدد الشركة أولًا."}) from None
         if is_platform_owner(request.user):
             raise NotFound("مالك المنصة لا يمتلك عضوية تشغيلية داخل الشركات.")
         membership = CompanyMembership.objects.filter(
@@ -240,7 +240,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         try:
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة أولًا."})
+            raise ValidationError({"company": "حدد الشركة أولًا."}) from None
         self._require_admin(company_id)
         term = request.query_params.get("search", "").strip()
         if len(term) < 2:
@@ -269,7 +269,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         try:
             company_id = int(request.data.get("company", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة أولًا."})
+            raise ValidationError({"company": "حدد الشركة أولًا."}) from None
         company = Company.objects.select_for_update().filter(pk=company_id).first()
         if not company:
             raise ValidationError({"company": "الشركة المحددة غير موجودة."})
@@ -290,7 +290,7 @@ class CompanyMembershipViewSet(viewsets.ModelViewSet):
         try:
             validate_password(password)
         except DjangoValidationError as exc:
-            raise ValidationError({"password": list(exc.messages)})
+            raise ValidationError({"password": list(exc.messages)}) from exc
         user = User.objects.create_user(
             username=username, password=password, display_name=display_name, email=email,
         )
@@ -709,7 +709,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
                 pk=request.data.get("period_id"), fiscal_year=fiscal_year,
             )
         except (FiscalPeriod.DoesNotExist, TypeError, ValueError):
-            raise ValidationError({"period_id": "الفترة الشهرية غير موجودة ضمن السنة المالية."})
+            raise ValidationError({"period_id": "الفترة الشهرية غير موجودة ضمن السنة المالية."}) from None
         if period.status == FiscalPeriod.Status.CLOSED:
             raise ValidationError("الفترة الشهرية مغلقة بالفعل.")
         drafts = JournalEntry.objects.filter(
@@ -756,7 +756,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
                 pk=request.data.get("period_id"), fiscal_year=fiscal_year,
             )
         except (FiscalPeriod.DoesNotExist, TypeError, ValueError):
-            raise ValidationError({"period_id": "الفترة الشهرية غير موجودة ضمن السنة المالية."})
+            raise ValidationError({"period_id": "الفترة الشهرية غير موجودة ضمن السنة المالية."}) from None
         if period.status != FiscalPeriod.Status.CLOSED:
             raise ValidationError("الفترة الشهرية مفتوحة بالفعل.")
         period.status = FiscalPeriod.Status.OPEN
