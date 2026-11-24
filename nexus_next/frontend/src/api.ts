@@ -862,6 +862,26 @@ export const fixedAssetsApi = {
   },
   // إنشاء بطاقة أصل ثابت جديدة.
   create: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<FixedAsset>("/api/assets/fixed-assets/", {method:"POST",body:JSON.stringify(payload)}); },
+  // تسجيل فاتورة مورد مباشرة للأصل مع معالجة ضريبة المدخلات.
+  purchaseInvoice: async (id:number, payload:{supplier:number;invoice_number:string;invoice_date:string;net_amount:string;tax_code:number|null;fiscal_year:number}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;asset:number;invoice_number:string;status:"draft"|"posted";approval_required?:boolean;approval_request?:number;grand_total:string;journal_entry:number|null;asset_cost?:string}>(`/api/assets/fixed-assets/${id}/purchase-invoice/`, {method:"POST",body:JSON.stringify(payload)});
+  },
+  // إنشاء سند سداد مرتبط بفاتورة الأصل.
+  supplierPayment: async (id:number, payload:{payment_number:string;payment_date:string;payment_account:number;amount:string;reference?:string}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;invoice:number;payment_number:string;status:"draft"|"posted";approval_required?:boolean;approval_request?:number;amount:string;journal_entry:number|null}>(`/api/assets/fixed-assets/${id}/supplier-payment/`, {method:"POST",body:JSON.stringify(payload)});
+  },
+  // ترحيل فاتورة أصل بعد الموافقة المالية.
+  postPurchaseInvoice: async (id:number) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;status:"posted";journal_entry:number;grand_total:string}>(`/api/assets/fixed-assets/${id}/post-purchase-invoice/`, {method:"POST"});
+  },
+  // ترحيل سند سداد أصل بعد الموافقة المالية.
+  postSupplierPayment: async (id:number, payment:number) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;status:"posted";journal_entry:number;amount:string}>(`/api/assets/fixed-assets/${id}/post-supplier-payment/`, {method:"POST",body:JSON.stringify({payment})});
+  },
   // احتساب وترحيل إهلاك الأصل عن الفترة والسنة المالية.
   depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
   // جلب جدول الإهلاك التفصيلي للأصل.
