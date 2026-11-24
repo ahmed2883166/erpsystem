@@ -95,7 +95,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
@@ -285,7 +285,7 @@ class SalesQuotationViewSet(SalesBaseViewSet):
         try:
             warehouse_id = int(request.data.get("warehouse"))
         except (TypeError, ValueError):
-            raise ValidationError({"warehouse": "حدد المخزن."})
+            raise ValidationError({"warehouse": "حدد المخزن."}) from None
         from inventory.models import Warehouse
         warehouse = Warehouse.objects.filter(pk=warehouse_id, company_id=quotation.company_id, is_active=True).first()
         if not warehouse:
@@ -365,7 +365,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
@@ -476,7 +476,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             company_id = int(request.query_params.get("company", ""))
             customer_id = int(request.query_params.get("customer", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"detail": "حدد الشركة والعميل لعرض كشف الحساب."})
+            raise ValidationError({"detail": "حدد الشركة والعميل لعرض كشف الحساب."}) from None
         if not can_access_company(request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
 
@@ -502,7 +502,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             try:
                 branch_id = int(branch_id_raw)
             except (TypeError, ValueError):
-                raise ValidationError({"branch": "معرّف الفرع غير صالح."})
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
             if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
 
@@ -583,7 +583,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         try:
             company_id = int(request.query_params.get("company", ""))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة لعرض أعمار مديونية العملاء."})
+            raise ValidationError({"company": "حدد الشركة لعرض أعمار مديونية العملاء."}) from None
         if not can_access_company(request.user, company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
 
@@ -598,7 +598,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             try:
                 customer_id = int(customer_id_raw)
             except (TypeError, ValueError):
-                raise ValidationError({"customer": "معرّف العميل غير صالح."})
+                raise ValidationError({"customer": "معرّف العميل غير صالح."}) from None
             from customers.models import Customer
             if not Customer.objects.filter(pk=customer_id, company_id=company_id).exists():
                 raise ValidationError({"customer": "العميل غير موجود في الشركة المحددة."})
@@ -609,7 +609,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             try:
                 branch_id = int(branch_id_raw)
             except (TypeError, ValueError):
-                raise ValidationError({"branch": "معرّف الفرع غير صالح."})
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
             if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
 
@@ -729,7 +729,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         try:
             self._check_write(int(request.data.get("company")))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."})
+            raise ValidationError({"company": "حدد الشركة."}) from None
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
