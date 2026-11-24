@@ -9,7 +9,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, BankStatementLine
+from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -192,6 +192,56 @@ class TreasuryWorkflowTests(APITestCase):
         entry = JournalEntry.objects.get(pk=posted.data["journal_entry"])
         self.assertEqual(set(entry.lines.values_list("account_id", flat=True)), {self.cash_gl.pk, self.bank_gl.pk})
 
+
+    def test_limited_branch_user_cannot_view_company_wide_bank_statement_lines(self):
+        shared_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1126", name_ar="بنك عام للكشف",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        shared_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=None, account=shared_gl, kind="bank",
+            code="BANK-STATEMENT-SHARED", name_ar="بنك كشف عام",
+        )
+        Branch.objects.create(company=self.company, code="OTHER-STATEMENT", name_ar="فرع آخر")
+        reconciliation = BankReconciliation.objects.create(
+            company=self.company, bank_account=shared_bank,
+            statement_number="SHARED-ST-001", statement_date=date(2026, 3, 31),
+            opening_balance=Decimal("0"), closing_balance=Decimal("125"),
+            created_by=self.user,
+        )
+        line = BankStatementLine.objects.create(
+            reconciliation=reconciliation, line_number=1,
+            transaction_date=date(2026, 3, 15), description="حركة كشف خاصة",
+            reference="PRIVATE-REF", amount=Decimal("125"),
+        )
+
+        limited = get_user_model().objects.create_user(
+            username="treasury-statement-limited", password="test-password"
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited)
+
+        reconciliations = self.client.get("/api/treasury/reconciliations/")
+        self.assertEqual(reconciliations.status_code, 200, reconciliations.data)
+        reconciliation_rows = reconciliations.data.get("results", reconciliations.data)
+        self.assertNotIn(reconciliation.pk, [row["id"] for row in reconciliation_rows])
+        self.assertEqual(
+            self.client.get(f"/api/treasury/reconciliations/{reconciliation.pk}/").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/treasury/reconciliations/{reconciliation.pk}/summary/").status_code,
+            404,
+        )
+
+        statement_lines = self.client.get("/api/treasury/statement-lines/")
+        self.assertEqual(statement_lines.status_code, 200, statement_lines.data)
+        line_rows = statement_lines.data.get("results", statement_lines.data)
+        self.assertNotIn(line.pk, [row["id"] for row in line_rows])
+        self.assertEqual(self.client.get(f"/api/treasury/statement-lines/{line.pk}/").status_code, 404)
 
     def test_limited_branch_user_cannot_view_company_wide_treasury_account(self):
         shared_gl = ChartOfAccount.objects.create(
