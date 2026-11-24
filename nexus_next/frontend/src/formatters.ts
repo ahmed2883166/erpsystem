@@ -54,7 +54,7 @@ export const multiplyDecimalToFixed = (
   decimalPlaces = 4,
 ): string => {
   const parse = (value: string | number) => {
-    const match = /^([+-]?)(\\d+)(?:\\.(\\d*))?$/.exec(String(value).trim());
+    const match = /^([+-]?)(\d+)(?:\\.(\d*))?$/.exec(String(value).trim());
     if (!match) return null;
     return {
       negative: match[1] === "-",
