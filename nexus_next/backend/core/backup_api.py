@@ -36,6 +36,27 @@ def _safe_backup_audit_event(**kwargs):
         logger.exception("Could not persist backup audit event")
 
 
+def _powershell_executable():
+    """Resolve the Windows PowerShell executable to a trusted absolute path."""
+    system_root = Path(os.environ.get("SystemRoot", "C:/Windows"))
+    candidates = [
+        system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+        system_root / "Sysnative" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    # PATH lookup is acceptable only when it resolves to an absolute existing file.
+    from shutil import which
+
+    resolved = which("powershell.exe")
+    if resolved:
+        executable = Path(resolved).resolve()
+        if executable.is_absolute() and executable.is_file():
+            return str(executable)
+    raise FileNotFoundError("Windows PowerShell executable was not found in a trusted system location.")
+
 _BACKUP_THREAD_LOCK = threading.Lock()
 
 
@@ -157,7 +178,7 @@ class BackupConfigurationView(APIView):
         try:
             with _backup_execution_lock():
                 result = subprocess.run(
-                    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                    [_powershell_executable(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                     cwd=str(settings.BASE_DIR.parent),
                     capture_output=True,
                     text=True,
