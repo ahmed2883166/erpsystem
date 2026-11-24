@@ -406,13 +406,24 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(Q(receipt__warehouse__branch__in=branches) | Q(receipt__warehouse__branch__isnull=True, company_id__in=defaults))
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
+        """حجز إذن الاستلام أثناء التحقق والحفظ لمنع حجز الكمية مرتين بالتزامن."""
         try:
             company_id = int(request.data.get("company"))
+            receipt_id = int(request.data.get("receipt"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."}) from None
+            raise ValidationError({"receipt": "حدد الشركة وإذن الاستلام."}) from None
         self._check_write(company_id)
+        receipt = PurchaseReceipt.objects.select_for_update().select_related(
+            "company", "warehouse", "warehouse__branch", "stock_movement",
+        ).filter(pk=receipt_id, company_id=company_id).first()
+        if not receipt:
+            raise ValidationError({"receipt": "إذن الاستلام غير موجود داخل الشركة المحددة."})
+        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        # The receipt row lock is held while serializer validation sums all
+        # draft and posted reservations and while the invoice is created.
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
@@ -423,6 +434,18 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        """قفل الفاتورة وإذن الاستلام قبل فحص حجوزات المسودة عند تعديلها."""
+        invoice = self.get_object()
+        locked_invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice.pk)
+        receipt = PurchaseReceipt.objects.select_for_update().select_related(
+            "warehouse", "warehouse__branch",
+        ).get(pk=locked_invoice.receipt_id)
+        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        return super().update(request, *args, **kwargs)
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
