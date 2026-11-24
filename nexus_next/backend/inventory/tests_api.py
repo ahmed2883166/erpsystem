@@ -1012,6 +1012,34 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(len(mismatch.data["fifo_mismatches"]), 1)
         self.assertEqual(mismatch.data["fifo_mismatches"][0]["value_difference"], "1.0000")
 
+    def test_inventory_reports_and_stock_card_reject_unassigned_branch_scope(self):
+        restricted_branch = Branch.objects.create(
+            company=self.company, code="B3", name_ar="فرع غير مصرح به",
+        )
+        restricted_warehouse = Warehouse.objects.create(
+            company=self.company, branch=restricted_branch,
+            code="REPORT-HIDDEN-WH", name_ar="مخزن فرع غير مصرح به",
+        )
+        limited_user = get_user_model().objects.create_user(
+            username="inventory-report-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited_user)
+
+        for report in ("stock-aging", "cost-aging", "reconciliation"):
+            response = self.client.get(
+                f"/api/inventory/balances/{report}/?company={self.company.pk}&branch={restricted_branch.pk}",
+            )
+            self.assertEqual(response.status_code, 403, (report, response.data))
+
+        card = self.client.get(
+            f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={restricted_warehouse.pk}",
+        )
+        self.assertEqual(card.status_code, 404, card.data)
+
     def test_inventory_integrity_report_rejects_an_unassigned_branch_scope(self):
         restricted_branch = Branch.objects.create(
             company=self.company, code="B2-INTEGRITY", name_ar="فرع غير مسموح",
