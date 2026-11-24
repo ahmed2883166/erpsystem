@@ -576,6 +576,16 @@ class PurchasingWorkflowTests(APITestCase):
                        "purchase_order_line": order_line_id}],
         }, format="json")
         self.assertEqual(receipt.status_code, 201, receipt.data)
+
+        reserved_over_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-RESERVED-OVER",
+            "receipt_date": "2026-03-06",
+            "lines": [{"product": self.product.pk, "quantity": "7", "unit_cost": "100",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(reserved_over_receipt.status_code, 400, reserved_over_receipt.data)
+
         posted = self.client.post(f"/api/purchasing/receipts/{receipt.data['id']}/post/", {}, format="json")
         self.assertEqual(posted.status_code, 200, posted.data)
         order = self.client.get(f"/api/purchasing/orders/{order_id}/").data
