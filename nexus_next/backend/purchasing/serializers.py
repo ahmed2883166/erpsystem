@@ -42,6 +42,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
     lines = ReceiptLineInputSerializer(many=True, write_only=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     movement_number = serializers.CharField(source="stock_movement.movement_number", read_only=True)
+    journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
     line_items = serializers.SerializerMethodField()
@@ -51,9 +52,9 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         fields = (
             "id", "company", "supplier", "supplier_name", "warehouse", "warehouse_name", "purchase_order",
             "receipt_number", "receipt_date", "supplier_delivery_ref", "notes",
-            "movement_status", "movement_number", "line_items", "lines", "created_at",
+            "movement_status", "movement_number", "journal_number", "line_items", "lines", "created_at",
         )
-        read_only_fields = ("created_at", "movement_status", "movement_number", "line_items")
+        read_only_fields = ("created_at", "movement_status", "movement_number", "journal_number", "line_items")
 
     def get_line_items(self, obj):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
