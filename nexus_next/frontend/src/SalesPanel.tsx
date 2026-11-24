@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import SalesDocumentPrint from "./SalesDocumentPrint";
-import { formatMoney } from "./formatters";
+import { formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type Company } from "./api";
 
 type Props = { companyId: number | null };
@@ -209,7 +209,7 @@ const beginEditInvoice = (invoice: SalesInvoice) => {
     try {
       const foreignAmount = invoice.transaction_currency ? Number(receiptForm.transaction_amount) : null;
       const baseAmount = invoice.transaction_currency
-        ? (foreignAmount! * Number(receiptForm.exchange_rate)).toFixed(4)
+        ? multiplyDecimalToFixed(receiptForm.transaction_amount, receiptForm.exchange_rate, 4)
         : receiptForm.amount;
       await salesApi.createReceipt({ company: companyId, customer: invoice.customer, invoice: invoice.id,
         receipt_number: receiptForm.receipt_number, receipt_date: receiptForm.receipt_date,
@@ -371,7 +371,7 @@ const post = async (action: () => Promise<unknown>) => {
         <label>المبلغ المحصل بالعملة الأجنبية<input required type="number" min="0.0001" step="0.0001" value={receiptForm.transaction_amount} onChange={e => setReceiptForm({...receiptForm, transaction_amount:e.target.value})} /></label>
         <label>تاريخ سعر الصرف<input required type="date" value={receiptForm.exchange_rate_date} onChange={e => { const rate=findRate(receiptForm.transaction_currency,e.target.value); setReceiptForm({...receiptForm, exchange_rate_date:e.target.value, exchange_rate:rate?.rate || receiptForm.exchange_rate}); }} /></label>
         <label>سعر الصرف<input required type="number" min="0.0000000001" step="0.0000000001" value={receiptForm.exchange_rate} onChange={e => setReceiptForm({...receiptForm, exchange_rate:e.target.value})} /></label>
-        <label>المقابل بالعملة الأساسية<input readOnly value={formatMoney(Number(receiptForm.transaction_amount || 0)*Number(receiptForm.exchange_rate || 0))} /></label>
+        <label>المقابل بالعملة الأساسية<input readOnly value={formatMoney(multiplyDecimalToFixed(receiptForm.transaction_amount || "0", receiptForm.exchange_rate || "0", 4))} /></label>
       </>}
       <label>طريقة التحصيل<select value={receiptForm.method} onChange={e => setReceiptForm({...receiptForm, method:e.target.value as "cash" | "bank", payment_account:String(treasuryAccounts.find(x => x.is_active && x.kind === (e.target.value as "cash" | "bank"))?.account || "")})}><option value="bank">تحويل بنكي</option><option value="cash">نقدي</option></select></label>
       <label className="inventory-wide">حساب الخزينة / البنك<select value={receiptForm.payment_account} onChange={e => setReceiptForm({...receiptForm, payment_account:e.target.value})}><option value="">الحساب الافتراضي حسب طريقة التحصيل</option>{treasuryAccounts.filter(account => account.is_active && account.kind === receiptForm.method).map(account => <option key={account.id} value={account.account}>{account.code} - {account.name_ar} ({account.account_code})</option>)}</select></label>
