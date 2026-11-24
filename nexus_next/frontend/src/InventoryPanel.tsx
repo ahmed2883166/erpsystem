@@ -97,10 +97,10 @@ const refresh = async () => {
     document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
   };
   // تحميل كارت الصنف وحركاته التفصيلية للفلاتر المحددة.
-const loadStockCard = async () => {
+const loadStockCard = async (page = 1) => {
     if (!stockCardForm.product || !stockCardForm.warehouse) { setStockCardError("اختر الصنف والمخزن أولاً."); return; }
     setStockCardBusy(true); setStockCardError("");
-    try { setStockCard(await stockApi.stockCard(Number(stockCardForm.product), Number(stockCardForm.warehouse), stockCardForm.date_from, stockCardForm.date_to)); }
+    try { setStockCard(await stockApi.stockCard(Number(stockCardForm.product), Number(stockCardForm.warehouse), stockCardForm.date_from, stockCardForm.date_to, page, 50)); }
     catch (reason) { setStockCard(null); setStockCardError(reason instanceof Error ? reason.message : "تعذر تحميل بطاقة الصنف."); }
     finally { setStockCardBusy(false); }
   };
@@ -239,7 +239,7 @@ const submit = async (event: React.FormEvent) => {
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
     { id: "reports", label: "تقارير المخزون", count: warehouseValuation.length + expiryAlerts.length + reorderAlerts.length },
     { id: "reorder", label: "حدود الطلب لكل مخزن", count: warehouseSettings.filter((item) => item.is_active).length },
-    { id: "stock-card", label: "بطاقة حركة الصنف", count: stockCard?.rows.length || 0 },
+    { id: "stock-card", label: "بطاقة حركة الصنف", count: stockCard?.pagination.total_rows || 0 },
     { id: "accounting", label: "ربط الحسابات", count: roleAssignments.length },
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
@@ -440,6 +440,13 @@ const submit = async (event: React.FormEvent) => {
           {stockCard && <>
             <div className="stock-card-summary"><div><span>الصنف</span><strong>{stockCard.product_code} - {stockCard.product_name}</strong></div><div><span>المخزن</span><strong>{stockCard.warehouse_name}</strong></div><div><span>رصيد أول المدة</span><strong>{Number(stockCard.opening_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} / {formatMoney(stockCard.opening_value)}</strong></div><div><span>رصيد آخر المدة</span><strong>{Number(stockCard.closing_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} / {formatMoney(stockCard.closing_value)}</strong></div></div>
             <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>وقت الترحيل</th><th>رقم الحركة</th><th>نوع الحركة</th><th>وارد كمية</th><th>منصرف كمية</th><th>تكلفة الوحدة</th><th>وارد قيمة</th><th>منصرف قيمة</th><th>الرصيد الكمي</th><th>قيمة الرصيد</th></tr></thead><tbody>{stockCard.rows.map((row, index) => <tr key={`${row.movement_number}-${index}`}><td>{row.date}</td><td>{row.posted_at ? new Date(row.posted_at).toLocaleString("ar-EG") : "—"}</td><td className="code-cell">{row.movement_number}</td><td>{({ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", sal_rev: "عكس مردود مبيعات", transfer: "تحويل", adjustment: "تسوية" } as Record<string, string>)[row.movement_type] || row.movement_type}</td><td>{Number(row.quantity_in).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.quantity_out).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.unit_cost)}</td><td>{formatMoney(row.value_in)}</td><td>{formatMoney(row.value_out)}</td><td>{Number(row.balance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.balance_value)}</td></tr>)}{!stockCard.rows.length && <tr><td colSpan={11}>لا توجد حركات مرحلة خلال الفترة المحددة.</td></tr>}</tbody></table></div>
+            <div className="activity-title" style={{ alignItems: "center", marginTop: 12 }}>
+              <p>عرض {stockCard.rows.length.toLocaleString("ar-EG")} من إجمالي {stockCard.pagination.total_rows.toLocaleString("ar-EG")} حركة — الصفحة {stockCard.pagination.page.toLocaleString("ar-EG")} من {stockCard.pagination.total_pages.toLocaleString("ar-EG")}. التصدير يشمل الصفحة المعروضة فقط.</p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="secondary-button" disabled={!stockCard.pagination.has_previous || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page - 1)}>السابق</button>
+                <button type="button" className="secondary-button" disabled={!stockCard.pagination.has_next || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page + 1)}>التالي</button>
+              </div>
+            </div>
           </>}
           {!stockCard && !stockCardError && <div className="table-empty">حدد الصنف والمخزن والفترة ثم اعرض بطاقة الحركة.</div>}
         </section>
