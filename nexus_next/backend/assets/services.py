@@ -262,6 +262,12 @@ def post_asset_purchase_invoice(invoice_id, user=None):
     ).get(pk=invoice_id)
     if invoice.status != AssetPurchaseInvoice.Status.DRAFT:
         raise ValidationError("فاتورة شراء الأصل مرحلة بالفعل.")
+    from approvals.models import FinancialApprovalRequest
+    from approvals.services import require_financial_approval
+    try:
+        require_financial_approval(FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE, invoice)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
     if invoice.fiscal_year.status != FiscalYear.Status.OPEN or not (
         invoice.fiscal_year.start_date <= invoice.invoice_date <= invoice.fiscal_year.end_date
     ):
@@ -365,6 +371,12 @@ def post_asset_supplier_payment(payment_id, user=None):
     ).get(pk=payment_id)
     if payment.status != AssetSupplierPayment.Status.DRAFT:
         raise ValidationError("سند سداد فاتورة الأصل ليس مسودة.")
+    from approvals.models import FinancialApprovalRequest
+    from approvals.services import require_financial_approval
+    try:
+        require_financial_approval(FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT, payment)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
     invoice = AssetPurchaseInvoice.objects.select_for_update(of=("self",)).get(pk=payment.invoice_id)
     if invoice.status != AssetPurchaseInvoice.Status.POSTED:
         raise ValidationError("لا يمكن سداد فاتورة أصل غير مرحلة.")
