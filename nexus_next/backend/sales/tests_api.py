@@ -402,6 +402,22 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(invoice.data["invoice_lines"][0]["tax_code"], code.pk)
         self.assertEqual(invoice.data["tax_total"], "28.0000")
 
+    def test_sales_invoice_tax_rounds_to_base_currency_minor_units(self):
+        delivery_id, line_id = self._create_delivery("DEL-TAX-ROUND")
+        code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-ROUND", name_ar="ضريبة تقريب",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1),
+        )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-TAX-ROUND", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "0.3333", "tax_code": code.pk}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["invoice_lines"][0]["tax_amount"], "0.0900")
+        self.assertEqual(invoice.data["tax_total"], "0.0900")
+
     def test_used_tax_code_rate_is_immutable_but_can_be_deactivated(self):
         delivery_id, line_id = self._create_delivery("DEL-TAX-LOCK")
         code = TaxCode.objects.create(
