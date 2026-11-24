@@ -598,7 +598,7 @@ export type InventoryStockAging = {
   rows: { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; quantity: string; value: string; last_movement: string | null; age_days: number | null; age_band: "active" | "slow" | "very_slow" | "stagnant" | "unknown" }[];
   truncated: boolean; scope_note: string;
 };
-export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; posted_at: string | null; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[] };
+export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; posted_at: string | null; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[]; pagination: { page: number; page_size: number; total_rows: number; total_pages: number; has_next: boolean; has_previous: boolean } };
 export type InventoryCostAging = {
   company: number; branch: number | null; branch_name: string; as_of: string; basis: string; costing_method: "FIFO";
   totals: { layers: number; quantity: string; value: string };
@@ -652,7 +652,7 @@ export const stockApi = {
   costAging: (companyId: number, branchId?: number) => request<InventoryCostAging>(`/api/inventory/balances/cost-aging/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   valuationIntegrity: (companyId: number, branchId?: number) => request<InventoryValuationIntegrity>(`/api/inventory/balances/valuation-integrity/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب كارت الصنف وحركاته داخل مخزن وفترة محددين.
-  stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
+  stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string, page = 1, pageSize = 50) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}&page=${page}&page_size=${pageSize}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
 };
 
 
