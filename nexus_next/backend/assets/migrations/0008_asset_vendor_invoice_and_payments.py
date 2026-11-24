@@ -90,4 +90,18 @@ class Migration(migrations.Migration):
             model_name="assetsupplierpayment",
             index=models.Index(fields=["company", "supplier", "status", "payment_date"], name="asset_pay_supplier_idx"),
         ),
+        migrations.AddConstraint(
+            model_name="assetpurchaseinvoice",
+            constraint=models.CheckConstraint(
+                condition=models.Q(tax_amount=models.F("recoverable_tax_amount") + models.F("nonrecoverable_tax_amount")),
+                name="ck_asset_invoice_tax_split",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="assetpurchaseinvoice",
+            constraint=models.CheckConstraint(
+                condition=models.Q(grand_total=models.F("net_amount") + models.F("tax_amount")),
+                name="ck_asset_invoice_total_math",
+            ),
+        ),
     ]
