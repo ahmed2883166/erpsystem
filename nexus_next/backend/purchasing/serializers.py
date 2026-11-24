@@ -348,6 +348,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                     existing_line.billed_quantity if existing_line
                     else receipt_line.quantity - previous
                 )
+            if line["billed_quantity"] <= 0:
+                raise serializers.ValidationError({
+                    "lines": f"لا توجد كمية متبقية قابلة للفوترة للصنف {receipt_line.product.code}."
+                })
             if line["billed_quantity"] > receipt_line.quantity - previous:
                 raise serializers.ValidationError({
                     "lines": f"الكمية المفوترة تتجاوز المتبقي من استلام الصنف {receipt_line.product.code}."
