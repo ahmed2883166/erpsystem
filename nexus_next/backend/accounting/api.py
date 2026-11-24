@@ -1368,7 +1368,7 @@ class JournalEntryViewSet(AccountingViewSet):
             ).aggregate(total=Sum("recoverable_tax_amount"))["total"] or Decimal("0")
             cash_asset_vat = FixedAsset.objects.filter(
                 company_id=company_id, acquisition_date__lte=as_of_date,
-                acquisition_tax_journal__status=JournalEntry.Status.POSTED,
+                acquisition_journal__status=JournalEntry.Status.POSTED,
                 branch__in=visible_branches,
             ).aggregate(total=Sum("recoverable_tax_amount"))["total"] or Decimal("0")
             return supplier_vat + cash_asset_vat
