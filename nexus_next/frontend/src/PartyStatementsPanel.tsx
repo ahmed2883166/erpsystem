@@ -19,6 +19,8 @@ const documentLabel = (kind: string) => ({
   invoice: "فاتورة",
   receipt: "مقبوض",
   payment: "دفعة",
+  asset_invoice: "فاتورة شراء أصل",
+  asset_payment: "سداد فاتورة أصل",
 }[kind] || kind);
 
 // عرض كشف حساب طرف واحد مع حركة تفصيلية ورصيد متحرك.
