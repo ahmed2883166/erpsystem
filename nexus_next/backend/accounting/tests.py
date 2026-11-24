@@ -157,6 +157,55 @@ class PostingEngineTests(TestCase):
         with self.assertRaises(ValidationError):
             post_journal(entry.pk)
 
+    def test_opening_journal_rejects_income_statement_accounts(self):
+        revenue = ChartOfAccount.objects.create(
+            company=self.company, code="4001", name_ar="إيرادات الاختبار",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="OPEN-PL-001", entry_date=self.year.start_date,
+            description="اختبار منع حسابات الدخل في الافتتاحي",
+            source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=entry, account=revenue, credit=Decimal("100"))
+
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+    def test_opening_journal_must_use_fiscal_year_start_date(self):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="OPEN-DATE-001", entry_date=date(2026, 1, 2),
+            description="اختبار تاريخ القيد الافتتاحي",
+            source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal("100"))
+
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+    def test_closing_journal_must_use_fiscal_year_end_date(self):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CLOSE-DATE-001", entry_date=date(2026, 12, 30),
+            description="اختبار تاريخ قيد الإقفال",
+            source_type=JournalEntry.Source.CLOSING,
+        )
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal("100"))
+
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
     def test_closed_monthly_period_rejects_journal_posting(self):
         FiscalPeriod.objects.create(
             fiscal_year=self.year, name="2026-01",
