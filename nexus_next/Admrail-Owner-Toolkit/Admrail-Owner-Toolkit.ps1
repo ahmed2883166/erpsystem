@@ -57,7 +57,7 @@ function Test-OwnerAuthentication {
             $record = [ordered]@{ version = 1; iterations = 220000; salt = [Convert]::ToBase64String($salt); hash = (Get-PinHash $pin $salt) }
             $record | ConvertTo-Json | Set-Content -LiteralPath $authPath -Encoding ASCII
             $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-            & (Join-Path $env:SystemRoot "System32\\icacls.exe") $authPath /inheritance:r /grant:r "$($identity):(R,W)" "SYSTEM:(R,W)" | Out-Null
+            & (Join-Path $env:SystemRoot "System32\icacls.exe") $authPath /inheritance:r /grant:r "$($identity):(R,W)" "SYSTEM:(R,W)" | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "تعذر تقييد صلاحيات ملف PIN على حساب المالك وSYSTEM." }
             Write-Log "Owner PIN initialized."
         } finally {
@@ -86,7 +86,7 @@ function Test-OwnerAuthentication {
     }
 }
 function Get-WindowsPowerShellPath {
-    $candidate = Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+    $candidate = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { throw "Windows PowerShell executable was not found in System32." }
     return $candidate
 }
@@ -166,7 +166,7 @@ function Invoke-Restore {
     if ($target -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$') { throw "اسم قاعدة الاستعادة غير صالح." }
     $scriptPath = Join-Path $script:AppRoot "scripts\restore-postgres-to-new-db.ps1"
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) { throw "ملف الاستعادة غير موجود." }
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $scriptPath -BackupFile $file -TargetDatabase $target
+    & (Get-WindowsPowerShellPath) -NoLogo -NoProfile -ExecutionPolicy Bypass -File $scriptPath -BackupFile $file -TargetDatabase $target
     if ($LASTEXITCODE -ne 0) { throw "فشلت الاستعادة إلى القاعدة المنفصلة." }
     Write-Log "Restore completed to separate database $target."
 }
