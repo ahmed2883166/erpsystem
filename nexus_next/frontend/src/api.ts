@@ -119,7 +119,7 @@ export type PurchaseRFQ = {
   status: "draft" | "open" | "closed" | "awarded" | "cancelled"; terms: string;
   line_items: {id:number;product:number;product_code:string;product_name:string;quantity:string;notes:string}[];
   supplier_list: {id:number;code:string;name:string;status:string}[];
-  awarded_quotation: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
+  awarded_quotation: number | null; converted_order: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
 };
 export type SupplierQuotation = {
   id:number; rfq:number; supplier:number; supplier_name:string; quotation_number:string; quotation_date:string;
@@ -196,6 +196,7 @@ export const purchasingApi = {
   openRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/open/`, {method:"POST"}); },
   closeRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/close/`, {method:"POST"}); },
   awardRFQ: async (id:number, quotation:number, reason:string) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/award/`, {method:"POST",body:JSON.stringify({quotation,reason})}); },
+  convertAward: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<{rfq:PurchaseRFQ;purchase_order_id:number}>(`/api/purchasing/rfqs/${id}/convert-award/`,{method:"POST",body:JSON.stringify(payload)}); },
   createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
