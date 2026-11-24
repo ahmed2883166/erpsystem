@@ -624,7 +624,7 @@ const postInvoice = async (id: number) => {
          setInvoiceForm({ ...invoiceForm, receipt: receiptId });
          setInvoiceQuantities(selected ? Object.fromEntries(selected.line_items.map((line) => [
            line.id, remainingReceiptLineQuantity(selected, line).toFixed(4),
-         ])) : {});
+         ])) as Record<number, string> : {});
        }}><option value="">اختر إذن الاستلام</option>{invoiceableReceipts.map((x) => <option key={x.id} value={x.id}>{x.receipt_number} - {x.supplier_name} - {x.receipt_date} · متبقي للفوترة</option>)}</select></label>
       <label>رقم فاتورة المورد<input required value={invoiceForm.invoice_number} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></label>
       <label>تاريخ الفاتورة<input required type="date" value={invoiceForm.invoice_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })} /></label>
