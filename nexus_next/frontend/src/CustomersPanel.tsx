@@ -3,11 +3,12 @@
  * تشمل بيانات التعريف والاتصال والحد الائتماني وشروط السداد.
  */
 import { useEffect, useMemo, useState } from "react";
+import { formatMoney } from "./formatters";
 import { api, inventoryApi, salesApi, type Customer, type CustomerStatement, type CustomerDiscountRule, type Product, type InventoryCategory } from "./api";
 
 type Props = { companyId: number | null };
 
-const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+const money = (value: string) => formatMoney(value);
 
 // شاشة إدارة العملاء والبحث في السجل وفتح نموذج الإضافة أو التعديل.
 export default function CustomersPanel({ companyId }: Props) {
