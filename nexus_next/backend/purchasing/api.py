@@ -945,7 +945,7 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
 class SupplierQuotationViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierQuotationSerializer
     queryset = SupplierQuotation.objects.select_related("rfq", "supplier").prefetch_related("lines__rfq_line__product")
-    filterset_fields = ("rfq", "supplier", "status")
+    filterset_fields = ("rfq", "rfq__company", "supplier", "status")
     search_fields = ("quotation_number", "supplier__name_ar", "rfq__rfq_number")
     ordering_fields = ("quotation_date", "valid_until", "submitted_at")
 
