@@ -55,6 +55,14 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        if company and company.base_currency_id:
+            for monetary_field in (
+                "original_cost", "salvage_value", "acquisition_net_amount",
+                "recoverable_tax_amount", "nonrecoverable_tax_amount",
+            ):
+                value = attrs.get(monetary_field)
+                if value is not None:
+                    attrs[monetary_field] = round_currency_amount(value, company.base_currency)
         if company and branch and branch.company_id != company.id:
             raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة."})
         for key in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account"):
