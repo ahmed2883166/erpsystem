@@ -979,3 +979,6 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
   .sales-print-sheet{width:100%!important;min-height:0!important;box-shadow:none!important;padding:0!important;border-top-width:5px!important}
   .sales-print-sheet.modern .sales-print-header{margin:0!important;padding:18px!important}
 }
+
+/* ألوان موحدة لحالات المستندات والمخزون: تشغيلية فقط ولا تغير حالة المستند الفعلية. */
+.status-pill.slow{background:#fff0df;color:#bd762b}.status-pill.stagnant{background:#fff0ef;color:#c45c56}.status-pill.unknown{background:#edf1f6;color:#738196}.status-pill.accepted{background:#e7f7ef;color:#269567}.status-pill.sent{background:#eaf2ff;color:#3677d4}.status-pill.rejected{background:#fff0ef;color:#c45c56}.status-pill.expired{background:#f2edff;color:#8264c6}.status-pill.partial{background:#fff5df;color:#a97820}.status-pill.cancelled{background:#f1f3f6;color:#7b8796}
