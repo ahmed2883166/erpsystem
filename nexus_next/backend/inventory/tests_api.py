@@ -696,7 +696,8 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(issue.status_code, 201, issue.data)
         issue_record = StockMovement.objects.get(pk=issue.data["id"])
         issue_record.movement_date = date(2026, 11, 23)
-        issue_record.save(update_fields=("movement_date",))        self.assertEqual(self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code, 200)
+        issue_record.save(update_fields=("movement_date",))
+        self.assertEqual(self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code, 200)
 
         response = self.client.get(
             f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={warehouse.pk}&date_from=2026-11-22&date_to=2026-11-30"
