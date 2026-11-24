@@ -163,7 +163,9 @@ class SalesQuotationLine(models.Model):
         self.net_amount = gross - self.discount_amount
         self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
         self.total_amount = self.net_amount + self.tax_amount
-\n\nclass SalesInvoice(models.Model):
+
+
+class SalesInvoice(models.Model):
     """يمثل فاتورة العميل وإجماليات البيع والضريبة والاعتماد."""
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
