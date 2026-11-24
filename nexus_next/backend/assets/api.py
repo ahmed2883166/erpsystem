@@ -160,30 +160,40 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
         if not as_of:
             raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
-        assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED).annotate(
-            reported_accumulated=Sum("depreciations__amount", filter=Q(depreciations__period_date__lte=as_of))
-        ).select_related("branch")
+        assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch").prefetch_related(
+            "depreciations__journal_entry", "impairments__journal_entry"
+        )
         rows = []
-        total_cost = total_accumulated = total_book = 0
+        total_cost = total_accumulated = total_impairment = total_book = 0
         for asset in assets:
-            accumulated = min(asset.reported_accumulated or 0, asset.depreciable_amount)
-            book_value = asset.original_cost - accumulated
+            accumulated = min(sum((
+                dep.amount for dep in asset.depreciations.all()
+                if dep.period_date <= as_of and dep.journal_entry.status == JournalEntry.Status.POSTED
+            ), Decimal("0")), asset.depreciable_amount)
+            impairment_total = sum((
+                item.impairment_loss for item in asset.impairments.all()
+                if item.impairment_date <= as_of and item.journal_entry.status == JournalEntry.Status.POSTED
+            ), Decimal("0"))
+            book_value = asset.original_cost - accumulated - impairment_total
             disposed = bool(asset.disposed_at and asset.disposed_at <= as_of)
             rows.append({
                 "asset_id": asset.pk, "code": asset.code, "name_ar": asset.name_ar,
                 "branch_id": asset.branch_id, "branch_name": asset.branch.name_ar,
                 "acquisition_date": asset.acquisition_date, "original_cost": asset.original_cost,
                 "salvage_value": asset.salvage_value, "useful_life_months": asset.useful_life_months,
-                "accumulated_depreciation": accumulated, "net_book_value": book_value,
+                "accumulated_depreciation": accumulated, "accumulated_impairment": impairment_total,
+                "net_book_value": book_value,
                 "status": "disposed" if disposed else "active", "disposed_at": asset.disposed_at,
                 "acquisition_journal": asset.acquisition_journal_id, "disposal_journal": asset.disposal_journal_id,
             })
             total_cost += asset.original_cost
             total_accumulated += accumulated
+            total_impairment += impairment_total
             total_book += book_value if not disposed else 0
         return response.Response({
             "company": int(request.query_params["company"]), "as_of": as_of,
             "totals": {"original_cost": total_cost, "accumulated_depreciation": total_accumulated,
+                       "accumulated_impairment": total_impairment,
                        "net_book_value_active": total_book, "asset_count": len(rows)},
             "rows": rows,
         })
@@ -227,7 +237,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
     def movement_report(self, request):
         """إعداد تقرير حركة الأصول والإضافات والاستبعادات."""
-        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations")
+        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations", "impairments")
         asset_id = request.query_params.get("asset")
         if asset_id:
             if not asset_id.isdigit():
@@ -250,10 +260,18 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 "treasury_transaction": asset.acquisition_treasury_transaction_id,
             }]
             for dep in asset.depreciations.all():
-                candidates.append({
-                    "date": dep.period_date, "event_type": "depreciation", "event_label": "إهلاك",
-                    "amount": dep.amount, "journal_entry": dep.journal_entry_id, "treasury_transaction": None,
-                })
+                if dep.journal_entry.status == JournalEntry.Status.POSTED:
+                    candidates.append({
+                        "date": dep.period_date, "event_type": "depreciation", "event_label": "إهلاك",
+                        "amount": dep.amount, "journal_entry": dep.journal_entry_id, "treasury_transaction": None,
+                    })
+            for impairment in asset.impairments.all():
+                if impairment.journal_entry.status == JournalEntry.Status.POSTED:
+                    candidates.append({
+                        "date": impairment.impairment_date, "event_type": "impairment",
+                        "event_label": "انخفاض قيمة", "amount": impairment.impairment_loss,
+                        "journal_entry": impairment.journal_entry_id, "treasury_transaction": None,
+                    })
             if asset.disposed_at:
                 candidates.append({
                     "date": asset.disposed_at, "event_type": "disposal", "event_label": "بيع / استبعاد",
