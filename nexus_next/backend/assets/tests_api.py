@@ -4,11 +4,12 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from assets.models import FixedAsset
-from accounting.models import ChartOfAccount, JournalEntry, TaxCode
+from assets.models import AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from treasury.models import TreasuryAccount, TreasuryTransaction
+from suppliers.models import Supplier
 
 
 class FixedAssetWorkflowTests(APITestCase):
@@ -344,3 +345,127 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(asset.category, FixedAsset.Category.VEHICLE)
         self.assertEqual(asset.custodian, "مدير الحركة")
 
+
+
+    def test_direct_asset_vendor_invoice_posts_to_supplier_subledger_and_bank_payment(self):
+        payable = self._account("2100", "الموردون", "liability")
+        vat_input = self._account("1180", "ضريبة مدخلات", "asset")
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.VAT_INPUT, account=vat_input)
+        supplier = Supplier.objects.create(company=self.company, code="SUP-FA", name_ar="مورد أصول")
+        tax = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT14-FA",
+            name_ar="ضريبة مدخلات 14%", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+            input_tax_recoverable=True,
+        )
+        payload = self._payload()
+        payload["acquisition_mode"] = "supplier_invoice"
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        self.assertIsNone(created.data["acquisition_journal"])
+        self.assertEqual(JournalEntry.objects.count(), 0)
+
+        invoice_response = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/purchase-invoice/",
+            {
+                "supplier": supplier.pk, "invoice_number": "FA-SUP-1001",
+                "invoice_date": "2026-01-10", "net_amount": "100000.0000",
+                "tax_code": tax.pk, "fiscal_year": self.year.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        self.assertEqual(invoice_response.data["grand_total"], Decimal("114000.0000"))
+        self.assertEqual(invoice_response.data["recoverable_tax_amount"], Decimal("14000.0000"))
+        invoice = AssetPurchaseInvoice.objects.get(pk=invoice_response.data["id"])
+        asset = FixedAsset.objects.get(pk=asset_id)
+        self.assertEqual(asset.original_cost, Decimal("100000.0000"))
+        self.assertEqual(asset.acquisition_journal_id, invoice.journal_entry_id)
+        self.assertEqual(invoice.journal_entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(invoice.journal_entry.lines.get(account=self.asset_gl).debit, Decimal("100000.0000"))
+        self.assertEqual(invoice.journal_entry.lines.get(account=vat_input).debit, Decimal("14000.0000"))
+        self.assertEqual(invoice.journal_entry.lines.get(account=payable).credit, Decimal("114000.0000"))
+
+        payment_response = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
+            {
+                "payment_number": "FA-PAY-1001", "payment_date": "2026-01-15",
+                "payment_account": self.cash_gl.pk, "amount": "50000.0000",
+                "reference": "BANK-REF-01",
+            },
+            format="json",
+        )
+        self.assertEqual(payment_response.status_code, 201, payment_response.data)
+        payment = AssetSupplierPayment.objects.get(pk=payment_response.data["id"])
+        self.assertEqual(payment.status, AssetSupplierPayment.Status.POSTED)
+        self.assertEqual(payment.journal_entry.lines.get(account=payable).debit, Decimal("50000.0000"))
+        self.assertEqual(payment.journal_entry.lines.get(account=self.cash_gl).credit, Decimal("50000.0000"))
+        self.assertTrue(TreasuryTransaction.objects.filter(
+            document_number=f"AUTO-FA-PAY-{payment.pk}",
+            journal_entry=payment.journal_entry, status=TreasuryTransaction.Status.POSTED,
+        ).exists())
+
+        statement = self.client.get("/api/purchasing/invoices/supplier-statement/", {
+            "company": self.company.pk, "supplier": supplier.pk,
+        })
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["closing_balance"], "64000.0000")
+        self.assertEqual(
+            {row["document_type"] for row in statement.data["rows"]},
+            {"asset_invoice", "asset_payment"},
+        )
+
+        overpayment = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
+            {
+                "payment_number": "FA-PAY-1002", "payment_date": "2026-01-20",
+                "payment_account": self.cash_gl.pk, "amount": "70000.0000",
+            },
+            format="json",
+        )
+        self.assertEqual(overpayment.status_code, 400, overpayment.data)
+        self.assertFalse(AssetSupplierPayment.objects.filter(payment_number="FA-PAY-1002").exists())
+
+    def test_asset_vendor_invoice_requires_financial_approval_above_policy_limit(self):
+        payable = self._account("2100", "الموردون", "liability")
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
+        supplier = Supplier.objects.create(company=self.company, code="SUP-FA-APP", name_ar="مورد اعتماد")
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_purchase_invoice_amount=Decimal("50000"),
+            created_by=self.user, updated_by=self.user,
+        )
+        payload = self._payload()
+        payload["acquisition_mode"] = "supplier_invoice"
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        invoice_response = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/purchase-invoice/",
+            {
+                "supplier": supplier.pk, "invoice_number": "FA-SUP-APP-1",
+                "invoice_date": "2026-01-10", "net_amount": "120000.0000",
+                "fiscal_year": self.year.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        self.assertTrue(invoice_response.data["approval_required"])
+        invoice = AssetPurchaseInvoice.objects.get(pk=invoice_response.data["id"])
+        self.assertEqual(invoice.status, AssetPurchaseInvoice.Status.DRAFT)
+        self.assertIsNone(invoice.journal_entry_id)
+        approval = FinancialApprovalRequest.objects.get(
+            document_type=FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE,
+            asset_purchase_invoice=invoice,
+        )
+        manager = get_user_model().objects.create_user(username="asset-invoice-manager", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(f"/api/approvals/financial-requests/{approval.pk}/approve/", {}, format="json")
+        self.assertEqual(approved.status_code, 200, approved.data)
+        posted = self.client.post(f"/api/assets/fixed-assets/{asset_id}/post-purchase-invoice/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, AssetPurchaseInvoice.Status.POSTED)
+        self.assertIsNotNone(invoice.journal_entry_id)
