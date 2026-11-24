@@ -837,6 +837,8 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
         lines = attrs.get("lines")
         if self.instance and self.instance.status != PurchaseRequisition.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل طلب شراء بعد إرساله للاعتماد.")
+        if self.instance and "company" in attrs and attrs["company"].pk != self.instance.company_id:
+            raise serializers.ValidationError({"company": "لا يمكن نقل طلب الاحتياج إلى شركة أخرى بعد إنشائه."})
         if not self.instance and lines is None:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         if lines is not None and not lines:
