@@ -13,7 +13,7 @@ type Statement = CustomerStatement | SupplierStatement;
 type StatementRow = Statement["rows"][number];
 
 const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-const money = (value: string | number, currency: string) => `${Number(value).toLocaleString("ar-EG", { maximumFractionDigits: 2 })} ${currency}`.trim();
+const money = (value: string | number, currency: string) => `${formatMoney(value)} ${currency}`.trim();
 const documentLabel = (kind: string) => ({
   invoice: "فاتورة",
   receipt: "مقبوض",
