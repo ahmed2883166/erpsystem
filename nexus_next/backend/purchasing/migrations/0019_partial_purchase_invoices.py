@@ -8,11 +8,17 @@ from django.db.models import Count
 def backfill_billed_quantity(apps, schema_editor):
     PurchaseInvoiceLine = apps.get_model("purchasing", "PurchaseInvoiceLine")
     database = schema_editor.connection.alias
-    rows = PurchaseInvoiceLine.objects.using(database).select_related("receipt_line").iterator()
+    rows = PurchaseInvoiceLine.objects.using(database).select_related("receipt_line").iterator(chunk_size=1000)
+    batch = []
+    manager = PurchaseInvoiceLine.objects.using(database)
     for row in rows:
-        PurchaseInvoiceLine.objects.using(database).filter(pk=row.pk).update(
-            billed_quantity=row.receipt_line.quantity
-        )
+        row.billed_quantity = row.receipt_line.quantity
+        batch.append(row)
+        if len(batch) >= 1000:
+            manager.bulk_update(batch, ("billed_quantity",), batch_size=1000)
+            batch.clear()
+    if batch:
+        manager.bulk_update(batch, ("billed_quantity",), batch_size=1000)
 
 
 def ensure_legacy_one_to_one_can_be_restored(apps, schema_editor):
