@@ -149,13 +149,13 @@ export type SupplierRefund = {
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
   opening_balance: string; closing_balance: string;
-  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return" | "supplier_return_reversal" | "supplier_refund"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
+  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return" | "supplier_return_reversal" | "supplier_refund" | "asset_invoice" | "asset_payment"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
 };
 export type SupplierAging = {
   company: number; as_of: string;
   totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
   suppliers: { supplier: number; supplier_code: string; supplier_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
-    invoices: { invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; balance_due: string }[] }[];
+    invoices: { invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; balance_due: string; document_type?: "asset_purchase_invoice"; asset_name?: string }[] }[];
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
