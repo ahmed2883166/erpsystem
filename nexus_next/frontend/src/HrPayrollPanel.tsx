@@ -3,6 +3,7 @@
  * تدير دورات المرتبات والاحتساب والمراجعة والاعتماد والصرف وسجل تغييرات الراتب.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { formatMoney } from "./formatters";
 import { api, hrApi, treasuryApi, type Branch, type Currency, type HrEmployee, type HrPayrollCycle, type HrPayrollResult, type HrPayrollComponent, type HrAttendance, type HrEmployeeComponent, type HrLeaveRequest, type HrEmployeeLoan, type HrPayrollRuleSet, type Account, type TreasuryAccount, type HrEmployeePayReport, type HrSalaryHistory } from "./api";
 
 const statusLabels: Record<string, string> = {
@@ -321,7 +322,7 @@ const exportEmployeePayReport = () => {
     employer:a.employer+Number(r.employer_share_total),
   }),{net:0,cost:0,employer:0}),[results]);
   const dynamicPayrollColumns=Array.from(new Map(results.flatMap(r=>r.lines.filter(line=>line.code!=="EMPLOYER_SHARE_DISPLAY"&&line.code!=="EMPLOYER_SHARE_OFFSET").map(line=>[line.code,{code:line.code,name:line.name,kind:line.kind}]))).values());
-  const money=(v:string|number)=>Number(v||0).toLocaleString("ar-EG",{maximumFractionDigits:2});
+  const money=(v:string|number)=>formatMoney(v);
 
   if(!companyId) return <section className="work-panel"><div className="empty-state">اختر الشركة لفتح الموارد البشرية والمرتبات.</div></section>;
   return <section className="work-panel hr-payroll-panel">
