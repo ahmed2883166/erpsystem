@@ -108,6 +108,8 @@ class Employee(CompanyScopedModel):
         ]
 
     def save(self, *args, **kwargs):
+        if not self.currency_id and self.company_id:
+            self.currency_id = self.company.base_currency_id
         if self.pk:
             previous_salary = type(self).objects.filter(pk=self.pk).values_list("basic_salary", flat=True).first()
             if (previous_salary is not None and previous_salary != self.basic_salary
