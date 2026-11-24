@@ -452,6 +452,10 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 if date_from <= reversal.reversal_date <= date_to and reversal.journal_entry.status == JournalEntry.Status.POSTED:
                     expected_impairment_reversal_income[reversal.reversal_income_account_id] += reversal.reversal_amount
 
+        reversal_journal_ids = list(AssetImpairmentReversal.objects.filter(
+            asset__in=assets, reversal_date__gte=date_from, reversal_date__lte=date_to,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).values_list("journal_entry_id", flat=True))
         account_ids = list(account_objects)
         ledger = JournalLine.objects.filter(
             entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
@@ -504,9 +508,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 })
             if expected_impairment_reversal_income[account_id]:
                 income_lines = JournalLine.objects.filter(
-                    entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
-                    entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
-                    entry__branch_id__in=branch_ids, account_id=account_id,
+                    entry_id__in=reversal_journal_ids, account_id=account_id,
                 ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
                 expected = expected_impairment_reversal_income[account_id]
                 actual_value = (income_lines["credit"] or Decimal("0")) - (income_lines["debit"] or Decimal("0"))
