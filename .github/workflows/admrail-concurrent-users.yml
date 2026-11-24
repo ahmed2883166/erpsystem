@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - fix/audit-performance-and-owner-toolkit-2026-11
     paths:
       - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
       - "nexus_next/backend/scripts/benchmark_posting_concurrency.py"
