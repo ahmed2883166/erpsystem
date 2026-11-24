@@ -32,6 +32,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [quotationRfqId, setQuotationRfqId] = useState("");
   const [quotationForm, setQuotationForm] = useState({supplier:"",quotation_number:"",quotation_date:new Date().toISOString().slice(0,10),valid_until:new Date(Date.now()+30*86400000).toISOString().slice(0,10),delivery_days:"0",payment_terms:"",notes:""});
   const [quotationPrices, setQuotationPrices] = useState<Record<number,{unit_price:string;discount_percent:string;tax_rate:string}>>({});
+  const [convertingRFQId, setConvertingRFQId] = useState<number | null>(null);
+  const [awardOrderForm, setAwardOrderForm] = useState({warehouse:"",order_number:"",order_date:new Date().toISOString().slice(0,10),expected_date:""});
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -146,6 +148,23 @@ const loadAging = async () => {
       setShowForm(false);setQuotationForm(x=>({...x,quotation_number:"",notes:""}));await refresh();
     }catch(e){setError(e instanceof Error?e.message:"تعذر تسجيل العرض.");}finally{setBusy(false);}
   };
+
+  const beginAwardConversion = (rfq:PurchaseRFQ) => {
+    setConvertingRFQId(rfq.id);
+    setAwardOrderForm({warehouse:String(warehouses[0]?.id||""),order_number:"PO-"+rfq.rfq_number,order_date:new Date().toISOString().slice(0,10),expected_date:""});
+    setShowForm(false);
+  };
+  const submitAwardConversion = async (event:FormEvent) => {
+    event.preventDefault();
+    if(convertingRFQId===null || !awardOrderForm.warehouse || !awardOrderForm.order_number.trim()){setError("حدد مخزن الاستلام ورقم أمر الشراء.");return;}
+    setBusy(true);setError("");
+    try{
+      await purchasingApi.convertAward(convertingRFQId,{warehouse:Number(awardOrderForm.warehouse),order_number:awardOrderForm.order_number.trim(),order_date:awardOrderForm.order_date,expected_date:awardOrderForm.expected_date||null});
+      setConvertingRFQId(null);setTab("orders");await refresh();
+    }catch(e){setError(e instanceof Error?e.message:"تعذر إنشاء أمر الشراء من العرض الفائز.");}
+    finally{setBusy(false);}
+  };
+
   const awardQuotation = async (rfqId:number, quotationId:number) => {
     const reason=window.prompt("اكتب مبرر الترسية مع مراعاة السعر والتوريد وشروط السداد:");
     if(!reason?.trim())return;
@@ -419,6 +438,14 @@ const postInvoice = async (id: number) => {
     {error && <div className="error-banner">{error}</div>}
 
     {tab === "sourcing" && <div className="inventory-tabs"><button className={sourcingView === "rfqs" ? "inventory-tab active" : "inventory-tab"} type="button" onClick={()=>{setSourcingView("rfqs");setShowForm(false);}}>طلبات العروض <b>{rfqs.length}</b></button><button className={sourcingView === "quotations" ? "inventory-tab active" : "inventory-tab"} type="button" onClick={()=>{setSourcingView("quotations");setShowForm(false);}}>مقارنة العروض <b>{quotations.length}</b></button></div>}
+    {convertingRFQId !== null && tab === "sourcing" && <form className="inventory-form" onSubmit={e=>void submitAwardConversion(e)}>
+      <div className="inventory-wide"><h3>إصدار أمر شراء من العرض الفائز</h3><p>سيتم نقل المورد والكميات والأسعار بعد الخصم والضريبة من العرض المعتمد إلى أمر شراء مسودة للمراجعة.</p></div>
+      <label>مخزن الاستلام<select required value={awardOrderForm.warehouse} onChange={e=>setAwardOrderForm({...awardOrderForm,warehouse:e.target.value})}><option value="">اختر المخزن</option>{warehouses.map(x=><option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+      <label>رقم أمر الشراء<input required value={awardOrderForm.order_number} onChange={e=>setAwardOrderForm({...awardOrderForm,order_number:e.target.value})}/></label>
+      <label>تاريخ الأمر<input required type="date" value={awardOrderForm.order_date} onChange={e=>setAwardOrderForm({...awardOrderForm,order_date:e.target.value})}/></label>
+      <label>التوريد المتوقع<input type="date" min={awardOrderForm.order_date} value={awardOrderForm.expected_date} onChange={e=>setAwardOrderForm({...awardOrderForm,expected_date:e.target.value})}/></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>إنشاء أمر شراء مسودة</button><button className="subtle-button" type="button" onClick={()=>setConvertingRFQId(null)}>إلغاء</button></div>
+    </form>}
     {showForm && tab === "sourcing" && sourcingView === "rfqs" && <form className="inventory-form" onSubmit={e=>void saveRFQ(e)}>
       <label>رقم طلب العروض<input required value={rfqForm.rfq_number} onChange={e=>setRfqForm({...rfqForm,rfq_number:e.target.value})}/></label>
       <label>تاريخ الإصدار<input required type="date" value={rfqForm.issue_date} onChange={e=>setRfqForm({...rfqForm,issue_date:e.target.value})}/></label>
@@ -446,7 +473,7 @@ const postInvoice = async (id: number) => {
       <label className="inventory-wide">ملاحظات<textarea value={quotationForm.notes} onChange={e=>setQuotationForm({...quotationForm,notes:e.target.value})}/></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!selectedRFQ}>حفظ عرض المورد</button><button className="subtle-button" type="button" onClick={()=>setShowForm(false)}>إلغاء</button></div>
     </form>}
-    {tab === "sourcing" && sourcingView === "rfqs" && <div className="data-table-wrap"><table><thead><tr><th>رقم الطلب</th><th>الإصدار</th><th>الإغلاق</th><th>البنود</th><th>الموردون</th><th>العروض</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{rfqs.filter(x=>[x.rfq_number,...x.supplier_list.map(v=>v.name)].join(" ").toLowerCase().includes(search.toLowerCase())).map(x=><tr key={x.id}><td className="code-cell">{x.rfq_number}</td><td>{x.issue_date}</td><td>{x.closing_date}</td><td>{x.line_items.length}</td><td>{x.supplier_list.length}</td><td>{quotations.filter(q=>q.rfq===x.id).length}</td><td><span className={statusPill(x.status)}>{x.status==="draft"?"مسودة":x.status==="open"?"مفتوح":x.status==="closed"?"مغلق":x.status==="awarded"?"تمت الترسية":"ملغي"}</span></td><td>{x.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void openRFQ(x.id)}>فتح استقبال العروض</button>:x.status==="open"?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void closeRFQ(x.id)}>إغلاق الطلب</button>:x.status==="awarded"?"تمت الترسية":"—"}</td></tr>)}</tbody></table>{rfqs.length===0&&<div className="table-empty">لا توجد طلبات عروض أسعار.</div>}</div>}
+    {tab === "sourcing" && sourcingView === "rfqs" && <div className="data-table-wrap"><table><thead><tr><th>رقم الطلب</th><th>الإصدار</th><th>الإغلاق</th><th>البنود</th><th>الموردون</th><th>العروض</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{rfqs.filter(x=>[x.rfq_number,...x.supplier_list.map(v=>v.name)].join(" ").toLowerCase().includes(search.toLowerCase())).map(x=><tr key={x.id}><td className="code-cell">{x.rfq_number}</td><td>{x.issue_date}</td><td>{x.closing_date}</td><td>{x.line_items.length}</td><td>{x.supplier_list.length}</td><td>{quotations.filter(q=>q.rfq===x.id).length}</td><td><span className={statusPill(x.status)}>{x.status==="draft"?"مسودة":x.status==="open"?"مفتوح":x.status==="closed"?"مغلق":x.status==="awarded"?"تمت الترسية":"ملغي"}</span></td><td>{x.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void openRFQ(x.id)}>فتح استقبال العروض</button>:x.status==="open"?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void closeRFQ(x.id)}>إغلاق الطلب</button>:x.status==="awarded"?(x.converted_order?"تم إنشاء أمر الشراء":<button className="primary-button" type="button" disabled={busy} onClick={()=>beginAwardConversion(x)}>إنشاء أمر شراء</button>):"—"}</td></tr>)}</tbody></table>{rfqs.length===0&&<div className="table-empty">لا توجد طلبات عروض أسعار.</div>}</div>}
     {tab === "sourcing" && sourcingView === "quotations" && <div className="data-table-wrap"><div className="customer-toolbar"><select value={quotationRfqId} onChange={e=>setQuotationRfqId(e.target.value)}><option value="">كل طلبات العروض</option>{rfqs.map(x=><option key={x.id} value={x.id}>{x.rfq_number}</option>)}</select></div><table><thead><tr><th>طلب العروض</th><th>المورد</th><th>رقم العرض</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>التوريد</th><th>السداد</th><th>الصلاحية</th><th>الترسية</th></tr></thead><tbody>{quotations.filter(q=>(!quotationRfqId||q.rfq===Number(quotationRfqId))&&[q.quotation_number,q.supplier_name].join(" ").toLowerCase().includes(search.toLowerCase())).map(q=>{const parent=rfqs.find(x=>x.id===q.rfq);return <tr key={q.id}><td>{parent?.rfq_number||q.rfq}</td><td>{q.supplier_name}</td><td className="code-cell">{q.quotation_number}</td><td>{money(q.total_before_tax)}</td><td>{money(q.tax_total)}</td><td><strong>{money(q.grand_total)}</strong></td><td>{q.delivery_days} يوم</td><td>{q.payment_terms||"—"}</td><td>{q.valid_until}</td><td>{parent?.status==="awarded"?(parent.awarded_quotation===q.id?"العرض الفائز":"—"):(parent?.status==="open"||parent?.status==="closed")?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void awardQuotation(q.rfq,q.id)}>ترسية العرض</button>:"—"}</td></tr>})}</tbody></table>{quotations.length===0&&<div className="table-empty">لم تسجل عروض موردين بعد.</div>}</div>}
 
     {convertingReqId !== null && tab === "requisitions" && <form className="inventory-form" onSubmit={(event) => void convertRequisition(event)}>
