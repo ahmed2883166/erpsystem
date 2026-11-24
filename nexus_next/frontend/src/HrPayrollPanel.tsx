@@ -97,7 +97,7 @@ const submitEmployee = async (event:FormEvent) => {
     event.preventDefault(); if(!companyId) return;
     setBusy(true);setError("");setNotice("");
     try {
-      await hrApi.createEmployee({...employeeDraft,company:companyId,branch:Number(employeeDraft.branch),currency:Number(employeeDraft.currency)});
+      await hrApi.createEmployee({...employeeDraft,company:companyId,branch:Number(employeeDraft.branch),currency:Number(baseCurrencyId||employeeDraft.currency)});
       setEmployeeDraft(old=>({...old,code:"",full_name_ar:"",basic_salary:"0"}));
       setNotice("تم حفظ ملف الموظف."); await load();
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ الموظف."); }
