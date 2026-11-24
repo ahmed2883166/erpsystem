@@ -364,7 +364,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
                          or code.category == TaxCode.Category.REVERSE_CHARGE
                          or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
-                raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو غير قابل للخصم للشركة أو تاريخ الفاتورة."})
+                raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو لا يسري على الشركة أو تاريخ الفاتورة."})
         return attrs
 
     @transaction.atomic
