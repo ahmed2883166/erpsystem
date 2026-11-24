@@ -531,6 +531,9 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 raise ValueError("رقم فاتورة المورد مطلوب.")
             invoice.full_clean()
             invoice.save()
+            # Normalize DecimalField values from the database before taking the
+            # immutable approval snapshot (e.g. 0 becomes 0.0000).
+            invoice.refresh_from_db()
             from approvals.models import FinancialApprovalRequest
             from approvals.services import refresh_financial_approval
             approval = refresh_financial_approval(
