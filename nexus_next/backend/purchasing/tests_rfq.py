@@ -23,6 +23,7 @@ class PurchaseRFQWorkflowTests(APITestCase):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="RFQ-1", name_ar="صنف منافسة", purchase_price=Decimal("10"))
         self.supplier_a = Supplier.objects.create(company=self.company, code="RFQ-S1", name_ar="مورد أ")
         self.supplier_b = Supplier.objects.create(company=self.company, code="RFQ-S2", name_ar="مورد ب")
+        self.supplier_c = Supplier.objects.create(company=self.company, code="RFQ-S3", name_ar="مورد ج")
 
     def test_rfq_invite_receive_compare_and_award(self):
         requisition = self.client.post("/api/purchasing/requisitions/", {
@@ -58,7 +59,7 @@ class PurchaseRFQWorkflowTests(APITestCase):
             "rfq_number": "RFQ-INVALID-001",
             "issue_date": "2026-11-24",
             "closing_date": "2026-11-30",
-            "invited_suppliers": [self.supplier_a.pk, self.supplier_b.pk],
+            "invited_suppliers": [self.supplier_a.pk, self.supplier_b.pk, self.supplier_c.pk],
             "lines": [{"product": self.product.pk, "quantity": "4"}],
         }, format="json")
         self.assertEqual(mismatched_rfq.status_code, 400, mismatched_rfq.data)
@@ -70,7 +71,7 @@ class PurchaseRFQWorkflowTests(APITestCase):
             "issue_date": "2026-11-24",
             "closing_date": "2026-11-30",
             "terms": "التوريد للمخزن الرئيسي",
-            "invited_suppliers": [self.supplier_a.pk, self.supplier_b.pk],
+            "invited_suppliers": [self.supplier_a.pk, self.supplier_b.pk, self.supplier_c.pk],
             "lines": [{"product": self.product.pk, "quantity": "5"}],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
@@ -101,6 +102,15 @@ class PurchaseRFQWorkflowTests(APITestCase):
         self.assertEqual(awarded.status_code, 200, awarded.data)
         self.assertEqual(awarded.data["status"], "awarded")
         self.assertEqual(awarded.data["awarded_quotation"], quote_a.data["id"])
+        self.client.force_authenticate(self.user)
+        late_quote = self.client.post("/api/purchasing/quotations/", {
+            "rfq": rfq_id, "supplier": self.supplier_c.pk, "quotation_number": "C-LATE",
+            "quotation_date": "2026-11-24", "valid_until": "2026-12-15",
+            "delivery_days": 5, "payment_terms": "30 يوم",
+            "lines": [{"rfq_line": rfq_line_id, "unit_price": "11"}],
+        }, format="json")
+        self.assertEqual(late_quote.status_code, 400, late_quote.data)
+        self.client.force_authenticate(self.manager)
         converted = self.client.post(f"/api/purchasing/rfqs/{rfq_id}/convert-award/", {
             "warehouse": self.warehouse.pk, "order_number": "PO-RFQ-001",
             "order_date": "2026-11-24", "expected_date": "2026-12-05",
