@@ -91,13 +91,15 @@ const refresh = async () => {
   };
   useEffect(() => { void refresh(); }, [companyId]);
 
-  const billedReceiptLineQuantity = (receiptId: number, receiptLineId: number) => invoices
-    .filter((invoice) => invoice.receipt === receiptId)
+  const receiptLineQuantityForStatus = (receiptId: number, receiptLineId: number, status: "draft" | "posted") => invoices
+    .filter((invoice) => invoice.receipt === receiptId && invoice.status === status)
     .reduce((total, invoice) => total + invoice.invoice_lines
       .filter((line) => line.receipt_line === receiptLineId)
       .reduce((lineTotal, line) => lineTotal + Number(line.quantity), 0), 0);
   const remainingReceiptLineQuantity = (receipt: PurchaseReceipt, line: PurchaseReceipt["line_items"][number]) =>
-    Math.max(Number(line.quantity) - billedReceiptLineQuantity(receipt.id, line.id), 0);
+    Math.max(Number(line.quantity)
+      - receiptLineQuantityForStatus(receipt.id, line.id, "posted")
+      - receiptLineQuantityForStatus(receipt.id, line.id, "draft"), 0);
   const paymentableInvoices = useMemo(() => invoices.filter((invoice) => invoice.status === "posted" && Number(invoice.balance_due) > 0), [invoices]);
   const invoiceableReceipts = receipts.filter((receipt) =>
     receipt.movement_status === "posted" && receipt.line_items.some((line) => remainingReceiptLineQuantity(receipt, line) > 0)
@@ -640,7 +642,7 @@ const postInvoice = async (id: number) => {
         const selectedReceipt = receipts.find((x) => x.id === Number(invoiceForm.receipt));
         if (!selectedReceipt) return null;
         return <div className="inventory-wide data-table-wrap">
-          <table><thead><tr><th>الصنف</th><th>المستلم</th><th>مفوتر سابقًا</th><th>متبقي</th><th>الكمية في الفاتورة الحالية</th><th>سعر الوحدة</th><th>الصافي</th></tr></thead>
+          <table><thead><tr><th>الصنف</th><th>المستلم</th><th>مفوتر سابقًا</th><th>محجوز بمسودات</th><th>متبقي</th><th>الكمية في الفاتورة الحالية</th><th>سعر الوحدة</th><th>الصافي</th></tr></thead>
             <tbody>{selectedReceipt.line_items.map((line) => {
               const remaining = remainingReceiptLineQuantity(selectedReceipt, line);
               if (remaining <= 0) return null;
@@ -648,7 +650,8 @@ const postInvoice = async (id: number) => {
               return <tr key={line.id}>
                 <td>{line.product_code} - {line.product_name}</td>
                 <td>{line.quantity}</td>
-                <td>{(Number(line.quantity) - remaining).toFixed(4)}</td>
+                <td>{receiptLineQuantityForStatus(selectedReceipt.id, line.id, "posted").toFixed(4)}</td>
+                <td>{receiptLineQuantityForStatus(selectedReceipt.id, line.id, "draft").toFixed(4)}</td>
                 <td>{remaining.toFixed(4)}</td>
                 <td><input aria-label={`كمية الفوترة ${line.product_code}`} type="number" min="0" max={remaining} step="0.0001" value={billed} onChange={(e) => setInvoiceQuantities((old) => ({ ...old, [line.id]: e.target.value }))} /></td>
                 <td>{money(line.unit_cost)}</td>
