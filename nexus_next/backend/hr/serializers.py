@@ -239,7 +239,7 @@ class PayrollRuleSetSerializer(serializers.ModelSerializer):
             try:
                 number = Decimal(str(value))
             except (InvalidOperation, TypeError, ValueError):
-                raise serializers.ValidationError({"configuration": f"القيمة {field} يجب أن تكون رقمًا صحيحًا."})
+                raise serializers.ValidationError({"configuration": f"القيمة {field} يجب أن تكون رقمًا صحيحًا."}) from None
             if not number.is_finite() or (minimum is not None and number < minimum) or (maximum is not None and number > maximum):
                 raise serializers.ValidationError({"configuration": f"القيمة {field} خارج النطاق المسموح."})
             return number
