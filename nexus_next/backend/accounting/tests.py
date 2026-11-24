@@ -1810,6 +1810,92 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(payroll["party_balances"][0]["code"], "EMP-001")
         self.assertEqual(Decimal(payroll["party_balances"][0]["balance"]), Decimal("9000"))
 
+
+    def test_fixed_asset_supplier_invoice_and_payment_are_in_ap_reconciliation(self):
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
+        from suppliers.models import Supplier
+
+        payable = ChartOfAccount.objects.create(
+            company=self.company, code="2100", name_ar="الموردون", nature="liability",
+        )
+        asset_account = ChartOfAccount.objects.create(
+            company=self.company, code="1500", name_ar="الأصول الثابتة", nature="asset",
+        )
+        accumulated = ChartOfAccount.objects.create(
+            company=self.company, code="1590", name_ar="مجمع الإهلاك", nature="asset",
+        )
+        depreciation = ChartOfAccount.objects.create(
+            company=self.company, code="6100", name_ar="مصروف الإهلاك", nature="expense",
+        )
+        disposal = ChartOfAccount.objects.create(
+            company=self.company, code="6900", name_ar="أرباح وخسائر الأصول", nature="expense",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company, code="SUP-RECON-FA", name_ar="مورد أصول للمطابقة",
+        )
+        asset = FixedAsset.objects.create(
+            company=self.company, branch=self.branch, code="FA-RECON-001",
+            name_ar="أصل اختبار المطابقة", acquisition_date=date(2026, 3, 1),
+            depreciation_start_date=date(2026, 3, 1), original_cost=Decimal("1000"),
+            acquisition_net_amount=Decimal("1000"), salvage_value=Decimal("0"),
+            useful_life_months=60, asset_account=asset_account,
+            accumulated_depreciation_account=accumulated,
+            depreciation_expense_account=depreciation,
+            acquisition_counter_account=self.cash, disposal_gain_loss_account=disposal,
+            disposal_loss_account=disposal,
+        )
+
+        invoice_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="FA-RECON-INV-001", entry_date=date(2026, 3, 2),
+            description="فاتورة شراء أصل للمطابقة", source_type=JournalEntry.Source.ASSETS,
+        )
+        JournalLine.objects.create(entry=invoice_entry, account=asset_account, debit=Decimal("1000"))
+        JournalLine.objects.create(entry=invoice_entry, account=payable, credit=Decimal("1000"))
+        post_journal(invoice_entry.pk)
+        asset.acquisition_journal = invoice_entry
+        asset.save(update_fields=("acquisition_journal",))
+
+        invoice = AssetPurchaseInvoice.objects.create(
+            company=self.company, branch=self.branch, asset=asset, supplier=supplier,
+            fiscal_year=self.year, invoice_number="FA-RECON-INV-001",
+            invoice_date=date(2026, 3, 2), net_amount=Decimal("1000"),
+            tax_amount=Decimal("0"), recoverable_tax_amount=Decimal("0"),
+            nonrecoverable_tax_amount=Decimal("0"), grand_total=Decimal("1000"),
+            status=AssetPurchaseInvoice.Status.POSTED, journal_entry=invoice_entry,
+        )
+
+        payment_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="FA-RECON-PAY-001", entry_date=date(2026, 3, 10),
+            description="سداد فاتورة أصل للمطابقة", source_type=JournalEntry.Source.ASSETS,
+        )
+        JournalLine.objects.create(entry=payment_entry, account=payable, debit=Decimal("400"))
+        JournalLine.objects.create(entry=payment_entry, account=self.cash, credit=Decimal("400"))
+        post_journal(payment_entry.pk)
+        AssetSupplierPayment.objects.create(
+            company=self.company, branch=self.branch, invoice=invoice, supplier=supplier,
+            payment_number="FA-RECON-PAY-001", payment_date=date(2026, 3, 10),
+            payment_account=self.cash, amount=Decimal("400"),
+            status=AssetSupplierPayment.Status.POSTED, journal_entry=payment_entry,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        suppliers = next(item for item in result.data["rows"] if item["key"] == "suppliers")
+        self.assertEqual(suppliers["status"], "matched", suppliers)
+        self.assertEqual(Decimal(suppliers["subledger_balance"]), Decimal("600"))
+        self.assertEqual(Decimal(suppliers["gl_balance"]), Decimal("600"))
+        self.assertEqual(Decimal(suppliers["difference"]), Decimal("0"))
+        self.assertEqual(suppliers["unmatched_entry_count"], 0)
+        self.assertEqual(suppliers["party_balances"][0]["party_id"], supplier.pk)
+        self.assertEqual(Decimal(suppliers["party_balances"][0]["balance"]), Decimal("600"))
+
 class HistoricalBalanceAndCashFlowRegressionTests(TestCase):
     def setUp(self):
         self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
