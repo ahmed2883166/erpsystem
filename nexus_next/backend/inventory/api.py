@@ -622,8 +622,6 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         self._check_count_write(count)
         if count.status != InventoryCount.Status.DRAFT:
             raise ValidationError("لا يمكن إلغاء جرد مرحّل أو ملغي.")
-        if not has_company_role(request.user, count.company_id, ("admin",)):
-            raise PermissionDenied("إلغاء مستند الجرد متاح لمدير الشركة فقط.")
         count.status = InventoryCount.Status.CANCELLED
         count.save(update_fields=("status", "updated_at"))
         return Response(self.get_serializer(count).data, status=status.HTTP_200_OK)

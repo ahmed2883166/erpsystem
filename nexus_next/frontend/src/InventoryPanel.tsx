@@ -346,7 +346,7 @@ const submit = async (event: React.FormEvent) => {
           const selectedWarehouseLocations = locations.filter((item) => item.is_active && item.warehouse === selected.warehouse);
           return <section className="activity-panel inventory-report-section">
             <div className="activity-title"><div><h3>تفاصيل الجرد: {selected.count_number}</h3><p>{selected.warehouse_name} · لقطة الرصيد {new Date(selected.created_at).toLocaleString("ar-EG")}</p></div>
-              {selected.status === "draft" && <div className="row-actions">
+              {selected.status === "draft" && <div className="inventory-actions">
                 <button type="button" className="primary-button" disabled={busy || pendingLines > 0 || selected.lines.length === 0} onClick={async () => {
                   setBusy(true); setError("");
                   try { await stockApi.postCount(selected.id); await refresh(); }
