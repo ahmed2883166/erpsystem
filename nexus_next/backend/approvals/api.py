@@ -202,12 +202,12 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             ).get(pk=approval.supplier_payment_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE:
             from assets.models import AssetPurchaseInvoice
-            return AssetPurchaseInvoice.objects.select_for_update().select_related(
+            return AssetPurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
                 "supplier", "asset", "tax_code", "branch", "fiscal_year",
             ).get(pk=approval.asset_purchase_invoice_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT:
             from assets.models import AssetSupplierPayment
-            return AssetSupplierPayment.objects.select_for_update().select_related(
+            return AssetSupplierPayment.objects.select_for_update(of=("self",)).select_related(
                 "supplier", "invoice", "payment_account", "branch",
             ).get(pk=approval.asset_supplier_payment_id)
         from treasury.models import TreasuryTransaction
