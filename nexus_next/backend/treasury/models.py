@@ -23,7 +23,7 @@ class TreasuryAccount(models.Model):
     bank_name = models.CharField(max_length=160, blank=True)
     account_number = models.CharField(max_length=80, blank=True)
     iban = models.CharField(max_length=64, blank=True)
-    currency_code = models.CharField(max_length=3, default="EGP")
+    currency_code = models.CharField(max_length=3, blank=True, default="")
     opening_balance = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     opening_journal_entry = models.OneToOneField(
         JournalEntry, null=True, blank=True, on_delete=models.PROTECT,
