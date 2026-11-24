@@ -2,11 +2,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import { salesApi, type SalesDocumentTemplate } from "./api";
 
 type Props = { companyId:number|null };
-type DocumentType = SalesDocumentTemplate["document_type"];
+type DocumentType = "quotation" | "invoice";
 type Style = SalesDocumentTemplate["style"];
 
 const documentLabels:Record<DocumentType,string> = {
-  quotation:"عروض الأسعار", invoice:"فواتير المبيعات", delivery:"أذون التسليم", receipt:"سندات القبض",
+  quotation:"عروض الأسعار", invoice:"فواتير المبيعات",
 };
 
 export default function DocumentTemplatesPanel({companyId}:Props) {
@@ -36,6 +36,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
     setForm({name:"",style:"classic",accent_color:"#1F4E79",show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,bank_details:"",language:"ar",font_scale:"normal",footer_text:"شكراً لتعاملكم معنا",is_default:false});
   };
   const edit=(row:SalesDocumentTemplate)=>{
+    if(row.document_type!=="invoice"&&row.document_type!=="quotation")return;
     setEditingId(row.id);setDocumentType(row.document_type);
     setForm({
       name:row.name,style:row.style,accent_color:row.config.accent_color||"#1F4E79",
@@ -74,7 +75,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
   const visible=rows.filter(row=>row.document_type===documentType);
 
   return <section className="work-panel">
-    <div className="work-panel-head"><div><h2>قوالب الطباعة</h2><p>كل شركة تختار شكلًا مستقلًا لعروض الأسعار والفواتير وأذون التسليم وسندات القبض.</p></div></div>
+    <div className="work-panel-head"><div><h2>قوالب الطباعة</h2><p>كل شركة تختار شكلًا مستقلًا لعروض الأسعار وفواتير المبيعات.</p></div></div>
     {error&&<div className="error-banner">{error}</div>}
     {!companyId&&<div className="table-empty">اختر شركة لإدارة قوالبها.</div>}
     {companyId&&<>
