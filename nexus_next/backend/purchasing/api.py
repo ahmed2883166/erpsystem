@@ -45,8 +45,8 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRequisitionLine, SupplierPayment, SupplierRefund, SupplierReturn
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
@@ -857,3 +857,120 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         data["reversal_journal_entry"] = reversal.pk
         data["reversal_journal_number"] = reversal.entry_number
         return Response(data, status=status.HTTP_200_OK)
+
+
+class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
+    serializer_class = PurchaseRequisitionSerializer
+    queryset = PurchaseRequisition.objects.select_related("company", "requested_by", "reviewed_by", "converted_order").prefetch_related("lines__product")
+    filterset_fields = ("company", "status", "request_date", "department")
+    search_fields = ("request_number", "department", "purpose")
+    ordering_fields = ("request_date", "request_number", "created_at")
+
+    def get_queryset(self):
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        self._check_write(serializer.validated_data["company"].pk)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        serializer.save()
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def submit(self, request, pk=None):
+        requisition = PurchaseRequisition.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(requisition.company_id)
+        if requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise ValidationError("لا يمكن إرسال طلب إلا إذا كان مسودة.")
+        if not requisition.lines.exists():
+            raise ValidationError("أضف بندًا واحدًا على الأقل قبل الإرسال.")
+        updated = PurchaseRequisition.objects.filter(pk=requisition.pk, status=PurchaseRequisition.Status.DRAFT).update(status=PurchaseRequisition.Status.SUBMITTED)
+        if updated != 1:
+            raise ValidationError("تغيرت حالة الطلب؛ حدّث الشاشة ثم أعد المحاولة.")
+        requisition.refresh_from_db()
+        return Response(self.get_serializer(requisition).data)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def review(self, request, pk=None):
+        requisition = PurchaseRequisition.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(requisition.company_id)
+        if requisition.status != PurchaseRequisition.Status.SUBMITTED:
+            raise ValidationError("لا يمكن مراجعة طلب غير مرسل للاعتماد.")
+        if requisition.requested_by_id == request.user.pk:
+            raise PermissionDenied("لا يجوز اعتماد أو رفض طلب الشراء بواسطة مقدمه نفسه.")
+        decision = request.data.get("decision")
+        if decision not in ("approve", "reject"):
+            raise ValidationError({"decision": "حدد approve أو reject."})
+        note = str(request.data.get("note", "")).strip()
+        if decision == "reject" and not note:
+            raise ValidationError({"note": "سبب الرفض مطلوب."})
+        requisition.status = PurchaseRequisition.Status.APPROVED if decision == "approve" else PurchaseRequisition.Status.REJECTED
+        requisition.reviewed_by = request.user
+        requisition.reviewed_at = timezone.now()
+        requisition.review_note = note
+        PurchaseRequisition.objects.filter(pk=requisition.pk, status=PurchaseRequisition.Status.SUBMITTED).update(
+            status=requisition.status, reviewed_by=request.user, reviewed_at=requisition.reviewed_at, review_note=note
+        )
+        requisition.refresh_from_db()
+        return Response(self.get_serializer(requisition).data)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def convert(self, request, pk=None):
+        requisition = PurchaseRequisition.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(requisition.company_id)
+        if requisition.status != PurchaseRequisition.Status.APPROVED or requisition.converted_order_id:
+            raise ValidationError("يجب أن يكون طلب الشراء معتمدًا وغير محول من قبل.")
+        supplier_id = request.data.get("supplier")
+        warehouse_id = request.data.get("warehouse")
+        order_number = str(request.data.get("order_number", "")).strip()
+        order_date = parse_date(str(request.data.get("order_date", "")))
+        expected_date = parse_date(str(request.data.get("expected_date", ""))) if request.data.get("expected_date") else None
+        if not supplier_id or not warehouse_id or not order_number or not order_date:
+            raise ValidationError("المورد والمخزن ورقم الأمر وتاريخه حقول مطلوبة للتحويل.")
+        from suppliers.models import Supplier
+        from inventory.models import Warehouse
+        supplier = Supplier.objects.filter(pk=supplier_id, company_id=requisition.company_id, is_active=True).first()
+        warehouse = Warehouse.objects.filter(pk=warehouse_id, company_id=requisition.company_id, is_active=True).first()
+        if not supplier:
+            raise ValidationError({"supplier": "اختر موردًا نشطًا تابعًا للشركة."})
+        if not warehouse or not _purchase_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("المخزن غير متاح للمستخدم أو لا يتبع الشركة.")
+        order = PurchaseOrder.objects.create(
+            company_id=requisition.company_id, supplier=supplier, warehouse=warehouse,
+            order_number=order_number, order_date=order_date, expected_date=expected_date,
+            notes=f"مصدر أمر الشراء: طلب الاحتياج {requisition.request_number}",
+            created_by=request.user,
+        )
+        PurchaseOrderLine.objects.bulk_create([
+            PurchaseOrderLine(order=order, product=line.product, quantity=line.requested_quantity,
+                              unit_price=line.estimated_unit_price or Decimal("0"))
+            for line in requisition.lines.select_related("product").all()
+        ])
+        PurchaseRequisition.objects.filter(pk=requisition.pk, status=PurchaseRequisition.Status.APPROVED, converted_order__isnull=True).update(
+            status=PurchaseRequisition.Status.CONVERTED, converted_order=order
+        )
+        requisition.refresh_from_db()
+        return Response({"requisition": self.get_serializer(requisition).data, "purchase_order_id": order.pk}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def cancel(self, request, pk=None):
+        requisition = PurchaseRequisition.objects.select_for_update().get(pk=self.get_object().pk)
+        self._check_write(requisition.company_id)
+        if requisition.status not in (PurchaseRequisition.Status.DRAFT, PurchaseRequisition.Status.SUBMITTED, PurchaseRequisition.Status.REJECTED):
+            raise ValidationError("لا يمكن إلغاء طلب معتمد أو محول إلى أمر شراء.")
+        PurchaseRequisition.objects.filter(pk=requisition.pk, status=requisition.status).update(status=PurchaseRequisition.Status.CANCELLED)
+        requisition.refresh_from_db()
+        return Response(self.get_serializer(requisition).data)
