@@ -148,6 +148,12 @@ def main():
                 )
                 if status_code != 200:
                     raise RuntimeError(f"Login failed: HTTP {status_code}; {error or body[:300].decode('utf-8', 'replace')}")
+                # Django rotates the CSRF secret during login. Refresh the header
+                # from the cookie jar before authenticated write requests.
+                csrf = next((cookie.value for cookie in jar if cookie.name == "csrftoken"), None)
+                if not csrf:
+                    raise RuntimeError("CSRF cookie missing after successful login.")
+                headers["X-CSRFToken"] = csrf
 
                 for iteration in range(ENTRIES_PER_USER):
                     entry_number = f"{stage_prefix}{username.rsplit('-', 1)[-1]}-{iteration + 1:02d}"
