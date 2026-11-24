@@ -950,3 +950,32 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
 .document-template-preview.compact .document-template-preview-company{font-size:14px}
 .document-template-preview.compact .document-template-preview-table{padding:6px}
 @media(max-width:850px){.document-template-preview-grid{grid-template-columns:1fr}}
+
+
+.sales-print-overlay{position:fixed;inset:0;z-index:1000;background:rgba(12,22,36,.72);overflow:auto;padding:20px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.print-controls{width:min(900px,100%);display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;background:var(--panel-bg,#fff);border-radius:10px}
+.print-controls>div{display:flex;gap:8px}
+.sales-print-sheet{width:min(900px,100%);min-height:900px;background:#fff;color:#172334;padding:42px;border-top:8px solid #1F4E79;box-shadow:0 14px 40px rgba(0,0,0,.2);font-size:14px}
+.sales-print-sheet.font-small{font-size:12px}.sales-print-sheet.font-large{font-size:16px}
+.sales-print-header{display:flex;justify-content:space-between;gap:20px;padding-bottom:22px;border-bottom:1px solid #dce2e9}
+.sales-print-header h1{font-size:24px;margin:0 0 8px}.sales-print-header p{margin:4px 0;color:#536276}
+.sales-print-document-title{display:flex;flex-direction:column;align-items:flex-end;gap:8px}.sales-print-document-title strong{font-size:22px}.sales-print-document-title span{font-size:16px;font-weight:700}
+.sales-print-meta{display:flex;flex-wrap:wrap;gap:28px;padding:20px 0}
+.sales-print-meta div,.sales-print-totals div{display:flex;flex-direction:column;gap:5px}.sales-print-meta span,.sales-print-totals span{color:#66758a;font-size:.9em}
+.sales-print-lines{width:100%;border-collapse:collapse;margin:12px 0 24px}.sales-print-lines th,.sales-print-lines td{padding:12px 9px;border:1px solid #dce2e9;text-align:right}.sales-print-lines th{background:#f1f4f8}.sales-print-lines td small{display:block;color:#718096;margin-top:3px}
+.sales-print-sheet.modern .sales-print-header{background:#f0f5fa;margin:-42px -42px 0;padding:32px 42px;border-bottom:3px solid #1F4E79}
+.sales-print-sheet.modern .sales-print-lines th{background:#e9f1f8}
+.sales-print-sheet.compact{padding:22px;min-height:650px;font-size:12px}.sales-print-sheet.compact .sales-print-header{padding-bottom:12px}.sales-print-sheet.compact .sales-print-lines th,.sales-print-sheet.compact .sales-print-lines td{padding:6px}
+.sales-print-sheet.compact .sales-print-header h1{font-size:18px}
+.sales-print-totals{margin-inline-start:auto;width:min(340px,100%);display:grid;gap:10px}.sales-print-totals .grand{border-top:2px solid #23384f;padding-top:12px;font-size:1.15em}
+.sales-print-notes{margin-top:24px;padding:12px;background:#f6f8fa;border-radius:6px}.sales-print-notes p{white-space:pre-wrap}
+.sales-print-bank{margin-top:16px;color:#526176}.sales-print-sheet footer{margin-top:40px;padding-top:12px;border-top:1px solid #dce2e9;text-align:center;color:#64748b}
+@media print{
+  @page{size:A4;margin:12mm}
+  body *{visibility:hidden!important}
+  .sales-print-overlay,.sales-print-overlay *{visibility:visible!important}
+  .sales-print-overlay{position:absolute!important;inset:0!important;padding:0!important;background:#fff!important;overflow:visible!important}
+  .print-controls{display:none!important}
+  .sales-print-sheet{width:100%!important;min-height:0!important;box-shadow:none!important;padding:0!important;border-top-width:5px!important}
+  .sales-print-sheet.modern .sales-print-header{margin:0!important;padding:18px!important}
+}
