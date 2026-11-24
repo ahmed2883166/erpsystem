@@ -1914,6 +1914,12 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.data["aging"]["0_30"], "200.0000")
         self.assertEqual(response.data["rows"][0]["receipt_number"], "GR-001")
         self.assertEqual(response.data["monthly_summary"][0]["month"], "2026-03")
+        self.assertEqual(
+            response.data["gl_reconciliation"]["operational_open_receipts"], "200.0000"
+        )
+        self.assertEqual(response.data["gl_reconciliation"]["posted_gl_balance"], "200.0000")
+        self.assertEqual(response.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(response.data["gl_reconciliation"]["reconciled"])
 
     def test_grni_aging_report_keeps_receipt_with_draft_supplier_invoice(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
