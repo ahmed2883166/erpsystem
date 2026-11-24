@@ -1,0 +1,72 @@
+import django.core.validators
+import django.db.models.deletion
+from decimal import Decimal
+from django.db import migrations, models
+
+
+def backfill_billed_quantity(apps, schema_editor):
+    PurchaseInvoiceLine = apps.get_model("purchasing", "PurchaseInvoiceLine")
+    database = schema_editor.connection.alias
+    rows = PurchaseInvoiceLine.objects.using(database).select_related("receipt_line").iterator()
+    for row in rows:
+        PurchaseInvoiceLine.objects.using(database).filter(pk=row.pk).update(
+            billed_quantity=row.receipt_line.quantity
+        )
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("purchasing", "0018_purchase_receipt_grni_journal"),
+    ]
+
+    operations = [
+        migrations.AlterField(
+            model_name="purchaseinvoice",
+            name="receipt",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name="invoices",
+                to="purchasing.purchasereceipt",
+            ),
+        ),
+        migrations.AlterField(
+            model_name="purchaseinvoiceline",
+            name="receipt_line",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.PROTECT,
+                related_name="purchase_invoice_lines",
+                to="inventory.stockmovementline",
+            ),
+        ),
+        migrations.AddField(
+            model_name="purchaseinvoiceline",
+            name="billed_quantity",
+            field=models.DecimalField(
+                max_digits=18, decimal_places=4, null=True,
+                validators=[django.core.validators.MinValueValidator(Decimal("0.0001"))],
+            ),
+        ),
+        migrations.RunPython(backfill_billed_quantity, migrations.RunPython.noop),
+        migrations.AlterField(
+            model_name="purchaseinvoiceline",
+            name="billed_quantity",
+            field=models.DecimalField(
+                max_digits=18, decimal_places=4,
+                validators=[django.core.validators.MinValueValidator(Decimal("0.0001"))],
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="purchaseinvoiceline",
+            constraint=models.UniqueConstraint(
+                fields=("invoice", "receipt_line"),
+                name="uq_purchase_invoice_receipt_line",
+            ),
+        ),
+        migrations.AddConstraint(
+            model_name="purchaseinvoiceline",
+            constraint=models.CheckConstraint(
+                condition=models.Q(billed_quantity__gt=0),
+                name="ck_purchase_invoice_line_qty_positive",
+            ),
+        ),
+    ]
