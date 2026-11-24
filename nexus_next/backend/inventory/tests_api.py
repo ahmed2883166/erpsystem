@@ -940,3 +940,51 @@ class InventoryApiTests(APITestCase):
         self.assertFalse(StockMovementJournalLink.objects.filter(movement_id=created.data["id"]).exists())
         self.assertFalse(JournalEntry.objects.filter(company=self.company).exists())
         self.assertEqual(StockMovement.objects.get(pk=created.data["id"]).status, StockMovement.Status.DRAFT)
+
+    def test_fifo_valuation_integrity_detects_balance_layer_value_mismatch(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="FIFO-INTEGRITY-1",
+            name_ar="فحص تقييم FIFO", costing_method=Product.CostingMethod.FIFO,
+        )
+        warehouse = self._warehouse("FIFO-INTEGRITY-WH")
+        receipt = self._movement(
+            "FIFO-INTEGRITY-R", "receipt", destination=warehouse, quantity="4", cost="10",
+        )
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted = self.client.post(
+            f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        url = f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}"
+        matched = self.client.get(url)
+        self.assertEqual(matched.status_code, 200, matched.data)
+        self.assertEqual(matched.data["fifo_mismatch_count"], 0)
+
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        balance.inventory_value += Decimal("1.0000")
+        balance.save(update_fields=("inventory_value",))
+        mismatch = self.client.get(url)
+        self.assertEqual(mismatch.status_code, 200, mismatch.data)
+        self.assertEqual(mismatch.data["fifo_mismatch_count"], 1)
+        self.assertEqual(len(mismatch.data["fifo_mismatches"]), 1)
+        self.assertEqual(mismatch.data["fifo_mismatches"][0]["value_difference"], "1.0000")
+
+    def test_inventory_integrity_report_rejects_an_unassigned_branch_scope(self):
+        restricted_branch = Branch.objects.create(
+            company=self.company, code="B2-INTEGRITY", name_ar="فرع غير مسموح",
+        )
+        limited_user = get_user_model().objects.create_user(
+            username="inventory-integrity-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited_user)
+
+        response = self.client.get(
+            f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}&branch={restricted_branch.pk}",
+        )
+        self.assertEqual(response.status_code, 403, response.data)
+
