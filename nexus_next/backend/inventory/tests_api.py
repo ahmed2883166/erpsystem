@@ -185,6 +185,60 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(report.data["buckets"]["slow"]["quantity"], "5.0000")
         self.assertEqual(report.data["rows"][0]["source_movement_number"], "FIFO-AGE-RCV")
 
+    def test_cost_aging_reconstructs_remaining_quantity_at_historical_date(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="FIFO-HIST-1", name_ar="تاريخ أعمار تاريخي",
+            costing_method=Product.CostingMethod.FIFO,
+        )
+        warehouse = self._warehouse("FIFO-HIST-WH")
+        receipt = self._movement(
+            "FIFO-HIST-R", "receipt", destination=warehouse, quantity="10", cost="10",
+        )
+        StockMovement.objects.filter(pk=receipt.data["id"]).update(movement_date=date(2026, 1, 1))
+        posted_receipt = self.client.post(
+            f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+
+        issue = self._movement("FIFO-HIST-I", "issue", source=warehouse, quantity="4")
+        StockMovement.objects.filter(pk=issue.data["id"]).update(movement_date=date(2026, 3, 1))
+        posted_issue = self.client.post(
+            f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_issue.status_code, 200, posted_issue.data)
+
+        report = self.client.get(
+            f"/api/inventory/balances/cost-aging/?company={self.company.pk}&as_of=2026-02-01",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["totals"]["quantity"], "10.0000")
+        self.assertEqual(report.data["totals"]["value"], "100.0000")
+        self.assertEqual(report.data["rows"][0]["quantity_as_of"], "10.0000")
+
+    def test_cost_aging_uses_source_receipt_for_legacy_rootless_original_layer(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="FIFO-LEGACY-1", name_ar="طبقة قديمة",
+            costing_method=Product.CostingMethod.FIFO,
+        )
+        warehouse = self._warehouse("FIFO-LEGACY-WH")
+        receipt = self._movement(
+            "FIFO-LEGACY-R", "receipt", destination=warehouse, quantity="3", cost="7",
+        )
+        StockMovement.objects.filter(pk=receipt.data["id"]).update(movement_date=date(2026, 1, 5))
+        posted = self.client.post(
+            f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        StockCostLayer.objects.filter(product=self.product, warehouse=warehouse).update(root_source_line=None)
+
+        report = self.client.get(
+            f"/api/inventory/balances/cost-aging/?company={self.company.pk}&as_of=2026-02-01",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["totals"]["layers"], 1)
+        self.assertEqual(report.data["rows"][0]["source_movement_number"], "FIFO-LEGACY-R")
+        self.assertEqual(report.data["rows"][0]["receipt_date"], "2026-01-05")
+
     def test_receipt_posts_and_updates_weighted_average_balance(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="STK-1", name_ar="صنف رصيد")
         warehouse = self._warehouse("ST-01")

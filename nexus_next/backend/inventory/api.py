@@ -1,7 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Case, Count, DateField, DecimalField, ExpressionWrapper, F, Q, Sum, Value, When
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
@@ -653,7 +654,7 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="cost-aging")
     def cost_aging(self, request):
-        """تقرير أعمار طبقات FIFO من تاريخ الاستلام الأصلي مع قيمة التكلفة المتبقية."""
+        """تقرير أعمار طبقات FIFO مع إعادة بناء الكمية المتبقية في تاريخ التقرير."""
         company_id = request.query_params.get("company")
         if not company_id:
             return Response({"detail": "حدد الشركة لعرض تقرير أعمار طبقات التكلفة."}, status=status.HTTP_400_BAD_REQUEST)
@@ -702,17 +703,62 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         if include_unassigned:
             warehouse_scope |= Q(warehouse__branch__isnull=True)
 
+        # A layer can be consumed after the report date. Reconstruct its historical
+        # quantity by adding back those later consumptions; only layers that existed
+        # on the report date are eligible. This prevents a past "as of" report from
+        # showing today's remaining quantity as if it were historical.
+        decimal_quantity = DecimalField(max_digits=20, decimal_places=4)
         layers = StockCostLayer.objects.filter(
             product__company_id=company_id,
             product__costing_method=Product.CostingMethod.FIFO,
-            quantity_remaining__gt=0,
             source_line__movement__status=StockMovement.Status.POSTED,
-            root_source_line__isnull=False,
-            root_source_line__movement__status=StockMovement.Status.POSTED,
-            root_source_line__movement__movement_date__lte=as_of,
-        ).filter(warehouse_scope).select_related(
-            "product", "warehouse", "location", "root_source_line__movement"
+            source_line__movement__movement_date__lte=as_of,
+        ).filter(warehouse_scope).filter(
+            Q(
+                root_source_line__isnull=False,
+                root_source_line__movement__status=StockMovement.Status.POSTED,
+                root_source_line__movement__movement_date__lte=as_of,
+            )
+            | Q(root_source_line__isnull=True, parent_layer__isnull=True)
+        ).annotate(
+            receipt_date=Case(
+                When(
+                    root_source_line__isnull=False,
+                    then=F("root_source_line__movement__movement_date"),
+                ),
+                default=F("source_line__movement__movement_date"),
+                output_field=DateField(),
+            ),
+            consumed_after_as_of=Coalesce(
+                Sum(
+                    "consumptions__quantity",
+                    filter=Q(consumptions__movement_line__movement__movement_date__gt=as_of),
+                ),
+                Value(Decimal("0.0000")),
+                output_field=decimal_quantity,
+            ),
+        ).annotate(
+            quantity_as_of=ExpressionWrapper(
+                F("quantity_remaining") + F("consumed_after_as_of"),
+                output_field=decimal_quantity,
+            )
+        ).filter(quantity_as_of__gt=0).select_related(
+            "product", "warehouse", "location", "source_line__movement",
+            "root_source_line__movement",
         )
+
+        # Old transferred layers without a root reference cannot be aged safely.
+        # Count them separately instead of silently presenting them as traceable.
+        untraceable_legacy_layers = StockCostLayer.objects.filter(
+            product__company_id=company_id,
+            product__costing_method=Product.CostingMethod.FIFO,
+            root_source_line__isnull=True,
+            parent_layer__isnull=False,
+            source_line__movement__status=StockMovement.Status.POSTED,
+            source_line__movement__movement_date__lte=as_of,
+            quantity_remaining__gt=0,
+        ).filter(warehouse_scope).count()
+
         cut_30 = as_of - timedelta(days=30)
         cut_90 = as_of - timedelta(days=90)
         cut_180 = as_of - timedelta(days=180)
@@ -720,8 +766,8 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         def bucket_summary(queryset):
             totals = queryset.aggregate(
                 layers=Count("id"),
-                quantity=Sum("quantity_remaining"),
-                value=Sum(F("quantity_remaining") * F("unit_cost")),
+                quantity=Sum("quantity_as_of"),
+                value=Sum(F("quantity_as_of") * F("unit_cost")),
             )
             return {
                 "layers": totals["layers"] or 0,
@@ -730,27 +776,23 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             }
 
         buckets = {
-            "active": bucket_summary(layers.filter(root_source_line__movement__movement_date__gte=cut_30)),
-            "slow": bucket_summary(layers.filter(
-                root_source_line__movement__movement_date__lt=cut_30,
-                root_source_line__movement__movement_date__gte=cut_90,
-            )),
-            "very_slow": bucket_summary(layers.filter(
-                root_source_line__movement__movement_date__lt=cut_90,
-                root_source_line__movement__movement_date__gte=cut_180,
-            )),
-            "stagnant": bucket_summary(layers.filter(root_source_line__movement__movement_date__lt=cut_180)),
+            "active": bucket_summary(layers.filter(receipt_date__gte=cut_30)),
+            "slow": bucket_summary(layers.filter(receipt_date__lt=cut_30, receipt_date__gte=cut_90)),
+            "very_slow": bucket_summary(layers.filter(receipt_date__lt=cut_90, receipt_date__gte=cut_180)),
+            "stagnant": bucket_summary(layers.filter(receipt_date__lt=cut_180)),
         }
         totals = bucket_summary(layers)
         rows = []
         row_limit = 500
-        for layer in layers.order_by("root_source_line__movement__movement_date", "id")[:row_limit + 1]:
-            receipt_date = layer.root_source_line.movement.movement_date
+        for layer in layers.order_by("receipt_date", "id")[:row_limit + 1]:
+            receipt_line = layer.root_source_line or layer.source_line
+            receipt_date = layer.receipt_date
             age_days = (as_of - receipt_date).days
             expiry_status = "none"
             if layer.expiry_date:
                 days_to_expiry = (layer.expiry_date - as_of).days
                 expiry_status = "expired" if days_to_expiry < 0 else "expiring" if days_to_expiry <= 30 else "valid"
+            quantity_as_of = layer.quantity_as_of
             rows.append({
                 "id": layer.pk,
                 "product": layer.product_id,
@@ -759,12 +801,13 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
                 "warehouse": layer.warehouse_id,
                 "warehouse_name": layer.warehouse.name_ar,
                 "location_name": layer.location.name_ar if layer.location_id else "",
-                "source_movement_number": layer.root_source_line.movement.movement_number,
+                "source_movement_number": receipt_line.movement.movement_number,
                 "receipt_date": receipt_date.isoformat(),
                 "age_days": age_days,
-                "quantity_remaining": str(layer.quantity_remaining),
+                "quantity_remaining": str(quantity_as_of),
+                "quantity_as_of": str(quantity_as_of),
                 "unit_cost": str(layer.unit_cost),
-                "layer_value": str((layer.quantity_remaining * layer.unit_cost).quantize(Decimal("0.0001"))),
+                "layer_value": str((quantity_as_of * layer.unit_cost).quantize(Decimal("0.0001"))),
                 "expiry_date": layer.expiry_date.isoformat() if layer.expiry_date else None,
                 "expiry_status": expiry_status,
             })
@@ -773,14 +816,15 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "branch": selected_branch.pk if selected_branch else None,
             "branch_name": selected_branch.name_ar if selected_branch else "",
             "as_of": as_of.isoformat(),
-            "basis": "تاريخ حركة الاستلام الأصلية المرتبطة بجذر طبقة التكلفة؛ لا يستخدم تاريخ آخر حركة أو updated_at.",
+            "basis": "تاريخ الاستلام الأصلي. الكمية التاريخية يعاد بناؤها بإضافة استهلاكات الطبقة التي حدثت بعد تاريخ التقرير.",
             "costing_method": "FIFO",
             "totals": totals,
             "buckets": buckets,
             "rows": rows[:row_limit],
             "truncated": totals["layers"] > row_limit,
+            "untraceable_legacy_layers_count": untraceable_legacy_layers,
             "scope_branch_ids": branch_ids,
-            "scope_note": "يعرض طبقات FIFO المتبقية فقط داخل الفروع المسموح بها. لا يعرض المتوسط المرجح كطبقات عمرية لأنه لا يمثل أعمار تكلفة مستقلة.",
+            "scope_note": "يعرض طبقات FIFO التي يمكن تتبع مصدرها فقط. الطبقات القديمة المنقولة دون رابط جذر تظهر في عداد منفصل. لا يعرض المتوسط المرجح كطبقات عمرية.",
         })
 
     @action(detail=False, methods=("get",), url_path="reconciliation")
