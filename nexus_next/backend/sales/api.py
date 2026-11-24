@@ -18,9 +18,23 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation
-from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate
+from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
+
+
+def _document_template_snapshot(company, document_type):
+    """التقاط إعدادات القالب الافتراضي لحظة إصدار المستند."""
+    template = SalesDocumentTemplate.objects.filter(
+        company=company, document_type=document_type, is_active=True, is_default=True,
+    ).first()
+    if template is None:
+        return {"template_id": None, "name": "Classic", "style": "classic", "config": {}}
+    return {
+        "template_id": template.pk, "name": template.name,
+        "style": template.style, "config": template.config,
+    }
+
 
 def _sales_warehouse_accessible(user, warehouse):
     """تنفيذ وظيفة _sales_warehouse_accessible ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
@@ -124,6 +138,55 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
 
 
 
+
+class SalesDocumentTemplateViewSet(SalesBaseViewSet):
+    """قوالب طباعة الشركة؛ تعديلها لمدير الشركة فقط."""
+    serializer_class = SalesDocumentTemplateSerializer
+    queryset = SalesDocumentTemplate.objects.select_related("company").all()
+    filterset_fields = ("company", "document_type", "style", "is_default", "is_active")
+    ordering_fields = ("document_type", "name", "created_at")
+
+    def get_queryset(self):
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def _check_template_admin(self, company_id):
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company_id, ("admin",)):
+            raise PermissionDenied("إدارة قوالب الطباعة متاحة لمدير الشركة فقط.")
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        company_id = serializer.validated_data["company"].pk
+        self._check_template_admin(company_id)
+        if serializer.validated_data.get("is_default", False):
+            SalesDocumentTemplate.objects.filter(
+                company_id=company_id,
+                document_type=serializer.validated_data["document_type"],
+                is_default=True,
+            ).update(is_default=False)
+        serializer.save()
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        self._check_template_admin(instance.company_id)
+        document_type = serializer.validated_data.get("document_type", instance.document_type)
+        if serializer.validated_data.get("is_default", instance.is_default):
+            SalesDocumentTemplate.objects.filter(
+                company_id=instance.company_id, document_type=document_type,
+                is_default=True,
+            ).exclude(pk=instance.pk).update(is_default=False)
+        serializer.save()
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        self._check_template_admin(instance.company_id)
+        instance.is_active = False
+        instance.is_default = False
+        instance.save(update_fields=("is_active", "is_default", "updated_at"))
+
+
 class SalesQuotationViewSet(SalesBaseViewSet):
     """إدارة عروض الأسعار وتحويل المقبول منها إلى إذن تسليم مسودة."""
     serializer_class = SalesQuotationSerializer
@@ -167,7 +230,8 @@ class SalesQuotationViewSet(SalesBaseViewSet):
             raise ValidationError("انتهت صلاحية عرض السعر.")
         quotation.status = SalesQuotation.Status.SENT
         quotation.sent_at = timezone.now()
-        quotation.save(update_fields=("status", "sent_at", "updated_at"))
+        quotation.print_template_snapshot = _document_template_snapshot(quotation.company, SalesDocumentTemplate.DocumentType.QUOTATION)
+        quotation.save(update_fields=("status", "sent_at", "print_template_snapshot", "updated_at"))
         return Response(self.get_serializer(quotation).data)
 
     @action(detail=True, methods=("post",))
@@ -340,6 +404,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         invoice.delete()
 
     @action(detail=True, methods=("post",))
+    @transaction.atomic
     def post(self, request, pk=None):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         invoice = self.get_object()
@@ -347,6 +412,8 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         warehouse = invoice.delivery.warehouse
         if not _sales_warehouse_accessible(request.user, warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        invoice.print_template_snapshot = _document_template_snapshot(invoice.company, SalesDocumentTemplate.DocumentType.INVOICE)
+        invoice.save(update_fields=("print_template_snapshot",))
         invoice = post_sales_invoice(invoice.pk, request.user)
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
 
