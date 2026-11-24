@@ -3,11 +3,12 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { formatMoney } from "./formatters";
 import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
-const money = (value: string) => Number(value || 0).toLocaleString("ar-EG", { maximumFractionDigits: 2 });
+const money = (value: string) => formatMoney(value);
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
