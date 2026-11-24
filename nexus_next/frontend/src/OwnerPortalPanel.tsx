@@ -15,6 +15,8 @@ const activities = [
 
 export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogout }: Props) {
   const [currencies, setCurrencies] = useState<Currency[]>([]);
+  const [currencyLoading, setCurrencyLoading] = useState(true);
+  const [currencyError, setCurrencyError] = useState("");
   const [selectedId, setSelectedId] = useState<number | "">("");
   const [members, setMembers] = useState<CompanyMembership[]>([]);
   const [query, setQuery] = useState("");
@@ -50,14 +52,24 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
     setMembers(await api.memberships(companyId));
   };
 
-  useEffect(() => {
-    api.currencies().then(rows => {
-      const active = rows.filter(row => row.is_active);
-      setCurrencies(active);
-      const preferred = active.find(row => row.code === "EGP") || active[0];
-      if (preferred) setCurrencyId(String(preferred.id));
-    }).catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل العملات."));
-  }, []);
+  const loadCurrencies = async () => {
+    setCurrencyLoading(true);
+    setCurrencyError("");
+    try {
+      const rows = (await api.currencies()).filter(row => row.is_active);
+      setCurrencies(rows);
+      const preferredCode = country === "EG" ? "EGP" : "SAR";
+      const preferred = rows.find(row => row.code === preferredCode) || rows[0];
+      setCurrencyId(preferred ? String(preferred.id) : "");
+      if (!rows.length) setCurrencyError("لا توجد عملات مفعّلة في قاعدة البيانات. أعد تحديث البيانات المرجعية قبل إنشاء الشركة.");
+    } catch (reason) {
+      setCurrencies([]);
+      setCurrencyId("");
+      setCurrencyError(reason instanceof Error ? reason.message : "تعذر تحميل العملات المرجعية.");
+    } finally { setCurrencyLoading(false); }
+  };
+
+  useEffect(() => { void loadCurrencies(); }, []);
 
   useEffect(() => {
     if (!selected) return;
@@ -233,19 +245,20 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
           </tbody></table></div>
         </section>
         <section className="work-panel">
-          <div className="work-panel-head"><div><h2>إنشاء شركة جديدة</h2><p>إنشاء سجل الشركة فقط؛ لا يتم إنشاء عضوية لمالك المنصة تلقائيًا.</p></div></div>
+          <div className="work-panel-head"><div><h2>إنشاء شركة وحساب مديرها</h2><p>يتم حفظ الشركة والفرع الرئيسي وحساب مدير الشركة وربط العضوية في عملية واحدة. لا تُنشأ عضوية لمالك المنصة.</p></div></div>
           <form className="journal-form" onSubmit={createCompany}>
             <label>كود الشركة<input required maxLength={30} value={code} onChange={event => setCode(event.target.value)} placeholder="COMP-001" /></label>
             <label>اسم الشركة<input required maxLength={180} value={name} onChange={event => setName(event.target.value)} /></label>
             <label>الدولة<select value={country} onChange={event => {const value=event.target.value as "EG"|"SA";setCountry(value);const preferred=currencies.find(row=>row.code===(value==="EG"?"EGP":"SAR"));if(preferred)setCurrencyId(String(preferred.id));}}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
             <label>النشاط<select value={activity} onChange={event => setActivity(event.target.value as Company["activity"])}>{activities.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
-            <label>العملة الأساسية<select required value={currencyId} onChange={event => setCurrencyId(event.target.value)}><option value="">اختر العملة</option>{currencies.map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
+            <label>العملة الأساسية<select required value={currencyId} onChange={event => setCurrencyId(event.target.value)} disabled={currencyLoading || !currencies.length}><option value="">{currencyLoading ? "جارٍ تحميل العملات…" : "اختر العملة"}</option>{currencies.map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
+            {currencyError && <div className="asset-report-note form-wide" role="alert">{currencyError} <button type="button" className="text-action-button" onClick={() => void loadCurrencies()} disabled={currencyLoading}>إعادة تحميل العملات</button></div>}
             <div className="setup-section-title form-wide"><div><h3>بيانات صاحب الشركة / مدير الشركة</h3><p>سيتم إنشاء حساب مستقل له وربطه بالشركة كمدير لجميع فروعها.</p></div></div>
             <label>اسم المستخدم<input required maxLength={150} autoComplete="off" value={newAdminUsername} onChange={event => setNewAdminUsername(event.target.value)} /></label>
             <label>اسم صاحب الشركة / المدير<input required maxLength={160} value={newAdminName} onChange={event => setNewAdminName(event.target.value)} /></label>
             <label>البريد الإلكتروني<input required type="email" maxLength={254} value={newAdminEmail} onChange={event => setNewAdminEmail(event.target.value)} /></label>
             <label>كلمة المرور<input required type="password" autoComplete="new-password" value={newAdminPassword} onChange={event => setNewAdminPassword(event.target.value)} /></label>
-            <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || !currencies.length || !newAdminUsername.trim() || !newAdminPassword}>{busy?"جارٍ الحفظ…":"حفظ الشركة وإنشاء حساب المدير"}</button></div>
+            <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || currencyLoading || !currencies.length || !currencyId || !newAdminUsername.trim() || !newAdminName.trim() || !newAdminEmail.trim() || !newAdminPassword}>{busy?"جارٍ الحفظ…":"حفظ الشركة وإنشاء حساب المدير"}</button></div>
           </form>
         </section>
         <section className="work-panel">
@@ -284,7 +297,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
             <h3>المديرون والعضويات الحالية</h3>
             <div className="data-table-wrap"><table><thead><tr><th>المستخدم</th><th>الدور</th><th>النطاق</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
               {members.map(member=><tr key={member.id}>
-                <td>{member.username}</td>
+                <td><strong>{member.display_name || member.username}</strong><small className="muted-text"> @{member.username}</small></td>
                 <td><select aria-label={`دور ${member.username}`} value={member.role} disabled={busy} onChange={event => void setMembershipRole(member, event.target.value as CompanyMembership["role"])}>
                   <option value="admin">مدير شركة</option><option value="accountant">محاسب</option><option value="viewer">مشاهد</option>
                 </select></td>
