@@ -87,7 +87,7 @@ class FinancialApprovalRequestSerializer(serializers.ModelSerializer):
         model = FinancialApprovalRequest
         fields = (
             "id", "company", "document_type", "purchase_invoice", "supplier_payment",
-            "treasury_transaction", "document_number", "document_total",
+            "treasury_transaction", "asset_purchase_invoice", "asset_supplier_payment", "document_number", "document_total",
             "requested_by", "requested_by_name", "requested_limit", "requested_amount",
             "requested_snapshot", "status", "decided_by", "decided_by_name",
             "decision_note", "requested_at", "decided_at",
@@ -96,10 +96,14 @@ class FinancialApprovalRequestSerializer(serializers.ModelSerializer):
 
     def get_document_number(self, obj):
         """تجهيز قيمة محسوبة أو بيانات مرتبطة لعرضها بأمان في الواجهة."""
-        document = obj.purchase_invoice or obj.supplier_payment or obj.treasury_transaction
+        document = obj.purchase_invoice or obj.supplier_payment or obj.treasury_transaction or obj.asset_purchase_invoice or obj.asset_supplier_payment
         if obj.document_type == "purchase_invoice":
             return document.invoice_number
         if obj.document_type == "supplier_payment":
+            return document.payment_number
+        if obj.document_type == "asset_purchase_invoice":
+            return document.invoice_number
+        if obj.document_type == "asset_supplier_payment":
             return document.payment_number
         return document.document_number
 
