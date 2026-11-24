@@ -337,7 +337,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             if receipt_line.movement_id != receipt.stock_movement_id:
                 raise serializers.ValidationError({"lines": "سطر الصنف لا يتبع إذن الاستلام المحدد."})
             previous = PurchaseInvoiceLine.objects.filter(
-                receipt_line=receipt_line, invoice__status=PurchaseInvoice.Status.POSTED,
+                receipt_line=receipt_line,
+                invoice__status__in=(PurchaseInvoice.Status.DRAFT, PurchaseInvoice.Status.POSTED),
             ).exclude(invoice=instance).aggregate(quantity=Sum("billed_quantity"))["quantity"] or Decimal("0")
             existing_line = (
                 instance.lines.filter(receipt_line=receipt_line).first()
