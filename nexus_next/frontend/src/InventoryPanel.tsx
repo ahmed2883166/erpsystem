@@ -346,12 +346,21 @@ const submit = async (event: React.FormEvent) => {
           const selectedWarehouseLocations = locations.filter((item) => item.is_active && item.warehouse === selected.warehouse);
           return <section className="activity-panel inventory-report-section">
             <div className="activity-title"><div><h3>تفاصيل الجرد: {selected.count_number}</h3><p>{selected.warehouse_name} · لقطة الرصيد {new Date(selected.created_at).toLocaleString("ar-EG")}</p></div>
-              {selected.status === "draft" && <button type="button" className="primary-button" disabled={busy || pendingLines > 0 || selected.lines.length === 0} onClick={async () => {
-                setBusy(true); setError("");
-                try { await stockApi.postCount(selected.id); await refresh(); }
-                catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر اعتماد الجرد."); }
-                finally { setBusy(false); }
-              }}>ترحيل فروق الجرد ({varianceLines})</button>}
+              {selected.status === "draft" && <div className="row-actions">
+                <button type="button" className="primary-button" disabled={busy || pendingLines > 0 || selected.lines.length === 0} onClick={async () => {
+                  setBusy(true); setError("");
+                  try { await stockApi.postCount(selected.id); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر اعتماد الجرد."); }
+                  finally { setBusy(false); }
+                }}>ترحيل فروق الجرد ({varianceLines})</button>
+                <button type="button" className="subtle-button" disabled={busy} onClick={async () => {
+                  if (!window.confirm("هل تريد إلغاء مستند الجرد؟ لن يتم تعديل أرصدة المخزون.")) return;
+                  setBusy(true); setError("");
+                  try { await stockApi.cancelCount(selected.id); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إلغاء الجرد."); }
+                  finally { setBusy(false); }
+                }}>إلغاء الجرد</button>
+              </div>}
             </div>
             {selected.status === "draft" && <p className="inventory-report-note">أدخل صفرًا إذا لم يوجد الصنف فعليًا. لا يمكن اعتماد الجرد قبل إدخال الكمية لكل بند. أي حركة جديدة بعد لقطة الجرد تتطلب بدء جرد جديد.</p>}
             <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>الموقع</th><th>الصلاحية</th><th>رصيد الدفاتر</th><th>الكمية الفعلية</th><th>الفرق</th><th>تكلفة الزيادة</th><th>الحالة</th><th>تم العد بواسطة</th></tr></thead><tbody>

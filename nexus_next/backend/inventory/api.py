@@ -616,6 +616,18 @@ class InventoryCountViewSet(viewsets.ModelViewSet):
         instance.status = InventoryCount.Status.CANCELLED
         instance.save(update_fields=("status", "updated_at"))
 
+    @action(detail=True, methods=("post",), url_path="cancel")
+    def cancel_count(self, request, pk=None):
+        count = self.get_object()
+        self._check_count_write(count)
+        if count.status != InventoryCount.Status.DRAFT:
+            raise ValidationError("لا يمكن إلغاء جرد مرحّل أو ملغي.")
+        if not has_company_role(request.user, count.company_id, ("admin",)):
+            raise PermissionDenied("إلغاء مستند الجرد متاح لمدير الشركة فقط.")
+        count.status = InventoryCount.Status.CANCELLED
+        count.save(update_fields=("status", "updated_at"))
+        return Response(self.get_serializer(count).data, status=status.HTTP_200_OK)
+
     @action(detail=True, methods=("post",), url_path="post-count")
     def post_count(self, request, pk=None):
         from .counting import post_inventory_count

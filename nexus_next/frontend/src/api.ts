@@ -636,7 +636,7 @@ export const stockApi = {
   // ترحيل فروق الجرد بعد التأكد من عدم تغير المخزون منذ أخذ اللقطة.
   postCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>(`/api/inventory/counts/${id}/post-count/`, { method: "POST" }); },
   // إلغاء مستند جرد مسودة.
-  cancelCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<void>(`/api/inventory/counts/${id}/`, { method: "DELETE" }); },
+  cancelCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>(`/api/inventory/counts/${id}/cancel/`, { method: "POST" }); },
 
   // جلب أرصدة الأصناف حسب المخازن.
   balances: (companyId: number) => request<StockBalance[]>(`/api/inventory/balances/?warehouse__company=${companyId}&ordering=product__code`),
