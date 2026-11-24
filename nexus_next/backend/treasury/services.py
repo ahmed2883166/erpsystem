@@ -48,7 +48,7 @@ def _foreign_position(account):
 
 def record_posted_document_bank_movement(*, company, branch, fiscal_year, account, kind, amount,
                                          transaction_date, document_number, description,
-                                         counter_account, journal_entry, user=None, reference=""):
+                                         counter_account, journal_entry, user=None, reference="", cash_flow_category=None):
     """تسجيل مرآة لحركة بنك مستند مرحّل وربطها بالقيد الأصلي دون إنشاء قيد مكرر."""
     expected_kind = TreasuryAccount.Kind.BANK if kind in (
         TreasuryTransaction.Kind.RECEIPT, TreasuryTransaction.Kind.PAYMENT
@@ -74,6 +74,7 @@ def record_posted_document_bank_movement(*, company, branch, fiscal_year, accoun
         document_number=document_number, transaction_date=transaction_date,
         amount=amount, description=description[:500], reference=reference,
         journal_entry=journal_entry, created_by=user, posted_at=timezone.now(),
+        **({"cash_flow_category": cash_flow_category} if cash_flow_category else {}),
     )
 
 
