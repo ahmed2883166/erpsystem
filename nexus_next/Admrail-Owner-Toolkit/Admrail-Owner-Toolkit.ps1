@@ -38,7 +38,7 @@ function Get-AppPython {
 }
 function Get-OwnerPinPath { Join-Path $ToolkitRoot ".owner-auth.json" }
 function Get-PinHash([string]$Pin, [byte[]]$Salt) {
-    $derive = New-Object Security.Cryptography.Rfc2898DeriveBytes($Pin, $Salt, 220000)
+    $derive = New-Object -TypeName Security.Cryptography.Rfc2898DeriveBytes -ArgumentList $Pin, $Salt, 220000
     try { return [Convert]::ToBase64String($derive.GetBytes(32)) } finally { $derive.Dispose() }
 }
 function Test-OwnerAuthentication {
