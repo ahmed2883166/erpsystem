@@ -54,7 +54,7 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
         <div className="grand"><span>{label("الإجمالي النهائي","Grand total")}</span><strong>{money(total)}</strong></div>
       </section>
       {doc.notes&&<section className="sales-print-notes"><strong>{label("ملاحظات","Notes")}</strong><p>{doc.notes}</p></section>}
-      {config.show_bank_details&&<p className="sales-print-bank">{label("بيانات التحويل البنكي: وفق بيانات الشركة المعتمدة.","Bank details: refer to the company's approved banking information.")}</p>}
+      {config.show_bank_details&&config.bank_details&&<p className="sales-print-bank">{config.bank_details}</p>}
       <footer>{config.footer_text||" "}</footer>
     </article>
   </div>;
