@@ -279,6 +279,13 @@ class SupplierPayment(models.Model):
     def company_id_for_permission(self):
         return self.company_id
 
+    @property
+    def grand_total(self):
+        return sum(
+            (line.quantity * line.unit_price * (Decimal("1") + line.tax_rate / Decimal("100")) for line in self.lines.all()),
+            Decimal("0"),
+        ).quantize(Decimal("0.0001"))
+
     def clean(self):
         super().clean()
         if self.supplier_id and self.supplier.company_id != self.company_id:
