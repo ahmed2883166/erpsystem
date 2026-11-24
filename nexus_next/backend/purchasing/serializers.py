@@ -602,7 +602,8 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         return str(obj.grand_total)
 
     def get_approval_status(self, obj):
-        latest = obj.approval_requests.order_by("-requested_at", "-pk").first()
+        requests = list(obj.approval_requests.all())
+        latest = max(requests, key=lambda item: (item.requested_at, item.pk), default=None)
         return latest.status if latest else None
 
     def get_line_items(self, obj):
