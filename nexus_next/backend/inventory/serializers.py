@@ -290,8 +290,6 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "lines": f"كمية الصنف {product.code} تتجاوز دقة وحدة القياس ({product.unit.decimal_places} منازل عشرية)."
                 })
-            if movement_type == StockMovement.MovementType.ADJUSTMENT and not line.get("adjustment_direction"):
-                raise serializers.ValidationError({"lines": "حدد الزيادة أو العجز لكل صنف في التسوية."})
             if movement_type != StockMovement.MovementType.ADJUSTMENT and line.get("adjustment_direction"):
                 raise serializers.ValidationError({"lines": "اتجاه التسوية لا يستخدم إلا في حركات التسوية."})
         if movement_type == StockMovement.MovementType.ADJUSTMENT:

@@ -457,6 +457,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                     continue
                 events.append({
                     "date": movement.movement_date,
+                    "posted_at": movement.posted_at,
+                    "movement_id": movement.pk,
                     "movement_number": movement.movement_number,
                     "movement_type": movement.movement_type,
                     "direction": direction,
@@ -464,7 +466,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                     "unit_cost": line.unit_cost,
                     "cost_amount": line.cost_amount,
                 })
-        events.sort(key=lambda item: (item["date"], item["movement_number"]))
+        events.sort(key=lambda item: (item["posted_at"], item["movement_id"]))
         opening_quantity, opening_value = Decimal("0"), Decimal("0")
         period_events = []
         for event in events:
@@ -488,6 +490,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
             running_value += incoming_value - outgoing_value
             rows.append({
                 "date": event["date"].isoformat(),
+                "posted_at": event["posted_at"].isoformat() if event["posted_at"] else None,
                 "movement_number": event["movement_number"],
                 "movement_type": event["movement_type"],
                 "direction": event["direction"],

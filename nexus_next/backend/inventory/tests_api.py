@@ -456,6 +456,33 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
 
 
+    def test_stock_card_orders_same_day_events_by_posting_time_not_document_number(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="CARD-ORDER-1", name_ar="ترتيب بطاقة الصنف",
+        )
+        warehouse = self._warehouse("CARD-ORDER-WH")
+        receipt = self._movement(
+            "Z-RECEIPT", "receipt", destination=warehouse, quantity="5", cost="2",
+        )
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        issue = self._movement("A-ISSUE", "issue", source=warehouse, quantity="2")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        card = self.client.get(
+            f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={warehouse.pk}",
+        )
+        self.assertEqual(card.status_code, 200, card.data)
+        self.assertEqual([row["movement_number"] for row in card.data["rows"]], ["Z-RECEIPT", "A-ISSUE"])
+        self.assertTrue(card.data["rows"][0]["posted_at"])
+        self.assertGreaterEqual(Decimal(card.data["rows"][0]["balance_quantity"]), Decimal("0"))
+
     def test_recent_movements_endpoint_returns_only_requested_limit(self):
         warehouse = self._warehouse("RECENT-WH")
         for index in range(3):

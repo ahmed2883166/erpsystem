@@ -598,7 +598,7 @@ export type InventoryStockAging = {
   rows: { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; quantity: string; value: string; last_movement: string | null; age_days: number | null; age_band: "active" | "slow" | "very_slow" | "stagnant" | "unknown" }[];
   truncated: boolean; scope_note: string;
 };
-export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[] };
+export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; posted_at: string | null; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[] };
 export type InventoryCostAging = {
   company: number; branch: number | null; branch_name: string; as_of: string; basis: string; costing_method: "FIFO";
   totals: { layers: number; quantity: string; value: string };
