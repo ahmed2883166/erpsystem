@@ -9,9 +9,9 @@ from django.utils import timezone, dateparse
 from decimal import Decimal, InvalidOperation
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
+from .models import FixedAsset, AssetDepreciation, AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
-from .services import acquire_asset, depreciate_asset, dispose_asset, post_asset_purchase_invoice, post_asset_supplier_payment
+from .services import acquire_asset, depreciate_asset, dispose_asset, record_asset_impairment, post_asset_purchase_invoice, post_asset_supplier_payment
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
 
 
@@ -81,16 +81,58 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             raise ValidationError(detail) from exc
         return response.Response({"asset_id": asset.pk, "depreciation_amount": amount}, status=status.HTTP_201_CREATED)
 
+    @decorators.action(detail=True, methods=("post",), url_path="impair")
+    def impair(self, request, pk=None):
+        """اختبار انخفاض القيمة وترحيل الخسارة وفق IAS 36."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            impairment = record_asset_impairment(
+                asset.pk, request.data.get("impairment_date"),
+                request.data.get("recoverable_amount"),
+                request.data.get("impairment_expense_account"),
+                request.data.get("accumulated_impairment_account"),
+                request.data.get("fiscal_year"), request.user,
+            )
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": impairment.pk, "asset_id": asset.pk,
+            "impairment_date": impairment.impairment_date,
+            "carrying_amount_before": impairment.carrying_amount_before,
+            "recoverable_amount": impairment.recoverable_amount,
+            "impairment_loss": impairment.impairment_loss,
+            "journal_entry": impairment.journal_entry_id,
+            "accounting_model": "cost",
+            "oci_impact": "none",
+        }, status=status.HTTP_201_CREATED)
+
+
     @decorators.action(detail=True, methods=("get",))
     def schedule(self, request, pk=None):
-        """عرض جدول الإهلاك المتوقع للأصل الثابت."""
+        """عرض سجل الإهلاك والانخفاض والقيمة الدفترية الحالية للأصل."""
         asset = self.get_object()
         rows = asset.depreciations.select_related("journal_entry").order_by("period_date")
-        accumulated = sum((row.amount for row in rows), start=0)
+        impairments = asset.impairments.select_related(
+            "journal_entry", "impairment_expense_account", "accumulated_impairment_account"
+        ).order_by("impairment_date")
+        accumulated = sum((row.amount for row in rows if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
+        impairment_total = sum((row.impairment_loss for row in impairments if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
         return response.Response({
             "asset_id": asset.pk, "original_cost": asset.original_cost,
-            "accumulated_depreciation": accumulated, "net_book_value": asset.original_cost - accumulated,
+            "accumulated_depreciation": accumulated,
+            "accumulated_impairment": impairment_total,
+            "net_book_value": asset.original_cost - accumulated - impairment_total,
             "rows": AssetDepreciationSerializer(rows, many=True).data,
+            "impairments": [{
+                "id": row.pk, "impairment_date": row.impairment_date,
+                "carrying_amount_before": row.carrying_amount_before,
+                "recoverable_amount": row.recoverable_amount,
+                "impairment_loss": row.impairment_loss, "journal_entry": row.journal_entry_id,
+            } for row in impairments],
         })
 
 
