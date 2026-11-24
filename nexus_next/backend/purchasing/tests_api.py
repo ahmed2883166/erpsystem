@@ -1880,3 +1880,25 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(approved.status_code, 200, approved.data)
         self.assertEqual(approved.data["document_type"], FinancialApprovalRequest.DocumentType.PURCHASE_ORDER)
         self.assertEqual(PurchaseOrder.objects.get(pk=order.data["id"]).status, PurchaseOrder.Status.CONFIRMED)
+
+
+    def test_purchase_receipt_rejects_unit_cost_above_approved_order_price(self):
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-PRICE-MATCH",
+            "order_date": "2026-03-10", "expected_date": "2026-03-20",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        order_line_id = order.data["line_items"][0]["id"]
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "purchase_order": order.data["id"],
+            "receipt_number": "PRICE-MISMATCH", "receipt_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "101",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 400, receipt.data)
+        self.assertIn("سعر أمر الشراء", str(receipt.data))
