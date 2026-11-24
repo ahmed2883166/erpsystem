@@ -1,5 +1,7 @@
 """نماذج الأصناف والمخازن ومواقع التخزين وحركات المخزون وتقييم التكلفة والربط المحاسبي."""
 
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models

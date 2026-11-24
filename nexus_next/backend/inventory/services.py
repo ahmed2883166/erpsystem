@@ -6,7 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
+from .models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, Warehouse
 
 
 @transaction.atomic
@@ -31,6 +31,15 @@ def post_stock_movement(movement_id, user):
     products_by_id = {product.pk: product for product in locked_products}
     if len(products_by_id) != len(product_ids):
         raise ValidationError("يوجد صنف غير موجود ضمن بنود الحركة.")
+
+    warehouse_ids = sorted({
+        warehouse_id for warehouse_id in (
+            movement.source_warehouse_id, movement.destination_warehouse_id,
+        ) if warehouse_id is not None
+    })
+    # Warehouse locks serialize postings with stock-count snapshots and with
+    # other movements that touch the same warehouse.
+    list(Warehouse.objects.select_for_update().filter(pk__in=warehouse_ids).order_by("pk"))
 
     movement_type = movement.movement_type
     source_required = movement_type in (

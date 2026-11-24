@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 
+from django.db import transaction
 from django.db.models import Case, Count, DateField, DecimalField, ExpressionWrapper, F, Q, Sum, Value, When
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -15,10 +16,11 @@ from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 
-from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
+    InventoryCountSerializer, InventoryCountLineSerializer,
 )
 
 
@@ -489,6 +491,152 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         movement = post_stock_movement(movement.pk, request.user)
         return Response(self.get_serializer(movement).data, status=status.HTTP_200_OK)
 
+
+
+class InventoryCountViewSet(viewsets.ModelViewSet):
+    serializer_class = InventoryCountSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = InventoryCount.objects.select_related(
+        "company", "warehouse", "warehouse__branch", "created_by", "posted_by",
+        "gain_movement", "loss_movement",
+    ).prefetch_related("lines__product__unit", "lines__location")
+    filterset_fields = ("company", "warehouse", "status", "count_date")
+    search_fields = ("count_number", "warehouse__name_ar", "notes")
+    ordering_fields = ("count_date", "count_number", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        queryset = self.queryset.filter(company__in=companies)
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
+            return queryset
+        branches = accessible_branches(self.request.user)
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
+        return queryset.filter(
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
+        )
+
+    def _check_count_write(self, count):
+        if not can_access_company(self.request.user, count.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, count.company_id, ("admin", "accountant")):
+            raise PermissionDenied("إجراءات الجرد متاحة لمدير الشركة والمحاسب فقط.")
+        if not _can_access_warehouse(self.request.user, count.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        warehouse = serializer.validated_data["warehouse"]
+        if warehouse.company_id != company.pk or not warehouse.is_active:
+            raise ValidationError("المخزن غير نشط أو لا يتبع الشركة.")
+        if not can_access_company(self.request.user, company.pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company.pk, ("admin", "accountant")):
+            raise PermissionDenied("بدء الجرد متاح لمدير الشركة والمحاسب فقط.")
+        if not _can_access_warehouse(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        warehouse = Warehouse.objects.select_for_update().get(pk=warehouse.pk)
+        pending = StockMovement.objects.filter(
+            status=StockMovement.Status.DRAFT,
+        ).filter(
+            Q(source_warehouse_id=warehouse.pk) | Q(destination_warehouse_id=warehouse.pk)
+        )
+        if pending.exists():
+            raise ValidationError("يوجد مستند حركة مسودة على المخزن. رحّله أو ألغِه قبل بدء الجرد.")
+        count = serializer.save(created_by=self.request.user)
+        balances = StockBalance.objects.filter(
+            warehouse=warehouse, quantity__gt=0,
+        ).select_related("product", "location").order_by(
+            "product_id", "location_id", "expiry_date", "id",
+        )
+        InventoryCountLine.objects.bulk_create([
+            InventoryCountLine(
+                count=count,
+                product=balance.product,
+                location=balance.location,
+                expiry_date=balance.expiry_date,
+                system_quantity=balance.quantity,
+                system_value=balance.inventory_value,
+                adjustment_unit_cost=balance.average_cost,
+            )
+            for balance in balances
+        ])
+
+    def perform_update(self, serializer):
+        count = serializer.instance
+        self._check_count_write(count)
+        if count.status != InventoryCount.Status.DRAFT:
+            raise PermissionDenied("لا يمكن تعديل جرد مرحّل أو ملغي.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_count_write(instance)
+        if instance.status != InventoryCount.Status.DRAFT:
+            raise PermissionDenied("لا يمكن حذف جرد مرحّل أو ملغي.")
+        if not has_company_role(self.request.user, instance.company_id, ("admin",)):
+            raise PermissionDenied("إلغاء مستند الجرد متاح لمدير الشركة فقط.")
+        instance.status = InventoryCount.Status.CANCELLED
+        instance.save(update_fields=("status", "updated_at"))
+
+    @action(detail=True, methods=("post",), url_path="post-count")
+    def post_count(self, request, pk=None):
+        from .counting import post_inventory_count
+
+        count = self.get_object()
+        self._check_count_write(count)
+        count = post_inventory_count(count.pk, request.user)
+        return Response(self.get_serializer(count).data, status=status.HTTP_200_OK)
+
+
+class InventoryCountLineViewSet(viewsets.ModelViewSet):
+    serializer_class = InventoryCountLineSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = InventoryCountLine.objects.select_related(
+        "count", "count__company", "count__warehouse", "count__warehouse__branch",
+        "product", "product__unit", "location", "counted_by",
+    )
+    filterset_fields = ("count", "product", "count__company", "count__warehouse")
+    search_fields = ("product__code", "product__name_ar", "notes")
+    ordering_fields = ("product__code", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        queryset = self.queryset.filter(count__company__in=companies)
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
+            return queryset
+        branches = accessible_branches(self.request.user)
+        default_company_ids = _default_branch_company_ids(self.request.user, companies)
+        return queryset.filter(
+            Q(count__warehouse__branch__in=branches)
+            | Q(count__warehouse__branch__isnull=True, count__company_id__in=default_company_ids)
+        )
+
+    def _check_line_write(self, count):
+        if not can_access_company(self.request.user, count.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, count.company_id, ("admin", "accountant")):
+            raise PermissionDenied("إدخال الجرد متاح لمدير الشركة والمحاسب فقط.")
+        if not _can_access_warehouse(self.request.user, count.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        if count.status != InventoryCount.Status.DRAFT:
+            raise PermissionDenied("لا يمكن تعديل بنود جرد مرحّل أو ملغي.")
+
+    def perform_create(self, serializer):
+        count = serializer.validated_data["count"]
+        self._check_line_write(count)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        count = serializer.instance.count
+        self._check_line_write(count)
+        serializer.save(counted_by=self.request.user, counted_at=timezone.now())
+
+    def perform_destroy(self, instance):
+        self._check_line_write(instance.count)
+        if not has_company_role(self.request.user, instance.count.company_id, ("admin",)):
+            raise PermissionDenied("حذف بند الجرد متاح لمدير الشركة فقط.")
+        instance.delete()
 
 
 class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):

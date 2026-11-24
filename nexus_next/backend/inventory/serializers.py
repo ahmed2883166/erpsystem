@@ -3,7 +3,7 @@ from decimal import Decimal
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -338,3 +338,98 @@ class StockBalanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockBalance
         fields = ("id", "product", "product_code", "product_name", "warehouse", "warehouse_name", "location", "location_name", "expiry_date", "quantity", "average_cost", "inventory_value", "updated_at")
+
+
+
+class InventoryCountLineSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    unit_name = serializers.CharField(source="product.unit.name_ar", read_only=True)
+    location_name = serializers.CharField(source="location.name_ar", read_only=True, allow_null=True)
+    variance_quantity = serializers.SerializerMethodField()
+    counted_by_name = serializers.CharField(source="counted_by.get_full_name", read_only=True)
+
+    class Meta:
+        model = InventoryCountLine
+        fields = (
+            "id", "count", "product", "product_code", "product_name", "unit_name",
+            "location", "location_name", "expiry_date", "system_quantity", "system_value",
+            "counted_quantity", "variance_quantity", "adjustment_unit_cost", "notes",
+            "counted_by", "counted_by_name", "counted_at", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "system_quantity", "system_value", "counted_by", "counted_by_name",
+            "counted_at", "created_at", "updated_at",
+        )
+
+    def get_variance_quantity(self, obj):
+        variance = obj.variance_quantity
+        return None if variance is None else str(variance)
+
+    def validate(self, attrs):
+        count = attrs.get("count", getattr(self.instance, "count", None))
+        product = attrs.get("product", getattr(self.instance, "product", None))
+        location = attrs.get("location", getattr(self.instance, "location", None))
+        expiry_date = attrs.get("expiry_date", getattr(self.instance, "expiry_date", None))
+        counted_quantity = attrs.get("counted_quantity", getattr(self.instance, "counted_quantity", None))
+        unit_cost = attrs.get("adjustment_unit_cost", getattr(self.instance, "adjustment_unit_cost", 0))
+        if count and count.status != InventoryCount.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل بنود جرد مرحّل أو ملغي.")
+        if self.instance and count and count.pk != self.instance.count_id:
+            raise serializers.ValidationError({"count": "لا يمكن نقل بند الجرد إلى مستند آخر."})
+        if product and count and product.company_id != count.company_id:
+            raise serializers.ValidationError({"product": "الصنف لا يتبع شركة مستند الجرد."})
+        if product and product.product_type != Product.ProductType.GOODS:
+            raise serializers.ValidationError({"product": "لا يمكن جرد خدمة غير مخزنية."})
+        if location and count and location.warehouse_id != count.warehouse_id:
+            raise serializers.ValidationError({"location": "موقع الجرد لا يتبع مخزن المستند."})
+        if product and product.track_expiry and not expiry_date:
+            raise serializers.ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب للصنف المتتبع."})
+        if product and not product.track_expiry and expiry_date:
+            raise serializers.ValidationError({"expiry_date": "الصنف لا يتطلب تتبع الصلاحية."})
+        if product and counted_quantity is not None:
+            quantum = Decimal("1").scaleb(-product.unit.decimal_places)
+            if counted_quantity != counted_quantity.quantize(quantum):
+                raise serializers.ValidationError({"counted_quantity": "الكمية تتجاوز دقة وحدة قياس الصنف."})
+        if counted_quantity is not None and counted_quantity < 0:
+            raise serializers.ValidationError({"counted_quantity": "الكمية الفعلية لا يمكن أن تكون سالبة."})
+        if unit_cost < 0:
+            raise serializers.ValidationError({"adjustment_unit_cost": "تكلفة التسوية لا يمكن أن تكون سالبة."})
+        if self.instance and any(key in attrs for key in ("product", "location", "expiry_date", "count")):
+            raise serializers.ValidationError("بعد إنشاء بند الجرد يمكن تعديل الكمية الفعلية والتكلفة والملاحظات فقط.")
+        return attrs
+
+
+class InventoryCountSerializer(serializers.ModelSerializer):
+    warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.get_full_name", read_only=True)
+    posted_by_name = serializers.CharField(source="posted_by.get_full_name", read_only=True)
+    gain_movement_number = serializers.CharField(source="gain_movement.movement_number", read_only=True, allow_null=True)
+    loss_movement_number = serializers.CharField(source="loss_movement.movement_number", read_only=True, allow_null=True)
+    lines = InventoryCountLineSerializer(many=True, read_only=True)
+    lines_count = serializers.IntegerField(source="lines.count", read_only=True)
+
+    class Meta:
+        model = InventoryCount
+        fields = (
+            "id", "company", "warehouse", "warehouse_name", "count_number", "count_date",
+            "status", "notes", "lines", "lines_count", "created_by", "created_by_name",
+            "posted_by", "posted_by_name", "posted_at", "gain_movement", "gain_movement_number",
+            "loss_movement", "loss_movement_number", "created_at", "updated_at",
+        )
+        read_only_fields = (
+            "status", "created_by", "created_by_name", "posted_by", "posted_by_name",
+            "posted_at", "gain_movement", "gain_movement_number", "loss_movement",
+            "loss_movement_number", "created_at", "updated_at",
+        )
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        warehouse = attrs.get("warehouse", getattr(self.instance, "warehouse", None))
+        if company and warehouse and warehouse.company_id != company.pk:
+            raise serializers.ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+        if self.instance and self.instance.status != InventoryCount.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل مستند جرد غير مسودة.")
+        if self.instance and any(key in attrs for key in ("company", "warehouse", "count_number", "count_date")):
+            raise serializers.ValidationError("بعد بدء الجرد لا يمكن تغيير الشركة أو المخزن أو الرقم أو التاريخ.")
+        return attrs
