@@ -238,7 +238,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
     def movement_report(self, request):
         """إعداد تقرير حركة الأصول والإضافات والاستبعادات."""
-        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations", "impairments")
+        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations__journal_entry", "impairments__journal_entry")
         asset_id = request.query_params.get("asset")
         if asset_id:
             if not asset_id.isdigit():
