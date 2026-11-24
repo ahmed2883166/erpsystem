@@ -913,6 +913,84 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(result.data["total_equity"], Decimal("175.0000"))
         self.assertEqual(result.data["difference"], Decimal("0.0000"))
 
+    def test_prior_unclosed_profit_carries_into_balance_sheet_and_equity(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="PRIOR-PL", name_ar="شركة أرباح سنوات سابقة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        prior_year = FiscalYear.objects.create(
+            company=company, name="2025",
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+        )
+        FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4000", name_ar="الإيرادات",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        expense = ChartOfAccount.objects.create(
+            company=company, code="5000", name_ar="المصروفات",
+            nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        prior_operations = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=prior_year,
+            entry_number="PRIOR-OPS-001", entry_date=date(2025, 12, 20),
+            description="إيرادات ومصروفات سنة سابقة لم تقفل",
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=cash, debit=Decimal("200"),
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=revenue, credit=Decimal("200"),
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=expense, debit=Decimal("50"),
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=cash, credit=Decimal("50"),
+        )
+        post_journal(prior_operations.pk)
+
+        user = User.objects.create_user(username="prior_profit_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        balance = client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={company.pk}&as_of=2026-01-31"
+        )
+        equity = client.get(
+            f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        self.assertEqual(balance.status_code, 200, balance.data)
+        self.assertEqual(equity.status_code, 200, equity.data)
+        self.assertEqual(balance.data["total_assets"], Decimal("150.0000"))
+        self.assertEqual(balance.data["prior_unclosed_profit"], Decimal("150.0000"))
+        self.assertEqual(balance.data["total_equity"], Decimal("150.0000"))
+        self.assertEqual(balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(equity.data["opening_equity"], Decimal("150.0000"))
+        self.assertEqual(equity.data["period_net_profit"], Decimal("0.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("150.0000"))
+        self.assertTrue(any(
+            row["code"] == "PRIOR-UNCLOSED-PROFIT" for row in equity.data["accounts"]
+        ))
+
+
     def test_income_statement_separates_cost_of_sales_from_operating_expenses(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         company = Company.objects.create(
