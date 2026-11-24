@@ -64,6 +64,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [convertingReqId, setConvertingReqId] = useState<number | null>(null);
   const [conversionForm, setConversionForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10) });
   const [invoiceForm, setInvoiceForm] = useState({ receipt: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [invoiceQuantities, setInvoiceQuantities] = useState<Record<number, string>>({});
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
   const [fxInvoice, setFxInvoice] = useState<PurchaseInvoice | null>(null);
   const [fxHistory, setFxHistory] = useState<FxSubledgerRevaluation[]>([]);
@@ -79,7 +80,7 @@ const refresh = async () => {
         purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId), purchasingApi.rfqs(companyId), purchasingApi.quotations(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -90,9 +91,16 @@ const refresh = async () => {
   };
   useEffect(() => { void refresh(); }, [companyId]);
 
+  const billedReceiptLineQuantity = (receiptId: number, receiptLineId: number) => invoices
+    .filter((invoice) => invoice.receipt === receiptId && invoice.status === "posted")
+    .reduce((total, invoice) => total + invoice.invoice_lines
+      .filter((line) => line.receipt_line === receiptLineId)
+      .reduce((lineTotal, line) => lineTotal + Number(line.quantity), 0), 0);
+  const remainingReceiptLineQuantity = (receipt: PurchaseReceipt, line: PurchaseReceipt["line_items"][number]) =>
+    Math.max(Number(line.quantity) - billedReceiptLineQuantity(receipt.id, line.id), 0);
   const paymentableInvoices = useMemo(() => invoices.filter((invoice) => invoice.status === "posted" && Number(invoice.balance_due) > 0), [invoices]);
   const invoiceableReceipts = useMemo(() => receipts.filter((receipt) =>
-    receipt.movement_status === "posted" && !invoices.some((invoice) => invoice.receipt === receipt.id)
+    receipt.movement_status === "posted" && receipt.line_items.some((line) => remainingReceiptLineQuantity(receipt, line) > 0)
   ), [receipts, invoices]);
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
@@ -306,6 +314,15 @@ const saveInvoice = async (event: React.FormEvent) => {
     event.preventDefault(); if (!companyId) return;
     const receipt = receipts.find((row) => row.id === Number(invoiceForm.receipt));
     if (!receipt) { setError("اختر إذن استلام مرحّلًا."); return; }
+    const lines = receipt.line_items.map((line) => {
+      const remaining = remainingReceiptLineQuantity(receipt, line);
+      const billedQuantity = invoiceQuantities[line.id] ?? remaining.toFixed(4);
+      return { line, remaining, billedQuantity };
+    }).filter((item) => Number(item.billedQuantity) > 0);
+    if (!lines.length) { setError("أدخل كمية واحدة على الأقل للفوترة."); return; }
+    if (lines.some((item) => Number(item.billedQuantity) > item.remaining)) {
+      setError("إحدى الكميات المطلوبة أكبر من المتبقي غير المفوتر من إذن الاستلام."); return;
+    }
     setBusy(true); setError("");
     try {
       await purchasingApi.createInvoice({
@@ -314,9 +331,13 @@ const saveInvoice = async (event: React.FormEvent) => {
         transaction_currency: invoiceForm.transaction_currency ? Number(invoiceForm.transaction_currency) : null,
         exchange_rate: invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
         exchange_rate_date: invoiceForm.transaction_currency ? invoiceForm.exchange_rate_date : null,
-        lines: receipt.line_items.map((line) => ({ receipt_line: line.id, ...(invoiceForm.transaction_currency ? { transaction_unit_price: divideDecimalToFixed(line.unit_cost, invoiceForm.exchange_rate, 4) } : { unit_price: line.unit_cost }), tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null })),
+        lines: lines.map(({ line, billedQuantity }) => ({
+          receipt_line: line.id, billed_quantity: billedQuantity,
+          ...(invoiceForm.transaction_currency ? { transaction_unit_price: divideDecimalToFixed(line.unit_cost, invoiceForm.exchange_rate, 4) } : { unit_price: line.unit_cost }),
+          tax_rate: invoiceForm.tax_rate, tax_code: invoiceForm.tax_code ? Number(invoiceForm.tax_code) : null,
+        })),
       });
-      setShowForm(false); setInvoiceForm((old) => ({ ...old, receipt: "", invoice_number: "", notes: "" }));
+      setShowForm(false); setInvoiceForm((old) => ({ ...old, receipt: "", invoice_number: "", notes: "" })); setInvoiceQuantities({});
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء فاتورة المورد."); }
     finally { setBusy(false); }
@@ -597,7 +618,14 @@ const postInvoice = async (id: number) => {
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ إذن الاستلام كمسودة"}</button></div>
     </form>}
     {showForm && tab === "invoices" && <form className="inventory-form" onSubmit={(event) => void saveInvoice(event)}>
-      <label className="inventory-wide">إذن الاستلام المرحّل<select required value={invoiceForm.receipt} onChange={(e) => setInvoiceForm({ ...invoiceForm, receipt: e.target.value })}><option value="">اختر إذن الاستلام</option>{invoiceableReceipts.map((x) => <option key={x.id} value={x.id}>{x.receipt_number} - {x.supplier_name} - {x.receipt_date}</option>)}</select></label>
+      <label className="inventory-wide">إذن الاستلام المرحّل<select required value={invoiceForm.receipt} onChange={(e) => {
+         const receiptId = e.target.value;
+         const selected = receipts.find((row) => row.id === Number(receiptId));
+         setInvoiceForm({ ...invoiceForm, receipt: receiptId });
+         setInvoiceQuantities(selected ? Object.fromEntries(selected.line_items.map((line) => [
+           line.id, remainingReceiptLineQuantity(selected, line).toFixed(4),
+         ])) : {});
+       }}><option value="">اختر إذن الاستلام</option>{invoiceableReceipts.map((x) => <option key={x.id} value={x.id}>{x.receipt_number} - {x.supplier_name} - {x.receipt_date} · متبقي للفوترة</option>)}</select></label>
       <label>رقم فاتورة المورد<input required value={invoiceForm.invoice_number} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></label>
       <label>تاريخ الفاتورة<input required type="date" value={invoiceForm.invoice_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })} /></label>
       <label>عملة فاتورة المورد<select value={invoiceForm.transaction_currency} onChange={e => { const rate=e.target.value ? findRate(e.target.value, invoiceForm.invoice_date) : null; setInvoiceForm({...invoiceForm, transaction_currency:e.target.value, exchange_rate:rate?.rate || "", exchange_rate_date:rate?.rate_date || invoiceForm.invoice_date}); }}><option value="">العملة الأساسية للشركة</option>{currencies.map(currency=><option key={currency.id} value={currency.id}>{currency.code} · {currency.name_ar}</option>)}</select></label>
@@ -606,9 +634,31 @@ const postInvoice = async (id: number) => {
         <label>سعر الصرف مقابل العملة الأساسية<input required type="number" min="0.0000000001" step="0.0000000001" value={invoiceForm.exchange_rate} onChange={e => setInvoiceForm({...invoiceForm, exchange_rate:e.target.value})} /></label>
         <p className="inventory-wide">تُحوّل أسعار الوحدات الأجنبية إلى العملة الأساسية، ويجب أن تطابق قيمة صافي الفاتورة قيمة الاستلام المخزني.</p>
       </>}
-      <label>كود ضريبة المدخلات<select value={invoiceForm.tax_code} onChange={(e) => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceForm({ ...invoiceForm, tax_code:e.target.value, tax_rate:selected?.rate || "0" }); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}%</option>)}</select><small>تظهر هنا الأكواد القابلة للخصم فقط. الضريبة غير القابلة للخصم تحتاج معالجة مستقلة لتكلفة المخزون قبل تفعيلها.</small></label>
+      <label>كود ضريبة المدخلات<select value={invoiceForm.tax_code} onChange={(e) => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceForm({ ...invoiceForm, tax_code:e.target.value, tax_rate:selected?.rate || "0" }); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}% · {code.input_tax_recoverable ? "قابلة للخصم" : "غير قابلة للخصم"}</option>)}</select><small>الضريبة غير القابلة للخصم تُعلّق في حساب التسوية حتى اكتمال فوترة كمية سطر الاستلام، ثم تُرسمل على المخزون والتكلفة المستهلكة.</small></label>
       {!invoiceForm.tax_code && <label>نسبة الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={invoiceForm.tax_rate} onChange={(e) => setInvoiceForm({ ...invoiceForm, tax_rate: e.target.value })} /><small>أدخل النسبة المعتمدة للمعاملة؛ تُحسب الضريبة على قيمة الأصناف غير شاملة الضريبة.</small></label>}
-      {invoiceForm.receipt && <div className="inventory-wide data-table-wrap"><table><thead><tr><th>الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>صافي القيمة</th></tr></thead><tbody>{receipts.find((x) => x.id === Number(invoiceForm.receipt))?.line_items.map((line) => <tr key={line.id}><td>{line.product_code} - {line.product_name}</td><td>{line.quantity}</td><td>{money(line.unit_cost)}</td><td>{money(String(Number(line.quantity) * Number(line.unit_cost)))}</td></tr>)}</tbody></table><p>سيتم احتساب الضريبة على قيمة الأصناف، ويجب أن يطابق صافي الفاتورة قيمة الاستلام حتى لا تتغير قيمة المخزون.</p></div>}
+      {invoiceForm.receipt && (() => {
+        const selectedReceipt = receipts.find((x) => x.id === Number(invoiceForm.receipt));
+        if (!selectedReceipt) return null;
+        return <div className="inventory-wide data-table-wrap">
+          <table><thead><tr><th>الصنف</th><th>المستلم</th><th>مفوتر سابقًا</th><th>متبقي</th><th>الكمية في الفاتورة الحالية</th><th>سعر الوحدة</th><th>الصافي</th></tr></thead>
+            <tbody>{selectedReceipt.line_items.map((line) => {
+              const remaining = remainingReceiptLineQuantity(selectedReceipt, line);
+              if (remaining <= 0) return null;
+              const billed = invoiceQuantities[line.id] ?? remaining.toFixed(4);
+              return <tr key={line.id}>
+                <td>{line.product_code} - {line.product_name}</td>
+                <td>{line.quantity}</td>
+                <td>{(Number(line.quantity) - remaining).toFixed(4)}</td>
+                <td>{remaining.toFixed(4)}</td>
+                <td><input aria-label={`كمية الفوترة ${line.product_code}`} type="number" min="0" max={remaining} step="0.0001" value={billed} onChange={(e) => setInvoiceQuantities((old) => ({ ...old, [line.id]: e.target.value }))} /></td>
+                <td>{money(line.unit_cost)}</td>
+                <td>{money(multiplyDecimalToFixed(billed || "0", line.unit_cost, 4))}</td>
+              </tr>;
+            })}</tbody>
+          </table>
+          <p>يمكن فوترة جزء من الكمية أو كل المتبقي. يجب أن يساوي صافي كل فاتورة تكلفة الكمية المفوترة، ويُخفض GRNI بقيمة الجزء المفوتر فقط.</p>
+        </div>;
+      })()}
       <label className="inventory-wide">ملاحظات<textarea value={invoiceForm.notes} onChange={(e) => setInvoiceForm({ ...invoiceForm, notes: e.target.value })} /></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ فاتورة المورد كمسودة"}</button></div>
     </form>}
@@ -670,7 +720,7 @@ const postInvoice = async (id: number) => {
         </div>
         <div className="data-table-wrap"><table><thead><tr><th>إذن الاستلام</th><th>التاريخ</th><th>عمر الرصيد</th><th>المورد</th><th>المخزن</th><th>الفاتورة</th><th>القيمة</th></tr></thead><tbody>{grniReport.rows.map(row=><tr key={row.receipt_id}><td className="code-cell">{row.receipt_number}</td><td>{row.receipt_date}</td><td>{row.age_days} يوم</td><td>{row.supplier_name}</td><td>{row.warehouse_name}</td><td>{row.invoice_number||"لم تفوتر"}</td><td><strong>{money(row.amount)}</strong></td></tr>)}</tbody></table>{grniReport.rows.length===0&&<div className="table-empty">لا توجد استلامات غير مفوترة في تاريخ التقرير.</div>}</div>
         <div className="data-table-wrap"><h3>ملخص شهري حسب تاريخ الاستلام</h3><table><thead><tr><th>الشهر</th><th>قيمة الاستلامات المفتوحة</th></tr></thead><tbody>{grniReport.monthly_summary.map(row=><tr key={row.month}><td>{row.month}</td><td>{money(row.amount)}</td></tr>)}</tbody></table></div>
-        <p className="inventory-report-note">يعرض التقرير الاستلامات المرحلة التي لم تُرحّل فاتورتها بعد. ترحيل فاتورة المورد المطابقة يصفّر رصيد GRNI لذلك الاستلام.</p>
+        <p className="inventory-report-note">يعرض التقرير الرصيد غير المفوتر المتبقي لكل استلام؛ كل فاتورة جزئية تخفض GRNI بقيمة صافي الكمية المفوترة، ويُصفّر الرصيد عند اكتمال الفوترة.</p>
       </div>}
     </div>}
 
