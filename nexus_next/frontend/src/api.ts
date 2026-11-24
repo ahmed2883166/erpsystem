@@ -633,6 +633,8 @@ export const stockApi = {
   createCountLine: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCountLine>("/api/inventory/count-lines/", { method: "POST", body: JSON.stringify(payload) }); },
   // حفظ الكمية الفعلية وتكلفة الزيادة وملاحظات بند الجرد.
   updateCountLine: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCountLine>(`/api/inventory/count-lines/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
+  // حذف بند إضافي أُدخل أثناء الجرد ولم يكن ضمن لقطة رصيد الدفاتر.
+  removeExtraCountLine: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<{ detail: string }>(`/api/inventory/count-lines/${id}/remove/`, { method: "POST" }); },
   // ترحيل فروق الجرد بعد التأكد من عدم تغير المخزون منذ أخذ اللقطة.
   postCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>(`/api/inventory/counts/${id}/post-count/`, { method: "POST" }); },
   // إلغاء مستند جرد مسودة.

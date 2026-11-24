@@ -697,6 +697,17 @@ class InventoryCountLineViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("حذف بند الجرد متاح لمدير الشركة فقط.")
         instance.delete()
 
+    @action(detail=True, methods=("post",), url_path="remove")
+    @transaction.atomic
+    def remove_extra_line(self, request, pk=None):
+        line = self.get_object()
+        count = InventoryCount.objects.select_for_update().get(pk=line.count_id)
+        self._check_line_write(count)
+        if line.system_quantity > 0:
+            raise ValidationError("لا يمكن حذف بند من لقطة رصيد الدفاتر؛ أدخل الكمية الفعلية صفرًا إذا لم يوجد الصنف.")
+        line.delete()
+        return Response({"detail": "تم حذف بند الجرد الإضافي."}, status=status.HTTP_200_OK)
+
 
 class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = StockBalanceSerializer

@@ -383,7 +383,13 @@ const submit = async (event: React.FormEvent) => {
                   finally { setBusy(false); }
                 }} /> : formatMoney(line.adjustment_unit_cost)}</td>
                 <td>{line.counted_quantity === null ? "لم يُعد" : Number(line.variance_quantity || "0") === 0 ? "مطابق" : Number(line.variance_quantity || "0") > 0 ? "زيادة" : "عجز"}</td>
-                <td>{line.counted_by_name || "—"}</td>
+                <td>{line.counted_by_name || "—"}{selected.status === "draft" && Number(line.system_quantity) === 0 && <button type="button" className="remove-line-button" title="حذف البند الإضافي" disabled={busy} onClick={async () => {
+                  if (!window.confirm("حذف هذا الصنف الإضافي من الجرد؟")) return;
+                  setBusy(true); setError("");
+                  try { await stockApi.removeExtraCountLine(line.id); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حذف بند الجرد."); }
+                  finally { setBusy(false); }
+                }}>×</button>}</td>
               </tr>)}
               {!selected.lines.length && <tr><td colSpan={9}>لا توجد أرصدة عند بدء الجرد. أضف الأصناف التي تم العثور عليها فعليًا من النموذج أدناه.</td></tr>}
             </tbody></table></div>
