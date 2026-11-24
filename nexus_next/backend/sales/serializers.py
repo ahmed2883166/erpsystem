@@ -323,6 +323,10 @@ class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
         company = attrs.get("company", self.instance.company if self.instance else None)
         if self.instance and company.pk != self.instance.company_id:
             raise serializers.ValidationError({"company": "لا يمكن نقل القالب إلى شركة أخرى."})
+        is_default = attrs.get("is_default", self.instance.is_default if self.instance else False)
+        is_active = attrs.get("is_active", self.instance.is_active if self.instance else True)
+        if is_default and not is_active:
+            raise serializers.ValidationError({"is_default": "القالب الافتراضي يجب أن يكون نشطًا."})
         return attrs
 
 
