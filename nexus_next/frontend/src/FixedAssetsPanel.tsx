@@ -4,12 +4,12 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { formatMoney } from "./formatters";
-import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport, type AssetAccountReconciliation, type AssetDepreciationRunResult } from "./api";
+import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport, type AssetAccountReconciliation, type AssetDepreciationRunResult, type Supplier, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
 const emptyForm = {
-  branch: "", code: "", name_ar: "", category: "other", description: "", location: "", custodian: "", serial_number: "", warranty_end_date: "", supplier_name: "", supplier_invoice: "", acquisition_date: today, depreciation_start_date: today,
+  branch: "", code: "", name_ar: "", category: "other", description: "", location: "", custodian: "", serial_number: "", warranty_end_date: "", supplier_name: "", supplier_invoice: "", acquisition_mode: "cash", supplier_id: "", supplier_net_amount: "", supplier_tax_code: "", acquisition_date: today, depreciation_start_date: today,
   original_cost: "", salvage_value: "0", useful_life_months: "60", asset_account: "",
   accumulated_depreciation_account: "", depreciation_expense_account: "", acquisition_counter_account: "",
   disposal_gain_loss_account: "", disposal_loss_account: "", fiscal_year: "",
@@ -22,6 +22,8 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [years, setYears] = useState<FiscalYear[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [periodDate, setPeriodDate] = useState(today.slice(0, 7) + "-28");
   const [disposalDate, setDisposalDate] = useState(today);
@@ -57,9 +59,11 @@ const refresh = async () => {
   };
   useEffect(() => {
     if (!companyId) return;
-    Promise.all([api.accounts(companyId), api.branches(companyId), api.fiscalYears(companyId), treasuryApi.accounts(companyId)]).then(([a,b,y,t]) => {
+    Promise.all([api.accounts(companyId), api.branches(companyId), api.fiscalYears(companyId), treasuryApi.accounts(companyId), api.suppliers(companyId), api.taxCodes(companyId)]).then(([a,b,y,t,s,tx]) => {
       setAccounts(a.filter(x => x.is_active && !x.is_group && x.allow_posting));
       setTreasuryAccounts(t.filter(x => x.is_active));
+      setSuppliers(s.filter(x => x.is_active));
+      setTaxCodes(tx.filter(x => x.is_active));
       setBranches(b.filter(x => x.is_active && x.company === companyId));
       setYears(y.filter(x => x.company === companyId && x.status === "open"));
       setForm(old => ({...old, branch: String(b.find(x => x.is_active && x.company === companyId)?.id || ""), fiscal_year: String(y.find(x => x.company === companyId && x.status === "open")?.id || "")}));
@@ -78,22 +82,42 @@ const accountSelect = (label: string, key: keyof typeof emptyForm, rows: Account
   // حفظ بطاقة الأصل وتفاصيل التكلفة والعمر والحسابات المحاسبية.
 const create = async (event: FormEvent) => {
     event.preventDefault(); if (!companyId) return;
-    setSaving(true); setError("");
+    if (form.acquisition_mode === "supplier_invoice" && (!form.supplier_id || !form.supplier_invoice.trim() || !(Number(form.supplier_net_amount) > 0))) {
+      setError("اختر المورد وأدخل رقم الفاتورة وصافي قيمتها قبل الضريبة."); return;
+    }
+    setSaving(true); setError(""); setNotice("");
     try {
-      await fixedAssetsApi.create({
+      const asset = await fixedAssetsApi.create({
         company: companyId, branch: Number(form.branch), code: form.code, name_ar: form.name_ar, category: form.category, description: form.description, location: form.location, custodian: form.custodian, serial_number: form.serial_number, warranty_end_date: form.warranty_end_date || null, supplier_name: form.supplier_name, supplier_invoice: form.supplier_invoice,
         acquisition_date: form.acquisition_date, depreciation_start_date: form.depreciation_start_date,
-        original_cost: form.original_cost, salvage_value: form.salvage_value, useful_life_months: Number(form.useful_life_months),
+        original_cost: form.acquisition_mode === "supplier_invoice" ? form.supplier_net_amount : form.original_cost,
+        salvage_value: form.salvage_value, useful_life_months: Number(form.useful_life_months),
         depreciation_method: "straight_line", asset_account: Number(form.asset_account),
         accumulated_depreciation_account: Number(form.accumulated_depreciation_account),
         depreciation_expense_account: Number(form.depreciation_expense_account),
         acquisition_counter_account: Number(form.acquisition_counter_account),
         disposal_gain_loss_account: Number(form.disposal_gain_loss_account), disposal_loss_account: Number(form.disposal_loss_account), fiscal_year: Number(form.fiscal_year),
+        acquisition_mode: form.acquisition_mode,
       });
+      if (form.acquisition_mode === "supplier_invoice") {
+        const invoice = await fixedAssetsApi.purchaseInvoice(asset.id, {
+          supplier: Number(form.supplier_id), invoice_number: form.supplier_invoice.trim(),
+          invoice_date: form.acquisition_date, net_amount: form.supplier_net_amount,
+          tax_code: form.supplier_tax_code ? Number(form.supplier_tax_code) : null,
+          fiscal_year: Number(form.fiscal_year),
+        });
+        setNotice(invoice.approval_required
+          ? `تم حفظ فاتورة المورد كمسودة وتحتاج اعتماد المدير. رقم طلب الاعتماد: ${invoice.approval_request}.`
+          : `تم ترحيل فاتورة المورد وربطها بالأصل. رقم القيد: ${invoice.journal_entry}.`);
+      } else {
+        setNotice("تم تسجيل الأصل وإثبات الاقتناء.");
+      }
       setForm({...emptyForm, branch: form.branch, fiscal_year: form.fiscal_year});
       await refresh();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تسجيل الأصل."); }
-    finally { setSaving(false); }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تسجيل الأصل أو فاتورة المورد.");
+      await refresh();
+    } finally { setSaving(false); }
   };
   // طلب احتساب وترحيل إهلاك الأصل المحدد وفق الجدول المعتمد.
 const depreciate = async (asset: FixedAsset) => {
