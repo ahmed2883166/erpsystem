@@ -1,3 +1,4 @@
+import decimal
 import django.core.validators
 import django.db.models.deletion
 from django.conf import settings
@@ -38,8 +39,8 @@ class Migration(migrations.Migration):
             name="PurchaseRequisitionLine",
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
-                ("requested_quantity", models.DecimalField(decimal_places=4, max_digits=18, validators=[django.core.validators.MinValueValidator(0.0001)])),
-                ("estimated_unit_price", models.DecimalField(blank=True, decimal_places=4, max_digits=18, null=True, validators=[django.core.validators.MinValueValidator(0)])),
+                ("requested_quantity", models.DecimalField(decimal_places=4, max_digits=18, validators=[django.core.validators.MinValueValidator(decimal.Decimal('0.0001'))])),
+                ("estimated_unit_price", models.DecimalField(blank=True, decimal_places=4, max_digits=18, null=True, validators=[django.core.validators.MinValueValidator(decimal.Decimal('0'))])),
                 ("notes", models.CharField(blank=True, max_length=250)),
                 ("product", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="purchase_requisition_lines", to="inventory.product")),
                 ("requisition", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="lines", to="purchasing.purchaserequisition")),
