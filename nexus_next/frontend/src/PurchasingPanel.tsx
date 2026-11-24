@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type SupplierQuotation } from "./api";
 
 type Props = { companyId: number | null };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -13,7 +13,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitte
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"requisitions" | "orders" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"requisitions" | "rfqs" | "quotations" | "orders" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -23,6 +23,14 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>([]);
+  const [rfqs, setRfqs] = useState<PurchaseRFQ[]>([]);
+  const [quotations, setQuotations] = useState<SupplierQuotation[]>([]);
+  const [rfqForm, setRfqForm] = useState({rfq_number:"",issue_date:new Date().toISOString().slice(0,10),closing_date:new Date(Date.now()+7*86400000).toISOString().slice(0,10),terms:""});
+  const [rfqSuppliers, setRfqSuppliers] = useState<string[]>([]);
+  const [rfqLines, setRfqLines] = useState<{product:string;quantity:string;notes:string}[]>([{product:"",quantity:"1",notes:""}]);
+  const [quotationRfqId, setQuotationRfqId] = useState("");
+  const [quotationForm, setQuotationForm] = useState({supplier:"",quotation_number:"",quotation_date:new Date().toISOString().slice(0,10),valid_until:new Date(Date.now()+30*86400000).toISOString().slice(0,10),delivery_days:"0",payment_terms:"",notes:""});
+  const [quotationPrices, setQuotationPrices] = useState<Record<number,{unit_price:string;discount_percent:string;tax_rate:string}>>({});
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -60,12 +68,12 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, r, i, pay, ret, ref, t, ta, cur, fx, rq] = await Promise.all([
+      const [s, p, w, o, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
-        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId),
+        purchasingApi.orders(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId), purchasingApi.rfqs(companyId), purchasingApi.quotations(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active && x.product_type === "goods"));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setRequisitions(rq); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.input_tax_recoverable && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -114,6 +122,36 @@ const loadAging = async () => {
     finally { setBusy(false); }
   };
 
+
+
+  const saveRFQ = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !rfqForm.rfq_number.trim() || !rfqSuppliers.length || !rfqLines.length || rfqLines.some(x=>!x.product || Number(x.quantity)<=0)) { setError("أدخل رقم الطلب وموردًا واحدًا على الأقل وبنودًا صحيحة."); return; }
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createRFQ({company:companyId,rfq_number:rfqForm.rfq_number.trim(),issue_date:rfqForm.issue_date,closing_date:rfqForm.closing_date,terms:rfqForm.terms,invited_suppliers:rfqSuppliers.map(Number),lines:rfqLines.map(x=>({product:Number(x.product),quantity:x.quantity,notes:x.notes}))});
+      setShowForm(false); setRfqForm(x=>({...x,rfq_number:"",terms:""})); setRfqSuppliers([]); await refresh();
+    } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إنشاء طلب العروض."); } finally { setBusy(false); }
+  };
+  const openRFQ = async (id:number) => { setBusy(true);setError("");try{await purchasingApi.openRFQ(id);await refresh();}catch(e){setError(e instanceof Error?e.message:"تعذر فتح الطلب.");}finally{setBusy(false);} };
+  const closeRFQ = async (id:number) => { setBusy(true);setError("");try{await purchasingApi.closeRFQ(id);await refresh();}catch(e){setError(e instanceof Error?e.message:"تعذر إغلاق الطلب.");}finally{setBusy(false);} };
+  const selectedRFQ = rfqs.find(x=>x.id===Number(quotationRfqId)) || null;
+  const saveQuotation = async (event:FormEvent) => {
+    event.preventDefault();
+    if(!selectedRFQ || !quotationForm.supplier || !quotationForm.quotation_number.trim() || selectedRFQ.line_items.some(x=>!quotationPrices[x.id]?.unit_price)){setError("حدد طلبًا وموردًا وأدخل سعر كل بند.");return;}
+    setBusy(true);setError("");
+    try {
+      await purchasingApi.createQuotation({rfq:selectedRFQ.id,supplier:Number(quotationForm.supplier),quotation_number:quotationForm.quotation_number.trim(),quotation_date:quotationForm.quotation_date,valid_until:quotationForm.valid_until,delivery_days:Number(quotationForm.delivery_days),payment_terms:quotationForm.payment_terms,notes:quotationForm.notes,lines:selectedRFQ.line_items.map(x=>({rfq_line:x.id,unit_price:quotationPrices[x.id].unit_price,discount_percent:quotationPrices[x.id].discount_percent||"0",tax_rate:quotationPrices[x.id].tax_rate||"0"}))});
+      setShowForm(false);setQuotationForm(x=>({...x,quotation_number:"",notes:""}));await refresh();
+    }catch(e){setError(e instanceof Error?e.message:"تعذر تسجيل العرض.");}finally{setBusy(false);}
+  };
+  const awardQuotation = async (rfqId:number, quotationId:number) => {
+    const reason=window.prompt("اكتب مبرر الترسية مع مراعاة السعر والتوريد وشروط السداد:");
+    if(!reason?.trim())return;
+    setBusy(true);setError("");
+    try{await purchasingApi.awardRFQ(rfqId,quotationId,reason.trim());await refresh();}
+    catch(e){setError(e instanceof Error?e.message:"تعذرت الترسية.");}finally{setBusy(false);}
+  };
 
   const saveRequisition = async (event: FormEvent) => {
     event.preventDefault();
@@ -374,10 +412,41 @@ const postInvoice = async (id: number) => {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || (tab === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "rfqs" ? "＋ طلب عروض أسعار" : tab === "quotations" ? "＋ تسجيل عرض مورد" : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
+    <div className="inventory-tabs"><button className={tab === "rfqs" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("rfqs");setShowForm(false);setSearch("");}}>طلبات عروض الأسعار <b>{rfqs.length}</b></button><button className={tab === "quotations" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("quotations");setShowForm(false);setSearch("");}}>مقارنة عروض الموردين <b>{quotations.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>أعمار المديونية</button></div>
     {error && <div className="error-banner">{error}</div>}
+
+    {showForm && tab === "rfqs" && <form className="inventory-form" onSubmit={e=>void saveRFQ(e)}>
+      <label>رقم طلب العروض<input required value={rfqForm.rfq_number} onChange={e=>setRfqForm({...rfqForm,rfq_number:e.target.value})}/></label>
+      <label>تاريخ الإصدار<input required type="date" value={rfqForm.issue_date} onChange={e=>setRfqForm({...rfqForm,issue_date:e.target.value})}/></label>
+      <label>آخر موعد للعروض<input required type="date" min={rfqForm.issue_date} value={rfqForm.closing_date} onChange={e=>setRfqForm({...rfqForm,closing_date:e.target.value})}/></label>
+      <label className="inventory-wide">الشروط والمواصفات<textarea value={rfqForm.terms} onChange={e=>setRfqForm({...rfqForm,terms:e.target.value})}/></label>
+      <div className="inventory-wide"><h3>الموردون المدعوون</h3><div className="inventory-form-row">{suppliers.map(x=><label key={x.id}><input type="checkbox" checked={rfqSuppliers.includes(String(x.id))} onChange={e=>setRfqSuppliers(old=>e.target.checked?[...old,String(x.id)]:old.filter(v=>v!==String(x.id)))}/>{x.code} - {x.name_ar}</label>)}</div></div>
+      <div className="inventory-wide"><div className="work-panel-head"><h3>بنود طلب العروض</h3><button className="subtle-button" type="button" onClick={()=>setRfqLines(old=>[...old,{product:"",quantity:"1",notes:""}])}>＋ إضافة بند</button></div></div>
+      {rfqLines.map((line,index)=><div className="inventory-form-row inventory-wide" key={index}>
+        <label>الصنف<select required value={line.product} onChange={e=>setRfqLines(old=>old.map((x,i)=>i===index?{...x,product:e.target.value}:x))}><option value="">اختر الصنف</option>{products.map(x=><option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+        <label>الكمية<input required type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={e=>setRfqLines(old=>old.map((x,i)=>i===index?{...x,quantity:e.target.value}:x))}/></label>
+        <label>مواصفة البند<input value={line.notes} onChange={e=>setRfqLines(old=>old.map((x,i)=>i===index?{...x,notes:e.target.value}:x))}/></label>
+        <button className="subtle-button" type="button" disabled={rfqLines.length===1} onClick={()=>setRfqLines(old=>old.filter((_,i)=>i!==index))}>حذف</button>
+      </div>)}
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>حفظ طلب العروض كمسودة</button><button className="subtle-button" type="button" onClick={()=>setShowForm(false)}>إلغاء</button></div>
+    </form>}
+    {showForm && tab === "quotations" && <form className="inventory-form" onSubmit={e=>void saveQuotation(e)}>
+      <label>طلب العروض<select required value={quotationRfqId} onChange={e=>{setQuotationRfqId(e.target.value);setQuotationForm(x=>({...x,supplier:""}));setQuotationPrices({});}}><option value="">اختر طلبًا مفتوحًا</option>{rfqs.filter(x=>x.status==="open").map(x=><option key={x.id} value={x.id}>{x.rfq_number} · {x.closing_date}</option>)}</select></label>
+      <label>المورد المدعو<select required value={quotationForm.supplier} onChange={e=>setQuotationForm({...quotationForm,supplier:e.target.value})}><option value="">اختر المورد</option>{selectedRFQ?.supplier_list.filter(x=>x.status==="invited").map(x=><option key={x.id} value={x.id}>{x.code} - {x.name}</option>)}</select></label>
+      <label>رقم عرض المورد<input required value={quotationForm.quotation_number} onChange={e=>setQuotationForm({...quotationForm,quotation_number:e.target.value})}/></label>
+      <label>تاريخ العرض<input required type="date" value={quotationForm.quotation_date} onChange={e=>setQuotationForm({...quotationForm,quotation_date:e.target.value})}/></label>
+      <label>صالح حتى<input required type="date" min={quotationForm.quotation_date} value={quotationForm.valid_until} onChange={e=>setQuotationForm({...quotationForm,valid_until:e.target.value})}/></label>
+      <label>مدة التوريد (يوم)<input type="number" min="0" value={quotationForm.delivery_days} onChange={e=>setQuotationForm({...quotationForm,delivery_days:e.target.value})}/></label>
+      <label>شروط السداد<input value={quotationForm.payment_terms} onChange={e=>setQuotationForm({...quotationForm,payment_terms:e.target.value})}/></label>
+      <div className="inventory-wide"><h3>تسعير البنود</h3>{selectedRFQ?.line_items.map(line=><div className="inventory-form-row" key={line.id}><div><strong>{line.product_code} - {line.product_name}</strong><small>الكمية: {line.quantity}</small></div><label>سعر الوحدة<input required type="number" min="0" step="0.0001" value={quotationPrices[line.id]?.unit_price||""} onChange={e=>setQuotationPrices(old=>({...old,[line.id]:{unit_price:e.target.value,discount_percent:old[line.id]?.discount_percent||"0",tax_rate:old[line.id]?.tax_rate||"0"}}))}/></label><label>خصم %<input type="number" min="0" max="100" step="0.0001" value={quotationPrices[line.id]?.discount_percent||"0"} onChange={e=>setQuotationPrices(old=>({...old,[line.id]:{unit_price:old[line.id]?.unit_price||"",discount_percent:e.target.value,tax_rate:old[line.id]?.tax_rate||"0"}}))}/></label><label>ضريبة %<input type="number" min="0" max="100" step="0.0001" value={quotationPrices[line.id]?.tax_rate||"0"} onChange={e=>setQuotationPrices(old=>({...old,[line.id]:{unit_price:old[line.id]?.unit_price||"",discount_percent:old[line.id]?.discount_percent||"0",tax_rate:e.target.value}}))}/></label></div>)}</div>
+      <label className="inventory-wide">ملاحظات<textarea value={quotationForm.notes} onChange={e=>setQuotationForm({...quotationForm,notes:e.target.value})}/></label>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!selectedRFQ}>حفظ عرض المورد</button><button className="subtle-button" type="button" onClick={()=>setShowForm(false)}>إلغاء</button></div>
+    </form>}
+    {tab === "rfqs" && <div className="data-table-wrap"><table><thead><tr><th>رقم الطلب</th><th>الإصدار</th><th>الإغلاق</th><th>البنود</th><th>الموردون</th><th>العروض</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{rfqs.filter(x=>[x.rfq_number,...x.supplier_list.map(v=>v.name)].join(" ").toLowerCase().includes(search.toLowerCase())).map(x=><tr key={x.id}><td className="code-cell">{x.rfq_number}</td><td>{x.issue_date}</td><td>{x.closing_date}</td><td>{x.line_items.length}</td><td>{x.supplier_list.length}</td><td>{quotations.filter(q=>q.rfq===x.id).length}</td><td><span className={statusPill(x.status)}>{x.status==="draft"?"مسودة":x.status==="open"?"مفتوح":x.status==="closed"?"مغلق":x.status==="awarded"?"تمت الترسية":"ملغي"}</span></td><td>{x.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void openRFQ(x.id)}>فتح استقبال العروض</button>:x.status==="open"?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void closeRFQ(x.id)}>إغلاق الطلب</button>:x.status==="awarded"?"تمت الترسية":"—"}</td></tr>)}</tbody></table>{rfqs.length===0&&<div className="table-empty">لا توجد طلبات عروض أسعار.</div>}</div>}
+    {tab === "quotations" && <div className="data-table-wrap"><div className="customer-toolbar"><select value={quotationRfqId} onChange={e=>setQuotationRfqId(e.target.value)}><option value="">كل طلبات العروض</option>{rfqs.map(x=><option key={x.id} value={x.id}>{x.rfq_number}</option>)}</select></div><table><thead><tr><th>طلب العروض</th><th>المورد</th><th>رقم العرض</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>التوريد</th><th>السداد</th><th>الصلاحية</th><th>الترسية</th></tr></thead><tbody>{quotations.filter(q=>(!quotationRfqId||q.rfq===Number(quotationRfqId))&&[q.quotation_number,q.supplier_name].join(" ").toLowerCase().includes(search.toLowerCase())).map(q=>{const parent=rfqs.find(x=>x.id===q.rfq);return <tr key={q.id}><td>{parent?.rfq_number||q.rfq}</td><td>{q.supplier_name}</td><td className="code-cell">{q.quotation_number}</td><td>{money(q.total_before_tax)}</td><td>{money(q.tax_total)}</td><td><strong>{money(q.grand_total)}</strong></td><td>{q.delivery_days} يوم</td><td>{q.payment_terms||"—"}</td><td>{q.valid_until}</td><td>{parent?.status==="awarded"?(parent.awarded_quotation===q.id?"العرض الفائز":"—"):(parent?.status==="open"||parent?.status==="closed")?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void awardQuotation(q.rfq,q.id)}>ترسية العرض</button>:"—"}</td></tr>})}</tbody></table>{quotations.length===0&&<div className="table-empty">لم تسجل عروض موردين بعد.</div>}</div>}
+
     {convertingReqId !== null && tab === "requisitions" && <form className="inventory-form" onSubmit={(event) => void convertRequisition(event)}>
       <div className="inventory-wide"><h3>تحويل طلب الاحتياج إلى أمر شراء</h3><p>اختيار المورد والمخزن يتم بعد اعتماد الاحتياج.</p></div>
       <label>المورد<select required value={conversionForm.supplier} onChange={e => setConversionForm({ ...conversionForm, supplier: e.target.value })}><option value="">اختر المورد</option>{suppliers.map(x => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
