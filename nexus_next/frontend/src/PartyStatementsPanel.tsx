@@ -3,6 +3,7 @@
  * تعرض الرصيد الافتتاحي والحركات المدينة والدائنة والرصيد المتحرك من واجهات التقارير الحالية.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { formatMoney } from "./formatters";
 import {
   api, salesApi, purchasingApi,
   type Customer, type Supplier, type CustomerStatement, type SupplierStatement,
