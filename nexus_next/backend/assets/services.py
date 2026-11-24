@@ -7,10 +7,10 @@ from django.db import transaction
 from django.utils import timezone, dateparse
 from django.db.models import Sum
 
-from accounting.models import JournalEntry, JournalLine
-from accounting.services import post_journal
+from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.services import get_account_for_role, post_journal
 from companies.models import FiscalYear
-from .models import FixedAsset, AssetDepreciation
+from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
 
 
 MONEY = Decimal("0.0001")
@@ -252,3 +252,161 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         "asset_id": asset.pk, "disposal_journal": entry.pk, "treasury_transaction": treasury_doc.pk if treasury_doc else None, "accumulated_depreciation": accumulated,
         "net_book_value": net_book_value, "proceeds": proceeds, "gain": gain, "loss": loss,
     }
+
+
+@transaction.atomic
+def post_asset_purchase_invoice(invoice_id, user=None):
+    """ترحيل فاتورة شراء أصل مباشر: تكلفة الأصل والضريبة القابلة للاسترداد مقابل حساب الموردين."""
+    invoice = AssetPurchaseInvoice.objects.select_for_update().select_related(
+        "company", "branch", "asset", "supplier", "fiscal_year", "tax_code",
+    ).get(pk=invoice_id)
+    if invoice.status != AssetPurchaseInvoice.Status.DRAFT:
+        raise ValidationError("فاتورة شراء الأصل مرحلة بالفعل.")
+    if invoice.fiscal_year.status != FiscalYear.Status.OPEN or not (
+        invoice.fiscal_year.start_date <= invoice.invoice_date <= invoice.fiscal_year.end_date
+    ):
+        raise ValidationError("تاريخ الفاتورة يجب أن يقع داخل سنة مالية مفتوحة.")
+    if not invoice.supplier.is_active:
+        raise ValidationError("لا يمكن ترحيل فاتورة مورد موقوف.")
+    asset = FixedAsset.objects.select_for_update(of=("self",)).get(pk=invoice.asset_id)
+    if asset.acquisition_journal_id or asset.status != FixedAsset.Status.ACTIVE:
+        raise ValidationError("الأصل مثبت محاسبيًا أو مستبعد بالفعل.")
+    if asset.company_id != invoice.company_id or asset.branch_id != invoice.branch_id:
+        raise ValidationError("بيانات الأصل لا تطابق فاتورة المورد.")
+    expected_cost = invoice.net_amount + invoice.nonrecoverable_tax_amount
+    if asset.salvage_value > expected_cost:
+        raise ValidationError("القيمة التخريدية تتجاوز تكلفة الأصل بعد معالجة الضريبة.")
+    if invoice.tax_code_id:
+        code = invoice.tax_code
+        if (
+            not code.is_active or code.company_id != invoice.company_id
+            or code.country != invoice.company.country
+            or code.category == "reverse_charge"
+            or code.effective_from > invoice.invoice_date
+            or (code.effective_to and code.effective_to < invoice.invoice_date)
+        ):
+            raise ValidationError("كود الضريبة غير صالح لهذه الشركة أو تاريخ الفاتورة.")
+        expected_recoverable = invoice.tax_amount if code.input_tax_recoverable else Decimal("0")
+        expected_nonrecoverable = invoice.tax_amount - expected_recoverable
+        if (
+            invoice.recoverable_tax_amount != expected_recoverable
+            or invoice.nonrecoverable_tax_amount != expected_nonrecoverable
+        ):
+            raise ValidationError("توزيع الضريبة لا يطابق قابلية الاسترداد في كود الضريبة.")
+    elif invoice.tax_amount or invoice.recoverable_tax_amount or invoice.nonrecoverable_tax_amount:
+        raise ValidationError("لا يمكن تسجيل ضريبة دون كود ضريبي معتمد.")
+
+    payable = get_account_for_role(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    vat_input = (
+        get_account_for_role(invoice.company, AccountRole.Role.VAT_INPUT)
+        if invoice.recoverable_tax_amount > 0 else None
+    )
+    accounts = [asset.asset_account, payable] + ([vat_input] if vat_input else [])
+    if len({account.pk for account in accounts}) != len(accounts):
+        raise ValidationError("يجب فصل حساب الأصل والموردين وضريبة المدخلات.")
+    if payable.nature != "liability" or not payable.is_active or payable.is_group or not payable.allow_posting:
+        raise ValidationError("حساب الموردين المرتبط غير صالح.")
+    if vat_input and (vat_input.nature != "asset" or not vat_input.is_active or vat_input.is_group or not vat_input.allow_posting):
+        raise ValidationError("حساب ضريبة المدخلات المرتبط غير صالح.")
+
+    entry = JournalEntry.objects.create(
+        company=invoice.company, branch=invoice.branch, fiscal_year=invoice.fiscal_year,
+        entry_number=f"FA-INV-{invoice.pk}", entry_date=invoice.invoice_date,
+        description=f"فاتورة شراء أصل من {invoice.supplier.name_ar} رقم {invoice.invoice_number}"[:500],
+        source_type=JournalEntry.Source.ASSETS, created_by=user,
+    )
+    lines = [
+        JournalLine(
+            entry=entry, account=asset.asset_account,
+            description=f"رسملة تكلفة الأصل {asset.name_ar}",
+            debit=expected_cost, credit=0,
+        ),
+        JournalLine(
+            entry=entry, account=payable,
+            description=f"إثبات مستحق المورد {invoice.supplier.name_ar}",
+            debit=0, credit=invoice.grand_total,
+        ),
+    ]
+    if vat_input and invoice.recoverable_tax_amount:
+        lines.append(JournalLine(
+            entry=entry, account=vat_input,
+            description="ضريبة مدخلات قابلة للاسترداد",
+            debit=invoice.recoverable_tax_amount, credit=0,
+        ))
+    JournalLine.objects.bulk_create(lines)
+    try:
+        posted = post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+
+    asset.original_cost = expected_cost
+    asset.acquisition_net_amount = invoice.net_amount
+    asset.nonrecoverable_tax_amount = invoice.nonrecoverable_tax_amount
+    asset.acquisition_tax_code = invoice.tax_code
+    asset.supplier_name = invoice.supplier.name_ar
+    asset.supplier_invoice = invoice.invoice_number
+    asset.acquisition_journal = posted
+    asset.save(update_fields=(
+        "original_cost", "acquisition_net_amount", "nonrecoverable_tax_amount",
+        "acquisition_tax_code", "supplier_name", "supplier_invoice", "acquisition_journal",
+    ))
+    invoice.status = AssetPurchaseInvoice.Status.POSTED
+    invoice.journal_entry = posted
+    invoice.posted_at = timezone.now()
+    invoice.save(update_fields=("status", "journal_entry", "posted_at"))
+    return invoice
+
+
+@transaction.atomic
+def post_asset_supplier_payment(payment_id, user=None):
+    """ترحيل سداد فاتورة الأصل على حساب الموردين مع منع تجاوز الرصيد المستحق."""
+    payment = AssetSupplierPayment.objects.select_for_update().select_related(
+        "company", "branch", "invoice", "supplier", "payment_account",
+    ).get(pk=payment_id)
+    if payment.status != AssetSupplierPayment.Status.DRAFT:
+        raise ValidationError("سند سداد فاتورة الأصل ليس مسودة.")
+    invoice = AssetPurchaseInvoice.objects.select_for_update(of=("self",)).get(pk=payment.invoice_id)
+    if invoice.status != AssetPurchaseInvoice.Status.POSTED:
+        raise ValidationError("لا يمكن سداد فاتورة أصل غير مرحلة.")
+    if payment.company_id != invoice.company_id or payment.branch_id != invoice.branch_id or payment.supplier_id != invoice.supplier_id:
+        raise ValidationError("بيانات سند السداد لا تطابق فاتورة الأصل.")
+    if payment.payment_date < invoice.invoice_date:
+        raise ValidationError("تاريخ السداد لا يمكن أن يسبق تاريخ الفاتورة.")
+    paid = AssetSupplierPayment.objects.filter(
+        invoice=invoice, status=AssetSupplierPayment.Status.POSTED,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    remaining = invoice.grand_total - paid
+    if payment.amount > remaining:
+        raise ValidationError(f"قيمة السداد تتجاوز المتبقي على الفاتورة ({remaining}).")
+    year = FiscalYear.objects.filter(
+        company=payment.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=payment.payment_date, end_date__gte=payment.payment_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ السداد.")
+    payable = get_account_for_role(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    cash = payment.payment_account
+    if cash.company_id != payment.company_id or cash.nature != "asset" or not cash.is_active or cash.is_group or not cash.allow_posting:
+        raise ValidationError("حساب البنك أو الخزينة غير صالح.")
+    if cash.pk == payable.pk:
+        raise ValidationError("يجب فصل حساب الموردين عن حساب البنك أو الخزينة.")
+
+    entry = JournalEntry.objects.create(
+        company=payment.company, branch=payment.branch, fiscal_year=year,
+        entry_number=f"FA-PAY-{payment.pk}", entry_date=payment.payment_date,
+        description=f"سداد فاتورة أصل {invoice.invoice_number} للمورد {payment.supplier.name_ar}"[:500],
+        source_type=JournalEntry.Source.ASSETS, created_by=user,
+    )
+    JournalLine.objects.bulk_create([
+        JournalLine(entry=entry, account=payable, description="تخفيض مستحق المورد", debit=payment.amount, credit=0),
+        JournalLine(entry=entry, account=cash, description="سداد من البنك أو الخزينة", debit=0, credit=payment.amount),
+    ])
+    try:
+        posted = post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+    payment.journal_entry = posted
+    payment.status = AssetSupplierPayment.Status.POSTED
+    payment.posted_at = timezone.now()
+    payment.save(update_fields=("journal_entry", "status", "posted_at"))
+    return payment
