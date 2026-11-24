@@ -86,6 +86,7 @@ class SalesQuotation(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)
     accepted_at = models.DateTimeField(null=True, blank=True)
     converted_at = models.DateTimeField(null=True, blank=True)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
 
     class Meta:
         ordering = ("-quotation_date", "-id")
@@ -180,6 +181,7 @@ class SalesQuotationLine(models.Model):
     transaction_tax_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     transaction_grand_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     discount_approval_limit = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
@@ -472,3 +474,42 @@ class SalesReturnLine(models.Model):
         if self.sales_return.status in (SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED):
             raise ValidationError("لا يمكن حذف بنود مردود مبيعات مرحّل أو معكوس.")
         return super().delete(*args, **kwargs)
+
+
+class SalesDocumentTemplate(models.Model):
+    """قوالب طباعة مستقلة لكل شركة ونوع مستند."""
+    class DocumentType(models.TextChoices):
+        QUOTATION = "quotation", "عرض سعر"
+        INVOICE = "invoice", "فاتورة مبيعات"
+        DELIVERY = "delivery", "إذن تسليم"
+        RECEIPT = "receipt", "سند قبض"
+
+    class Style(models.TextChoices):
+        CLASSIC = "classic", "Classic"
+        MODERN = "modern", "Modern"
+        COMPACT = "compact", "Compact"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_document_templates")
+    document_type = models.CharField(max_length=16, choices=DocumentType.choices)
+    name = models.CharField(max_length=80)
+    style = models.CharField(max_length=12, choices=Style.choices, default=Style.CLASSIC)
+    config = models.JSONField(default=dict, blank=True)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("document_type", "-is_default", "name")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "document_type", "name"), name="uq_sales_template_company_type_name"),
+            models.UniqueConstraint(fields=("company", "document_type"), condition=models.Q(is_default=True), name="uq_sales_template_default_type"),
+        ]
+        indexes = [models.Index(fields=("company", "document_type", "is_active"), name="sales_template_co_type_idx")]
+
+    def clean(self):
+        super().clean()
+        if self.style not in self.Style.values:
+            raise ValidationError({"style": "نمط القالب غير صالح."})
+        if not isinstance(self.config, dict):
+            raise ValidationError({"config": "إعدادات القالب يجب أن تكون كائن إعدادات."})
