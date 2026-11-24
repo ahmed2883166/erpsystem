@@ -169,6 +169,12 @@ export type SupplierAging = {
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
+  requisitions: (companyId: number) => request<PurchaseRequisition[]>(`/api/purchasing/requisitions/?company=${companyId}&ordering=-request_date`),
+  createRequisition: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>("/api/purchasing/requisitions/", { method: "POST", body: JSON.stringify(payload) }); },
+  submitRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/submit/`, { method: "POST" }); },
+  reviewRequisition: async (id: number, decision: "approve" | "reject", note = "") => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/review/`, { method: "POST", body: JSON.stringify({ decision, note }) }); },
+  convertRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<{ requisition: PurchaseRequisition; purchase_order_id: number }>(`/api/purchasing/requisitions/${id}/convert/`, { method: "POST", body: JSON.stringify(payload) }); },
+  cancelRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/cancel/`, { method: "POST" }); },
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
