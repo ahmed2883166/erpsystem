@@ -95,6 +95,10 @@ try {
         & $Python manage.py migrate --noinput
         if ($LASTEXITCODE -ne 0) { throw "Database migration failed. The new database was not deleted." }
 
+        Write-Host "Preparing default currencies and reference data..." -ForegroundColor Cyan
+        & $Python manage.py seed_reference_data
+        if ($LASTEXITCODE -ne 0) { throw "Could not prepare default currencies and reference data." }
+
         $Username = Read-Host "Choose the first Admrail administrator username"
         if ([string]::IsNullOrWhiteSpace($Username) -or $Username -notmatch "^[A-Za-z0-9_.@+-]{3,150}$") {
             throw "Username must be 3-150 characters and use only letters, numbers, . _ @ + -"
