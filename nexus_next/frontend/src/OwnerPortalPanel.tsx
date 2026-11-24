@@ -29,6 +29,10 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<Company["activity"]>("commercial");
   const [currencyId, setCurrencyId] = useState("");
+  const [newAdminUsername, setNewAdminUsername] = useState("");
+  const [newAdminName, setNewAdminName] = useState("");
+  const [newAdminEmail, setNewAdminEmail] = useState("");
+  const [newAdminPassword, setNewAdminPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -78,18 +82,26 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
 
   const createCompany = async (event: FormEvent) => {
     event.preventDefault();
-    if (!code.trim() || !name.trim() || !currencyId) return;
+    if (!code.trim() || !name.trim() || !currencyId || !newAdminUsername.trim() || !newAdminPassword) return;
     setBusy(true); setError(""); setNotice("");
     try {
-      const created = await api.createCompany({
-        code: code.trim().toUpperCase(), name_ar: name.trim(), country, activity,
-        base_currency: Number(currencyId), is_active: true,
+      const created = await api.createCompanyWithAdmin({
+        company: {
+          code: code.trim().toUpperCase(), name_ar: name.trim(), country, activity,
+          base_currency: Number(currencyId), is_active: true,
+        },
+        manager: {
+          username: newAdminUsername.trim(), display_name: newAdminName.trim(),
+          email: newAdminEmail.trim(), password: newAdminPassword,
+        },
       });
       await refreshCompanies();
-      setSelectedId(created.id);
+      setSelectedId(created.company.id);
+      setMembers([created.manager]);
       setCode(""); setName("");
-      setNotice("تم إنشاء سجل الشركة. الخطوة التالية تعيين مدير شركة مستقل.");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء الشركة."); }
+      setNewAdminUsername(""); setNewAdminName(""); setNewAdminEmail(""); setNewAdminPassword("");
+      setNotice("تم حفظ الشركة وإنشاء حساب مديرها وربطه بها بنجاح.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ الشركة ومديرها."); }
     finally { setBusy(false); }
   };
 
@@ -232,7 +244,12 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
             <label>الدولة<select value={country} onChange={event => {const value=event.target.value as "EG"|"SA";setCountry(value);const preferred=currencies.find(row=>row.code===(value==="EG"?"EGP":"SAR"));if(preferred)setCurrencyId(String(preferred.id));}}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
             <label>النشاط<select value={activity} onChange={event => setActivity(event.target.value as Company["activity"])}>{activities.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
             <label>العملة الأساسية<select required value={currencyId} onChange={event => setCurrencyId(event.target.value)}><option value="">اختر العملة</option>{currencies.map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
-            <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || !currencies.length}>{busy?"جارٍ الإنشاء…":"إنشاء الشركة"}</button></div>
+            <div className="setup-section-title form-wide"><div><h3>بيانات صاحب الشركة / مدير الشركة</h3><p>سيتم إنشاء حساب مستقل له وربطه بالشركة كمدير لجميع فروعها.</p></div></div>
+            <label>اسم المستخدم<input required maxLength={150} autoComplete="off" value={newAdminUsername} onChange={event => setNewAdminUsername(event.target.value)} /></label>
+            <label>اسم صاحب الشركة / المدير<input required maxLength={160} value={newAdminName} onChange={event => setNewAdminName(event.target.value)} /></label>
+            <label>البريد الإلكتروني<input required type="email" maxLength={254} value={newAdminEmail} onChange={event => setNewAdminEmail(event.target.value)} /></label>
+            <label>كلمة المرور<input required type="password" autoComplete="new-password" value={newAdminPassword} onChange={event => setNewAdminPassword(event.target.value)} /></label>
+            <div className="form-actions form-wide"><button type="submit" className="primary-button" disabled={busy || !currencies.length || !newAdminUsername.trim() || !newAdminPassword}>{busy?"جارٍ الحفظ…":"حفظ الشركة وإنشاء حساب المدير"}</button></div>
           </form>
         </section>
         <section className="work-panel">
