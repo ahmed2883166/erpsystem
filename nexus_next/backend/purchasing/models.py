@@ -410,6 +410,7 @@ class PurchaseRFQ(models.Model):
     terms = models.TextField(blank=True)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_rfqs")
     awarded_quotation = models.OneToOneField("SupplierQuotation", null=True, blank=True, on_delete=models.PROTECT, related_name="awarded_rfq")
+    converted_order = models.OneToOneField("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="source_rfq")
     award_reason = models.TextField(blank=True)
     awarded_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="awarded_purchase_rfqs")
     awarded_at = models.DateTimeField(null=True, blank=True)
