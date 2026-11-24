@@ -1916,11 +1916,11 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.data["monthly_summary"][0]["month"], "2026-03")
 
     def test_grni_aging_report_keeps_receipt_with_draft_supplier_invoice(self):
-        _, receipt_line_id = self._create_and_post_receipt()
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
         invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk,
             "supplier": self.supplier.pk,
-            "receipt": PurchaseReceipt.objects.get(receipt_number="GR-001").pk,
+            "receipt": receipt_id,
             "invoice_number": "INV-DRAFT-GRNI",
             "invoice_date": "2026-03-10",
             "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "0"}],
