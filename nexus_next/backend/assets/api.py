@@ -402,6 +402,9 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "impairments__journal_entry",
             "impairments__impairment_expense_account",
             "impairments__accumulated_impairment_account",
+            "impairments__reversal_allocations__reversal__journal_entry",
+            "impairment_reversals__journal_entry",
+            "impairment_reversals__reversal_income_account",
         )
         date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
         date_from = dateparse.parse_date(date_from_raw) if date_from_raw else (as_of.replace(month=1, day=1) if as_of else None)
@@ -416,6 +419,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         expected_impairment = defaultdict(Decimal)
         expected_depreciation_expense = defaultdict(Decimal)
         expected_impairment_expense = defaultdict(Decimal)
+        expected_impairment_reversal_income = defaultdict(Decimal)
         account_objects = {}
         for asset in assets:
             account_objects[asset.asset_account_id] = asset.asset_account
@@ -436,9 +440,17 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 account_objects[impairment.accumulated_impairment_account_id] = impairment.accumulated_impairment_account
                 account_objects[impairment.impairment_expense_account_id] = impairment.impairment_expense_account
                 if not disposed_by_date and impairment.impairment_date <= as_of and impairment.journal_entry.status == JournalEntry.Status.POSTED:
-                    expected_impairment[impairment.accumulated_impairment_account_id] += impairment.impairment_loss
+                    reversed_amount = impairment.reversal_allocations.filter(
+                        reversal__reversal_date__lte=as_of,
+                        reversal__journal_entry__status=JournalEntry.Status.POSTED,
+                    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+                    expected_impairment[impairment.accumulated_impairment_account_id] += impairment.impairment_loss - reversed_amount
                 if date_from <= impairment.impairment_date <= date_to and impairment.journal_entry.status == JournalEntry.Status.POSTED:
                     expected_impairment_expense[impairment.impairment_expense_account_id] += impairment.impairment_loss
+            for reversal in asset.impairment_reversals.all():
+                account_objects[reversal.reversal_income_account_id] = reversal.reversal_income_account
+                if date_from <= reversal.reversal_date <= date_to and reversal.journal_entry.status == JournalEntry.Status.POSTED:
+                    expected_impairment_reversal_income[reversal.reversal_income_account_id] += reversal.reversal_amount
 
         account_ids = list(account_objects)
         ledger = JournalLine.objects.filter(
@@ -447,7 +459,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             account_id__in=account_ids,
         ).values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
         actual = {row["account_id"]: row for row in ledger}
-        cost_rows, accum_rows, impairment_rows, expense_rows = [], [], [], []
+        cost_rows, accum_rows, impairment_rows, expense_rows, reversal_income_rows = [], [], [], [], []
         for account_id, account in account_objects.items():
             row = actual.get(account_id, {})
             debit = row.get("debit") or Decimal("0")
@@ -490,13 +502,27 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                     "expected_depreciation": str(expected_dep), "expected_impairment": str(expected_imp),
                     "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value),
                 })
-        all_rows = cost_rows + accum_rows + impairment_rows + expense_rows
+            if expected_impairment_reversal_income[account_id]:
+                income_lines = JournalLine.objects.filter(
+                    entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
+                    entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
+                    entry__branch_id__in=branch_ids, account_id=account_id,
+                ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+                expected = expected_impairment_reversal_income[account_id]
+                actual_value = (income_lines["credit"] or Decimal("0")) - (income_lines["debit"] or Decimal("0"))
+                reversal_income_rows.append({
+                    "account_id": account_id, "code": account.code, "name": account.name_ar,
+                    "expected_reversal_income": str(expected), "actual": str(actual_value),
+                    "difference": str(expected - actual_value),
+                })
+        all_rows = cost_rows + accum_rows + impairment_rows + expense_rows + reversal_income_rows
         return response.Response({
             "company": company_id, "as_of": as_of, "date_from": date_from, "date_to": date_to,
             "cost_accounts": cost_rows, "accumulated_depreciation_accounts": accum_rows,
             "accumulated_impairment_accounts": impairment_rows,
             "asset_expense_accounts": expense_rows,
             "depreciation_expense_accounts": expense_rows,
+            "impairment_reversal_income_accounts": reversal_income_rows,
             "is_reconciled": all(Decimal(row["difference"]) == 0 for row in all_rows),
             "difference_count": sum(1 for row in all_rows if Decimal(row["difference"]) != 0),
             "note": "المطابقة تقارن سجل الأصول والقيود المرحلة، بما فيها مجمع انخفاض القيمة ومصروفه. أي فروق تحتاج مراجعة قبل تعديل القيود أو بيانات الأصول.",
