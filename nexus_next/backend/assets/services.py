@@ -82,6 +82,8 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     treasury_account = TreasuryAccount.objects.filter(
         company=asset.company, account=asset.acquisition_counter_account, is_active=True
     ).first()
+    if not treasury_account:
+        raise ValidationError("اربط حساب البنك أو الخزينة بحساب خزينة نشط حتى يُسجل التدفق الاستثماري ومطابقة النقدية بصورة صحيحة.")
     if treasury_account:
         if treasury_account.branch_id and treasury_account.branch_id != asset.branch_id:
             raise ValidationError("حساب الخزينة المرتبط بمقابل الاقتناء لا يتبع فرع الأصل.")
@@ -118,22 +120,7 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
             asset.refresh_from_db()
         return asset
 
-    lines = [
-        {"account": asset.asset_account, "debit": asset.original_cost, "credit": 0, "description": asset.name_ar},
-    ]
-    if recoverable_tax:
-        lines.append({"account": vat_input, "debit": recoverable_tax, "credit": 0, "description": "ضريبة مدخلات قابلة للاسترداد"})
-    lines.append({
-        "account": asset.acquisition_counter_account, "debit": 0, "credit": cash_amount,
-        "description": asset.name_ar,
-    })
-    entry = _post_entry(
-        asset, year, f"FA-ACQ-{asset.pk}", asset.acquisition_date,
-        f"إثبات اقتناء الأصل: {asset.name_ar}", lines, user,
-    )
-    asset.acquisition_journal = entry
-    asset.save(update_fields=("acquisition_journal",))
-    return asset
+    raise ValidationError("لم يتم إنشاء حركة خزينة للاقتناء؛ راجع ربط حساب البنك أو الخزينة.")
 
 
 @transaction.atomic
