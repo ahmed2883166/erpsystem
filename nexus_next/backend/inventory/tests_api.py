@@ -286,6 +286,28 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
 
 
+    def test_movement_rejects_quantity_beyond_unit_precision(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="PRECISION-1", name_ar="دقة الكمية",
+        )
+        warehouse = self._warehouse("PRECISION-WH")
+        response = self._movement(
+            "PRECISION-R1", "receipt", destination=warehouse, quantity="1.234", cost="2",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("دقة وحدة القياس", str(response.data))
+
+    def test_adjustment_direction_must_match_the_selected_warehouse(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="ADJ-DIR-1", name_ar="اتجاه التسوية",
+        )
+        warehouse = self._warehouse("ADJ-DIR-WH")
+        response = self._movement(
+            "ADJ-DIR-1", "adjustment", destination=warehouse,
+            quantity="1", cost="2", adjustment_direction="out",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+
     def test_expiry_tracked_receipt_updates_location_specific_balance(self):
         from datetime import date
         from .models import StorageLocation

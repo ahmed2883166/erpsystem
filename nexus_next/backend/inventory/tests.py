@@ -110,6 +110,24 @@ class StockPostingServiceTests(TestCase):
             for link in movement.journal_links.select_related("journal_entry")
         ))
 
+    def test_posting_rejects_product_deactivated_after_draft_creation(self):
+        movement = self._movement(
+            "INACTIVE-PRODUCT", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="2", unit_cost="5",
+        )
+        self.product.is_active = False
+        self.product.save(update_fields=("is_active",))
+
+        with self.assertRaises(ValidationError):
+            post_stock_movement(movement.pk, self.user)
+
+        movement.refresh_from_db()
+        self.assertEqual(movement.status, StockMovement.Status.DRAFT)
+        self.assertFalse(StockBalance.objects.filter(
+            product=self.product, warehouse=self.warehouse,
+        ).exists())
+        self.assertFalse(movement.journal_links.exists())
+
     def test_issue_cannot_create_negative_stock_and_rolls_back_balance(self):
         issue = self._movement(
             "ISS-EMPTY", StockMovement.MovementType.ISSUE,

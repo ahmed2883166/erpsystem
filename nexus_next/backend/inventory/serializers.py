@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 from rest_framework import serializers
 
@@ -229,10 +231,30 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("المخزن لا يتبع الشركة المحددة.")
             if warehouse and not warehouse.is_active:
                 raise serializers.ValidationError("لا يمكن تسجيل حركة على مخزن موقوف.")
-        if movement_type == StockMovement.MovementType.RECEIPT and not destination:
-            raise serializers.ValidationError({"destination_warehouse": "حدد مخزن الاستلام."})
-        if movement_type == StockMovement.MovementType.ISSUE and not source:
-            raise serializers.ValidationError({"source_warehouse": "حدد مخزن الصرف."})
+        source_required = movement_type in (
+            StockMovement.MovementType.ISSUE,
+            StockMovement.MovementType.SUPPLIER_RETURN,
+            StockMovement.MovementType.SALES_RETURN_REVERSAL,
+        )
+        destination_required = movement_type in (
+            StockMovement.MovementType.RECEIPT,
+            StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL,
+        )
+        if source_required and not source:
+            raise serializers.ValidationError({"source_warehouse": "حدد مخزن المصدر لهذه الحركة."})
+        if destination_required and not destination:
+            raise serializers.ValidationError({"destination_warehouse": "حدد مخزن الوجهة لهذه الحركة."})
+        if movement_type in (
+            StockMovement.MovementType.RECEIPT,
+            StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL,
+        ) and source:
+            raise serializers.ValidationError({"source_warehouse": "هذه الحركة لا تستخدم مخزن مصدر."})
+        if movement_type in (
+            StockMovement.MovementType.ISSUE,
+            StockMovement.MovementType.SUPPLIER_RETURN,
+            StockMovement.MovementType.SALES_RETURN_REVERSAL,
+        ) and destination:
+            raise serializers.ValidationError({"destination_warehouse": "هذه الحركة لا تستخدم مخزن وجهة."})
         if movement_type == StockMovement.MovementType.TRANSFER:
             if not source or not destination or source.pk == destination.pk:
                 raise serializers.ValidationError("التحويل يتطلب مخزنين مختلفين.")
@@ -259,10 +281,24 @@ class StockMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "الصنف لا يتطلب تتبع الصلاحية."})
             if movement_type == StockMovement.MovementType.ADJUSTMENT and not line.get("adjustment_direction"):
                 raise serializers.ValidationError({"lines": "حدد الزيادة أو العجز لكل صنف في التسوية."})
-            if movement_type == StockMovement.MovementType.ADJUSTMENT:
-                directions = {item.get("adjustment_direction") for item in lines}
-                if len(directions) > 1:
-                    raise serializers.ValidationError({"lines": "افصل زيادات الجرد عن العجز في حركتين مستقلتين."})
+            quantity_quantum = Decimal("1").scaleb(-product.unit.decimal_places)
+            if line["quantity"] != line["quantity"].quantize(quantity_quantum):
+                raise serializers.ValidationError({
+                    "lines": f"كمية الصنف {product.code} تتجاوز دقة وحدة القياس ({product.unit.decimal_places} منازل عشرية)."
+                })
+            if movement_type == StockMovement.MovementType.ADJUSTMENT and not line.get("adjustment_direction"):
+                raise serializers.ValidationError({"lines": "حدد الزيادة أو العجز لكل صنف في التسوية."})
+            if movement_type != StockMovement.MovementType.ADJUSTMENT and line.get("adjustment_direction"):
+                raise serializers.ValidationError({"lines": "اتجاه التسوية لا يستخدم إلا في حركات التسوية."})
+        if movement_type == StockMovement.MovementType.ADJUSTMENT:
+            directions = {item.get("adjustment_direction") for item in lines}
+            if len(directions) != 1 or "" in directions:
+                raise serializers.ValidationError({"lines": "افصل زيادات الجرد عن العجز في حركتين مستقلتين."})
+            direction = next(iter(directions))
+            if direction == StockMovementLine.AdjustmentDirection.IN and (not destination or source):
+                raise serializers.ValidationError({"destination_warehouse": "زيادة الجرد تتطلب مخزن وجهة فقط."})
+            if direction == StockMovementLine.AdjustmentDirection.OUT and (not source or destination):
+                raise serializers.ValidationError({"source_warehouse": "عجز الجرد يتطلب مخزن مصدر فقط."})
         return attrs
 
     @transaction.atomic

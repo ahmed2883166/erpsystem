@@ -20,6 +20,87 @@ def post_stock_movement(movement_id, user):
     if not lines:
         raise ValidationError("لا يمكن ترحيل حركة بدون أصناف.")
 
+    # Serialize posting per product, not merely per movement. Locking the product
+    # rows in a stable order also protects the get_or_create path for a balance
+    # row that does not exist yet (a row lock cannot protect a missing row).
+    product_ids = sorted({line.product_id for line in lines})
+    locked_products = list(
+        Product.objects.select_for_update().select_related("unit")
+        .filter(pk__in=product_ids).order_by("pk")
+    )
+    products_by_id = {product.pk: product for product in locked_products}
+    if len(products_by_id) != len(product_ids):
+        raise ValidationError("يوجد صنف غير موجود ضمن بنود الحركة.")
+
+    movement_type = movement.movement_type
+    source_required = movement_type in (
+        StockMovement.MovementType.ISSUE,
+        StockMovement.MovementType.SUPPLIER_RETURN,
+        StockMovement.MovementType.SALES_RETURN_REVERSAL,
+    )
+    destination_required = movement_type in (
+        StockMovement.MovementType.RECEIPT,
+        StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL,
+    )
+    if source_required and not movement.source_warehouse_id:
+        raise ValidationError("حدد مخزن المصدر لهذه الحركة.")
+    if destination_required and not movement.destination_warehouse_id:
+        raise ValidationError("حدد مخزن الوجهة لهذه الحركة.")
+    if movement_type == StockMovement.MovementType.TRANSFER:
+        if not movement.source_warehouse_id or not movement.destination_warehouse_id:
+            raise ValidationError("التحويل يتطلب مخزن مصدر ومخزن وجهة.")
+        if movement.source_warehouse_id == movement.destination_warehouse_id:
+            raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
+    if movement_type == StockMovement.MovementType.ADJUSTMENT:
+        directions = {line.adjustment_direction for line in lines}
+        if len(directions) != 1 or "" in directions:
+            raise ValidationError("حدد اتجاهًا موحدًا لكل بنود التسوية.")
+        direction = next(iter(directions))
+        if direction == StockMovementLine.AdjustmentDirection.IN:
+            if not movement.destination_warehouse_id or movement.source_warehouse_id:
+                raise ValidationError("زيادة الجرد تتطلب مخزن وجهة فقط.")
+        elif direction == StockMovementLine.AdjustmentDirection.OUT:
+            if not movement.source_warehouse_id or movement.destination_warehouse_id:
+                raise ValidationError("عجز الجرد يتطلب مخزن مصدر فقط.")
+        else:
+            raise ValidationError("اتجاه التسوية غير صحيح.")
+
+    for warehouse in (movement.source_warehouse, movement.destination_warehouse):
+        if warehouse and (warehouse.company_id != movement.company_id or not warehouse.is_active):
+            raise ValidationError("مخزن الحركة غير نشط أو لا يتبع الشركة.")
+
+    for line in lines:
+        line.product = products_by_id[line.product_id]
+        product = line.product
+        if not product.is_active:
+            raise ValidationError(f"الصنف {product.code} موقوف ولا يمكن ترحيل حركة عليه.")
+        if not product.unit.is_active:
+            raise ValidationError(f"وحدة قياس الصنف {product.code} موقوفة.")
+        quantity_quantum = Decimal("1").scaleb(-product.unit.decimal_places)
+        if line.quantity != line.quantity.quantize(quantity_quantum):
+            raise ValidationError(
+                f"كمية الصنف {product.code} تتجاوز دقة وحدة القياس "
+                f"({product.unit.decimal_places} منازل عشرية)."
+            )
+        if line.source_location_id and (
+            not movement.source_warehouse_id
+            or line.source_location.warehouse_id != movement.source_warehouse_id
+            or not line.source_location.is_active
+        ):
+            raise ValidationError(f"موقع المصدر للصنف {product.code} غير صالح.")
+        if line.destination_location_id and (
+            not movement.destination_warehouse_id
+            or line.destination_location.warehouse_id != movement.destination_warehouse_id
+            or not line.destination_location.is_active
+        ):
+            raise ValidationError(f"موقع الوجهة للصنف {product.code} غير صالح.")
+        if product.track_expiry and not line.expiry_date:
+            raise ValidationError(f"تاريخ الصلاحية مطلوب للصنف {product.code}.")
+        if not product.track_expiry and line.expiry_date:
+            raise ValidationError(f"الصنف {product.code} لا يتطلب تتبع الصلاحية.")
+        if movement_type != StockMovement.MovementType.ADJUSTMENT and line.adjustment_direction:
+            raise ValidationError("اتجاه التسوية لا يستخدم إلا في حركات التسوية.")
+
     for line in lines:
         product = line.product
         if product.company_id != movement.company_id or product.product_type != Product.ProductType.GOODS:
