@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from customers.models import CustomerDiscountRule
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate
 from approvals.snapshots import invoice_discount_snapshot
 
 
@@ -280,6 +280,50 @@ class SalesQuotationSerializer(serializers.ModelSerializer):
                 old_line.delete()
             self._save_lines(quotation, lines)
         return quotation
+
+
+
+class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name_ar", read_only=True)
+
+    class Meta:
+        model = SalesDocumentTemplate
+        fields = ("id", "company", "company_name", "document_type", "name", "style",
+                  "config", "is_default", "is_active", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
+
+    def validate_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("إعدادات القالب يجب أن تكون كائنًا.")
+        allowed = {"accent_color", "show_logo", "show_tax_number", "show_discount",
+                   "show_tax", "show_bank_details", "footer_text", "language", "font_scale"}
+        unknown = set(value) - allowed
+        if unknown:
+            raise serializers.ValidationError("توجد إعدادات غير مدعومة: " + ", ".join(sorted(unknown)))
+        color = value.get("accent_color")
+        if color is not None and (
+            not isinstance(color, str) or len(color) not in (4, 7)
+            or not color.startswith("#")
+            or any(ch not in "0123456789abcdefABCDEF" for ch in color[1:])
+        ):
+            raise serializers.ValidationError({"accent_color": "أدخل لونًا بصيغة HEX مثل #1F4E79."})
+        if value.get("language", "ar") not in ("ar", "en", "bilingual"):
+            raise serializers.ValidationError({"language": "لغة الطباعة غير مدعومة."})
+        if value.get("font_scale", "normal") not in ("small", "normal", "large"):
+            raise serializers.ValidationError({"font_scale": "حجم الخط غير مدعوم."})
+        if "footer_text" in value and (not isinstance(value["footer_text"], str) or len(value["footer_text"]) > 500):
+            raise serializers.ValidationError({"footer_text": "نص التذييل يجب ألا يتجاوز 500 حرف."})
+        for flag in ("show_logo", "show_tax_number", "show_discount", "show_tax", "show_bank_details"):
+            if flag in value and not isinstance(value[flag], bool):
+                raise serializers.ValidationError({flag: "القيمة يجب أن تكون نعم أو لا."})
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        company = attrs.get("company", self.instance.company if self.instance else None)
+        if self.instance and company.pk != self.instance.company_id:
+            raise serializers.ValidationError({"company": "لا يمكن نقل القالب إلى شركة أخرى."})
+        return attrs
 
 
 class SalesInvoiceLineInputSerializer(serializers.Serializer):
