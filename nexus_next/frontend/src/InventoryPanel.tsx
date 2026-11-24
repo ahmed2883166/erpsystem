@@ -443,8 +443,8 @@ const submit = async (event: React.FormEvent) => {
             <div className="activity-title" style={{ alignItems: "center", marginTop: 12 }}>
               <p>عرض {stockCard.rows.length.toLocaleString("ar-EG")} من إجمالي {stockCard.pagination.total_rows.toLocaleString("ar-EG")} حركة — الصفحة {stockCard.pagination.page.toLocaleString("ar-EG")} من {stockCard.pagination.total_pages.toLocaleString("ar-EG")}. التصدير يشمل الصفحة المعروضة فقط.</p>
               <div style={{ display: "flex", gap: 8 }}>
-                <button type="button" className="secondary-button" disabled={!stockCard.pagination.has_previous || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page - 1)}>السابق</button>
-                <button type="button" className="secondary-button" disabled={!stockCard.pagination.has_next || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page + 1)}>التالي</button>
+                <button type="button" className="subtle-button" disabled={!stockCard.pagination.has_previous || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page - 1)}>السابق</button>
+                <button type="button" className="subtle-button" disabled={!stockCard.pagination.has_next || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page + 1)}>التالي</button>
               </div>
             </div>
           </>}
