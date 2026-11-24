@@ -2,14 +2,14 @@
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Sum
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone, dateparse
 from decimal import Decimal, InvalidOperation
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from .models import FixedAsset, AssetDepreciation, AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment
+from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
 from .services import acquire_asset, depreciate_asset, dispose_asset, record_asset_impairment, post_asset_purchase_invoice, post_asset_supplier_payment
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
