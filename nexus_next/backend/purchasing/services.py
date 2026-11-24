@@ -306,17 +306,27 @@ def post_purchase_invoice(invoice_id, user):
         ).get(pk=invoice_line.receipt_line_id)
         if receipt_line.movement_id != receipt.stock_movement_id:
             raise ValidationError("سطر الفاتورة لا يتبع إذن الاستلام المحدد.")
-        billed_before = PurchaseInvoiceLine.objects.filter(
+        prior_totals = PurchaseInvoiceLine.objects.filter(
             receipt_line_id=receipt_line.pk,
             invoice__status=PurchaseInvoice.Status.POSTED,
-        ).exclude(invoice_id=invoice.pk).aggregate(total=Sum("billed_quantity"))["total"] or Decimal("0")
-        if billed_before + invoice_line.billed_quantity > receipt_line.quantity:
+        ).exclude(invoice_id=invoice.pk).aggregate(
+            quantity=Sum("billed_quantity"), net=Sum("net_amount"),
+        )
+        billed_before = prior_totals["quantity"] or Decimal("0")
+        net_before = prior_totals["net"] or Decimal("0")
+        billed_after = billed_before + invoice_line.billed_quantity
+        if billed_after > receipt_line.quantity:
             raise ValidationError(
                 f"إجمالي الكمية المفوترة يتجاوز الكمية المستلمة للصنف {receipt_line.product.code}."
             )
-        expected_net = (
-            receipt_line.cost_amount * invoice_line.billed_quantity / receipt_line.quantity
-        ).quantize(Decimal("0.0001"))
+        if billed_after == receipt_line.quantity:
+            # The final invoice consumes the exact residual, avoiding rounding
+            # drift across multiple partial invoices.
+            expected_net = (receipt_line.cost_amount - net_before).quantize(Decimal("0.0001"))
+        else:
+            expected_net = (
+                receipt_line.cost_amount * invoice_line.billed_quantity / receipt_line.quantity
+            ).quantize(Decimal("0.0001"))
         if abs(invoice_line.net_amount - expected_net) > tolerance:
             raise ValidationError(
                 f"صافي فاتورة الصنف {receipt_line.product.code} لا يطابق تكلفة الكمية المفوترة من إذن الاستلام."
@@ -978,7 +988,10 @@ def post_supplier_return(return_id, user):
         already_returned = returned_by_invoice_line.get(invoice_line.pk, Decimal("0"))
         if already_returned + line.quantity > invoice_line.billed_quantity:
             raise ValidationError(f"كمية المرتجع تتجاوز الكمية المفوترة في هذه الفاتورة للصنف {receipt_line.product.code}.")
-        if invoice_line.tax_code_id and not invoice_line.tax_code.input_tax_recoverable:
+        if (
+            invoice_line.tax_amount > 0 and invoice_line.tax_code_id
+            and not invoice_line.tax_code.input_tax_recoverable
+        ):
             billed_total = PurchaseInvoiceLine.objects.filter(
                 receipt_line_id=receipt_line.pk,
                 invoice__status=PurchaseInvoice.Status.POSTED,
