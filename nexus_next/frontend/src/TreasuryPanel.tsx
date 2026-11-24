@@ -52,8 +52,8 @@ export default function TreasuryPanel({companyId}: Props) {
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
 const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
-    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code,opening_balance:acc.opening_balance});
-    setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"EGP",opening_balance:"0"});await load();
+    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code||baseCurrencyCode,opening_balance:acc.opening_balance});
+    setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:baseCurrencyCode,opening_balance:"0"});await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ الحساب.");}finally{setBusy(false);}};
   // تسجيل مستند حركة نقدية أو بنكية حسب نوع العملية المختار.
 const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
