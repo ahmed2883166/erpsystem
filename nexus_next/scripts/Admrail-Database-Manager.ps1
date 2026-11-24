@@ -68,6 +68,18 @@ function New-DbPassword {
     try { $r.GetBytes($b) } finally { $r.Dispose() }
     return [Convert]::ToBase64String($b).TrimEnd('=').Replace('+','A').Replace('/','B')
 }
+function Ensure-BackupEncryption {
+    $keyFile = Join-Path $Backend ".secrets\backup-key.dpapi"
+    if (Test-Path -LiteralPath $keyFile -PathType Leaf) { return }
+    Write-Host "يلزم إعداد مفتاح تشفير النسخ مرة واحدة فقط." -ForegroundColor Yellow
+    Write-Host "جهّز وحدة USB واحفظ عليها ملف الاسترداد المشفر؛ لا تحفظه بجوار قاعدة البيانات."
+    $recoveryFile = Read-Host "اكتب مسار ملف الاسترداد على USB (مثال E:\Admrail-Recovery\backup-key.recovery)"
+    if ([string]::IsNullOrWhiteSpace($recoveryFile)) { throw "تم إلغاء إعداد مفتاح التشفير؛ لم تُنشأ نسخة ولم تتغير قاعدة البيانات." }
+    $initializer = Join-Path $PSScriptRoot "initialize-backup-encryption.ps1"
+    if (-not (Test-Path -LiteralPath $initializer -PathType Leaf)) { throw "ملف إعداد تشفير النسخ غير موجود." }
+    & $initializer -RecoveryFile $recoveryFile
+    if (-not (Test-Path -LiteralPath $keyFile -PathType Leaf)) { throw "لم يكتمل إعداد مفتاح التشفير؛ لم تُنشأ نسخة ولم تتغير قاعدة البيانات." }
+}
 function Save-VerifiedBackup([string]$Db) {
     $c = Read-Config; $dump = Get-PgTool "pg_dump"; $restore = Get-PgTool "pg_restore"
     $py = $script:Python
@@ -76,6 +88,7 @@ function Save-VerifiedBackup([string]$Db) {
     if (-not $folder) { throw "مسار النسخ مطلوب." }
     New-Item -ItemType Directory -Force -Path $folder | Out-Null
     if ([IO.Path]::GetPathRoot($folder).TrimEnd('\') -ieq "C:") { throw "اختر قرصًا غير C." }
+    Ensure-BackupEncryption
     $tag = Get-Date -Format "yyyyMMdd_HHmmss"
     $plain = Join-Path $env:TEMP "admrail-$tag.dump"
     $enc = Join-Path $folder "admrail-$Db-$tag.dump.nexusenc"
