@@ -436,6 +436,7 @@ def post_asset_supplier_payment(payment_id, user=None):
         transaction_date=payment.payment_date, document_number=f"AUTO-FA-PAY-{payment.pk}",
         description=f"سداد فاتورة أصل {invoice.invoice_number} - سند {payment.payment_number}",
         counter_account=payable, journal_entry=posted, user=user, reference=payment.reference,
+        cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
     )
     payment.journal_entry = posted
     payment.status = AssetSupplierPayment.Status.POSTED
