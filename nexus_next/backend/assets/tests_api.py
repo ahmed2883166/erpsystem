@@ -429,6 +429,38 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(asset_aging_line["document_type"], "asset_purchase_invoice")
         self.assertEqual(asset_aging_line["asset_name"], "سيارة الشركة")
 
+        # A second settlement must clear the exact remaining balance without
+        # changing the original invoice or duplicating the first payment.
+        final_payment_response = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
+            {
+                "payment_number": "FA-PAY-1001-FINAL", "payment_date": "2026-01-20",
+                "payment_account": self.cash_gl.pk, "amount": "64000.0000",
+                "reference": "BANK-REF-02",
+            },
+            format="json",
+        )
+        self.assertEqual(final_payment_response.status_code, 201, final_payment_response.data)
+        final_payment = AssetSupplierPayment.objects.get(pk=final_payment_response.data["id"])
+        self.assertEqual(final_payment.status, AssetSupplierPayment.Status.POSTED)
+        self.assertEqual(final_payment.journal_entry.lines.get(account=payable).debit, Decimal("64000.0000"))
+        self.assertEqual(final_payment.journal_entry.lines.get(account=self.cash_gl).credit, Decimal("64000.0000"))
+        self.assertEqual(
+            AssetSupplierPayment.objects.filter(invoice=invoice, status=AssetSupplierPayment.Status.POSTED)
+            .aggregate(total=__import__("django.db.models", fromlist=["Sum"]).Sum("amount"))["total"],
+            Decimal("114000.0000"),
+        )
+        statement_after_full_settlement = self.client.get("/api/purchasing/invoices/supplier-statement/", {
+            "company": self.company.pk, "supplier": supplier.pk,
+        })
+        self.assertEqual(statement_after_full_settlement.status_code, 200, statement_after_full_settlement.data)
+        self.assertEqual(statement_after_full_settlement.data["closing_balance"], "0.0000")
+        aging_after_full_settlement = self.client.get("/api/purchasing/invoices/supplier-aging/", {
+            "company": self.company.pk, "as_of": "2026-01-20",
+        })
+        self.assertEqual(aging_after_full_settlement.status_code, 200, aging_after_full_settlement.data)
+        self.assertEqual(aging_after_full_settlement.data["totals"]["total_due"], "0.0000")
+
         overpayment = self.client.post(
             f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
             {
