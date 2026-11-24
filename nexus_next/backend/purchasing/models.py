@@ -7,6 +7,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 from accounting.models import ChartOfAccount, TaxCode
+from core.money import round_currency_amount
 from companies.models import Branch, Company, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 from suppliers.models import Supplier
@@ -175,18 +176,18 @@ class PurchaseInvoiceLine(models.Model):
             if self.transaction_unit_price is None:
                 raise ValidationError({"transaction_unit_price": "سعر الوحدة بالعملة الأجنبية مطلوب."})
             self.transaction_net_amount = (quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
-            self.transaction_tax_amount = (self.transaction_net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+            self.transaction_tax_amount = round_currency_amount(self.transaction_net_amount * self.tax_rate / Decimal("100"), self.invoice.transaction_currency)
             self.transaction_total_amount = self.transaction_net_amount + self.transaction_tax_amount
             self.unit_price = (self.transaction_unit_price * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
             self.net_amount = (self.transaction_net_amount * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
-            self.tax_amount = (self.transaction_tax_amount * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
+            self.tax_amount = round_currency_amount(self.transaction_tax_amount * self.invoice.exchange_rate, self.invoice.company.base_currency)
             self.total_amount = self.net_amount + self.tax_amount
         else:
             if self.transaction_unit_price is not None:
                 raise ValidationError({"transaction_unit_price": "لا تستخدم سعر وحدة أجنبيًا مع فاتورة بالعملة الأساسية."})
             self.transaction_net_amount = self.transaction_tax_amount = self.transaction_total_amount = None
             self.net_amount = (quantity * self.unit_price).quantize(Decimal("0.0001"))
-            self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+            self.tax_amount = round_currency_amount(self.net_amount * self.tax_rate / Decimal("100"), self.invoice.company.base_currency)
             self.total_amount = self.net_amount + self.tax_amount
 
     def clean(self):
