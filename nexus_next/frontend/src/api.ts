@@ -895,7 +895,7 @@ export const fixedAssetsApi = {
   // إثبات خسارة انخفاض القيمة بعد تحديد القيمة القابلة للاسترداد وحسابات القيد.
   impair: async (id:number, payload:{impairment_date:string;recoverable_amount:string;impairment_expense_account:number;accumulated_impairment_account:number;fiscal_year:number}) => {
     await request<{detail:string}>("/api/csrf/");
-    return request<{id:number;asset_id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;accounting_model:"cost";oci_impact:"none"}>(`/api/assets/fixed-assets/${id}/impair/`, {method:"POST",body:JSON.stringify(payload)});
+    return request<{id:number;asset_id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model";oci_note:string}>(`/api/assets/fixed-assets/${id}/impair/`, {method:"POST",body:JSON.stringify(payload)});
   },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
   dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
