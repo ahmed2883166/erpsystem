@@ -637,7 +637,7 @@ class FixedAssetWorkflowTests(APITestCase):
             "company": self.company.pk, "as_of": "2026-01-20",
         })
         self.assertEqual(aging_after_full_settlement.status_code, 200, aging_after_full_settlement.data)
-        self.assertEqual(aging_after_full_settlement.data["totals"]["total_due"], "0.0000")
+        self.assertEqual(Decimal(aging_after_full_settlement.data["totals"]["total_due"]), Decimal("0.0000"))
 
         partial_cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
             "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-15",
