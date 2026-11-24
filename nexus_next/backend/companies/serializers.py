@@ -146,11 +146,12 @@ class FiscalYearSerializer(serializers.ModelSerializer):
 class CompanyMembershipSerializer(serializers.ModelSerializer):
     company_code = serializers.CharField(source="company.code", read_only=True)
     username = serializers.CharField(source="user.username", read_only=True)
+    display_name = serializers.CharField(source="user.display_name", read_only=True)
     branches = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), many=True, required=False)
 
     class Meta:
         model = CompanyMembership
-        fields = ("id", "company", "company_code", "user", "username", "role", "all_branches", "branches", "is_active", "created_at")
+        fields = ("id", "company", "company_code", "user", "username", "display_name", "role", "all_branches", "branches", "is_active", "created_at")
         read_only_fields = ("created_at",)
 
     def validate_user(self, user):
