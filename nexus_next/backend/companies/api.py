@@ -75,12 +75,60 @@ class CompanyViewSet(viewsets.ModelViewSet):
             return Company.objects.all().select_related("base_currency")
         return accessible_companies(self.request.user).select_related("base_currency")
 
+    @action(detail=False, methods=("post",), url_path="create-with-admin")
+    @transaction.atomic
+    def create_with_admin(self, request):
+        """إنشاء الشركة والفرع الرئيسي وحساب مديرها وعضويته في معاملة واحدة."""
+        from django.contrib.auth.password_validation import validate_password
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from rest_framework.exceptions import PermissionDenied, ValidationError as APIValidationError
+
+        if not is_platform_owner(request.user):
+            raise PermissionDenied("إنشاء الشركات متاح لمالك المنصة المسجل فقط.")
+
+        company_data = request.data.get("company")
+        manager_data = request.data.get("manager")
+        if not isinstance(company_data, dict) or not isinstance(manager_data, dict):
+            raise APIValidationError("أدخل بيانات الشركة وبيانات مديرها.")
+
+        username = str(manager_data.get("username", "")).strip()
+        display_name = str(manager_data.get("display_name", "")).strip()
+        email = str(manager_data.get("email", "")).strip()
+        password = manager_data.get("password", "")
+        if not username or len(username) > 150:
+            raise APIValidationError({"manager": {"username": "أدخل اسم مستخدم صالحًا لا يتجاوز 150 حرفًا."}})
+        if not isinstance(password, str) or not password:
+            raise APIValidationError({"manager": {"password": "أدخل كلمة مرور لمدير الشركة."}})
+
+        User = get_user_model()
+        if User.objects.filter(username__iexact=username).exists():
+            raise APIValidationError({"manager": {"username": "اسم المستخدم مستخدم بالفعل."}})
+        try:
+            validate_password(password)
+        except DjangoValidationError as exc:
+            raise APIValidationError({"manager": {"password": list(exc.messages)}})
+
+        company_serializer = CompanySerializer(data=company_data, context=self.get_serializer_context())
+        company_serializer.is_valid(raise_exception=True)
+        company = company_serializer.save()
+
+        manager = User.objects.create_user(
+            username=username, password=password, display_name=display_name, email=email,
+        )
+        membership = CompanyMembership.objects.create(
+            company=company, user=manager, role=CompanyMembership.Role.ADMIN,
+            all_branches=True, is_active=True,
+        )
+        return Response({
+            "company": CompanySerializer(company, context=self.get_serializer_context()).data,
+            "manager": CompanyMembershipSerializer(membership).data,
+        }, status=201)
+
     def perform_create(self, serializer):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         from rest_framework.exceptions import PermissionDenied
         if not is_platform_owner(self.request.user):
             raise PermissionDenied("إنشاء الشركات متاح لمالك المنصة المسجل فقط.")
-        # لا ننشئ عضوية تشغيلية للمالك؛ تعيين مدير الشركة خطوة مستقلة ومقصودة.
         serializer.save()
 
     def perform_update(self, serializer):
