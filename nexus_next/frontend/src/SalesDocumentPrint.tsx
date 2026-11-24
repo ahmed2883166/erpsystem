@@ -16,7 +16,7 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
   const doc=invoice||quotation;
   if(!doc)return null;
   const isInvoice=Boolean(invoice);
-  const snapshot=doc.print_template_snapshot||{template_id:null,name:"Classic",style:"classic" as const,config:{}};
+  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=doc.print_template_snapshot||{template_id:null,name:"Classic",style:"classic",config:{}};
   const config=snapshot.config||{};
   const language=config.language||"ar";
   const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
