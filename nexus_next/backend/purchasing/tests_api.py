@@ -1847,3 +1847,36 @@ class PurchasingWorkflowTests(APITestCase):
              "order_number": "PO-REQ-002", "order_date": "2026-03-11"}, format="json",
         )
         self.assertEqual(duplicate_conversion.status_code, 400)
+
+
+    def test_purchase_order_over_limit_waits_for_separate_manager_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_purchase_order_amount=Decimal("500"),
+            created_by=self.user, updated_by=self.user,
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-APPROVAL-001",
+            "order_date": "2026-03-10", "expected_date": "2026-03-20",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_price": "300", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        pending = self.client.post(
+            f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json"
+        )
+        self.assertEqual(pending.status_code, 202, pending.data)
+        request = FinancialApprovalRequest.objects.get(purchase_order_id=order.data["id"])
+        self.assertEqual(request.requested_amount, Decimal("600.0000"))
+        self.assertEqual(request.requested_limit, Decimal("500.0000"))
+        self.assertEqual(PurchaseOrder.objects.get(pk=order.data["id"]).status, PurchaseOrder.Status.DRAFT)
+
+        manager = get_user_model().objects.create_user(username="po-approval-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/financial-requests/{request.pk}/approve/",
+            {"note": "اعتماد أمر الشراء بعد مراجعة العرض"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["document_type"], FinancialApprovalRequest.DocumentType.PURCHASE_ORDER)
+        self.assertEqual(PurchaseOrder.objects.get(pk=order.data["id"]).status, PurchaseOrder.Status.CONFIRMED)
