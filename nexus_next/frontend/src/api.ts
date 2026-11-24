@@ -659,8 +659,9 @@ export type SalesInvoiceApproval = {
 };
 export type FinancialApprovalRequest = {
   id: number; company: number;
-  document_type: "purchase_invoice" | "supplier_payment" | "treasury_payment";
+  document_type: "purchase_invoice" | "supplier_payment" | "treasury_payment" | "asset_purchase_invoice" | "asset_supplier_payment";
   purchase_invoice: number | null; supplier_payment: number | null; treasury_transaction: number | null;
+  asset_purchase_invoice: number | null; asset_supplier_payment: number | null;
   document_number: string; document_total: string;
   requested_by: number; requested_by_name: string; requested_limit: string; requested_amount: string;
   requested_snapshot: Record<string, unknown>;
