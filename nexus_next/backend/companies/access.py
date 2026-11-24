@@ -13,7 +13,7 @@ def parse_company_param(request):
     try:
         company_id = int(raw)
     except (TypeError, ValueError):
-        raise ValidationError({"company": "معرّف الشركة غير صالح."})
+        raise ValidationError({"company": "معرّف الشركة غير صالح."}) from None
     if company_id <= 0:
         raise ValidationError({"company": "معرّف الشركة غير صالح."})
     return company_id
