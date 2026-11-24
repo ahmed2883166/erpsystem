@@ -864,15 +864,13 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         if include_unassigned:
             warehouse_scope |= Q(warehouse__branch__isnull=True)
 
-        balances = list(
-            StockBalance.objects.filter(
-                warehouse__company_id=company_id,
-                product__costing_method=Product.CostingMethod.FIFO,
-            ).filter(warehouse_scope).values(
-                "product_id", "warehouse_id", "location_id", "expiry_date", "quantity", "inventory_value",
-                "product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar",
-            )
-        )
+        balance_rows = StockBalance.objects.filter(
+            warehouse__company_id=company_id,
+            product__costing_method=Product.CostingMethod.FIFO,
+        ).filter(warehouse_scope).values(
+            "product_id", "warehouse_id", "location_id", "expiry_date", "quantity", "inventory_value",
+            "product__code", "product__name_ar", "warehouse__code", "warehouse__name_ar",
+        ).iterator(chunk_size=2000)
         layers = StockCostLayer.objects.filter(
             product__company_id=company_id,
             product__costing_method=Product.CostingMethod.FIFO,
@@ -884,42 +882,50 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
         ).annotate(
             quantity=Sum("quantity_remaining"),
             value=Sum(F("quantity_remaining") * F("unit_cost")),
-        )
+        ).iterator(chunk_size=2000)
 
         def dimension_key(row):
-            """تنفيذ وظيفة dimension_key ضمن واجهات api.py مع تطبيق ضوابط البيانات والصلاحيات الخاصة بها."""
             return (row["product_id"], row["warehouse_id"], row["location_id"], row["expiry_date"])
 
-        balance_map = {dimension_key(row): row for row in balances}
-        layer_map = {dimension_key(row): row for row in layers}
+        # Keep one side in memory and stream the aggregated FIFO side. This avoids
+        # materializing both full result sets and caps the returned mismatch detail.
+        balance_map = {dimension_key(row): row for row in balance_rows}
         mismatches = []
-        for key in set(balance_map) | set(layer_map):
-            balance = balance_map.get(key, {})
-            layer = layer_map.get(key, {})
+        mismatch_count = 0
+
+        def collect_mismatch(key, balance, layer):
+            nonlocal mismatch_count
             balance_quantity = balance.get("quantity", Decimal("0")) or Decimal("0")
             balance_value = balance.get("inventory_value", Decimal("0")) or Decimal("0")
             layer_quantity = layer.get("quantity", Decimal("0")) or Decimal("0")
-            layer_value = layer.get("value", Decimal("0")) or Decimal("0")
-            layer_value = layer_value.quantize(Decimal("0.0001"))
+            layer_value = (layer.get("value", Decimal("0")) or Decimal("0")).quantize(Decimal("0.0001"))
             quantity_difference = balance_quantity - layer_quantity
             value_difference = balance_value - layer_value
             if abs(quantity_difference) > Decimal("0.0001") or abs(value_difference) > Decimal("0.0001"):
-                mismatches.append({
-                    "product": key[0],
-                    "product_code": balance.get("product__code") or layer.get("product__code", ""),
-                    "product_name": balance.get("product__name_ar") or layer.get("product__name_ar", ""),
-                    "warehouse": key[1],
-                    "warehouse_code": balance.get("warehouse__code") or layer.get("warehouse__code", ""),
-                    "warehouse_name": balance.get("warehouse__name_ar") or layer.get("warehouse__name_ar", ""),
-                    "location": key[2],
-                    "expiry_date": key[3].isoformat() if key[3] else None,
-                    "balance_quantity": str(balance_quantity),
-                    "layer_quantity": str(layer_quantity),
-                    "quantity_difference": str(quantity_difference),
-                    "balance_value": str(balance_value),
-                    "layer_value": str(layer_value),
-                    "value_difference": str(value_difference),
-                })
+                mismatch_count += 1
+                if len(mismatches) < 200:
+                    mismatches.append({
+                        "product": key[0],
+                        "product_code": balance.get("product__code") or layer.get("product__code", ""),
+                        "product_name": balance.get("product__name_ar") or layer.get("product__name_ar", ""),
+                        "warehouse": key[1],
+                        "warehouse_code": balance.get("warehouse__code") or layer.get("warehouse__code", ""),
+                        "warehouse_name": balance.get("warehouse__name_ar") or layer.get("warehouse__name_ar", ""),
+                        "location": key[2],
+                        "expiry_date": key[3].isoformat() if key[3] else None,
+                        "balance_quantity": str(balance_quantity),
+                        "layer_quantity": str(layer_quantity),
+                        "quantity_difference": str(quantity_difference),
+                        "balance_value": str(balance_value),
+                        "layer_value": str(layer_value),
+                        "value_difference": str(value_difference),
+                    })
+
+        for layer in layers:
+            key = dimension_key(layer)
+            collect_mismatch(key, balance_map.pop(key, {}), layer)
+        for key, balance in balance_map.items():
+            collect_mismatch(key, balance, {})
 
         source_scope = Q(source_warehouse__isnull=True) | Q(source_warehouse__branch_id__in=branch_ids)
         destination_scope = Q(destination_warehouse__isnull=True) | Q(destination_warehouse__branch_id__in=branch_ids)
@@ -948,8 +954,8 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "company": company_id,
             "branch": selected_branch.pk if selected_branch else None,
             "branch_name": selected_branch.name_ar if selected_branch else "",
-            "fifo_mismatch_count": len(mismatches),
-            "fifo_mismatches": mismatches[:200],
+            "fifo_mismatch_count": mismatch_count,
+            "fifo_mismatches": mismatches,
             "pending_movements_count": pending_count,
             "pending_movements": pending_rows,
             "pending_movements_truncated": pending_count > len(pending_rows),
