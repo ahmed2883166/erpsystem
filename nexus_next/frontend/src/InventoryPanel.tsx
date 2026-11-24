@@ -8,7 +8,7 @@ import { accountRoleApi, api, inventoryApi, stockApi, type Account, type Account
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
-export default function InventoryPanel({ companyId }: { companyId: number | null }) {
+export default function InventoryPanel({ companyId, currency = "" }: { companyId: number | null; currency?: string }) {
   const [tab, setTab] = useState<Tab>("products");
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<InventoryCategory[]>([]);
