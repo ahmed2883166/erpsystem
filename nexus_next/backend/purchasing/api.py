@@ -882,6 +882,9 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
         self._check_write(serializer.validated_data["company"].pk)
         serializer.save()
 
+    def perform_update(self, serializer):
+        raise ValidationError("طلب عروض الأسعار بعد إنشائه لا يعدل؛ أنشئ طلبًا جديدًا إذا تغيرت المواصفات أو الكميات.")
+
     @transaction.atomic
     def perform_destroy(self, instance):
         rfq = PurchaseRFQ.objects.select_for_update().get(pk=instance.pk)
