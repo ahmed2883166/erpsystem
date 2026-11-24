@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
             model_name="stockmovementline",
             index=models.Index(
                 fields=["product", "movement"],
-                name="inv_stock_line_product_move_idx",
+                name="inv_line_prod_move_idx",
             ),
         ),
     ]
