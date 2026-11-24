@@ -12,7 +12,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
 from .services import acquire_asset, depreciate_asset, dispose_asset, post_asset_purchase_invoice, post_asset_supplier_payment
-from accounting.models import JournalEntry, JournalLine
+from accounting.models import ChartOfAccount, JournalEntry, JournalLine
 
 
 class FixedAssetViewSet(viewsets.ModelViewSet):
@@ -440,7 +440,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             invoice.full_clean()
             invoice.save()
             invoice = post_asset_purchase_invoice(invoice.pk, request.user)
-        except (Supplier.DoesNotExist, ValueError, TypeError, Decimal.InvalidOperation) as exc:
+        except (Supplier.DoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
@@ -472,7 +472,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             )
             payment_date = parse_date(str(request.data.get("payment_date", "")))
             amount = Decimal(str(request.data.get("amount", "")))
-            account = __import__("accounting.models", fromlist=["ChartOfAccount"]).ChartOfAccount.objects.get(
+            account = ChartOfAccount.objects.get(
                 pk=request.data.get("payment_account"), company=asset.company,
             )
             payment = AssetSupplierPayment(
@@ -486,7 +486,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             payment.full_clean()
             payment.save()
             payment = post_asset_supplier_payment(payment.pk, request.user)
-        except (AssetPurchaseInvoice.DoesNotExist, ValueError, TypeError, Decimal.InvalidOperation) as exc:
+        except (AssetPurchaseInvoice.DoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات سند السداد غير صحيحة.") from exc
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
