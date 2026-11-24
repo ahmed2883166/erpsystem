@@ -434,7 +434,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"receipt": "حدد الشركة وإذن الاستلام."}) from None
         self._check_write(company_id)
-        receipt = PurchaseReceipt.objects.select_for_update().select_related(
+        receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
             "company", "warehouse", "warehouse__branch", "stock_movement",
         ).filter(pk=receipt_id, company_id=company_id).first()
         if not receipt:
@@ -459,7 +459,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         """قفل الفاتورة وإذن الاستلام قبل فحص حجوزات المسودة عند تعديلها."""
         invoice = self.get_object()
         locked_invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice.pk)
-        receipt = PurchaseReceipt.objects.select_for_update().select_related(
+        receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
             "warehouse", "warehouse__branch",
         ).get(pk=locked_invoice.receipt_id)
         if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
