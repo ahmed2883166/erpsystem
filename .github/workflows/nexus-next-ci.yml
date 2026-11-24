@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - fix/audit-performance-and-owner-toolkit-2026-11
   pull_request:
     branches:
       - work/nexus-django-react-rebuild
@@ -183,6 +184,7 @@ jobs:
             Get-Item nexus_next/run-admrail-lan.ps1
             Get-Item nexus_next/start-production.ps1
             Get-Item nexus_next/configure-admrail-lan.ps1
+            Get-Item nexus_next/Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1
             Get-Item nexus_next/scripts/Remove-Old-Admrail-Database.ps1
           )
           foreach ($script in $scripts) {
