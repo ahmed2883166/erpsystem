@@ -54,6 +54,11 @@ class TreasuryAccount(models.Model):
         if self.company_id and self.currency_code != self.company.base_currency.code and self.opening_balance > 0:
             raise ValidationError({"opening_balance": "الرصيد الافتتاحي الأجنبي يحتاج مبلغًا اسميًا وسعر صرف معتمدًا؛ لا تستخدم قيمة أساسية غير محددة."})
 
+    def save(self, *args, **kwargs):
+        if not self.currency_code and self.company_id:
+            self.currency_code = self.company.base_currency.code
+        return super().save(*args, **kwargs)
+
     def delete(self, *args, **kwargs):
         if self.opening_journal_entry_id:
             raise ValidationError("لا يمكن حذف خزينة مرتبطة بقيد افتتاحي؛ عطّل الحساب للحفاظ على الأثر المحاسبي.")
@@ -181,8 +186,6 @@ class TreasuryTransaction(models.Model):
             raise ValidationError("سند القبض أو الصرف يتطلب حسابًا مقابلًا فقط.")
 
     def save(self, *args, **kwargs):
-        if not self.currency_code and self.company_id:
-            self.currency_code = self.company.base_currency.code
         if self.pk:
             old = type(self).objects.filter(pk=self.pk).first()
             if old and old.status == self.Status.POSTED:
