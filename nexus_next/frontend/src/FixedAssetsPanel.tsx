@@ -44,6 +44,10 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [disposalDate, setDisposalDate] = useState(today);
   const [disposalProceeds, setDisposalProceeds] = useState("0");
   const [disposalCashAccount, setDisposalCashAccount] = useState("");
+  const [impairmentDate, setImpairmentDate] = useState(today);
+  const [impairmentRecoverable, setImpairmentRecoverable] = useState("");
+  const [impairmentExpenseAccount, setImpairmentExpenseAccount] = useState("");
+  const [accumulatedImpairmentAccount, setAccumulatedImpairmentAccount] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [schedule, setSchedule] = useState<AssetSchedule | null>(null);
   const [loading, setLoading] = useState(false);
@@ -228,6 +232,27 @@ const create = async (event: FormEvent) => {
     finally { setSaving(false); }
   };
 
+  const impairSelectedAsset = async () => {
+    if (!selected || !form.fiscal_year || !(Number(impairmentRecoverable) >= 0) || !impairmentExpenseAccount || !accumulatedImpairmentAccount) {
+      setError("أدخل القيمة القابلة للاسترداد واختر حساب مصروف الانخفاض ومجمع الانخفاض والسنة المالية."); return;
+    }
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const result = await fixedAssetsApi.impair(selected, {
+        impairment_date: impairmentDate, recoverable_amount: impairmentRecoverable,
+        impairment_expense_account: Number(impairmentExpenseAccount),
+        accumulated_impairment_account: Number(accumulatedImpairmentAccount),
+        fiscal_year: Number(form.fiscal_year),
+      });
+      setNotice(`تم إثبات انخفاض قيمة الأصل بمبلغ ${formatMoney(result.impairment_loss)}. رقم القيد: ${result.journal_entry}. لا أثر على OCI وفق نموذج التكلفة.`);
+      setImpairmentRecoverable("");
+      setSchedule(await fixedAssetsApi.schedule(selected));
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر إثبات انخفاض قيمة الأصل.");
+    } finally { setSaving(false); }
+  };
+
   // طلب احتساب وترحيل إهلاك الأصل المحدد وفق الجدول المعتمد.
 const depreciate = async (asset: FixedAsset) => {
     if (!form.fiscal_year) { setError("حدد سنة مالية مفتوحة."); return; }
@@ -393,6 +418,18 @@ const loadReport = async () => {
       {!assets.find(x=>x.id===selected)?.acquisition_journal && <p className="asset-report-note">الاقتناء لم يُرحّل بعد؛ بعد اعتماد حركة السداد وترحيل قيد الاقتناء ستتاح إجراءات الإهلاك والاستبعاد.</p>}
       {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-depreciation-action"><label>تاريخ الإهلاك<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label><button className="primary-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void depreciate(a);}}>تسجيل إهلاك الفترة</button></div>}
       <div className="data-table-wrap"><table><thead><tr><th>تاريخ الفترة</th><th>قيمة الإهلاك</th><th>النوع</th><th>رقم القيد</th></tr></thead><tbody>{schedule.rows.map(row=><tr key={row.id}><td>{row.period_date}</td><td>{formatMoney(row.amount)}</td><td>{row.is_partial_period ? "حتى تاريخ الاستبعاد" : "شهري"}</td><td>{row.journal_entry}</td></tr>)}</tbody></table></div>
+      {schedule.impairments.length > 0 && <div className="data-table-wrap"><h3>سجل انخفاض القيمة</h3><table><thead><tr><th>تاريخ الاختبار</th><th>القيمة قبل الانخفاض</th><th>القيمة القابلة للاسترداد</th><th>خسارة الانخفاض</th><th>القيد</th></tr></thead><tbody>{schedule.impairments.map(row=><tr key={row.id}><td>{row.impairment_date}</td><td>{formatMoney(row.carrying_amount_before)}</td><td>{formatMoney(row.recoverable_amount)}</td><td>{formatMoney(row.impairment_loss)}</td><td>{row.journal_entry}</td></tr>)}</tbody></table></div>}
+      {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-disposal-form">
+        <strong>اختبار انخفاض قيمة الأصل (IAS 36)</strong>
+        <p className="asset-report-note">أدخل القيمة القابلة للاسترداد = الأعلى من القيمة العادلة ناقص تكاليف البيع والقيمة الاستخدامية. يجب ترحيل الإهلاك حتى تاريخ الاختبار أولًا.</p>
+        <div className="asset-disposal-fields">
+          <label>تاريخ الاختبار<input type="date" value={impairmentDate} onChange={e=>setImpairmentDate(e.target.value)}/></label>
+          <label>القيمة القابلة للاسترداد<input type="number" min="0" step="0.0001" value={impairmentRecoverable} onChange={e=>setImpairmentRecoverable(e.target.value)}/></label>
+          <label>حساب مصروف انخفاض القيمة<select value={impairmentExpenseAccount} onChange={e=>setImpairmentExpenseAccount(e.target.value)}><option value="">اختر حساب المصروف</option>{expenseAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+          <label>حساب مجمع انخفاض القيمة<select value={accumulatedImpairmentAccount} onChange={e=>setAccumulatedImpairmentAccount(e.target.value)}><option value="">اختر الحساب المقابل للأصل</option>{assetAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+          <button type="button" className="primary-button" disabled={saving} onClick={()=>void impairSelectedAsset()}>{saving?"جارٍ الترحيل…":"احتساب وترحيل انخفاض القيمة"}</button>
+        </div>
+      </div>}
       {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-disposal-form">
         <strong>بيع الأصل أو استبعاده</strong>
         <div className="asset-disposal-fields">
