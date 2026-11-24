@@ -171,6 +171,14 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         ).update(status=PurchaseOrder.Status.CANCELLED)
         if updated != 1:
             raise ValidationError("تغيرت حالة أمر الشراء؛ حدّث الشاشة ثم أعد المحاولة.")
+        from approvals.models import FinancialApprovalRequest
+        pending_approvals = FinancialApprovalRequest.objects.select_for_update().filter(
+            document_type=FinancialApprovalRequest.DocumentType.PURCHASE_ORDER,
+            purchase_order=order, status=FinancialApprovalRequest.Status.PENDING,
+        )
+        for approval in pending_approvals:
+            approval.status = FinancialApprovalRequest.Status.SUPERSEDED
+            approval.save(update_fields=("status", "decided_at"))
         order.refresh_from_db()
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
