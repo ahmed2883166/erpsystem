@@ -1941,3 +1941,91 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["grand_total"], "200.0000")
         self.assertEqual(response.data["rows"][0]["invoice_status"], "draft")
+
+
+    def test_partial_supplier_invoices_clear_grni_by_billed_quantity(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PART-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["invoice_lines"][0]["quantity"], "0.7500")
+        first_posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertEqual(first_posted.data["net_total"], "75.0000")
+        self.assertEqual(first_posted.data["tax_total"], "10.5000")
+
+        after_first = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(after_first.status_code, 200, after_first.data)
+        self.assertEqual(after_first.data["grand_total"], "125.0000")
+        self.assertEqual(after_first.data["rows"][0]["invoice_status"], "partially_invoiced")
+        self.assertEqual(after_first.data["rows"][0]["invoiced_amount"], "75.0000")
+        self.assertEqual(after_first.data["gl_reconciliation"]["posted_gl_balance"], "125.0000")
+        self.assertEqual(after_first.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(after_first.data["gl_reconciliation"]["reconciled"])
+
+        second = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PART-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.2500",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/purchasing/invoices/{second.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+        self.assertEqual(second_posted.data["net_total"], "125.0000")
+
+        after_second = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(after_second.status_code, 200, after_second.data)
+        self.assertEqual(after_second.data["grand_total"], "0.0000")
+        self.assertEqual(after_second.data["gl_reconciliation"]["posted_gl_balance"], "0.0000")
+        self.assertEqual(after_second.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(after_second.data["gl_reconciliation"]["reconciled"])
+
+    def test_partial_supplier_invoices_cannot_overbill_a_receipt_line(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-OVER-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.5000",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        overbilled = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-OVER-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(overbilled.status_code, 400, overbilled.data)
+        self.assertFalse(PurchaseInvoice.objects.filter(invoice_number="INV-OVER-002").exists())
+        self.assertEqual(
+            PurchaseInvoiceLine.objects.filter(
+                receipt_line_id=receipt_line_id, invoice__status=PurchaseInvoice.Status.POSTED,
+            ).aggregate(total=Sum("billed_quantity"))["total"],
+            Decimal("1.5000"),
+        )
