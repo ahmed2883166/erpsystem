@@ -269,7 +269,7 @@ class BackupConfigurationView(APIView):
                 try:
                     value = int(request.data[field])
                 except (TypeError, ValueError):
-                    raise ValidationError({field: "أدخل رقمًا صحيحًا."})
+                    raise ValidationError({field: "أدخل رقمًا صحيحًا."}) from None
                 if not low <= value <= high:
                     raise ValidationError({field: f"القيمة يجب أن تكون بين {low} و{high}."})
                 setattr(config, field, value)
