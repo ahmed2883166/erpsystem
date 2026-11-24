@@ -466,7 +466,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                     "unit_cost": line.unit_cost,
                     "cost_amount": line.cost_amount,
                 })
-        events.sort(key=lambda item: (item["posted_at"], item["movement_id"]))
+        events.sort(key=lambda item: (item["date"], item["posted_at"], item["movement_id"]))
         opening_quantity, opening_value = Decimal("0"), Decimal("0")
         period_events = []
         for event in events:
