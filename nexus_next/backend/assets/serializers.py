@@ -11,6 +11,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
     net_book_value = serializers.DecimalField(max_digits=20, decimal_places=4, read_only=True)
     vendor_invoice_id = serializers.SerializerMethodField()
     vendor_invoice_status = serializers.SerializerMethodField()
+    vendor_payments = serializers.SerializerMethodField()
 
     class Meta:
         model = FixedAsset
@@ -20,7 +21,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
                   "depreciation_method", "asset_account", "accumulated_depreciation_account",
                   "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account",
                   "acquisition_journal", "acquisition_treasury_transaction", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
-                  "accumulated_depreciation", "net_book_value", "vendor_invoice_id", "vendor_invoice_status", "created_at")
+                  "accumulated_depreciation", "net_book_value", "vendor_invoice_id", "vendor_invoice_status", "vendor_payments", "created_at")
         read_only_fields = ("acquisition_journal", "status", "disposed_at", "disposal_proceeds",
                             "disposal_journal", "disposal_treasury_transaction", "acquisition_treasury_transaction", "accumulated_depreciation", "net_book_value", "created_at")
 
@@ -33,6 +34,20 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         """Expose whether the direct supplier invoice is awaiting approval or already posted."""
         invoice = getattr(obj, "vendor_invoice", None)
         return invoice.status if invoice else None
+
+    def get_vendor_payments(self, obj):
+        """Expose linked supplier settlements for status tracking and approval-aware posting."""
+        invoice = getattr(obj, "vendor_invoice", None)
+        if not invoice:
+            return []
+        return [{
+            "id": payment.pk,
+            "payment_number": payment.payment_number,
+            "payment_date": payment.payment_date,
+            "amount": payment.amount,
+            "status": payment.status,
+            "journal_entry": payment.journal_entry_id,
+        } for payment in invoice.payments.all()]
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
