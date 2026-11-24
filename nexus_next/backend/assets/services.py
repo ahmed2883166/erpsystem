@@ -38,7 +38,7 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     try:
         year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
     except (FiscalYear.DoesNotExist, TypeError, ValueError):
-        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.") from None
     if not (year.start_date <= asset.acquisition_date <= year.end_date):
         raise ValidationError("تاريخ الاقتناء خارج السنة المالية المفتوحة.")
 
@@ -108,7 +108,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
     try:
         year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
     except (FiscalYear.DoesNotExist, TypeError, ValueError):
-        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.") from None
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
     last_depreciation = asset.depreciations.order_by("-period_date", "-pk").first()
@@ -161,7 +161,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     try:
         year = FiscalYear.objects.get(pk=fiscal_year_id, company=asset.company, status=FiscalYear.Status.OPEN)
     except (FiscalYear.DoesNotExist, TypeError, ValueError):
-        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.")
+        raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.") from None
     if not (year.start_date <= disposal_date <= year.end_date):
         raise ValidationError("تاريخ الاستبعاد خارج السنة المالية المفتوحة.")
 
@@ -170,7 +170,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         try:
             treasury_account = TreasuryAccount.objects.select_related("account").get(pk=cash_account_id, company=asset.company, is_active=True)
         except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
-            raise ValidationError("اختر حساب بنك أو خزينة نشطًا لمتحصلات البيع.")
+            raise ValidationError("اختر حساب بنك أو خزينة نشطًا لمتحصلات البيع.") from None
         cash_account = treasury_account.account
         if not cash_account.is_active or cash_account.is_group or not cash_account.allow_posting or cash_account.nature != "asset":
             raise ValidationError("الحساب المحاسبي المرتبط بالخزينة غير صالح.")
