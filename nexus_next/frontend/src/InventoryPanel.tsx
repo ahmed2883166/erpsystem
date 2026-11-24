@@ -234,7 +234,7 @@ const submit = async (event: React.FormEvent) => {
     { id: "units", label: "وحدات القياس", count: units.length },
     { id: "warehouses", label: "المخازن", count: warehouses.length },
     { id: "locations", label: "مواقع التخزين", count: locations.length },
-    { id: "movements", label: "حركات المخزون", count: movements.length },
+    { id: "movements", label: "آخر 100 حركة", count: movements.length },
     { id: "counts", label: "الجرد الفعلي", count: counts.length },
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
     { id: "reports", label: "تقارير المخزون", count: warehouseValuation.length + expiryAlerts.length + reorderAlerts.length },
@@ -463,7 +463,7 @@ const submit = async (event: React.FormEvent) => {
               <article className="metric-card"><div className="metric-top">راكد · أكثر من 180 يوم</div><strong className="metric-value">{formatMoney(costAging.buckets.stagnant.value)}</strong><small>{Number(costAging.buckets.stagnant.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} وحدة</small></article>
             </div>
             <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن / الموقع</th><th>رقم الاستلام الأصلي</th><th>تاريخ الاستلام</th><th>العمر بالأيام</th><th>الكمية المتبقية</th><th>تكلفة الوحدة</th><th>قيمة الطبقة</th><th>الصلاحية</th></tr></thead><tbody>{costAging.rows.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name} ${row.source_movement_number}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}{row.location_name ? ` / ${row.location_name}` : ""}</td><td>{row.source_movement_number}</td><td>{row.receipt_date}</td><td>{row.age_days.toLocaleString("ar-EG")}</td><td>{Number(row.quantity_remaining).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.unit_cost)}</td><td>{formatMoney(row.layer_value)}</td><td>{row.expiry_status === "expired" ? <span className="status-pill reversed">منتهي</span> : row.expiry_status === "expiring" ? <span className="status-pill draft">ينتهي خلال 30 يومًا</span> : row.expiry_status === "valid" ? <span className="status-pill posted">ساري</span> : "غير محدد"}</td></tr>)}{!costAging.rows.length && <tr><td colSpan={10}>لا توجد طبقات FIFO متبقية بتاريخ التقرير.</td></tr>}</tbody></table></div>
-            {costAging.truncated && <p className="inventory-report-note">تم عرض أول 500 طبقة فقط لتجنب تحميل مفرط؛ الإجماليات تشمل جميع الطبقات ضمن نطاق صلاحياتك.</p>}
+            {costAging.truncated && <p className="inventory-report-note">تم عرض أول 500 طبقة فقط لتجنب تحميل مفرط؛ الإجماليات تشمل جميع الطبقات ضمن نطاق صلاحياتك.</p>}{costAging.untraceable_legacy_layers_count > 0 && <p className="inventory-report-note">تنبيه: توجد {costAging.untraceable_legacy_layers_count.toLocaleString("ar-EG")} طبقة قديمة منقولة لا يمكن تتبع جذر استلامها بدقة؛ تم استبعادها من أعمار FIFO حتى لا نعرض عمرًا غير موثوق.</p>}
             <p className="inventory-report-note">{costAging.basis} {costAging.scope_note}</p>
           </>}
           {!costAging && !costAgingError && <p className="inventory-report-note">اضغط تحديث التقرير لعرض طبقات FIFO المتبقية. أصناف المتوسط المرجح مستبعدة من أعمار الطبقات لأن توزيعها لا يمثل طبقات تكلفة مستقلة.</p>}

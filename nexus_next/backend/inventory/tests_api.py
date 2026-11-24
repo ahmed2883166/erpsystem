@@ -456,6 +456,44 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
 
 
+    def test_recent_movements_endpoint_returns_only_requested_limit(self):
+        warehouse = self._warehouse("RECENT-WH")
+        for index in range(3):
+            response = self._movement(
+                f"RECENT-{index}", "receipt", destination=warehouse,
+                quantity="1", cost="1",
+            )
+            self.assertEqual(response.status_code, 201, response.data)
+        response = self.client.get(
+            f"/api/inventory/movements/recent/?company={self.company.pk}&limit=2",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data), 2)
+
+    def test_stock_aging_is_calculated_server_side_from_latest_posted_movement(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="AGING-API-1", name_ar="تحليل حركة",
+        )
+        warehouse = self._warehouse("AGING-API-WH")
+        receipt = self._movement("AGING-API-R", "receipt", destination=warehouse, quantity="5", cost="2")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        StockMovement.objects.filter(pk=receipt.data["id"]).update(movement_date=date(2026, 1, 1))
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        issue = self._movement("AGING-API-I", "issue", source=warehouse, quantity="1")
+        StockMovement.objects.filter(pk=issue.data["id"]).update(movement_date=date(2026, 2, 1))
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        response = self.client.get(f"/api/inventory/balances/stock-aging/?company={self.company.pk}")
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(item for item in response.data["rows"] if item["product"] == self.product.pk)
+        self.assertEqual(row["last_movement"], "2026-02-01")
+        self.assertEqual(row["quantity"], "4.0000")
+
     def test_issue_rejects_expired_tracked_stock(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="EXP-ISSUE-1", name_ar="منتهي الصلاحية",

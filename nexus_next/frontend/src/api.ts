@@ -604,7 +604,7 @@ export type InventoryCostAging = {
   totals: { layers: number; quantity: string; value: string };
   buckets: Record<"active" | "slow" | "very_slow" | "stagnant", { layers: number; quantity: string; value: string }>;
   rows: { id: number; product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; location_name: string; source_movement_number: string; receipt_date: string; age_days: number; quantity_remaining: string; unit_cost: string; layer_value: string; expiry_date: string | null; expiry_status: "none" | "expired" | "expiring" | "valid" }[];
-  truncated: boolean; scope_branch_ids: number[]; scope_note: string;
+  truncated: boolean; untraceable_legacy_layers_count: number; scope_branch_ids: number[]; scope_note: string;
 };
 export type InventoryValuationIntegrity = {
   company: number; branch: number | null; branch_name: string; scope_branch_ids: number[];

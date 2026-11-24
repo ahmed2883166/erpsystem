@@ -397,10 +397,12 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                 warehouse_id = int(warehouse_id)
             except (TypeError, ValueError):
                 return Response({"detail": "معرّف المخزن غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
-            if not _can_access_warehouse(
-                request.user,
-                Warehouse.objects.filter(pk=warehouse_id, company_id=company_id, is_active=True).first(),
-            ):
+            warehouse = Warehouse.objects.filter(
+                pk=warehouse_id, company_id=company_id, is_active=True,
+            ).first()
+            if warehouse is None:
+                raise NotFound("المخزن غير موجود أو غير متاح.")
+            if not _can_access_warehouse(request.user, warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى المخزن المحدد.")
             queryset = queryset.filter(
                 Q(source_warehouse_id=warehouse_id) | Q(destination_warehouse_id=warehouse_id)
