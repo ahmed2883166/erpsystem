@@ -506,7 +506,7 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         page_rows = list(ordered.values(
             "id", "movement_id", "movement__movement_date", "movement__posted_at",
             "movement__created_at", "movement__movement_number", "movement__movement_type",
-            "movement__source_warehouse_id", "quantity", "unit_cost", "cost_amount",
+            "movement__source_warehouse_id", "movement__destination_warehouse_id", "quantity", "unit_cost", "cost_amount",
             "_card_posted_order",
         )[(page - 1) * page_size:page * page_size])
 
