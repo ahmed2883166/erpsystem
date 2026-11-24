@@ -1309,6 +1309,36 @@ class SalesWorkflowTests(APITestCase):
         self.assertIsNone(response.data["invoice_lines"][0]["discount_rule"])
         self.assertEqual(response.data["discount_total"], "4.0000")
 
+    def test_quotation_cannot_be_moved_to_another_company(self):
+        other_company = Company.objects.create(
+            code="OTHER-SELL", name_ar="شركة أخرى", country="EG",
+            activity="commercial", base_currency=self.company.base_currency,
+        )
+        other_customer = Customer.objects.create(
+            company=other_company, code="CUS-OTHER", name_ar="عميل آخر",
+        )
+        created = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "quotation_number": "Q-COMPANY-LOCK",
+            "quotation_date": "2027-01-10",
+            "valid_until": "2027-01-20",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        response = self.client.patch(
+            f"/api/sales-documents/quotations/{created.data['id']}/",
+            {"company": other_company.pk, "customer": other_customer.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("company", response.data)
+        self.assertEqual(
+            SalesQuotation.objects.get(pk=created.data["id"]).company_id,
+            self.company.pk,
+        )
+
     def test_accepted_quotation_converts_once_to_draft_delivery_without_stock_or_ledger_effects(self):
         opening_movements = StockMovement.objects.count()
         opening_journals = JournalEntry.objects.count()
