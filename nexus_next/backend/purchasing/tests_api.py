@@ -1902,3 +1902,15 @@ class PurchasingWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(receipt.status_code, 400, receipt.data)
         self.assertIn("سعر أمر الشراء", str(receipt.data))
+
+
+    def test_grni_aging_report_includes_posted_uninvoiced_receipts(self):
+        self._create_and_post_receipt()
+        response = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["grand_total"], "200.0000")
+        self.assertEqual(response.data["aging"]["0_30"], "200.0000")
+        self.assertEqual(response.data["rows"][0]["receipt_number"], "GR-001")
+        self.assertEqual(response.data["monthly_summary"][0]["month"], "2026-03")
