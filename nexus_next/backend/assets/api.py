@@ -9,9 +9,9 @@ from django.utils import timezone, dateparse
 from decimal import Decimal
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from .models import FixedAsset, AssetDepreciation
+from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
-from .services import acquire_asset, depreciate_asset, dispose_asset
+from .services import acquire_asset, depreciate_asset, dispose_asset, post_asset_purchase_invoice, post_asset_supplier_payment
 from accounting.models import JournalEntry, JournalLine
 
 
@@ -48,7 +48,8 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         try:
             with transaction.atomic():
                 asset = serializer.save()
-                acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
+                if self.request.data.get("acquisition_mode") != "supplier_invoice":
+                    acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
                 serializer.instance.refresh_from_db()
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
@@ -370,3 +371,128 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
             raise ValidationError(detail) from exc
         return response.Response(result, status=status.HTTP_201_CREATED)
+
+
+    @decorators.action(detail=True, methods=("post",), url_path="purchase-invoice")
+    @transaction.atomic
+    def purchase_invoice(self, request, pk=None):
+        """إثبات فاتورة مورد مباشرة للأصل دون المرور بدورة استلام المخزون."""
+        from suppliers.models import Supplier
+        from core.money import round_currency_amount
+
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        if asset.acquisition_journal_id or asset.status != FixedAsset.Status.ACTIVE:
+            raise ValidationError("يجب أن يكون الأصل غير مثبت محاسبيًا قبل ربط فاتورة المورد.")
+        if hasattr(asset, "vendor_invoice"):
+            raise ValidationError("تم ربط فاتورة مورد بهذا الأصل بالفعل.")
+        try:
+            supplier = Supplier.objects.get(
+                pk=request.data.get("supplier"), company_id=asset.company_id, is_active=True,
+            )
+            from companies.models import FiscalYear
+            year = FiscalYear.objects.get(
+                pk=request.data.get("fiscal_year"), company_id=asset.company_id,
+                status=FiscalYear.Status.OPEN,
+            )
+            invoice_date = dateparse.parse_date(str(request.data.get("invoice_date", "")))
+            net_amount = Decimal(str(request.data.get("net_amount", "")))
+            if not invoice_date or net_amount <= 0:
+                raise ValueError("تاريخ الفاتورة أو صافي قيمتها غير صحيح.")
+            if not (year.start_date <= invoice_date <= year.end_date):
+                raise ValueError("تاريخ الفاتورة خارج السنة المالية المفتوحة.")
+            tax_code = None
+            tax_amount = recoverable = nonrecoverable = Decimal("0")
+            tax_code_id = request.data.get("tax_code")
+            if tax_code_id not in (None, ""):
+                from accounting.models import TaxCode
+                tax_code = TaxCode.objects.get(pk=tax_code_id, company_id=asset.company_id)
+                if (
+                    not tax_code.is_active or tax_code.country != asset.company.country
+                    or tax_code.category == TaxCode.Category.REVERSE_CHARGE
+                    or tax_code.effective_from > invoice_date
+                    or (tax_code.effective_to and tax_code.effective_to < invoice_date)
+                ):
+                    raise ValueError("كود الضريبة غير صالح لتاريخ الفاتورة.")
+                tax_amount = round_currency_amount(
+                    net_amount * tax_code.rate / Decimal("100"), asset.company.base_currency,
+                )
+                if tax_code.input_tax_recoverable:
+                    recoverable = tax_amount
+                else:
+                    nonrecoverable = tax_amount
+            grand_total = net_amount + tax_amount
+            capitalized_cost = net_amount + nonrecoverable
+            if asset.salvage_value > capitalized_cost:
+                raise ValueError("القيمة التخريدية تتجاوز تكلفة الأصل بعد الضريبة غير القابلة للاسترداد.")
+            invoice = AssetPurchaseInvoice(
+                company=asset.company, branch=asset.branch, asset=asset, supplier=supplier,
+                fiscal_year=year, invoice_number=str(request.data.get("invoice_number", "")).strip(),
+                invoice_date=invoice_date, net_amount=net_amount, tax_code=tax_code,
+                tax_amount=tax_amount, recoverable_tax_amount=recoverable,
+                nonrecoverable_tax_amount=nonrecoverable, grand_total=grand_total,
+                created_by=request.user,
+            )
+            if not invoice.invoice_number:
+                raise ValueError("رقم فاتورة المورد مطلوب.")
+            invoice.full_clean()
+            invoice.save()
+            invoice = post_asset_purchase_invoice(invoice.pk, request.user)
+        except (Supplier.DoesNotExist, ValueError, TypeError, Decimal.InvalidOperation) as exc:
+            raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": invoice.pk, "asset": asset.pk, "supplier": supplier.pk,
+            "supplier_name": supplier.name_ar, "invoice_number": invoice.invoice_number,
+            "invoice_date": invoice.invoice_date, "net_amount": invoice.net_amount,
+            "tax_amount": invoice.tax_amount, "recoverable_tax_amount": invoice.recoverable_tax_amount,
+            "nonrecoverable_tax_amount": invoice.nonrecoverable_tax_amount,
+            "grand_total": invoice.grand_total, "status": invoice.status,
+            "journal_entry": invoice.journal_entry_id,
+            "asset_cost": asset.original_cost,
+        }, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=("post",), url_path="supplier-payment")
+    @transaction.atomic
+    def supplier_payment(self, request, pk=None):
+        """إنشاء وترحيل سند سداد مخصص لفاتورة شراء الأصل."""
+        from django.utils.dateparse import parse_date
+
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            invoice = AssetPurchaseInvoice.objects.select_related("supplier").get(
+                asset=asset, company=asset.company, status=AssetPurchaseInvoice.Status.POSTED,
+            )
+            payment_date = parse_date(str(request.data.get("payment_date", "")))
+            amount = Decimal(str(request.data.get("amount", "")))
+            account = __import__("accounting.models", fromlist=["ChartOfAccount"]).ChartOfAccount.objects.get(
+                pk=request.data.get("payment_account"), company=asset.company,
+            )
+            payment = AssetSupplierPayment(
+                company=asset.company, branch=asset.branch, invoice=invoice,
+                supplier=invoice.supplier, payment_number=str(request.data.get("payment_number", "")).strip(),
+                payment_date=payment_date, payment_account=account, amount=amount,
+                reference=str(request.data.get("reference", ""))[:120], created_by=request.user,
+            )
+            if not payment.payment_number or not payment.payment_date:
+                raise ValueError("رقم السند وتاريخ السداد مطلوبان.")
+            payment.full_clean()
+            payment.save()
+            payment = post_asset_supplier_payment(payment.pk, request.user)
+        except (AssetPurchaseInvoice.DoesNotExist, ValueError, TypeError, Decimal.InvalidOperation) as exc:
+            raise ValidationError(str(exc) or "بيانات سند السداد غير صحيحة.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": payment.pk, "invoice": invoice.pk, "payment_number": payment.payment_number,
+            "payment_date": payment.payment_date, "amount": payment.amount,
+            "status": payment.status, "journal_entry": payment.journal_entry_id,
+        }, status=status.HTTP_201_CREATED)
