@@ -392,6 +392,143 @@ class SupplierRefund(models.Model):
         return super().delete(*args, **kwargs)
 
 
+class PurchaseRFQ(models.Model):
+    """طلب عروض أسعار من موردين مدعوين، مرتبط باحتياج داخلي اختياري."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        OPEN = "open", "مفتوح لاستقبال العروض"
+        CLOSED = "closed", "مغلق"
+        AWARDED = "awarded", "تمت الترسية"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_rfqs")
+    source_requisition = models.ForeignKey("PurchaseRequisition", null=True, blank=True, on_delete=models.PROTECT, related_name="rfqs")
+    rfq_number = models.CharField(max_length=40)
+    issue_date = models.DateField()
+    closing_date = models.DateField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    terms = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_rfqs")
+    awarded_quotation = models.OneToOneField("SupplierQuotation", null=True, blank=True, on_delete=models.PROTECT, related_name="awarded_rfq")
+    award_reason = models.TextField(blank=True)
+    awarded_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="awarded_purchase_rfqs")
+    awarded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-issue_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "rfq_number"), name="uq_purchase_rfq_company_no")]
+        indexes = [models.Index(fields=("company", "status", "closing_date"), name="pur_rfq_co_status_close_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.closing_date < self.issue_date:
+            raise ValidationError({"closing_date": "تاريخ إغلاق طلب العروض لا يمكن أن يسبق تاريخ الإصدار."})
+        if self.source_requisition_id and self.source_requisition.company_id != self.company_id:
+            raise ValidationError({"source_requisition": "طلب الاحتياج لا يتبع الشركة المحددة."})
+
+
+class PurchaseRFQLine(models.Model):
+    rfq = models.ForeignKey(PurchaseRFQ, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_rfq_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    notes = models.CharField(max_length=250, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type != "goods"):
+            raise ValidationError({"product": "الصنف يجب أن يكون مخزنيًا ويتبع شركة طلب العروض."})
+
+
+class PurchaseRFQInvitation(models.Model):
+    class Status(models.TextChoices):
+        INVITED = "invited", "مدعو"
+        DECLINED = "declined", "اعتذر"
+        QUOTED = "quoted", "قدم عرضًا"
+
+    rfq = models.ForeignKey(PurchaseRFQ, on_delete=models.PROTECT, related_name="invitations")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_rfq_invitations")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.INVITED)
+    invited_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("rfq", "supplier"), name="uq_purchase_rfq_supplier")]
+
+
+class SupplierQuotation(models.Model):
+    class Status(models.TextChoices):
+        SUBMITTED = "submitted", "مقدم"
+        WITHDRAWN = "withdrawn", "مسحوب"
+
+    rfq = models.ForeignKey(PurchaseRFQ, on_delete=models.PROTECT, related_name="quotations")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_quotations")
+    quotation_number = models.CharField(max_length=60)
+    quotation_date = models.DateField()
+    valid_until = models.DateField()
+    delivery_days = models.PositiveSmallIntegerField(default=0)
+    payment_terms = models.CharField(max_length=160, blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SUBMITTED)
+    submitted_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="submitted_supplier_quotations")
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("quotation_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("rfq", "supplier"), name="uq_supplier_quote_rfq_supplier"),
+            models.UniqueConstraint(fields=("supplier", "quotation_number"), name="uq_supplier_quote_supplier_no"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.rfq.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.rfq.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع شركة طلب العروض."})
+        if self.valid_until < self.quotation_date:
+            raise ValidationError({"valid_until": "صلاحية العرض لا يمكن أن تنتهي قبل تاريخ العرض."})
+        if self.rfq_id and not self.rfq.invitations.filter(supplier_id=self.supplier_id).exists():
+            raise ValidationError({"supplier": "لا يمكن تسجيل عرض من مورد غير مدعو."})
+
+
+class SupplierQuotationLine(models.Model):
+    quotation = models.ForeignKey(SupplierQuotation, on_delete=models.PROTECT, related_name="lines")
+    rfq_line = models.ForeignKey(PurchaseRFQLine, on_delete=models.PROTECT, related_name="quotation_lines")
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(Decimal("0")), MaxValueValidator(100)])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(Decimal("0")), MaxValueValidator(100)])
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [models.UniqueConstraint(fields=("quotation", "rfq_line"), name="uq_supplier_quote_line")]
+
+    def clean(self):
+        super().clean()
+        if self.rfq_line_id and self.quotation_id and self.rfq_line.rfq_id != self.quotation.rfq_id:
+            raise ValidationError({"rfq_line": "بند العرض لا يتبع طلب العروض المحدد."})
+
+    @property
+    def net_amount(self):
+        return (self.rfq_line.quantity * self.unit_price * (Decimal("1") - self.discount_percent / Decimal("100"))).quantize(Decimal("0.0001"))
+
+    @property
+    def tax_amount(self):
+        return (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+
+    @property
+    def total_amount(self):
+        return self.net_amount + self.tax_amount
+
+
 class PurchaseOrder(models.Model):
     """يمثل أمر شراء ومراحله قبل الاستلام والفوترة."""
     class Status(models.TextChoices):
