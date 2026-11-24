@@ -5,6 +5,7 @@
 from contextlib import contextmanager
 from io import BytesIO
 from decimal import Decimal
+import os
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, connection, transaction
@@ -31,20 +32,30 @@ from .account_imports import inspect_account_workbook, import_account_rows
 from treasury.models import TreasuryFxRevaluation, TreasuryTransaction
 
 
+def _accounting_report_profile():
+    """Return a validated, opt-in PostgreSQL report profile; defaults stay unchanged."""
+    work_mem = os.environ.get("ADMRAIL_REPORT_WORK_MEM", "32MB").upper()
+    parallel_workers = os.environ.get("ADMRAIL_REPORT_PARALLEL_WORKERS", "0")
+    if work_mem not in {"8MB", "16MB", "32MB"}:
+        raise ValueError("ADMRAIL_REPORT_WORK_MEM must be 8MB, 16MB, or 32MB.")
+    if parallel_workers not in {"0", "1", "2"}:
+        raise ValueError("ADMRAIL_REPORT_PARALLEL_WORKERS must be 0, 1, or 2.")
+    return work_mem, int(parallel_workers)
+
+
 @contextmanager
 def _accounting_report_work_mem():
     """Give large PostgreSQL report aggregates a bounded memory budget per request."""
     if connection.vendor != "postgresql":
         yield
         return
-    # Keep enough bounded per-request memory for in-memory hash aggregation,
-    # while disabling parallel workers so concurrent LAN reports do not multiply
-    # worker memory or spill large sorts. JIT compilation is also disabled only
-    # inside this report transaction to avoid repeated compilation overhead.
+    # The default profile remains 32MB with no parallel workers. Environment
+    # overrides are opt-in and are used for isolated benchmark comparisons only.
+    work_mem, parallel_workers = _accounting_report_profile()
     with transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute("SET LOCAL work_mem = '32MB'")
-            cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+            cursor.execute(f"SET LOCAL work_mem = '{work_mem}'")
+            cursor.execute(f"SET LOCAL max_parallel_workers_per_gather = {parallel_workers}")
             cursor.execute("SET LOCAL jit = off")
         yield
 
