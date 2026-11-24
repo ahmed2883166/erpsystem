@@ -125,6 +125,8 @@ class Employee(CompanyScopedModel):
             value = getattr(self, field, None)
             if value and value.company_id != self.company_id:
                 raise ValidationError({field: "يجب أن يتبع نفس الشركة."})
+        if self.currency_id and self.company_id and self.currency_id != self.company.base_currency_id:
+            raise ValidationError({"currency": "عملة راتب الموظف يجب أن تطابق العملة الأساسية للشركة."})
         if self.basic_salary < 0:
             raise ValidationError({"basic_salary": "الراتب الأساسي لا يمكن أن يكون سالبًا."})
         if self.termination_date and self.termination_date < self.hire_date:
