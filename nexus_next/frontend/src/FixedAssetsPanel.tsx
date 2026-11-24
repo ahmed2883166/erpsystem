@@ -9,11 +9,20 @@ import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type Fisca
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
 const emptyForm = {
-  branch: "", code: "", name_ar: "", category: "other", description: "", location: "", custodian: "", serial_number: "", warranty_end_date: "", supplier_name: "", supplier_invoice: "", acquisition_mode: "cash", supplier_id: "", supplier_net_amount: "", supplier_tax_code: "", acquisition_date: today, depreciation_start_date: today,
+  branch: "", code: "", name_ar: "", category: "other", description: "", location: "", custodian: "", serial_number: "", warranty_end_date: "", supplier_name: "", supplier_invoice: "", acquisition_mode: "cash", supplier_id: "", supplier_net_amount: "", supplier_tax_code: "", cash_tax_code: "", acquisition_date: today, depreciation_start_date: today,
   original_cost: "", salvage_value: "0", useful_life_months: "60", asset_account: "",
   accumulated_depreciation_account: "", depreciation_expense_account: "", acquisition_counter_account: "",
   disposal_gain_loss_account: "", disposal_loss_account: "", fiscal_year: "",
 };
+
+function cashTaxPreview(form: typeof emptyForm, taxCodes: TaxCode[]) {
+  const code = taxCodes.find(item => item.id === Number(form.cash_tax_code));
+  if (!code || !(Number(form.original_cost) > 0)) return null;
+  const net = Number(form.original_cost);
+  const tax = Number((net * Number(code.rate) / 100).toFixed(4));
+  const capitalized = net + (code.input_tax_recoverable ? 0 : tax);
+  return <div className="asset-report-note">ضريبة المدخلات: {formatMoney(tax)} · {code.input_tax_recoverable ? "تُثبت كضريبة مدخلات قابلة للاسترداد" : "تُضاف إلى تكلفة الأصل"} · تكلفة الأصل بعد المعالجة: {formatMoney(capitalized)} · إجمالي المدفوع: {formatMoney(net + tax)}</div>;
+}
 
 // شاشة الأصول الثابتة لإضافة الأصول وإدارة الإهلاك والاستبعاد والتقارير.
 export default function FixedAssetsPanel({ companyId }: Props) {
@@ -91,13 +100,27 @@ const create = async (event: FormEvent) => {
     if (form.acquisition_mode === "supplier_invoice" && (!form.supplier_id || !form.supplier_invoice.trim() || !(Number(form.supplier_net_amount) > 0))) {
       setError("اختر المورد وأدخل رقم الفاتورة وصافي قيمتها قبل الضريبة."); return;
     }
+    const cashTaxCode = form.acquisition_mode === "cash" && form.cash_tax_code
+      ? taxCodes.find(item => item.id === Number(form.cash_tax_code)) || null : null;
+    const cashNetAmount = Number(form.original_cost || 0);
+    if (form.acquisition_mode === "cash" && cashTaxCode && !(cashNetAmount > 0)) {
+      setError("أدخل صافي تكلفة الأصل قبل الضريبة."); return;
+    }
+    const cashTaxAmount = cashTaxCode ? Number((cashNetAmount * Number(cashTaxCode.rate) / 100).toFixed(4)) : 0;
+    const cashRecoverableTax = cashTaxCode?.input_tax_recoverable ? cashTaxAmount : 0;
+    const cashNonrecoverableTax = cashTaxCode && !cashTaxCode.input_tax_recoverable ? cashTaxAmount : 0;
+    const cashCapitalizedCost = Number((cashNetAmount + cashNonrecoverableTax).toFixed(4));
     setSaving(true); setError(""); setNotice("");
     let createdAsset: FixedAsset | null = null;
     try {
       const asset = await fixedAssetsApi.create({
         company: companyId, branch: Number(form.branch), code: form.code, name_ar: form.name_ar, category: form.category, description: form.description, location: form.location, custodian: form.custodian, serial_number: form.serial_number, warranty_end_date: form.warranty_end_date || null, supplier_name: form.supplier_name, supplier_invoice: form.supplier_invoice,
         acquisition_date: form.acquisition_date, depreciation_start_date: form.depreciation_start_date,
-        original_cost: form.acquisition_mode === "supplier_invoice" ? form.supplier_net_amount : form.original_cost,
+        original_cost: form.acquisition_mode === "supplier_invoice" ? form.supplier_net_amount : String(cashCapitalizedCost.toFixed(4)),
+        acquisition_net_amount: cashTaxCode ? String(cashNetAmount.toFixed(4)) : null,
+        recoverable_tax_amount: String(cashRecoverableTax.toFixed(4)),
+        nonrecoverable_tax_amount: String(cashNonrecoverableTax.toFixed(4)),
+        acquisition_tax_code: cashTaxCode?.id ?? null,
         salvage_value: form.salvage_value, useful_life_months: Number(form.useful_life_months),
         depreciation_method: "straight_line", asset_account: Number(form.asset_account),
         accumulated_depreciation_account: Number(form.accumulated_depreciation_account),
@@ -290,11 +313,17 @@ const loadReport = async () => {
         <label>صافي الفاتورة قبل الضريبة<input required type="number" min="0.0001" step="0.0001" value={form.supplier_net_amount} onChange={e=>setForm({...form,supplier_net_amount:e.target.value,original_cost:e.target.value})}/></label>
         <label>كود ضريبة المدخلات<select value={form.supplier_tax_code} onChange={e=>setForm({...form,supplier_tax_code:e.target.value})}><option value="">بدون ضريبة</option>{taxCodes.filter(t=>t.category!=="reverse_charge").map(t=><option key={t.id} value={t.id}>{t.code} · {t.name_ar} · {t.rate}% · {t.input_tax_recoverable?"قابلة للاسترداد":"تُرسمل على الأصل"}</option>)}</select></label>
       </>}
-      {form.acquisition_mode === "cash" && <label>رقم فاتورة المورد<input value={form.supplier_invoice} onChange={e=>setForm({...form,supplier_invoice:e.target.value})}/></label>}
+      {form.acquisition_mode === "cash" && <>
+        <label>رقم فاتورة المورد<input value={form.supplier_invoice} onChange={e=>setForm({...form,supplier_invoice:e.target.value})}/></label>
+        <label>كود ضريبة الشراء النقدي<select value={form.cash_tax_code} onChange={e=>setForm({...form,cash_tax_code:e.target.value})}><option value="">بدون ضريبة</option>{taxCodes.filter(t=>t.category==="standard").map(t=><option key={t.id} value={t.id}>{t.code} · {t.name_ar} · {t.rate}% · {t.input_tax_recoverable?"قابلة للاسترداد":"غير قابلة للاسترداد"}</option>)}</select></label>
+      </>}
       <label>الفرع<select required value={form.branch} onChange={e=>setForm({...form,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
       <label>تاريخ الاقتناء<input required type="date" value={form.acquisition_date} onChange={e=>setForm({...form,acquisition_date:e.target.value})}/></label>
       <label>بداية الإهلاك<input required type="date" value={form.depreciation_start_date} onChange={e=>setForm({...form,depreciation_start_date:e.target.value})}/></label>
-      {form.acquisition_mode === "cash" && <label>التكلفة<input required type="number" min="0.0001" step="0.0001" value={form.original_cost} onChange={e=>setForm({...form,original_cost:e.target.value})}/></label>}
+      {form.acquisition_mode === "cash" && <>
+        <label>{form.cash_tax_code ? "صافي تكلفة الأصل قبل الضريبة" : "تكلفة الأصل"}<input required type="number" min="0.0001" step="0.0001" value={form.original_cost} onChange={e=>setForm({...form,original_cost:e.target.value})}/></label>
+        {cashTaxPreview(form, taxCodes)}
+      </>}
       <label>القيمة التخريدية<input type="number" min="0" step="0.0001" value={form.salvage_value} onChange={e=>setForm({...form,salvage_value:e.target.value})}/></label>
       <label>العمر (شهر)<input required type="number" min="1" value={form.useful_life_months} onChange={e=>setForm({...form,useful_life_months:e.target.value})}/></label>
       <label>السنة المالية<select required value={form.fiscal_year} onChange={e=>setForm({...form,fiscal_year:e.target.value})}><option value="">اختر السنة</option>{years.map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label>
