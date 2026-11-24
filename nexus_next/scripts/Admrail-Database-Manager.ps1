@@ -44,6 +44,10 @@ function Get-PgTool([string]$Name) {
     }
     throw "أداة PostgreSQL $Name.exe غير موجودة. ثبّت Command Line Tools."
 }
+function Assert-AppStopped {
+    $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
+    if ($listener) { throw "أوقف تشغيل Admrail على جهاز الخادم أولًا (المنفذ 8000 ما زال مستخدمًا)، ثم أعد المحاولة." }
+}
 function Read-AdminPassword {
     $s = Read-Host "أدخل كلمة مرور مسؤول PostgreSQL (postgres)" -AsSecureString
     $p = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)
@@ -92,6 +96,7 @@ function Save-VerifiedBackup([string]$Db) {
     }
 }
 function Update-Db {
+    Assert-AppStopped
     $c = Read-Config
     Write-Host "سيتم تحديث الجداول مع الاحتفاظ بالحركات والبيانات." -ForegroundColor Cyan
     $null = Save-VerifiedBackup $c.POSTGRES_DB
@@ -112,6 +117,7 @@ function Show-DbStatus {
     ($v | ConvertFrom-Json) | Format-List
 }
 function Create-Db {
+    Assert-AppStopped
     $c = Read-Config; $name = (Read-Host "اسم قاعدة البيانات الجديدة").Trim()
     if ($name -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$') { throw "اسم غير صالح: استخدم حروفًا إنجليزية وأرقامًا و _." }
     $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname = '$($name.Replace("'","''"))';"
@@ -130,6 +136,7 @@ function Create-Db {
     }
 }
 function Rename-Db {
+    Assert-AppStopped
     $c = Read-Config; $old = $c.POSTGRES_DB; $new = (Read-Host "الاسم الجديد للقاعدة").Trim()
     if ($new -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$' -or $new -eq $old) { throw "الاسم الجديد غير صالح أو مطابق للحالي." }
     $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname = '$($new.Replace("'","''"))';"
@@ -141,6 +148,7 @@ function Rename-Db {
     Write-Host "تم تغيير الاسم وتحديث اتصال البرنامج دون تغيير البيانات." -ForegroundColor Green
 }
 function Delete-Db {
+    Assert-AppStopped
     $c = Read-Config
     $raw = Invoke-Psql "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> 'postgres' ORDER BY datname;"
     $list = @($raw -split "\r?\n" | Where-Object { $_ })
@@ -158,6 +166,7 @@ function Delete-Db {
     Write-Host "تم حذف القاعدة بعد حفظ النسخة المشفرة." -ForegroundColor Green
 }
 function Change-DbPassword {
+    Assert-AppStopped
     $c = Read-Config; $role = $c.POSTGRES_USER; $new = New-DbPassword
     $sqlFile = Join-Path $env:TEMP ("admrail-secret-" + [guid]::NewGuid().ToString("N") + ".sql")
     try {
@@ -179,6 +188,7 @@ function Change-DbPassword {
     }
 }
 function Reset-AppPassword {
+    Assert-AppStopped
     $u = Read-Host "اسم مستخدم Admrail"
     if (-not $u) { throw "اسم المستخدم مطلوب." }
     Push-Location $Backend
