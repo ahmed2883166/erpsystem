@@ -264,17 +264,17 @@ class SalesQuotationViewSet(SalesBaseViewSet):
     def convert_to_delivery(self, request, pk=None):
         quotation = self.get_object()
         self._check_write(quotation.company_id)
+        if quotation.converted_delivery_id:
+            return Response({
+                "detail": "تم تحويل عرض السعر من قبل؛ لا يُنشأ إذن تسليم مكرر.",
+                "delivery": SalesDeliverySerializer(quotation.converted_delivery, context=self.get_serializer_context()).data,
+            }, status=status.HTTP_200_OK)
         if quotation.status != SalesQuotation.Status.ACCEPTED:
             raise ValidationError("يجب قبول عرض السعر قبل تحويله.")
         if quotation.valid_until < timezone.localdate():
             quotation.status = SalesQuotation.Status.EXPIRED
             quotation.save(update_fields=("status", "updated_at"))
             raise ValidationError("انتهت صلاحية عرض السعر.")
-        if quotation.converted_delivery_id:
-            return Response({
-                "detail": "تم تحويل عرض السعر من قبل؛ لا يُنشأ إذن تسليم مكرر.",
-                "delivery": SalesDeliverySerializer(quotation.converted_delivery, context=self.get_serializer_context()).data,
-            }, status=status.HTTP_200_OK)
         try:
             warehouse_id = int(request.data.get("warehouse"))
         except (TypeError, ValueError):
