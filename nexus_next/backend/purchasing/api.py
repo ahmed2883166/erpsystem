@@ -1080,7 +1080,7 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
     @action(detail=True, methods=("post",), url_path="convert-award")
     @transaction.atomic
     def convert_award(self, request, pk=None):
-        rfq = PurchaseRFQ.objects.select_for_update().select_related("awarded_quotation__supplier").get(pk=self.get_object().pk)
+        rfq = PurchaseRFQ.objects.select_for_update(of=("self",)).select_related("awarded_quotation__supplier").get(pk=self.get_object().pk)
         self._check_write(rfq.company_id)
         if rfq.status != PurchaseRFQ.Status.AWARDED or not rfq.awarded_quotation_id:
             raise ValidationError("لا يمكن إصدار أمر شراء قبل ترسية عرض مورد.")
