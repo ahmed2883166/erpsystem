@@ -125,6 +125,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
   const pending = requests.filter(row => row.status === "pending").length + financialRequests.filter(row => row.status === "pending").length;
   const financialDocumentLabel: Record<FinancialApprovalRequest["document_type"], string> = {
     purchase_invoice: "فاتورة مشتريات", supplier_payment: "سند صرف مورد", treasury_payment: "سند صرف خزينة",
+    asset_purchase_invoice: "فاتورة شراء أصل ثابت", asset_supplier_payment: "سند سداد أصل ثابت",
   };
 
   return <section className="work-panel">
@@ -170,7 +171,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
     </div>
 
     <section className="work-panel-subsection">
-      <div className="work-panel-head"><div><h3>موافقات فواتير المشتريات وسندات الصرف</h3><p>تتطلب المستندات التي تتجاوز حدودها اعتماد مدير الشركة قبل الترحيل.</p></div></div>
+      <div className="work-panel-head"><div><h3>موافقات المشتريات والأصول وسندات الصرف</h3><p>تتطلب المستندات التي تتجاوز حدودها اعتماد مدير الشركة قبل الترحيل.</p></div></div>
       <div className="data-table-wrap">
         <table><thead><tr><th>نوع المستند</th><th>رقم المستند</th><th>المبلغ وقت الطلب</th><th>الحد وقت الطلب</th><th>مقدم الطلب</th><th>تاريخ الطلب</th><th>الحالة</th><th>تفاصيل النسخة</th><th>القرار</th></tr></thead>
           <tbody>{financialRequests.map(row => <tr key={row.id}>
@@ -181,7 +182,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
             <td><details className="approval-snapshot"><summary>عرض التفاصيل</summary><pre>{JSON.stringify(row.requested_snapshot, null, 2)}</pre></details></td>
             <td>{row.status === "pending" ? canManage ? <div className="table-actions"><button type="button" className="primary-button" disabled={busy} onClick={() => void decideFinancial(row, "approve")}>اعتماد</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void decideFinancial(row, "reject")}>رفض</button></div> : "بانتظار قرار المدير" : <span>{row.decided_by_name || "—"}{row.decision_note ? ` · ${row.decision_note}` : ""}</span>}</td>
           </tr>)}
-          {!financialRequests.length && <tr><td colSpan={9}>لا توجد طلبات موافقة مشتريات أو صرف.</td></tr>}</tbody>
+          {!financialRequests.length && <tr><td colSpan={9}>لا توجد طلبات موافقة مشتريات أو أصول أو صرف.</td></tr>}</tbody>
         </table>
       </div>
     </section>
