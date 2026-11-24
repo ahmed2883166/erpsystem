@@ -781,8 +781,13 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         ).exists()
         if later_receipts:
             raise ValidationError("يجب عكس أحدث سند قبض على الفاتورة أولًا.")
-        if FxSubledgerRevaluation.objects.filter(sales_invoice_id=receipt.invoice_id).exists():
-            raise ValidationError("لا يمكن عكس سند قبض لفاتورة لها سجل إعادة تقييم عملة؛ راجع تسلسل التسويات وإعادة التقييم أولًا.")
+        if FxSubledgerRevaluation.objects.filter(
+            sales_invoice_id=receipt.invoice_id,
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+        ).exists():
+            raise ValidationError("لا يمكن عكس سند قبض لفاتورة لها إعادة تقييم عملة سارية؛ راجع تسلسل التسويات وإعادة التقييم أولًا.")
         entry_date_raw = request.data.get("entry_date")
         try:
             entry_date = parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
