@@ -808,6 +808,7 @@ export type FixedAsset = {
   acquisition_counter_account: number; disposal_gain_loss_account: number; disposal_loss_account: number | null; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
   status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null; disposal_journal: number | null; disposal_treasury_transaction: number | null;
   vendor_invoice_id: number | null; vendor_invoice_status: "draft" | "posted" | null;
+  vendor_payments: {id:number;payment_number:string;payment_date:string;amount:string;status:"draft"|"posted"|"reversed";journal_entry:number|null}[];
   accumulated_depreciation: string; net_book_value: string; created_at: string;
 };
 export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; net_book_value: string;
