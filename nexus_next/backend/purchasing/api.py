@@ -244,6 +244,72 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         receipt.delete()
         movement.delete()
 
+
+    @action(detail=False, methods=("get",), url_path="grni-aging")
+    def grni_aging(self, request):
+        """تقرير أعمار البضاعة المستلمة غير المفوترة مع ملخص شهري للمطابقة."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير GRNI."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        as_of = parse_date(request.query_params.get("as_of", "")) if request.query_params.get("as_of") else timezone.localdate()
+        if not as_of:
+            raise ValidationError({"as_of": "تاريخ التقرير غير صالح."})
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        companies = accessible_companies(request.user).filter(pk=company_id)
+        qs = self.queryset.filter(
+            company__in=companies, receipt_date__lte=as_of,
+            stock_movement__status=StockMovement.Status.POSTED,
+        ).select_related("invoice")
+        if branch_id:
+            qs = qs.filter(warehouse__branch_id=branch_id)
+        else:
+            branches = accessible_branches(request.user)
+            defaults = _default_branch_company_ids(request.user, companies)
+            qs = qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
+        qs = qs.exclude(invoice__status=PurchaseInvoice.Status.POSTED).order_by("receipt_date", "receipt_number")
+        rows = []
+        aging = {"0_30": Decimal("0"), "31_60": Decimal("0"), "61_90": Decimal("0"), "over_90": Decimal("0")}
+        monthly = {}
+        grand_total = Decimal("0")
+        for receipt in qs:
+            amount = sum((line.cost_amount for line in receipt.stock_movement.lines.all()), Decimal("0")).quantize(Decimal("0.0001"))
+            if amount <= 0:
+                continue
+            age_days = max((as_of - receipt.receipt_date).days, 0)
+            bucket = "0_30" if age_days <= 30 else "31_60" if age_days <= 60 else "61_90" if age_days <= 90 else "over_90"
+            aging[bucket] += amount
+            grand_total += amount
+            month = receipt.receipt_date.strftime("%Y-%m")
+            monthly[month] = monthly.get(month, Decimal("0")) + amount
+            invoice = getattr(receipt, "invoice", None)
+            rows.append({
+                "receipt_id": receipt.pk, "receipt_number": receipt.receipt_number,
+                "receipt_date": receipt.receipt_date.isoformat(), "age_days": age_days,
+                "aging_bucket": bucket, "supplier_id": receipt.supplier_id,
+                "supplier_name": receipt.supplier.name_ar, "warehouse_id": receipt.warehouse_id,
+                "warehouse_name": receipt.warehouse.name_ar,
+                "branch_id": receipt.warehouse.branch_id,
+                "amount": str(amount), "invoice_status": invoice.status if invoice else "not_invoiced",
+                "invoice_number": invoice.invoice_number if invoice else None,
+            })
+        return Response({
+            "company": company_id, "as_of": as_of.isoformat(),
+            "grand_total": str(grand_total.quantize(Decimal("0.0001"))),
+            "aging": {key: str(value.quantize(Decimal("0.0001"))) for key, value in aging.items()},
+            "monthly_summary": [{"month": key, "amount": str(value.quantize(Decimal("0.0001")))} for key, value in sorted(monthly.items())],
+            "rows": rows,
+        })
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
