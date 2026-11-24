@@ -798,3 +798,80 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
             ) for movement_line, line in zip(movement_lines, lines)
         ])
         return document
+
+
+class PurchaseRequisitionLineInputSerializer(serializers.Serializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    requested_quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    estimated_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=250)
+
+
+class PurchaseRequisitionSerializer(serializers.ModelSerializer):
+    lines = PurchaseRequisitionLineInputSerializer(many=True, write_only=True)
+    line_items = serializers.SerializerMethodField()
+    requested_by_name = serializers.CharField(source="requested_by.get_full_name", read_only=True)
+    reviewed_by_name = serializers.CharField(source="reviewed_by.get_full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        from .models import PurchaseRequisition
+        model = PurchaseRequisition
+        fields = ("id", "company", "request_number", "request_date", "required_date", "department",
+                  "purpose", "notes", "status", "requested_by", "requested_by_name",
+                  "reviewed_by", "reviewed_by_name", "reviewed_at", "review_note",
+                  "converted_order", "lines", "line_items", "created_at")
+        read_only_fields = ("status", "requested_by", "reviewed_by", "reviewed_at",
+                            "converted_order", "line_items", "created_at")
+
+    def get_line_items(self, obj):
+        return [{
+            "id": line.pk, "product": line.product_id, "product_code": line.product.code,
+            "product_name": line.product.name_ar, "requested_quantity": str(line.requested_quantity),
+            "estimated_unit_price": str(line.estimated_unit_price) if line.estimated_unit_price is not None else None,
+            "notes": line.notes,
+        } for line in obj.lines.select_related("product").all()]
+
+    def validate(self, attrs):
+        from .models import PurchaseRequisition
+        company = attrs.get("company", self.instance.company if self.instance else None)
+        lines = attrs.get("lines")
+        if self.instance and self.instance.status != PurchaseRequisition.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل طلب شراء بعد إرساله للاعتماد.")
+        if not self.instance and lines is None:
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        if lines is not None and not lines:
+            raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        if lines is not None:
+            for line in lines:
+                product = line["product"]
+                if not company or product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
+                    raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
+        if attrs.get("required_date") and attrs.get("request_date", self.instance.request_date if self.instance else None) and attrs["required_date"] < attrs.get("request_date", self.instance.request_date if self.instance else None):
+            raise serializers.ValidationError({"required_date": "تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        from .models import PurchaseRequisition, PurchaseRequisitionLine
+        lines = validated_data.pop("lines")
+        request = self.context["request"]
+        requisition = PurchaseRequisition.objects.create(**validated_data, requested_by=request.user)
+        PurchaseRequisitionLine.objects.bulk_create([
+            PurchaseRequisitionLine(requisition=requisition, **line) for line in lines
+        ])
+        return requisition
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        from .models import PurchaseRequisition, PurchaseRequisitionLine
+        requisition = PurchaseRequisition.objects.select_for_update().get(pk=instance.pk)
+        if requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل طلب شراء بعد إرساله للاعتماد.")
+        lines = validated_data.pop("lines", None)
+        requisition = super().update(requisition, validated_data)
+        if lines is not None:
+            requisition.lines.all().delete()
+            PurchaseRequisitionLine.objects.bulk_create([
+                PurchaseRequisitionLine(requisition=requisition, **line) for line in lines
+            ])
+        return requisition
