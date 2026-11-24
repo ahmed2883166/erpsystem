@@ -924,6 +924,8 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
     def award(self, request, pk=None):
         rfq = PurchaseRFQ.objects.select_for_update().get(pk=self.get_object().pk)
         self._check_write(rfq.company_id)
+        if not has_company_role(request.user, rfq.company_id, ("admin",)):
+            raise PermissionDenied("ترسية عروض الموردين متاحة لمدير الشركة فقط.")
         if rfq.status not in (PurchaseRFQ.Status.OPEN, PurchaseRFQ.Status.CLOSED):
             raise ValidationError("لا يمكن ترسية طلب العروض في حالته الحالية.")
         quotation_id = request.data.get("quotation")
@@ -933,6 +935,8 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
         quotation = SupplierQuotation.objects.filter(pk=quotation_id, rfq=rfq, status=SupplierQuotation.Status.SUBMITTED).first()
         if not quotation:
             raise ValidationError({"quotation": "اختر عرضًا صالحًا تابعًا لطلب العروض."})
+        if quotation.submitted_by_id == request.user.pk:
+            raise PermissionDenied("لا يجوز ترسية عرض قمت بتسجيله بنفسك.")
         if quotation.valid_until < timezone.localdate():
             raise ValidationError({"quotation": "صلاحية العرض المختار منتهية."})
         PurchaseRFQ.objects.filter(pk=rfq.pk, awarded_quotation__isnull=True).update(
