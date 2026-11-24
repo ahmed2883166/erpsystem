@@ -937,8 +937,20 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
         if any(x["product"].company_id != company.pk or x["product"].product_type != Product.ProductType.GOODS or not x["product"].is_active for x in lines):
             raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة من نفس الشركة."})
         source = attrs.get("source_requisition")
-        if source and (source.company_id != company.pk or source.status != "approved"):
-            raise serializers.ValidationError({"source_requisition": "اختر طلب احتياج معتمدًا من نفس الشركة."})
+        if source:
+            if source.company_id != company.pk or source.status != "approved":
+                raise serializers.ValidationError({"source_requisition": "اختر طلب احتياج معتمدًا من نفس الشركة."})
+            source_quantities = {}
+            for source_line in source.lines.all():
+                source_quantities[source_line.product_id] = (
+                    source_quantities.get(source_line.product_id, Decimal("0"))
+                    + source_line.requested_quantity
+                )
+            rfq_quantities = {line["product"].pk: line["quantity"] for line in lines}
+            if source_quantities != rfq_quantities:
+                raise serializers.ValidationError({
+                    "lines": "أصناف وكميات طلب عروض الأسعار يجب أن تطابق طلب الاحتياج المرتبط بالكامل."
+                })
         if attrs["closing_date"] < attrs["issue_date"]:
             raise serializers.ValidationError({"closing_date": "تاريخ الإغلاق لا يسبق تاريخ الإصدار."})
         return attrs
