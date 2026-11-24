@@ -145,10 +145,10 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         asset = FixedAsset.objects.get(pk=asset_id)
         self.assertIsNotNone(asset.acquisition_journal_id)
-        self.assertIsNotNone(asset.acquisition_tax_journal_id)
-        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=vat_input).debit, Decimal("14000.0000"))
-        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=self.asset_gl).credit, Decimal("14000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.get(account=self.asset_gl).debit, Decimal("100000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.get(account=vat_input).debit, Decimal("14000.0000"))
         self.assertEqual(asset.acquisition_journal.lines.get(account=self.cash_gl).credit, Decimal("114000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.count(), 3)
 
     def test_asset_acquisition_is_atomic_when_fiscal_year_is_invalid(self):
         payload = self._payload()
@@ -408,18 +408,18 @@ class FixedAssetWorkflowTests(APITestCase):
         asset = FixedAsset.objects.get(pk=created.data["id"])
         self.assertEqual(asset.original_cost, Decimal("100000.0000"))
         self.assertEqual(asset.recoverable_tax_amount, Decimal("14000.0000"))
-        self.assertIsNotNone(asset.acquisition_tax_journal_id)
         cash_document = TreasuryTransaction.objects.get(pk=asset.acquisition_treasury_transaction_id)
         self.assertEqual(cash_document.amount, Decimal("114000.0000"))
         self.assertEqual(cash_document.cash_flow_category, TreasuryTransaction.CashFlowCategory.INVESTING)
-        self.assertEqual(asset.acquisition_journal.lines.get(account=self.asset_gl).debit, Decimal("114000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.get(account=self.asset_gl).debit, Decimal("100000.0000"))
+        self.assertEqual(asset.acquisition_journal.lines.get(account=vat_input).debit, Decimal("14000.0000"))
         self.assertEqual(asset.acquisition_journal.lines.get(account=self.cash_gl).credit, Decimal("114000.0000"))
-        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=vat_input).debit, Decimal("14000.0000"))
-        self.assertEqual(asset.acquisition_tax_journal.lines.get(account=self.asset_gl).credit, Decimal("14000.0000"))
-        for journal in (asset.acquisition_journal, asset.acquisition_tax_journal):
-            totals = journal.lines.aggregate(debit=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
-                                             credit=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"))
-            self.assertEqual(totals["debit"], totals["credit"])
+        self.assertEqual(asset.acquisition_journal.lines.count(), 3)
+        totals = asset.acquisition_journal.lines.aggregate(
+            debit=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
+            credit=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"),
+        )
+        self.assertEqual(totals["debit"], totals["credit"])
 
         income = self.client.get("/api/accounting/journal-entries/income-statement/", {
             "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-01-31",
