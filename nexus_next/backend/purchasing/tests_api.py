@@ -1914,3 +1914,23 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(response.data["aging"]["0_30"], "200.0000")
         self.assertEqual(response.data["rows"][0]["receipt_number"], "GR-001")
         self.assertEqual(response.data["monthly_summary"][0]["month"], "2026-03")
+
+    def test_grni_aging_report_keeps_receipt_with_draft_supplier_invoice(self):
+        _, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "receipt": PurchaseReceipt.objects.get(receipt_number="GR-001").pk,
+            "invoice_number": "INV-DRAFT-GRNI",
+            "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["status"], "draft")
+
+        response = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["grand_total"], "200.0000")
+        self.assertEqual(response.data["rows"][0]["invoice_status"], "draft")
