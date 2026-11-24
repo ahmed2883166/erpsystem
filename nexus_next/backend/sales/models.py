@@ -289,7 +289,7 @@ class SalesInvoiceLine(models.Model):
             gross_amount = (self.delivery_line.quantity * self.unit_price).quantize(Decimal("0.0001"))
             self.discount_amount = (gross_amount * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
             self.net_amount = gross_amount - self.discount_amount
-            self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+            self.tax_amount = round_currency_amount(self.net_amount * self.tax_rate / Decimal("100"), self.invoice.company.base_currency)
             self.total_amount = self.net_amount + self.tax_amount
 
     def save(self, *args, **kwargs):
