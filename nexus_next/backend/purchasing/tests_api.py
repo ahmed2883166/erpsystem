@@ -1664,6 +1664,14 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
         self.assertEqual(reversed_return.data["status"], "reversed")
         self.assertEqual(reversed_return.data["reversal_movement_status"], "posted")
+        repeated_reverse = self.client.post(
+            f"/api/purchasing/returns/{draft.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(repeated_reverse.status_code, 400, repeated_reverse.data)
+        unchanged_after_repeat = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(unchanged_after_repeat.quantity, Decimal("2.0000"))
+        self.assertEqual(unchanged_after_repeat.inventory_value, Decimal("200.0000"))
         self.assertTrue(reversed_return.data["reversal_journal_number"])
 
         after_reverse = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
