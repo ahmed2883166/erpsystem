@@ -268,6 +268,12 @@ def post_treasury_transaction(transaction_id, user=None):
     if asset_acquisition and not asset_acquisition.acquisition_journal_id:
         asset_acquisition.acquisition_journal = entry
         asset_acquisition.save(update_fields=("acquisition_journal",))
+    if asset_acquisition and asset_acquisition.recoverable_tax_amount:
+        # Complete the tax split in the same transaction as treasury posting.
+        # This also covers the approval workflow where the user posts the
+        # treasury draft directly after manager approval.
+        from assets.services import post_asset_acquisition_tax_adjustment
+        post_asset_acquisition_tax_adjustment(asset_acquisition.pk, user or doc.created_by)
     return doc
 
 
