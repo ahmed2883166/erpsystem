@@ -27,8 +27,6 @@ def post_inventory_count(count_id, user):
             "product__unit", "location",
         ).order_by("product_id", "id")
     )
-    if not lines:
-        raise ValidationError("لا يمكن اعتماد جرد بدون بنود.")
     if any(line.counted_quantity is None for line in lines):
         raise ValidationError("أكمل العد الفعلي لكل البنود قبل اعتماد الجرد.")
 
