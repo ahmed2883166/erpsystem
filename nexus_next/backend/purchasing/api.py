@@ -885,6 +885,7 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
         self._check_write(serializer.instance.company_id)
         serializer.save()
 
+    @transaction.atomic
     def perform_destroy(self, instance):
         requisition = PurchaseRequisition.objects.select_for_update().get(pk=instance.pk)
         self._check_write(requisition.company_id)
