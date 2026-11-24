@@ -42,6 +42,7 @@ class FixedAsset(models.Model):
     depreciation_start_date = models.DateField()
     original_cost = models.DecimalField(max_digits=20, decimal_places=4)
     acquisition_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    recoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     nonrecoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     acquisition_tax_code = models.ForeignKey(
         "accounting.TaxCode", null=True, blank=True, on_delete=models.PROTECT,
@@ -57,6 +58,7 @@ class FixedAsset(models.Model):
     disposal_gain_loss_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_disposals")
     disposal_loss_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_disposal_losses")
     acquisition_journal = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="acquired_fixed_asset")
+    acquisition_tax_journal = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_acquisition_tax_adjustment")
     acquisition_treasury_transaction = models.OneToOneField("treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_asset_acquisition")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
     disposed_at = models.DateField(null=True, blank=True)
@@ -80,13 +82,23 @@ class FixedAsset(models.Model):
             raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية لا يمكن أن تتجاوز التكلفة."})
-        if self.nonrecoverable_tax_amount < 0:
-            raise ValidationError({"nonrecoverable_tax_amount": "قيمة الضريبة غير القابلة للخصم لا يمكن أن تكون سالبة."})
+        if self.nonrecoverable_tax_amount < 0 or self.recoverable_tax_amount < 0:
+            raise ValidationError({"nonrecoverable_tax_amount": "قيم الضريبة لا يمكن أن تكون سالبة."})
         if self.acquisition_net_amount is not None:
             if self.acquisition_net_amount < 0 or self.acquisition_net_amount + self.nonrecoverable_tax_amount != self.original_cost:
-                raise ValidationError({"original_cost": "تكلفة الأصل يجب أن تساوي صافي الاقتناء مضافًا إليه الضريبة غير القابلة للخصم."})
-        elif self.nonrecoverable_tax_amount:
-            raise ValidationError({"acquisition_net_amount": "أدخل صافي تكلفة الاقتناء لتوثيق الضريبة غير القابلة للخصم."})
+                raise ValidationError({"original_cost": "تكلفة الأصل يجب أن تساوي صافي الاقتناء مضافًا إليه الضريبة غير القابلة للاسترداد."})
+        elif self.nonrecoverable_tax_amount or self.recoverable_tax_amount:
+            raise ValidationError({"acquisition_net_amount": "أدخل صافي تكلفة الاقتناء لتوثيق ضريبة الاقتناء."})
+        if bool(self.acquisition_tax_code_id) != bool(self.recoverable_tax_amount or self.nonrecoverable_tax_amount):
+            raise ValidationError({"acquisition_tax_code": "كود الضريبة ومبالغ الضريبة يجب إدخالها معًا."})
+        if self.acquisition_tax_code_id:
+            tax_code = self.acquisition_tax_code
+            if tax_code.company_id != self.company_id:
+                raise ValidationError({"acquisition_tax_code": "كود الضريبة لا يتبع الشركة."})
+            if tax_code.input_tax_recoverable and self.nonrecoverable_tax_amount:
+                raise ValidationError({"nonrecoverable_tax_amount": "هذه الضريبة قابلة للاسترداد ولا تدخل في تكلفة الأصل."})
+            if not tax_code.input_tax_recoverable and self.recoverable_tax_amount:
+                raise ValidationError({"recoverable_tax_amount": "هذه الضريبة غير قابلة للاسترداد."})
         for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account"):
             account = getattr(self, field, None)
             if account and account.company_id != self.company_id:
