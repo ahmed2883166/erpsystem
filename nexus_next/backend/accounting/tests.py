@@ -2360,3 +2360,120 @@ class HistoricalBalanceAndCashFlowRegressionTests(TestCase):
         self.assertEqual(result.data["ledger_cash_change"], Decimal("0.0000"))
         self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
 
+
+
+class FixedAssetIAS36ReversalTests(TestCase):
+    def setUp(self):
+        from assets.models import FixedAsset
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="FA-IAS36", name_ar="شركة اختبار الأصول", country="EG",
+            activity="commercial", base_currency=self.currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026", start_date=date(2026, 1, 1),
+            end_date=date(2026, 12, 31),
+        )
+        self.asset_account = ChartOfAccount.objects.create(
+            company=self.company, code="1500", name_ar="تكلفة الأصول", nature="asset",
+        )
+        self.accumulated_depreciation = ChartOfAccount.objects.create(
+            company=self.company, code="1590", name_ar="مجمع الإهلاك", nature="asset",
+        )
+        self.depreciation_expense = ChartOfAccount.objects.create(
+            company=self.company, code="6100", name_ar="مصروف الإهلاك", nature="expense",
+        )
+        self.impairment_expense = ChartOfAccount.objects.create(
+            company=self.company, code="6110", name_ar="خسائر انخفاض القيمة", nature="expense",
+        )
+        self.accumulated_impairment = ChartOfAccount.objects.create(
+            company=self.company, code="1595", name_ar="مجمع انخفاض القيمة", nature="asset",
+        )
+        self.impairment_reversal_income = ChartOfAccount.objects.create(
+            company=self.company, code="4105", name_ar="عكس خسائر انخفاض القيمة", nature="revenue",
+        )
+        self.bank = ChartOfAccount.objects.create(
+            company=self.company, code="1000", name_ar="البنك", nature="asset",
+        )
+        self.disposal = ChartOfAccount.objects.create(
+            company=self.company, code="6900", name_ar="أرباح استبعاد", nature="revenue",
+        )
+        acquisition = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="FA-IAS36-ACQ", entry_date=date(2026, 1, 1),
+            description="إثبات اقتناء أصل للاختبار", source_type=JournalEntry.Source.ASSETS,
+        )
+        JournalLine.objects.create(entry=acquisition, account=self.asset_account, debit=Decimal("1200"))
+        JournalLine.objects.create(entry=acquisition, account=self.bank, credit=Decimal("1200"))
+        post_journal(acquisition.pk)
+        self.asset = FixedAsset.objects.create(
+            company=self.company, branch=self.branch, code="FA-IAS36-001",
+            name_ar="أصل اختبار انخفاض القيمة", acquisition_date=date(2026, 1, 1),
+            depreciation_start_date=date(2026, 1, 1), original_cost=Decimal("1200"),
+            acquisition_net_amount=Decimal("1200"), salvage_value=Decimal("0"),
+            useful_life_months=12, asset_account=self.asset_account,
+            accumulated_depreciation_account=self.accumulated_depreciation,
+            depreciation_expense_account=self.depreciation_expense,
+            acquisition_counter_account=self.bank, disposal_gain_loss_account=self.disposal,
+            disposal_loss_account=self.impairment_expense, acquisition_journal=acquisition,
+        )
+
+    def test_ias36_reversal_is_capped_and_allocated_to_original_contra_account(self):
+        from django.db.models import Sum
+        from assets.services import depreciate_asset, record_asset_impairment, reverse_asset_impairment
+        from assets.models import AssetImpairmentReversalAllocation
+
+        depreciate_asset(self.asset.pk, date(2026, 1, 31), self.year.pk)
+        impairment = record_asset_impairment(
+            self.asset.pk, date(2026, 1, 31), Decimal("800"),
+            self.impairment_expense.pk, self.accumulated_impairment.pk, self.year.pk,
+        )
+        depreciate_asset(self.asset.pk, date(2026, 2, 28), self.year.pk)
+        reversal = reverse_asset_impairment(
+            self.asset.pk, date(2026, 2, 28), Decimal("1100"),
+            self.impairment_reversal_income.pk, self.year.pk,
+        )
+
+        self.assertGreater(reversal.reversal_amount, Decimal("0"))
+        self.assertLess(reversal.reversal_amount, impairment.impairment_loss)
+        self.assertLessEqual(
+            reversal.carrying_amount_before + reversal.reversal_amount,
+            reversal.hypothetical_carrying_amount,
+        )
+        self.assertEqual(
+            AssetImpairmentReversalAllocation.objects.filter(reversal=reversal).aggregate(
+                total=Sum("amount")
+            )["total"],
+            reversal.reversal_amount,
+        )
+        lines = list(reversal.journal_entry.lines.all())
+        self.assertEqual(
+            sum((line.debit for line in lines), Decimal("0")),
+            sum((line.credit for line in lines), Decimal("0")),
+        )
+        contra_line = next(line for line in lines if line.account_id == self.accumulated_impairment.pk)
+        income_line = next(line for line in lines if line.account_id == self.impairment_reversal_income.pk)
+        self.assertEqual(contra_line.debit, reversal.reversal_amount)
+        self.assertEqual(income_line.credit, reversal.reversal_amount)
+
+    def test_ias36_reversal_cannot_exceed_no_impairment_carrying_amount(self):
+        from assets.services import depreciate_asset, record_asset_impairment, reverse_asset_impairment
+
+        depreciate_asset(self.asset.pk, date(2026, 1, 31), self.year.pk)
+        record_asset_impairment(
+            self.asset.pk, date(2026, 1, 31), Decimal("800"),
+            self.impairment_expense.pk, self.accumulated_impairment.pk, self.year.pk,
+        )
+        depreciate_asset(self.asset.pk, date(2026, 2, 28), self.year.pk)
+        reversal = reverse_asset_impairment(
+            self.asset.pk, date(2026, 2, 28), Decimal("5000"),
+            self.impairment_reversal_income.pk, self.year.pk,
+        )
+        self.assertEqual(
+            reversal.carrying_amount_before + reversal.reversal_amount,
+            reversal.hypothetical_carrying_amount,
+        )
+
