@@ -109,7 +109,7 @@ export const sumDecimalToFixed = (
   });
   if (parsed.some((value) => value === null)
     || !Number.isInteger(decimalPlaces) || decimalPlaces < 0 || decimalPlaces > 12) {
-    const total = values.reduce((sum, value) => sum + Number(value), 0);
+    const total = values.reduce<number>((sum, value) => sum + Number(value), 0);
     return Number.isFinite(total) ? total.toFixed(Math.max(0, Math.min(decimalPlaces, 12))) : "0";
   }
 
