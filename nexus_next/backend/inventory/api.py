@@ -625,7 +625,7 @@ class InventoryCountLineViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         count = serializer.validated_data["count"]
         self._check_line_write(count)
-        serializer.save()
+        serializer.save(counted_by=self.request.user, counted_at=timezone.now())
 
     def perform_update(self, serializer):
         count = serializer.instance.count

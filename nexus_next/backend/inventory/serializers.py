@@ -347,7 +347,7 @@ class InventoryCountLineSerializer(serializers.ModelSerializer):
     unit_name = serializers.CharField(source="product.unit.name_ar", read_only=True)
     location_name = serializers.CharField(source="location.name_ar", read_only=True, allow_null=True)
     variance_quantity = serializers.SerializerMethodField()
-    counted_by_name = serializers.CharField(source="counted_by.get_full_name", read_only=True)
+    counted_by_name = serializers.CharField(source="counted_by.get_full_name", read_only=True, allow_null=True)
 
     class Meta:
         model = InventoryCountLine

@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class InventoryApiTests(APITestCase):
@@ -238,6 +238,116 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(report.data["totals"]["layers"], 1)
         self.assertEqual(report.data["rows"][0]["source_movement_number"], "FIFO-LEGACY-R")
         self.assertEqual(report.data["rows"][0]["receipt_date"], "2026-01-05")
+
+    def test_inventory_count_snapshots_balances_and_posts_loss_variance(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="COUNT-LOSS-1", name_ar="جرد عجز",
+        )
+        warehouse = self._warehouse("COUNT-LOSS-WH")
+        receipt = self._movement("COUNT-LOSS-R", "receipt", destination=warehouse, quantity="5", cost="10")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+
+        started = self.client.post("/api/inventory/counts/", {
+            "company": self.company.pk, "warehouse": warehouse.pk,
+            "count_number": "COUNT-LOSS-001", "count_date": "2026-11-21",
+        }, format="json")
+        self.assertEqual(started.status_code, 201, started.data)
+        self.assertEqual(len(started.data["lines"]), 1)
+        line = started.data["lines"][0]
+        self.assertEqual(line["system_quantity"], "5.0000")
+        self.assertIsNone(line["counted_quantity"])
+
+        updated = self.client.patch(
+            f"/api/inventory/count-lines/{line['id']}/",
+            {"counted_quantity": "4"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["variance_quantity"], "-1.0000")
+
+        posted = self.client.post(
+            f"/api/inventory/counts/{started.data['id']}/post-count/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], InventoryCount.Status.POSTED)
+        self.assertTrue(posted.data["loss_movement_number"])
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        self.assertEqual(balance.quantity, Decimal("4.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("40.0000"))
+
+    def test_inventory_count_posts_positive_variance_with_explicit_cost(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="COUNT-GAIN-1", name_ar="جرد زيادة",
+        )
+        warehouse = self._warehouse("COUNT-GAIN-WH")
+        started = self.client.post("/api/inventory/counts/", {
+            "company": self.company.pk, "warehouse": warehouse.pk,
+            "count_number": "COUNT-GAIN-001", "count_date": "2026-11-21",
+        }, format="json")
+        self.assertEqual(started.status_code, 201, started.data)
+        line = self.client.post("/api/inventory/count-lines/", {
+            "count": started.data["id"], "product": self.product.pk,
+            "counted_quantity": "3", "adjustment_unit_cost": "2.5",
+        }, format="json")
+        self.assertEqual(line.status_code, 201, line.data)
+        posted = self.client.post(
+            f"/api/inventory/counts/{started.data['id']}/post-count/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertTrue(posted.data["gain_movement_number"])
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        self.assertEqual(balance.quantity, Decimal("3.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("7.5000"))
+
+    def test_inventory_count_rejects_unfinished_or_stale_snapshot(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="COUNT-STALE-1", name_ar="جرد قديم",
+        )
+        warehouse = self._warehouse("COUNT-STALE-WH")
+        started = self.client.post("/api/inventory/counts/", {
+            "company": self.company.pk, "warehouse": warehouse.pk,
+            "count_number": "COUNT-STALE-001", "count_date": "2026-11-21",
+        }, format="json")
+        self.assertEqual(started.status_code, 201, started.data)
+        line = self.client.post("/api/inventory/count-lines/", {
+            "count": started.data["id"], "product": self.product.pk,
+            "counted_quantity": "0",
+        }, format="json")
+        self.assertEqual(line.status_code, 201, line.data)
+
+        receipt = self._movement("COUNT-STALE-R", "receipt", destination=warehouse, quantity="2", cost="4")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        response = self.client.post(
+            f"/api/inventory/counts/{started.data['id']}/post-count/", {}, format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("حركة مخزنية بعد بدء الجرد", str(response.data))
+        self.assertEqual(
+            InventoryCount.objects.get(pk=started.data["id"]).status,
+            InventoryCount.Status.DRAFT,
+        )
+
+    def test_inventory_count_cannot_start_while_draft_movement_exists(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="COUNT-PENDING-1", name_ar="جرد مع مسودة",
+        )
+        warehouse = self._warehouse("COUNT-PENDING-WH")
+        draft = self._movement("COUNT-PENDING-R", "receipt", destination=warehouse)
+        self.assertEqual(draft.status_code, 201, draft.data)
+        response = self.client.post("/api/inventory/counts/", {
+            "company": self.company.pk, "warehouse": warehouse.pk,
+            "count_number": "COUNT-PENDING-001", "count_date": "2026-11-21",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("مستند حركة مسودة", str(response.data))
 
     def test_receipt_posts_and_updates_weighted_average_balance(self):
         self.product = Product.objects.create(company=self.company, unit=self.unit, code="STK-1", name_ar="صنف رصيد")
