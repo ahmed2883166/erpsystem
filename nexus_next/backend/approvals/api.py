@@ -115,10 +115,6 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         approval.decided_by = request.user
         approval.decision_note = str(request.data.get("note", "")).strip()[:500]
         approval.save()
-        if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_ORDER:
-            document.status = "confirmed"
-            document.confirmed_at = timezone.now()
-            document.save(update_fields=("status", "confirmed_at"))
         return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=("post",))
@@ -289,6 +285,10 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         approval.decided_by = request.user
         approval.decision_note = str(request.data.get("note", "")).strip()[:500]
         approval.save()
+        if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_ORDER:
+            document.status = "confirmed"
+            document.confirmed_at = timezone.now()
+            document.save(update_fields=("status", "confirmed_at"))
         return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=("post",))
