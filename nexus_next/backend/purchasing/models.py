@@ -440,6 +440,7 @@ class PurchaseRFQLine(models.Model):
 
     class Meta:
         ordering = ("id",)
+        constraints = [models.UniqueConstraint(fields=("rfq", "product"), name="uq_purchase_rfq_product")]
 
     def clean(self):
         super().clean()
