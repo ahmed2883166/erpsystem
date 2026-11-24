@@ -171,3 +171,29 @@ export const divideDecimalToFixed = (
   const sign = negative ? "-" : "";
   return decimalPlaces === 0 ? sign + whole.toString() : sign + whole.toString() + "." + fraction;
 };
+
+/** Exact two-decimal formatter for English-language printed documents. */
+export const formatMoneyEnglish = (value?: string | number | null): string => {
+  if (value === undefined || value === null || value === "") return "—";
+  const raw = String(value).trim();
+  const match = /^([+-]?)(\d+)(?:\.(\d*))?$/.exec(raw);
+  if (!match) {
+    const amount = Number(value);
+    return Number.isFinite(amount)
+      ? amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : "—";
+  }
+  const whole = BigInt(match[2]);
+  const fraction = match[3] || "";
+  let cents = BigInt((fraction + "00").slice(0, 2));
+  let roundedWhole = whole;
+  if (Number(fraction[2] || "0") >= 5) {
+    cents += 1n;
+    if (cents === 100n) {
+      cents = 0n;
+      roundedWhole += 1n;
+    }
+  }
+  const sign = match[1] === "-" && (roundedWhole !== 0n || cents !== 0n) ? "-" : "";
+  return sign + roundedWhole.toLocaleString("en-US") + "." + cents.toString().padStart(2, "0");
+};
