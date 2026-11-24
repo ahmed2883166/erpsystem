@@ -1243,12 +1243,31 @@ class SupplierQuotationViewSet(PurchaseBaseViewSet):
     def get_queryset(self):
         return self.queryset.filter(rfq__company__in=accessible_companies(self.request.user))
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
-            rfq = PurchaseRFQ.objects.get(pk=request.data.get("rfq"), company__in=accessible_companies(request.user))
-        except (PurchaseRFQ.DoesNotExist, TypeError, ValueError):
+            rfq_id = int(request.data.get("rfq"))
+        except (TypeError, ValueError):
             raise NotFound("طلب عروض الأسعار غير موجود.") from None
+        rfq = PurchaseRFQ.objects.select_for_update(of=("self",)).filter(
+            pk=rfq_id, company__in=accessible_companies(request.user),
+        ).first()
+        if not rfq:
+            raise NotFound("طلب عروض الأسعار غير موجود.")
         self._check_write(rfq.company_id)
+        try:
+            supplier_id = int(request.data.get("supplier"))
+        except (TypeError, ValueError):
+            supplier_id = None
+        if supplier_id is not None:
+            # Serialize submissions for the same RFQ/supplier and prevent a
+            # quote from being inserted after the RFQ has been awarded or closed.
+            Supplier.objects.select_for_update().filter(
+                pk=supplier_id, company_id=rfq.company_id,
+            ).first()
+            PurchaseRFQInvitation.objects.select_for_update().filter(
+                rfq=rfq, supplier_id=supplier_id,
+            ).first()
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
