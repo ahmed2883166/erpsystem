@@ -48,7 +48,7 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = (
             "id", "company", "category", "category_name", "unit", "unit_name",
-            "code", "barcode", "name_ar", "name_en", "product_type",
+            "code", "barcode", "name_ar", "name_en", "product_type", "stock_class",
             "purchase_price", "sale_price", "costing_method", "min_stock",
             "track_expiry", "is_active", "created_at", "updated_at",
         )
@@ -66,8 +66,12 @@ class ProductSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"category": "المجموعة لا تتبع الشركة المحددة."})
         if unit and company and unit.company_id != company.pk:
             raise serializers.ValidationError({"unit": "وحدة القياس لا تتبع الشركة المحددة."})
-        if product_type == Product.ProductType.SERVICE and track_expiry:
-            raise serializers.ValidationError({"track_expiry": "الخدمة لا يمكن تتبع صلاحيتها."})
+        if product_type == Product.ProductType.SERVICE:
+            if track_expiry:
+                raise serializers.ValidationError({"track_expiry": "الخدمة لا يمكن تتبع صلاحيتها."})
+            attrs["stock_class"] = None
+        elif not attrs.get("stock_class", getattr(self.instance, "stock_class", Product.StockClass.FINISHED_GOODS)):
+            attrs["stock_class"] = Product.StockClass.FINISHED_GOODS
         if self.instance:
             costing_method = attrs.get("costing_method", self.instance.costing_method)
             next_type = attrs.get("product_type", self.instance.product_type)

@@ -107,6 +107,13 @@ def post_stock_movement(movement_id, user):
             raise ValidationError(f"تاريخ الصلاحية مطلوب للصنف {product.code}.")
         if not product.track_expiry and line.expiry_date:
             raise ValidationError(f"الصنف {product.code} لا يتطلب تتبع الصلاحية.")
+        if (
+            product.track_expiry
+            and line.expiry_date
+            and line.expiry_date < movement.movement_date
+            and movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.TRANSFER)
+        ):
+            raise ValidationError(f"لا يمكن صرف أو تحويل تشغيلة منتهية الصلاحية للصنف {product.code}.")
         if movement_type != StockMovement.MovementType.ADJUSTMENT and line.adjustment_direction:
             raise ValidationError("اتجاه التسوية لا يستخدم إلا في حركات التسوية.")
 

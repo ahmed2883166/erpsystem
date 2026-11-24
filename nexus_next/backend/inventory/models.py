@@ -69,6 +69,12 @@ class Product(models.Model):
         WEIGHTED_AVERAGE = "weighted_average", "متوسط مرجح"
         FIFO = "fifo", "الوارد أولاً يصرف أولاً"
 
+    class StockClass(models.TextChoices):
+        RAW_MATERIAL = "raw_material", "مواد خام"
+        FINISHED_GOODS = "finished_goods", "منتجات تامة"
+        OPERATING_SUPPLIES = "operating_supplies", "مستلزمات تشغيل"
+        SPARE_PARTS = "spare_parts", "قطع غيار"
+
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="products")
     category = models.ForeignKey(ProductCategory, null=True, blank=True, on_delete=models.PROTECT, related_name="products")
     unit = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, related_name="products")
@@ -77,6 +83,7 @@ class Product(models.Model):
     name_ar = models.CharField(max_length=180)
     name_en = models.CharField(max_length=180, blank=True)
     product_type = models.CharField(max_length=10, choices=ProductType.choices, default=ProductType.GOODS)
+    stock_class = models.CharField(max_length=20, choices=StockClass.choices, default=StockClass.FINISHED_GOODS, null=True, blank=True)
     purchase_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     sale_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     costing_method = models.CharField(max_length=20, choices=CostingMethod.choices, default=CostingMethod.WEIGHTED_AVERAGE)
@@ -107,6 +114,10 @@ class Product(models.Model):
             raise ValidationError({"unit": "وحدة القياس يجب أن تتبع نفس الشركة."})
         if self.product_type == self.ProductType.SERVICE and self.track_expiry:
             raise ValidationError({"track_expiry": "لا يمكن تتبع صلاحية خدمة."})
+        if self.product_type == self.ProductType.SERVICE and self.stock_class is not None:
+            raise ValidationError({"stock_class": "تصنيف المخزون لا يطبق على الخدمات."})
+        if self.product_type == self.ProductType.GOODS and not self.stock_class:
+            raise ValidationError({"stock_class": "حدد تصنيف الصنف المخزني."})
 
 
 class Warehouse(models.Model):

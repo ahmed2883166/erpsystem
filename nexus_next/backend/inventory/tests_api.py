@@ -456,6 +456,34 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
 
 
+    def test_issue_rejects_expired_tracked_stock(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="EXP-ISSUE-1", name_ar="منتهي الصلاحية",
+            track_expiry=True,
+        )
+        warehouse = self._warehouse("EXP-ISSUE-WH")
+        receipt = self._movement(
+            "EXP-ISSUE-R", "receipt", destination=warehouse,
+            quantity="5", cost="4", expiry_date="2026-10-01",
+        )
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{receipt.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+        issue = self._movement(
+            "EXP-ISSUE-I", "issue", source=warehouse,
+            quantity="1", expiry_date="2026-10-01",
+        )
+        self.assertEqual(issue.status_code, 201, issue.data)
+        response = self.client.post(
+            f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("منتهية الصلاحية", str(response.data))
+        balance = StockBalance.objects.get(product=self.product, warehouse=warehouse)
+        self.assertEqual(balance.quantity, Decimal("5.0000"))
+
     def test_movement_rejects_quantity_beyond_unit_precision(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="PRECISION-1", name_ar="دقة الكمية",
