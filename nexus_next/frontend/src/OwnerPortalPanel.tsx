@@ -29,10 +29,6 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<Company["activity"]>("commercial");
   const [currencyId, setCurrencyId] = useState("");
-  const [newAdminUsername, setNewAdminUsername] = useState("");
-  const [newAdminName, setNewAdminName] = useState("");
-  const [newAdminEmail, setNewAdminEmail] = useState("");
-  const [newAdminPassword, setNewAdminPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
