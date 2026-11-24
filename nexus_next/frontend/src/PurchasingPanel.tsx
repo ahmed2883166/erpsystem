@@ -21,7 +21,8 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [orders, setOrders] = useState<PurchaseOrder[]>([]);\n  const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>([]);
+  const [orders, setOrders] = useState<PurchaseOrder[]>([]);
+  const [requisitions, setRequisitions] = useState<PurchaseRequisition[]>([]);
   const [receipts, setReceipts] = useState<PurchaseReceipt[]>([]);
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
@@ -108,6 +109,57 @@ const loadAging = async () => {
     setBusy(true); setError("");
     try { setAging(await purchasingApi.supplierAging(companyId, agingAsOf)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أعمار مديونية الموردين."); }
+    finally { setBusy(false); }
+  };
+
+
+  const saveRequisition = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !requisitionForm.request_number.trim() || !requisitionLines.length || requisitionLines.some(line => !line.product || Number(line.requested_quantity) <= 0)) {
+      setError("أكمل رقم الطلب والأصناف والكميات المطلوبة."); return;
+    }
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createRequisition({
+        company: companyId, request_number: requisitionForm.request_number.trim(),
+        request_date: requisitionForm.request_date, required_date: requisitionForm.required_date || null,
+        department: requisitionForm.department, purpose: requisitionForm.purpose,
+        lines: requisitionLines.map(line => ({ product: Number(line.product), requested_quantity: line.requested_quantity, estimated_unit_price: line.estimated_unit_price || null })),
+      });
+      setShowForm(false);
+      setRequisitionForm(old => ({ ...old, request_number: "", department: "", purpose: "", required_date: "" }));
+      setRequisitionLines([{ product: String(products[0]?.id || ""), requested_quantity: "1", estimated_unit_price: "" }]);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ طلب الاحتياج."); }
+    finally { setBusy(false); }
+  };
+  const submitRequisition = async (id: number) => {
+    setBusy(true); setError("");
+    try { await purchasingApi.submitRequisition(id); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إرسال طلب الاحتياج."); }
+    finally { setBusy(false); }
+  };
+  const reviewRequisition = async (id: number, decision: "approve" | "reject") => {
+    const note = window.prompt(decision === "approve" ? "ملاحظة الاعتماد (اختياري)" : "سبب الرفض (مطلوب)") || "";
+    if (decision === "reject" && !note.trim()) return;
+    setBusy(true); setError("");
+    try { await purchasingApi.reviewRequisition(id, decision, note); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذرت مراجعة طلب الاحتياج."); }
+    finally { setBusy(false); }
+  };
+  const convertRequisition = async (row: PurchaseRequisition) => {
+    const supplier = window.prompt("أدخل رقم المورد (Supplier ID)");
+    const warehouse = window.prompt("أدخل رقم المخزن (Warehouse ID)");
+    const orderNumber = window.prompt("رقم أمر الشراء");
+    if (!supplier || !warehouse || !orderNumber) return;
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.convertRequisition(row.id, {
+        supplier: Number(supplier), warehouse: Number(warehouse), order_number: orderNumber.trim(),
+        order_date: new Date().toISOString().slice(0, 10), expected_date: row.required_date,
+      });
+      setTab("orders"); setShowForm(false); await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحويل الطلب إلى أمر شراء."); }
     finally { setBusy(false); }
   };
 
