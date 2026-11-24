@@ -412,21 +412,29 @@ class StockMovementViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=("get",), url_path="stock-card")
     def stock_card(self, request):
-        """إعداد بطاقة الصنف مع الرصيد الافتتاحي والحركة والرصيد الجاري."""
+        """إعداد بطاقة الصنف بترقيم صفحات وحساب الأرصدة داخل قاعدة البيانات."""
         product_id = request.query_params.get("product")
         warehouse_id = request.query_params.get("warehouse")
         if not product_id or not warehouse_id:
             return Response({"detail": "حدد الصنف والمخزن لعرض بطاقة الصنف."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             product_id, warehouse_id = int(product_id), int(warehouse_id)
+            page = int(request.query_params.get("page", "1"))
+            page_size = int(request.query_params.get("page_size", "50"))
         except (TypeError, ValueError):
-            return Response({"detail": "معرّف الصنف أو المخزن غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "معرّف الصنف أو المخزن أو رقم الصفحة غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+        if page < 1 or page_size < 1 or page_size > 200:
+            return Response({"detail": "رقم الصفحة يجب أن يكون موجبًا وحجم الصفحة بين 1 و200."}, status=status.HTTP_400_BAD_REQUEST)
 
         companies = accessible_companies(request.user)
-        product = Product.objects.filter(pk=product_id, company__in=companies, product_type=Product.ProductType.GOODS).first()
+        product = Product.objects.filter(
+            pk=product_id, company__in=companies, product_type=Product.ProductType.GOODS,
+        ).first()
         if product is None:
             raise NotFound("الصنف غير موجود أو غير متاح.")
-        warehouse_query = Warehouse.objects.filter(pk=warehouse_id, company_id=product.company_id, is_active=True)
+        warehouse_query = Warehouse.objects.filter(
+            pk=warehouse_id, company_id=product.company_id, is_active=True,
+        )
         if not request.user.is_superuser or is_platform_owner(request.user):
             branches = accessible_branches(request.user)
             default_company_ids = _default_branch_company_ids(request.user, companies)
@@ -443,57 +451,97 @@ class StockMovementViewSet(viewsets.ModelViewSet):
         if (date_from_raw and date_from is None) or (date_to_raw and date_to is None):
             return Response({"detail": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
         if date_from and date_to and date_from > date_to:
-            return Response({"detail": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": "تاريخ البداية يجب ألا يتجاوز النهاية."}, status=status.HTTP_400_BAD_REQUEST)
 
-        movements = self.get_queryset().filter(
-            status=StockMovement.Status.POSTED,
-            lines__product_id=product_id,
-        ).filter(Q(source_warehouse_id=warehouse_id) | Q(destination_warehouse_id=warehouse_id)).distinct().prefetch_related("lines")
-        events = []
-        for movement in movements:
-            direction = "in" if movement.destination_warehouse_id == warehouse_id else "out"
-            for line in movement.lines.all():
-                if line.product_id != product_id:
-                    continue
-                events.append({
-                    "date": movement.movement_date,
-                    "posted_at": movement.posted_at,
-                    "movement_id": movement.pk,
-                    "movement_number": movement.movement_number,
-                    "movement_type": movement.movement_type,
-                    "direction": direction,
-                    "quantity": line.quantity,
-                    "unit_cost": line.unit_cost,
-                    "cost_amount": line.cost_amount,
-                })
-        events.sort(key=lambda item: (item["date"], item["posted_at"], item["movement_id"]))
-        opening_quantity, opening_value = Decimal("0"), Decimal("0")
-        period_events = []
-        for event in events:
-            if date_from and event["date"] < date_from:
-                sign = Decimal("1") if event["direction"] == "in" else Decimal("-1")
-                opening_quantity += sign * event["quantity"]
-                opening_value += sign * event["cost_amount"]
-            elif date_to and event["date"] > date_to:
-                continue
-            else:
-                period_events.append(event)
+        base = StockMovementLine.objects.filter(
+            product_id=product_id,
+            movement__status=StockMovement.Status.POSTED,
+        ).filter(
+            Q(movement__source_warehouse_id=warehouse_id)
+            | Q(movement__destination_warehouse_id=warehouse_id)
+        )
+        if date_to:
+            base = base.filter(movement__movement_date__lte=date_to)
 
-        running_quantity, running_value = opening_quantity, opening_value
+        quantity_in = Case(
+            When(movement__destination_warehouse_id=warehouse_id, then=F("quantity")),
+            default=Value(0), output_field=DecimalField(max_digits=20, decimal_places=4),
+        )
+        quantity_out = Case(
+            When(movement__source_warehouse_id=warehouse_id, then=F("quantity")),
+            default=Value(0), output_field=DecimalField(max_digits=20, decimal_places=4),
+        )
+        value_in = Case(
+            When(movement__destination_warehouse_id=warehouse_id, then=F("cost_amount")),
+            default=Value(0), output_field=DecimalField(max_digits=22, decimal_places=4),
+        )
+        value_out = Case(
+            When(movement__source_warehouse_id=warehouse_id, then=F("cost_amount")),
+            default=Value(0), output_field=DecimalField(max_digits=22, decimal_places=4),
+        )
+
+        def totals(queryset):
+            result = queryset.aggregate(
+                quantity_in=Sum(quantity_in), quantity_out=Sum(quantity_out),
+                value_in=Sum(value_in), value_out=Sum(value_out),
+            )
+            q_in = result["quantity_in"] or Decimal("0")
+            q_out = result["quantity_out"] or Decimal("0")
+            v_in = result["value_in"] or Decimal("0")
+            v_out = result["value_out"] or Decimal("0")
+            return q_in - q_out, v_in - v_out
+
+        opening_quantity, opening_value = (
+            totals(base.filter(movement__movement_date__lt=date_from))
+            if date_from else (Decimal("0"), Decimal("0"))
+        )
+        period = base.filter(movement__movement_date__gte=date_from) if date_from else base
+        total_rows = period.count()
+        total_pages = (total_rows + page_size - 1) // page_size
+        ordered = period.annotate(
+            _card_posted_order=Coalesce("movement__posted_at", "movement__created_at"),
+        ).order_by(
+            "movement__movement_date", "_card_posted_order", "movement_id", "id",
+        )
+        page_rows = list(ordered.values(
+            "id", "movement_id", "movement__movement_date", "movement__posted_at",
+            "movement__created_at", "movement__movement_number", "movement__movement_type",
+            "movement__source_warehouse_id", "quantity", "unit_cost", "cost_amount",
+            "_card_posted_order",
+        )[(page - 1) * page_size:page * page_size])
+
+        if page_rows:
+            first = page_rows[0]
+            first_date = first["movement__movement_date"]
+            first_posted = first["_card_posted_order"]
+            first_movement_id = first["movement_id"]
+            first_line_id = first["id"]
+            before_first = base.annotate(
+                _card_posted_order=Coalesce("movement__posted_at", "movement__created_at"),
+            ).filter(
+                Q(movement__movement_date__lt=first_date)
+                | Q(movement__movement_date=first_date, _card_posted_order__lt=first_posted)
+                | Q(movement__movement_date=first_date, _card_posted_order=first_posted, movement_id__lt=first_movement_id)
+                | Q(movement__movement_date=first_date, _card_posted_order=first_posted, movement_id=first_movement_id, id__lt=first_line_id)
+            )
+            running_quantity, running_value = totals(before_first)
+        else:
+            running_quantity, running_value = opening_quantity, opening_value
+
         rows = []
-        for event in period_events:
-            incoming = event["quantity"] if event["direction"] == "in" else Decimal("0")
-            outgoing = event["quantity"] if event["direction"] == "out" else Decimal("0")
-            incoming_value = event["cost_amount"] if event["direction"] == "in" else Decimal("0")
-            outgoing_value = event["cost_amount"] if event["direction"] == "out" else Decimal("0")
+        for event in page_rows:
+            incoming = event["quantity"] if event["movement__destination_warehouse_id"] == warehouse_id else Decimal("0")
+            outgoing = event["quantity"] if event["movement__source_warehouse_id"] == warehouse_id else Decimal("0")
+            incoming_value = event["cost_amount"] if incoming else Decimal("0")
+            outgoing_value = event["cost_amount"] if outgoing else Decimal("0")
             running_quantity += incoming - outgoing
             running_value += incoming_value - outgoing_value
             rows.append({
-                "date": event["date"].isoformat(),
-                "posted_at": event["posted_at"].isoformat() if event["posted_at"] else None,
-                "movement_number": event["movement_number"],
-                "movement_type": event["movement_type"],
-                "direction": event["direction"],
+                "date": event["movement__movement_date"].isoformat(),
+                "posted_at": event["movement__posted_at"].isoformat() if event["movement__posted_at"] else None,
+                "movement_number": event["movement__movement_number"],
+                "movement_type": event["movement__movement_type"],
+                "direction": "in" if incoming else "out",
                 "quantity_in": str(incoming),
                 "quantity_out": str(outgoing),
                 "unit_cost": str(event["unit_cost"]),
@@ -502,6 +550,8 @@ class StockMovementViewSet(viewsets.ModelViewSet):
                 "balance_quantity": str(running_quantity),
                 "balance_value": str(running_value),
             })
+
+        closing_quantity, closing_value = totals(base)
         return Response({
             "product": product.pk,
             "product_code": product.code,
@@ -512,9 +562,14 @@ class StockMovementViewSet(viewsets.ModelViewSet):
             "date_to": date_to.isoformat() if date_to else None,
             "opening_quantity": str(opening_quantity),
             "opening_value": str(opening_value),
-            "closing_quantity": str(running_quantity),
-            "closing_value": str(running_value),
+            "closing_quantity": str(closing_quantity),
+            "closing_value": str(closing_value),
             "rows": rows,
+            "pagination": {
+                "page": page, "page_size": page_size, "total_rows": total_rows,
+                "total_pages": total_pages, "has_next": page < total_pages,
+                "has_previous": page > 1,
+            },
         })
 
     @action(detail=True, methods=("post",))
