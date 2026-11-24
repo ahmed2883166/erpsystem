@@ -132,7 +132,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 "id": row.pk, "impairment_date": row.impairment_date,
                 "carrying_amount_before": row.carrying_amount_before,
                 "recoverable_amount": row.recoverable_amount,
-                "impairment_loss": row.impairment_loss, "journal_entry": row.journal_entry_id,
+                "impairment_loss": row.impairment_loss, "journal_entry": row.journal_entry_id, "status": row.journal_entry.status,
             } for row in impairments],
         })
 
