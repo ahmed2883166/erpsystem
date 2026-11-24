@@ -469,6 +469,11 @@ class InventoryCountLine(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def company_id(self):
+        """Expose the owning company for the shared company-role permission."""
+        return self.count.company_id
+
     class Meta:
         ordering = ("product__code", "id")
         constraints = [

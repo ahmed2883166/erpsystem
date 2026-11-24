@@ -850,6 +850,7 @@ class PurchasingWorkflowTests(APITestCase):
         adjustment = StockMovement.objects.create(
             company=self.company, movement_number="TAX-ADJ-OUT-01",
             movement_type=StockMovement.MovementType.ADJUSTMENT, movement_date=date(2026, 3, 11),
+            adjustment_reason=StockMovement.AdjustmentReason.OTHER,
             source_warehouse=self.warehouse, created_by=self.user,
         )
         StockMovementLine.objects.create(

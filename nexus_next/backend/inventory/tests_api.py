@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
@@ -536,6 +537,9 @@ class InventoryApiTests(APITestCase):
         self.assertGreaterEqual(Decimal(card.data["rows"][0]["balance_quantity"]), Decimal("0"))
 
     def test_recent_movements_endpoint_returns_only_requested_limit(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="RECENT-API-1", name_ar="حركات حديثة",
+        )
         warehouse = self._warehouse("RECENT-WH")
         for index in range(3):
             response = self._movement(
