@@ -300,6 +300,9 @@ class StockMovementLine(models.Model):
 
     class Meta:
         ordering = ("id",)
+        indexes = [
+            models.Index(fields=("product", "movement"), name="inv_stock_line_product_move_idx"),
+        ]
 
     def clean(self):
         super().clean()
