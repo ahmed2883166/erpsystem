@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryCountLine, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
@@ -379,11 +379,11 @@ const submit = async (event: React.FormEvent) => {
               }}>ترحيل فروق الجرد ({varianceLines})</button>}
             </div>
             {selected.status === "draft" && <p className="inventory-report-note">أدخل صفرًا إذا لم يوجد الصنف فعليًا. لا يمكن اعتماد الجرد قبل إدخال الكمية لكل بند. أي حركة جديدة بعد لقطة الجرد تتطلب بدء جرد جديد.</p>}
-            <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>الموقع</th><th>الصلاحية</th><th>رصيد الدفاتر</th><th>الكمية الفعلية</th><th>الفرق</th><th>تكلفة الزيادة</th><th>الحالة</th><th>حفظ</th></tr></thead><tbody>
+            <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>الموقع</th><th>الصلاحية</th><th>رصيد الدفاتر</th><th>الكمية الفعلية</th><th>الفرق</th><th>تكلفة الزيادة</th><th>الحالة</th><th>تم العد بواسطة</th></tr></thead><tbody>
               {selected.lines.map((line) => <tr key={line.id}>
                 <td>{line.product_code} - {line.product_name}</td><td>{line.location_name || "عام"}</td><td>{line.expiry_date || "—"}</td>
                 <td>{Number(line.system_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td>
-                <td><input aria-label={`الكمية الفعلية ${line.product_code}`} type="number" min="0" step="0.0001" disabled={selected.status !== "draft"} defaultValue={line.counted_quantity ?? ""} onBlur={async (event) => {
+                <td><input key={`counted-${line.id}-${line.updated_at}`} aria-label={`الكمية الفعلية ${line.product_code}`} type="number" min="0" step="0.0001" disabled={selected.status !== "draft"} defaultValue={line.counted_quantity ?? ""} onBlur={async (event) => {
                   if (selected.status !== "draft" || event.target.value === (line.counted_quantity ?? "")) return;
                   setBusy(true); setError("");
                   try { await stockApi.updateCountLine(line.id, { counted_quantity: event.target.value }); await refresh(); }
@@ -391,7 +391,7 @@ const submit = async (event: React.FormEvent) => {
                   finally { setBusy(false); }
                 }} /></td>
                 <td>{line.variance_quantity === null ? "—" : Number(line.variance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td>
-                <td>{selected.status === "draft" && Number(line.variance_quantity || "0") >= 0 ? <input aria-label={`تكلفة الزيادة ${line.product_code}`} type="number" min="0" step="0.0001" defaultValue={line.adjustment_unit_cost} onBlur={async (event) => {
+                <td>{selected.status === "draft" && Number(line.variance_quantity || "0") >= 0 ? <input key={`cost-${line.id}-${line.updated_at}`} aria-label={`تكلفة الزيادة ${line.product_code}`} type="number" min="0" step="0.0001" defaultValue={line.adjustment_unit_cost} onBlur={async (event) => {
                   if (event.target.value === line.adjustment_unit_cost) return;
                   setBusy(true); setError("");
                   try { await stockApi.updateCountLine(line.id, { adjustment_unit_cost: event.target.value }); await refresh(); }
