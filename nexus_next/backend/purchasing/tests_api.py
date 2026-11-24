@@ -2056,6 +2056,20 @@ class PurchasingWorkflowTests(APITestCase):
             StockBalance.objects.get(product=self.product, warehouse=self.warehouse).inventory_value,
             Decimal("200.0000"),
         )
+        pending_return = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": first.data["id"], "return_number": "RET-NR-PENDING",
+            "return_date": "2026-03-11",
+            "lines": [{
+                "invoice_line": first.data["invoice_lines"][0]["id"],
+                "quantity": "0.2500",
+            }],
+        }, format="json")
+        self.assertEqual(pending_return.status_code, 201, pending_return.data)
+        blocked_return = self.client.post(
+            f"/api/purchasing/returns/{pending_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked_return.status_code, 400, blocked_return.data)
 
         second = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
@@ -2081,3 +2095,8 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(clearing_totals["debit"], Decimal("28.0000"))
         self.assertEqual(clearing_totals["credit"], Decimal("28.0000"))
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{pending_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["status"], "posted")
