@@ -204,6 +204,8 @@ class SalesQuotationSerializer(serializers.ModelSerializer):
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         customer = attrs.get("customer", instance.customer if instance else None)
+        if instance and company.pk != instance.company_id:
+            raise serializers.ValidationError({"company": "لا يمكن نقل عرض السعر إلى شركة أخرى."})
         quote_date = attrs.get("quotation_date", instance.quotation_date if instance else None)
         valid_until = attrs.get("valid_until", instance.valid_until if instance else None)
         if instance and instance.status != SalesQuotation.Status.DRAFT:
