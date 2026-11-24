@@ -4,7 +4,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryStockAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
 type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
@@ -51,6 +51,7 @@ export default function InventoryPanel({ companyId, currency = "" }: { companyId
   const [stockForm, setStockForm] = useState({ movement_number: "", movement_type: "receipt", movement_date: new Date().toISOString().slice(0, 10), source_warehouse: "", destination_warehouse: "", source_location: "", destination_location: "", expiry_date: "", product: "", quantity: "1", unit_cost: "0", adjustment_direction: "in", notes: "" });
   const [stockLines, setStockLines] = useState([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
   const [counts, setCounts] = useState<InventoryCount[]>([]);
+  const [stockAging, setStockAging] = useState<InventoryStockAging | null>(null);
   const [selectedCountId, setSelectedCountId] = useState<number | null>(null);
   const [countForm, setCountForm] = useState({ warehouse: "", count_number: "", count_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [countLineDraft, setCountLineDraft] = useState({ product: "", location: "", expiry_date: "", counted_quantity: "", adjustment_unit_cost: "0", notes: "" });
@@ -61,8 +62,8 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [p, c, u, w, l, m, b, a, ar, ws, br, ct] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId), stockApi.counts(companyId)]);
-      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br); setCounts(ct);
+      const [p, c, u, w, l, m, b, a, ar, ws, br, ct, sa] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId), stockApi.counts(companyId), stockApi.stockAging(companyId)]);
+      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br); setCounts(ct); setStockAging(sa);
       setSelectedCountId((old) => old && ct.some((item) => item.id === old) ? old : (ct[0]?.id ?? null));
       setReconciliationBranch((old) => old && br.some((item) => String(item.id) === old) ? old : "");
       setRoleForm((old) => ({ ...old, account: String(ar.find((item) => item.role === old.role)?.account || "") }));
@@ -163,42 +164,15 @@ const loadValuationIntegrity = async () => {
     const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
     return { ...row, days };
   }).filter((row) => row.days <= 30).sort((a, b) => a.days - b.days);
-  // تحليل بطء الحركة يعتمد على آخر حركة مخزنية مرحلة لكل صنف ومخزن، وليس تاريخ تحديث السجل فقط.
-  const stockAgingRows = useMemo(() => {
-    const lastMovementByKey = new Map<string, string>();
-    for (const movement of movements) {
-      if (movement.status !== "posted") continue;
-      for (const line of movement.lines) {
-        for (const warehouseId of [movement.source_warehouse, movement.destination_warehouse]) {
-          if (!warehouseId) continue;
-          const key = `${warehouseId}:${line.product}`;
-          const previous = lastMovementByKey.get(key);
-          if (!previous || movement.movement_date > previous) lastMovementByKey.set(key, movement.movement_date);
-        }
-      }
-    }
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const grouped = new Map<string, { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; quantity: number; value: string; last_movement: string | null }>();
-    for (const balance of balances) {
-      const key = `${balance.warehouse}:${balance.product}`;
-      const row = grouped.get(key) ?? { product: balance.product, product_code: balance.product_code, product_name: balance.product_name, warehouse: balance.warehouse, warehouse_name: balance.warehouse_name, quantity: 0, value: "0", last_movement: lastMovementByKey.get(key) ?? null };
-      row.quantity += Number(balance.quantity);
-      row.value = sumDecimalToFixed([row.value, balance.inventory_value], 4);
-      grouped.set(key, row);
-    }
-    return [...grouped.values()].filter((row) => row.quantity > 0).map((row) => {
-      const ageDays = row.last_movement ? Math.max(0, Math.floor((today.getTime() - new Date(row.last_movement + "T00:00:00").getTime()) / 86400000)) : null;
-      const ageBand = ageDays === null ? "unknown" : ageDays <= 30 ? "active" : ageDays <= 90 ? "slow" : ageDays <= 180 ? "very_slow" : "stagnant";
-      return { ...row, ageDays, ageBand };
-    }).sort((a, b) => (b.ageDays ?? -1) - (a.ageDays ?? -1));
-  }, [balances, movements]);
-  const stockAgingCounts = useMemo(() => ({
-    active: stockAgingRows.filter((row) => row.ageBand === "active").length,
-    slow: stockAgingRows.filter((row) => row.ageBand === "slow").length,
-    very_slow: stockAgingRows.filter((row) => row.ageBand === "very_slow").length,
-    stagnant: stockAgingRows.filter((row) => row.ageBand === "stagnant").length,
-    unknown: stockAgingRows.filter((row) => row.ageBand === "unknown").length,
-  }), [stockAgingRows]);
+  const stockAgingRows = stockAging?.rows.map((row) => ({
+    product: row.product, product_code: row.product_code, product_name: row.product_name,
+    warehouse: row.warehouse, warehouse_name: row.warehouse_name,
+    quantity: Number(row.quantity), value: row.value, last_movement: row.last_movement,
+    ageDays: row.age_days, ageBand: row.age_band,
+  })) ?? [];
+  const stockAgingCounts = stockAging?.summary ?? {
+    active: 0, slow: 0, very_slow: 0, stagnant: 0, unknown: 0,
+  };
   const totalInventoryValue = sumDecimalToFixed(balances.map((row) => row.inventory_value), 4);
   const totalInventoryQuantity = balances.reduce((sum, row) => sum + Number(row.quantity), 0);
   // حفظ العملية الحالية في تبويب المخزون ثم إعادة تحميل البيانات المرتبطة.
@@ -476,7 +450,7 @@ const submit = async (event: React.FormEvent) => {
             <article className="metric-card"><div className="metric-top">راكد · أكثر من 180 يوم</div><strong className="metric-value">{stockAgingCounts.stagnant.toLocaleString("ar-EG")}</strong><small>صنف / مخزن</small></article>
           </div>
           <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد</th><th>القيمة</th><th>آخر حركة مرحلة</th><th>أيام دون حركة</th><th>التصنيف</th></tr></thead><tbody>{stockAgingRows.filter((row) => (stockAgeFilter === "all" || row.ageBand === stockAgeFilter) && `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product}-${row.warehouse}`}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td><td>{row.last_movement || "لا توجد حركة مسجلة"}</td><td>{row.ageDays === null ? "—" : row.ageDays.toLocaleString("ar-EG")}</td><td><span className={`status-pill ${row.ageBand === "stagnant" ? "reversed" : row.ageBand === "very_slow" ? "slow" : row.ageBand === "slow" ? "draft" : row.ageBand === "active" ? "posted" : "unknown"}`}>{row.ageBand === "active" ? "نشط" : row.ageBand === "slow" ? "بطيء" : row.ageBand === "very_slow" ? "بطيء جدًا" : row.ageBand === "stagnant" ? "راكد" : "غير محدد"}</span></td></tr>)}{!stockAgingRows.length && <tr><td colSpan={8}>لا توجد أرصدة موجبة لتحليلها.</td></tr>}</tbody></table></div>
-          {stockAgingCounts.unknown > 0 && <p className="inventory-report-note">يوجد {stockAgingCounts.unknown.toLocaleString("ar-EG")} صنف/مخزن بلا حركة مرحلة مسجلة في سجل الحركات المتاح؛ لم نفترض لها عمرًا أو نصنفها كراكد.</p>}
+          {stockAgingCounts.unknown > 0 && <p className="inventory-report-note">يوجد {stockAgingCounts.unknown.toLocaleString("ar-EG")} صنف/مخزن بلا حركة مرحلة مسجلة؛ لم نفترض لها عمرًا أو نصنفها كراكد.</p>}{stockAging?.truncated && <p className="inventory-report-note">تم عرض أول 5000 صنف/مخزن. إجماليات الشرائح تشمل جميع النتائج.</p>}
         </section>
         <section className="activity-panel inventory-report-section">
           <div className="activity-title"><div><h3>أعمار طبقات التكلفة وفق FIFO</h3><p>العمر محسوب من تاريخ الاستلام الأصلي المرتبط بطبقة التكلفة، وليس من آخر حركة مخزنية</p></div><button type="button" className="primary-button" disabled={costAgingBusy} onClick={() => void loadCostAging()}>{costAgingBusy ? "جارٍ التحميل…" : "تحديث تقرير أعمار التكلفة"}</button></div>

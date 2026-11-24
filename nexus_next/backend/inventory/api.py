@@ -16,7 +16,7 @@ from accounting.permissions import CompanyRolePermission
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch, Company, CompanyMembership
 
-from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, InventoryCountLine, Product, ProductCategory, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, StorageLocation, UnitOfMeasure, Warehouse, WarehouseProductSetting
 from .serializers import (
     ProductCategorySerializer, ProductSerializer, StockBalanceSerializer, StockMovementSerializer, StorageLocationSerializer,
     UnitOfMeasureSerializer, WarehouseProductSettingSerializer, WarehouseSerializer,
@@ -376,6 +376,38 @@ class StockMovementViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("حذف المسودات متاح لمدير الشركة فقط.")
         instance.delete()
 
+    @action(detail=False, methods=("get",), url_path="recent")
+    def recent(self, request):
+        """إرجاع آخر عدد محدود من الحركات بدل تحميل سجل المخزون بالكامل للواجهة."""
+        company_id = request.query_params.get("company")
+        if not company_id:
+            return Response({"detail": "حدد الشركة لعرض الحركات الأخيرة."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company_id = int(company_id)
+            limit = int(request.query_params.get("limit", "100"))
+        except (TypeError, ValueError):
+            return Response({"detail": "معرّف الشركة أو عدد الحركات غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        limit = max(1, min(limit, 500))
+        queryset = self.filter_queryset(self.get_queryset().filter(company_id=company_id))
+        warehouse_id = request.query_params.get("warehouse")
+        if warehouse_id:
+            try:
+                warehouse_id = int(warehouse_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "معرّف المخزن غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+            if not _can_access_warehouse(
+                request.user,
+                Warehouse.objects.filter(pk=warehouse_id, company_id=company_id, is_active=True).first(),
+            ):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى المخزن المحدد.")
+            queryset = queryset.filter(
+                Q(source_warehouse_id=warehouse_id) | Q(destination_warehouse_id=warehouse_id)
+            )
+        rows = queryset.order_by("-movement_date", "-created_at", "-id")[:limit]
+        return Response(self.get_serializer(rows, many=True).data)
+
     @action(detail=False, methods=("get",), url_path="stock-card")
     def stock_card(self, request):
         """إعداد بطاقة الصنف مع الرصيد الافتتاحي والحركة والرصيد الجاري."""
@@ -659,6 +691,93 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             Q(warehouse__branch__in=branches)
             | Q(warehouse__branch__isnull=True, warehouse__company_id__in=default_company_ids)
         )
+
+    @action(detail=False, methods=("get",), url_path="stock-aging")
+    def stock_aging(self, request):
+        """تحليل أعمار الحركة حسب آخر ترحيل لكل صنف ومخزن دون تحميل كل الحركات."""
+        company_id = request.query_params.get("company")
+        if not company_id:
+            return Response({"detail": "حدد الشركة لتحليل حركة المخزون."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company_id = int(company_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "معرّف الشركة غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        balances = self.get_queryset().filter(
+            warehouse__company_id=company_id,
+            product__product_type=Product.ProductType.GOODS,
+            quantity__gt=0,
+        )
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "معرّف الفرع غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            balances = balances.filter(warehouse__branch_id=branch_id)
+
+        latest_movement_date = StockMovementLine.objects.filter(
+            product_id=OuterRef("product_id"),
+            movement__status=StockMovement.Status.POSTED,
+        ).filter(
+            Q(movement__source_warehouse_id=OuterRef("warehouse_id"))
+            | Q(movement__destination_warehouse_id=OuterRef("warehouse_id"))
+        ).order_by(
+            "-movement__posted_at", "-movement_id", "-id",
+        ).values("movement__movement_date")[:1]
+
+        grouped = balances.values(
+            "product_id", "product__code", "product__name_ar",
+            "warehouse_id", "warehouse__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"),
+            value=Sum("inventory_value"),
+            last_movement=Subquery(latest_movement_date),
+        ).order_by(F("last_movement").asc(nulls_last=True), "product__code", "warehouse__name_ar")
+
+        today = timezone.localdate()
+        summary = {"active": 0, "slow": 0, "very_slow": 0, "stagnant": 0, "unknown": 0}
+        rows = []
+        total_rows = 0
+        row_limit = 5000
+        for item in grouped.iterator(chunk_size=1000):
+            total_rows += 1
+            last_movement = item["last_movement"]
+            age_days = max(0, (today - last_movement).days) if last_movement else None
+            age_band = (
+                "unknown" if age_days is None else
+                "active" if age_days <= 30 else
+                "slow" if age_days <= 90 else
+                "very_slow" if age_days <= 180 else "stagnant"
+            )
+            summary[age_band] += 1
+            if len(rows) < row_limit:
+                rows.append({
+                    "product": item["product_id"],
+                    "product_code": item["product__code"],
+                    "product_name": item["product__name_ar"],
+                    "warehouse": item["warehouse_id"],
+                    "warehouse_name": item["warehouse__name_ar"],
+                    "quantity": str(item["quantity"] or Decimal("0")),
+                    "value": str((item["value"] or Decimal("0")).quantize(Decimal("0.0001"))),
+                    "last_movement": last_movement.isoformat() if last_movement else None,
+                    "age_days": age_days,
+                    "age_band": age_band,
+                })
+        return Response({
+            "company": company_id,
+            "branch": branch_id,
+            "as_of": today.isoformat(),
+            "summary": summary,
+            "total_rows": total_rows,
+            "rows": rows,
+            "truncated": total_rows > row_limit,
+            "scope_note": "العمر محسوب من تاريخ آخر حركة مرحلة، مع ترتيب الأحداث حسب وقت الترحيل. التقرير مجمّع لكل صنف ومخزن ولا يمثل عمر طبقات التكلفة.",
+        })
 
     @action(detail=False, methods=("get",), url_path="valuation-integrity")
     def valuation_integrity(self, request):
