@@ -588,13 +588,22 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
     line_items = serializers.SerializerMethodField()
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+    grand_total = serializers.SerializerMethodField()
+    approval_status = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrder
         fields = ("id", "company", "supplier", "supplier_name", "warehouse", "warehouse_name",
                   "order_number", "order_date", "expected_date", "status", "notes", "lines",
-                  "line_items", "created_at", "confirmed_at")
-        read_only_fields = ("status", "line_items", "created_at", "confirmed_at")
+                  "line_items", "grand_total", "approval_status", "created_at", "confirmed_at")
+        read_only_fields = ("status", "line_items", "grand_total", "approval_status", "created_at", "confirmed_at")
+
+    def get_grand_total(self, obj):
+        return str(obj.grand_total)
+
+    def get_approval_status(self, obj):
+        latest = obj.approval_requests.order_by("-requested_at", "-pk").first()
+        return latest.status if latest else None
 
     def get_line_items(self, obj):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
