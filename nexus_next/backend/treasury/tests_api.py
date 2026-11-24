@@ -226,7 +226,7 @@ class TreasuryWorkflowTests(APITestCase):
 
         reconciliations = self.client.get("/api/treasury/reconciliations/")
         self.assertEqual(reconciliations.status_code, 200, reconciliations.data)
-        reconciliation_rows = reconciliations.data.get("results", reconciliations.data)
+        reconciliation_rows = reconciliations.data["results"] if isinstance(reconciliations.data, dict) else reconciliations.data
         self.assertNotIn(reconciliation.pk, [row["id"] for row in reconciliation_rows])
         self.assertEqual(
             self.client.get(f"/api/treasury/reconciliations/{reconciliation.pk}/").status_code,
@@ -239,7 +239,7 @@ class TreasuryWorkflowTests(APITestCase):
 
         statement_lines = self.client.get("/api/treasury/statement-lines/")
         self.assertEqual(statement_lines.status_code, 200, statement_lines.data)
-        line_rows = statement_lines.data.get("results", statement_lines.data)
+        line_rows = statement_lines.data["results"] if isinstance(statement_lines.data, dict) else statement_lines.data
         self.assertNotIn(line.pk, [row["id"] for row in line_rows])
         self.assertEqual(self.client.get(f"/api/treasury/statement-lines/{line.pk}/").status_code, 404)
 
