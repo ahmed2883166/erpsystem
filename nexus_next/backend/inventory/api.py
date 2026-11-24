@@ -1,6 +1,8 @@
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import F, Q, Sum
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -647,6 +649,138 @@ class StockBalanceViewSet(viewsets.ReadOnlyModelViewSet):
             "pending_movements_truncated": pending_count > len(pending_rows),
             "scope_branch_ids": branch_ids,
             "scope_note": "يشمل الفروع المسموح بها فقط؛ المخازن غير المرتبطة بفرع تُدرج مع المركز الرئيسي.",
+        })
+
+    @action(detail=False, methods=("get",), url_path="cost-aging")
+    def cost_aging(self, request):
+        """تقرير أعمار طبقات FIFO من تاريخ الاستلام الأصلي مع قيمة التكلفة المتبقية."""
+        company_id = request.query_params.get("company")
+        if not company_id:
+            return Response({"detail": "حدد الشركة لعرض تقرير أعمار طبقات التكلفة."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company_id = int(company_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "معرّف الشركة غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        has_all_branch_access = (request.user.is_superuser and not is_platform_owner(request.user)) or CompanyMembership.objects.filter(
+            user=request.user, company_id=company_id, is_active=True, all_branches=True
+        ).exists()
+        if has_all_branch_access:
+            branch_ids = list(Branch.objects.filter(company_id=company_id).values_list("id", flat=True))
+        else:
+            branch_ids = list(accessible_branches(request.user, company_id).values_list("id", flat=True))
+
+        requested_branch = request.query_params.get("branch")
+        if requested_branch:
+            try:
+                requested_branch_id = int(requested_branch)
+            except (TypeError, ValueError):
+                return Response({"detail": "معرّف الفرع غير صحيح."}, status=status.HTTP_400_BAD_REQUEST)
+            selected_branch = Branch.objects.filter(pk=requested_branch_id, company_id=company_id, is_active=True).first()
+            if selected_branch is None:
+                return Response({"detail": "الفرع المحدد غير موجود أو موقوف."}, status=status.HTTP_400_BAD_REQUEST)
+            if selected_branch.pk not in branch_ids:
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            branch_ids = [selected_branch.pk]
+        else:
+            selected_branch = None
+
+        as_of_raw = request.query_params.get("as_of", "")
+        as_of = parse_date(as_of_raw) if as_of_raw else timezone.localdate()
+        if as_of is None:
+            return Response({"detail": "تاريخ التقرير غير صحيح؛ استخدم YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
+
+        default_branch = Branch.objects.filter(
+            company_id=company_id, is_active=True, is_head_office=True
+        ).first()
+        if default_branch is None:
+            default_branch = Branch.objects.filter(company_id=company_id, is_active=True).order_by("code").first()
+        include_unassigned = bool(default_branch and default_branch.pk in branch_ids)
+        warehouse_scope = Q(warehouse__branch_id__in=branch_ids)
+        if include_unassigned:
+            warehouse_scope |= Q(warehouse__branch__isnull=True)
+
+        layers = StockCostLayer.objects.filter(
+            product__company_id=company_id,
+            product__costing_method=Product.CostingMethod.FIFO,
+            quantity_remaining__gt=0,
+            source_line__movement__status=StockMovement.Status.POSTED,
+            root_source_line__isnull=False,
+            root_source_line__movement__status=StockMovement.Status.POSTED,
+            root_source_line__movement__movement_date__lte=as_of,
+        ).filter(warehouse_scope).select_related(
+            "product", "warehouse", "location", "root_source_line__movement"
+        )
+        cut_30 = as_of - timedelta(days=30)
+        cut_90 = as_of - timedelta(days=90)
+        cut_180 = as_of - timedelta(days=180)
+
+        def bucket_summary(queryset):
+            totals = queryset.aggregate(
+                layers=Count("id"),
+                quantity=Sum("quantity_remaining"),
+                value=Sum(F("quantity_remaining") * F("unit_cost")),
+            )
+            return {
+                "layers": totals["layers"] or 0,
+                "quantity": str(totals["quantity"] or Decimal("0")),
+                "value": str((totals["value"] or Decimal("0")).quantize(Decimal("0.0001"))),
+            }
+
+        buckets = {
+            "active": bucket_summary(layers.filter(root_source_line__movement__movement_date__gte=cut_30)),
+            "slow": bucket_summary(layers.filter(
+                root_source_line__movement__movement_date__lt=cut_30,
+                root_source_line__movement__movement_date__gte=cut_90,
+            )),
+            "very_slow": bucket_summary(layers.filter(
+                root_source_line__movement__movement_date__lt=cut_90,
+                root_source_line__movement__movement_date__gte=cut_180,
+            )),
+            "stagnant": bucket_summary(layers.filter(root_source_line__movement__movement_date__lt=cut_180)),
+        }
+        totals = bucket_summary(layers)
+        rows = []
+        row_limit = 500
+        for layer in layers.order_by("root_source_line__movement__movement_date", "id")[:row_limit + 1]:
+            receipt_date = layer.root_source_line.movement.movement_date
+            age_days = (as_of - receipt_date).days
+            expiry_status = "none"
+            if layer.expiry_date:
+                days_to_expiry = (layer.expiry_date - as_of).days
+                expiry_status = "expired" if days_to_expiry < 0 else "expiring" if days_to_expiry <= 30 else "valid"
+            rows.append({
+                "id": layer.pk,
+                "product": layer.product_id,
+                "product_code": layer.product.code,
+                "product_name": layer.product.name_ar,
+                "warehouse": layer.warehouse_id,
+                "warehouse_name": layer.warehouse.name_ar,
+                "location_name": layer.location.name_ar if layer.location_id else "",
+                "source_movement_number": layer.root_source_line.movement.movement_number,
+                "receipt_date": receipt_date.isoformat(),
+                "age_days": age_days,
+                "quantity_remaining": str(layer.quantity_remaining),
+                "unit_cost": str(layer.unit_cost),
+                "layer_value": str((layer.quantity_remaining * layer.unit_cost).quantize(Decimal("0.0001"))),
+                "expiry_date": layer.expiry_date.isoformat() if layer.expiry_date else None,
+                "expiry_status": expiry_status,
+            })
+        return Response({
+            "company": company_id,
+            "branch": selected_branch.pk if selected_branch else None,
+            "branch_name": selected_branch.name_ar if selected_branch else "",
+            "as_of": as_of.isoformat(),
+            "basis": "تاريخ حركة الاستلام الأصلية المرتبطة بجذر طبقة التكلفة؛ لا يستخدم تاريخ آخر حركة أو updated_at.",
+            "costing_method": "FIFO",
+            "totals": totals,
+            "buckets": buckets,
+            "rows": rows[:row_limit],
+            "truncated": totals["layers"] > row_limit,
+            "scope_branch_ids": branch_ids,
+            "scope_note": "يعرض طبقات FIFO المتبقية فقط داخل الفروع المسموح بها. لا يعرض المتوسط المرجح كطبقات عمرية لأنه لا يمثل أعمار تكلفة مستقلة.",
         })
 
     @action(detail=False, methods=("get",), url_path="reconciliation")
