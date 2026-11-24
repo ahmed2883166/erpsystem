@@ -203,7 +203,7 @@ export const purchasingApi = {
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
   createOrder: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>("/api/purchasing/orders/", { method: "POST", body: JSON.stringify(payload) }); },
   // تأكيد أمر الشراء المحدد للانتقال إلى مرحلة التنفيذ.
-  confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
+  confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder | {status:"pending_approval";detail:string;approval_request_id:number;order:PurchaseOrder}>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
   // إلغاء أمر شراء مسودة أو معتمد قبل تسجيل أي استلام.
   cancelOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/cancel/`, { method: "POST" }); },
 
