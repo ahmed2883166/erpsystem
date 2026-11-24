@@ -711,6 +711,48 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(response.data["closing_quantity"], "3.0000")
         self.assertEqual(response.data["closing_value"], "30.0000")
 
+    def test_stock_card_orders_backdated_postings_by_movement_date(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="CARD-DATE-1", name_ar="ترتيب بطاقة الصنف"
+        )
+        warehouse = self._warehouse("CARD-DATE-WH")
+
+        first = self._movement("CARD-DATE-R1", "receipt", destination=warehouse, quantity="4", cost="10")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{first.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+
+        issue = self._movement("CARD-DATE-I1", "issue", source=warehouse, quantity="1")
+        self.assertEqual(issue.status_code, 201, issue.data)
+        issue_record = StockMovement.objects.get(pk=issue.data["id"])
+        issue_record.movement_date = date(2026, 11, 23)
+        issue_record.save(update_fields=("movement_date",))
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{issue.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+
+        backdated = self._movement("CARD-DATE-R2", "receipt", destination=warehouse, quantity="2", cost="12")
+        self.assertEqual(backdated.status_code, 201, backdated.data)
+        backdated_record = StockMovement.objects.get(pk=backdated.data["id"])
+        backdated_record.movement_date = date(2026, 11, 22)
+        backdated_record.save(update_fields=("movement_date",))
+        self.assertEqual(
+            self.client.post(f"/api/inventory/movements/{backdated.data['id']}/post/", {}, format="json").status_code,
+            200,
+        )
+
+        response = self.client.get(
+            f"/api/inventory/movements/stock-card/?product={self.product.pk}&warehouse={warehouse.pk}&date_from=2026-11-20&date_to=2026-11-30"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [row["movement_number"] for row in response.data["rows"]],
+            ["CARD-DATE-R1", "CARD-DATE-R2", "CARD-DATE-I1"],
+        )
+
     def test_warehouse_product_reorder_setting_is_scoped_and_persisted(self):
         product = Product.objects.create(company=self.company, unit=self.unit, code="MIN-1", name_ar="حد مخزن")
         warehouse = self._warehouse("MIN-WH")
