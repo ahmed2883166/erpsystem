@@ -492,6 +492,8 @@ class SubledgerReconciliationView(APIView):
             + SalesReturn.objects.filter(company_id=company_id, return_date__lte=as_of, status=SalesReturn.Status.DRAFT).filter(sales_return_scope).count(),
             "purchasing": PurchaseInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=PurchaseInvoice.Status.DRAFT).filter(purchase_invoice_scope).count()
             + SupplierPayment.objects.filter(company_id=company_id, payment_date__lte=as_of, status=SupplierPayment.Status.DRAFT).filter(supplier_payment_scope).count()
+            + AssetPurchaseInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=AssetPurchaseInvoice.Status.DRAFT, branch_id__in=branch_ids).count()
+            + AssetSupplierPayment.objects.filter(company_id=company_id, payment_date__lte=as_of, status=AssetSupplierPayment.Status.DRAFT, branch_id__in=branch_ids).count()
             + SupplierReturn.objects.filter(company_id=company_id, return_date__lte=as_of, status=SupplierReturn.Status.DRAFT).filter(supplier_return_scope).count()
             + SupplierRefund.objects.filter(company_id=company_id, refund_date__lte=as_of, status=SupplierRefund.Status.DRAFT).filter(supplier_refund_scope).count(),
             "payroll": PayrollCycle.objects.filter(company_id=company_id, period_end__lte=as_of, status__in=(PayrollCycle.Status.DRAFT, PayrollCycle.Status.CALCULATED, PayrollCycle.Status.REVIEW, PayrollCycle.Status.APPROVED)).count(),
