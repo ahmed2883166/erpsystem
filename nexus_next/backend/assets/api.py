@@ -9,9 +9,9 @@ from django.utils import timezone, dateparse
 from decimal import Decimal, InvalidOperation
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment
+from .models import FixedAsset, AssetDepreciation, AssetImpairmentReversal, AssetPurchaseInvoice, AssetSupplierPayment
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
-from .services import acquire_asset, depreciate_asset, dispose_asset, record_asset_impairment, post_asset_purchase_invoice, post_asset_supplier_payment
+from .services import acquire_asset, depreciate_asset, dispose_asset, record_asset_impairment, reverse_asset_impairment, post_asset_purchase_invoice, post_asset_supplier_payment
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
 
 
@@ -20,7 +20,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
     queryset = FixedAsset.objects.select_related("company", "branch", "asset_account",
         "accumulated_depreciation_account", "depreciation_expense_account",
-        "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction", "vendor_invoice").prefetch_related("depreciations", "vendor_invoice__payments").all()
+        "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction", "vendor_invoice").prefetch_related("depreciations", "impairments", "impairment_reversals", "vendor_invoice__payments").all()
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
@@ -112,6 +112,36 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_201_CREATED)
 
 
+    @decorators.action(detail=True, methods=("post",), url_path="reverse-impairment")
+    def reverse_impairment(self, request, pk=None):
+        """عكس انخفاض القيمة مع الالتزام بسقف القيمة الدفترية الافتراضية وفق IAS 36."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            reversal = reverse_asset_impairment(
+                asset.pk, request.data.get("reversal_date"),
+                request.data.get("recoverable_amount"),
+                request.data.get("reversal_income_account"),
+                request.data.get("fiscal_year"), request.user,
+            )
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": reversal.pk, "asset_id": asset.pk,
+            "reversal_date": reversal.reversal_date,
+            "carrying_amount_before": reversal.carrying_amount_before,
+            "recoverable_amount": reversal.recoverable_amount,
+            "hypothetical_carrying_amount": reversal.hypothetical_carrying_amount,
+            "reversal_amount": reversal.reversal_amount,
+            "journal_entry": reversal.journal_entry_id,
+            "accounting_model": "cost",
+            "oci_impact": "none_under_cost_model",
+        }, status=status.HTTP_201_CREATED)
+
+
     @decorators.action(detail=True, methods=("get",))
     def schedule(self, request, pk=None):
         """عرض سجل الإهلاك والانخفاض والقيمة الدفترية الحالية للأصل."""
@@ -120,13 +150,17 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         impairments = asset.impairments.select_related(
             "journal_entry", "impairment_expense_account", "accumulated_impairment_account"
         ).order_by("impairment_date")
+        reversals = asset.impairment_reversals.select_related(
+            "journal_entry", "reversal_income_account"
+        ).prefetch_related("allocations").order_by("reversal_date")
         accumulated = sum((row.amount for row in rows if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
         impairment_total = sum((row.impairment_loss for row in impairments if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
+        reversal_total = sum((row.reversal_amount for row in reversals if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
         return response.Response({
             "asset_id": asset.pk, "original_cost": asset.original_cost,
             "accumulated_depreciation": accumulated,
-            "accumulated_impairment": impairment_total,
-            "net_book_value": asset.original_cost - accumulated - impairment_total,
+            "accumulated_impairment": impairment_total - reversal_total,
+            "net_book_value": asset.original_cost - accumulated - impairment_total + reversal_total,
             "rows": AssetDepreciationSerializer(rows, many=True).data,
             "impairments": [{
                 "id": row.pk, "impairment_date": row.impairment_date,
@@ -134,6 +168,14 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 "recoverable_amount": row.recoverable_amount,
                 "impairment_loss": row.impairment_loss, "journal_entry": row.journal_entry_id, "status": row.journal_entry.status,
             } for row in impairments],
+            "impairment_reversals": [{
+                "id": row.pk, "reversal_date": row.reversal_date,
+                "carrying_amount_before": row.carrying_amount_before,
+                "recoverable_amount": row.recoverable_amount,
+                "hypothetical_carrying_amount": row.hypothetical_carrying_amount,
+                "reversal_amount": row.reversal_amount,
+                "journal_entry": row.journal_entry_id, "status": row.journal_entry.status,
+            } for row in reversals],
         })
 
 
