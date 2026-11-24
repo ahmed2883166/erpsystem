@@ -433,6 +433,7 @@ class InventoryCountSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = InventoryCount
+        validators = []
         fields = (
             "id", "company", "warehouse", "warehouse_name", "count_number", "count_date",
             "status", "notes", "lines", "lines_count", "created_by", "created_by_name",
@@ -454,4 +455,19 @@ class InventoryCountSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("لا يمكن تعديل مستند جرد غير مسودة.")
         if self.instance and any(key in attrs for key in ("company", "warehouse", "count_number", "count_date")):
             raise serializers.ValidationError("بعد بدء الجرد لا يمكن تغيير الشركة أو المخزن أو الرقم أو التاريخ.")
+        count_number = attrs.get("count_number", getattr(self.instance, "count_number", None))
+        if company and count_number:
+            duplicate_number = InventoryCount.objects.filter(company=company, count_number=count_number)
+            if self.instance:
+                duplicate_number = duplicate_number.exclude(pk=self.instance.pk)
+            if duplicate_number.exists():
+                raise serializers.ValidationError({"count_number": "رقم الجرد مستخدم بالفعل داخل الشركة."})
+        if warehouse and (not self.instance or warehouse.pk != self.instance.warehouse_id):
+            open_count = InventoryCount.objects.filter(
+                warehouse=warehouse, status=InventoryCount.Status.DRAFT,
+            )
+            if self.instance:
+                open_count = open_count.exclude(pk=self.instance.pk)
+            if open_count.exists():
+                raise serializers.ValidationError({"warehouse": "يوجد مستند جرد مفتوح بالفعل على هذا المخزن."})
         return attrs

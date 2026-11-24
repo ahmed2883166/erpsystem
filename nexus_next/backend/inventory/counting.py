@@ -23,7 +23,7 @@ def post_inventory_count(count_id, user):
         raise ValidationError("مستند الجرد مرحّل بالفعل أو ملغي.")
 
     lines = list(
-        count.lines.select_for_update().select_related(
+        count.lines.select_for_update(of=("self",)).select_related(
             "product__unit", "location",
         ).order_by("product_id", "id")
     )
