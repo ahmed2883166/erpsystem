@@ -299,13 +299,14 @@ const createYear = async (event: FormEvent) => {
       <label>اسم الشركة بالإنجليزية<input maxLength={180} value={companyNameEn} onChange={e => setCompanyNameEn(e.target.value)} /></label>
       <label>الدولة<select value={country} onChange={e => setCountry(e.target.value as "EG" | "SA")}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
       <label>النشاط<select value={activity} onChange={e => setActivity(e.target.value as NonNullable<Company["activity"]>)}>{Object.entries(activityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-      <label>العملة الأساسية<select required value={currencyId} onChange={e => setCurrencyId(e.target.value)}><option value="">اختر العملة</option>{currencies.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name_ar}</option>)}</select></label>
+      <label>العملة الأساسية<select required value={currencyId} onChange={e => setCurrencyId(e.target.value)} disabled={currencyLoading || !currencies.length}><option value="">{currencyLoading ? "جارٍ تحميل العملات…" : "اختر العملة"}</option>{currencies.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name_ar}</option>)}</select></label>
+      {currencyError && <div className="asset-report-note form-wide" role="alert">{currencyError} <button type="button" className="text-action-button" onClick={() => void loadCurrencies()} disabled={currencyLoading}>إعادة تحميل العملات</button></div>}
       <label>رقم التسجيل الضريبي<input maxLength={80} value={taxNumber} onChange={e => setTaxNumber(e.target.value)} /></label>
       <label>الهاتف<input maxLength={40} value={phone} onChange={e => setPhone(e.target.value)} /></label>
       <label>البريد الإلكتروني<input type="email" maxLength={254} value={email} onChange={e => setEmail(e.target.value)} /></label>
       <label className="form-wide">العنوان<textarea rows={2} value={address} onChange={e => setAddress(e.target.value)} /></label>
       {activity === "industrial" && <p className="asset-report-note form-wide">النشاط الصناعي هنا لتجهيز الحسابات والمخزون فقط؛ أوامر الإنتاج وقوائم المواد وتحويل الخام إلى منتج نهائي غير مفعّلة في هذه المرحلة.</p>}
-      <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !currencies.length}>{busy ? "جارٍ إنشاء الشركة…" : "إنشاء الشركة والانتقال للخطوة التالية"}</button></div>
+      <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || currencyLoading || !currencies.length || !currencyId}>{busy ? "جارٍ إنشاء الشركة…" : "إنشاء الشركة والانتقال للخطوة التالية"}</button></div>
       <p className="asset-report-note form-wide">إنشاء الشركة متاح لحساب مسؤول النظام الأول الذي تم إنشاؤه أثناء تشغيل البرنامج لأول مرة. لا يتم إنشاء نسب ضريبية قانونية تلقائيًا.</p>
     </form>}
 
