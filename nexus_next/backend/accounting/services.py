@@ -9,7 +9,7 @@ from django.utils import timezone
 from companies.models import FiscalYear
 from companies.access import acquire_fiscal_year_lock, ensure_fiscal_period_open
 from audit.models import AuditEvent
-from .models import JournalEntry
+from .models import ChartOfAccount, JournalEntry
 
 ACCOUNT_ROLE_NATURES = {
     "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
@@ -100,7 +100,9 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
         if line.account.company_id != entry.company_id:
             raise ValidationError("يوجد حساب لا يتبع شركة القيد.")
         if entry.source_type == JournalEntry.Source.OPENING and line.account.nature not in (
-            "asset", "liability", "equity",
+            ChartOfAccount.Nature.ASSET,
+            ChartOfAccount.Nature.LIABILITY,
+            ChartOfAccount.Nature.EQUITY,
         ):
             raise ValidationError("القيد الافتتاحي يقبل حسابات الأصول والالتزامات وحقوق الملكية فقط.")
         if not line.account.is_active or line.account.is_group or not line.account.allow_posting:
