@@ -466,7 +466,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(impairment.impairment_loss, Decimal("25000.0000"))
         self.assertEqual(impairment.journal_entry.lines.get(account=impairment_expense).debit, Decimal("25000.0000"))
         self.assertEqual(impairment.journal_entry.lines.get(account=accumulated_impairment).credit, Decimal("25000.0000"))
-        self.assertEqual(response.data["oci_impact"], "none")
+        self.assertEqual(response.data["oci_impact"], "none_under_cost_model")
 
         schedule = self.client.get(f"/api/assets/fixed-assets/{asset_id}/schedule/")
         self.assertEqual(schedule.status_code, 200, schedule.data)
