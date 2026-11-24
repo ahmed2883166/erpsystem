@@ -390,6 +390,8 @@ export const api = {
   currencies: () => request<Currency[]>("/api/setup/currencies/?is_active=true"),
   // جلب الشركات المتاحة للمستخدم.
   companies: () => request<Company[]>("/api/setup/companies/"),
+  // إنشاء سجل شركة من شاشة إعداد النظام؛ الخادم يطبق صلاحية الإنشاء المناسبة.
+  createCompany: async (payload: Record<string, unknown>) => { await request<{ detail: string }>("/api/csrf/"); return request<Company>("/api/setup/companies/", { method: "POST", body: JSON.stringify(payload) }); },
   // إنشاء الشركة والفرع الرئيسي وحساب مديرها وربطهما ذريًا في طلب واحد.
   createCompanyWithAdmin: async (payload: { company: Record<string, unknown>; manager: { username: string; display_name: string; email: string; password: string } }) => { await request<{ detail: string }>("/api/csrf/"); return request<{ company: Company; manager: CompanyMembership }>("/api/setup/companies/create-with-admin/", { method: "POST", body: JSON.stringify(payload) }); },
   // تحديث بيانات الشركة الحالية بصلاحية مدير الشركة دون إنشاء سجل شركة جديد.
