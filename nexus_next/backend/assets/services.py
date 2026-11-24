@@ -134,8 +134,10 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         raise ValidationError("تاريخ الإهلاك يسبق بداية الإهلاك المحددة.")
     if asset.impairments.filter(
         journal_entry__status=JournalEntry.Status.POSTED, impairment_date__gt=period_date,
+    ).exists() or asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__gt=period_date,
     ).exists():
-        raise ValidationError("يوجد اختبار انخفاض قيمة بتاريخ لاحق؛ لا يمكن ترحيل إهلاك بأثر رجعي قبله.")
+        raise ValidationError("يوجد اختبار انخفاض أو عكس انخفاض بتاريخ لاحق؛ لا يمكن ترحيل إهلاك بأثر رجعي قبله.")
     if AssetDepreciation.objects.filter(asset=asset, period_date__year=period_date.year, period_date__month=period_date.month).exists():
         raise ValidationError("تم تسجيل إهلاك هذا الأصل لهذا الشهر من قبل.")
     try:
