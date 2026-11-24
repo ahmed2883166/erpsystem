@@ -452,6 +452,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                     "grand_total": invoice.grand_total,
                 }, status=status.HTTP_201_CREATED)
             invoice = post_asset_purchase_invoice(invoice.pk, request.user)
+            asset.refresh_from_db()
         except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
             raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
         except DjangoValidationError as exc:
