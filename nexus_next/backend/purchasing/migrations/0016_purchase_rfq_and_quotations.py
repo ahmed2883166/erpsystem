@@ -103,7 +103,7 @@ class Migration(migrations.Migration):
             index=models.Index(fields=["company", "status", "closing_date"], name="pur_rfq_co_status_close_idx"),
         ),
         migrations.AddConstraint(
-            model_name="purchaserfqinviation",
+            model_name="purchaserfqinvitation",
             constraint=models.UniqueConstraint(fields=("rfq", "supplier"), name="uq_purchase_rfq_supplier"),
         ),
         migrations.AddConstraint(
