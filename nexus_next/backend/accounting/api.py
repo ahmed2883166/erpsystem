@@ -43,8 +43,9 @@ def _accounting_report_work_mem():
     # validate this 16MB single-worker profile against the same load test.
     with transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute("SET LOCAL work_mem = '16MB'")
+            cursor.execute("SET LOCAL work_mem = '32MB'")
             cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+            cursor.execute("SET LOCAL jit = off")
         yield
 
 
