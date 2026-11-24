@@ -25,6 +25,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Company, CompanyMembership
 from accounting.models import ChartOfAccount
+from accounting.api import _accounting_report_profile
 
 def require_isolated_benchmark_database():
     with connection.cursor() as cursor:
@@ -99,12 +100,13 @@ def main():
         ),
     }
 
+    work_mem, parallel_workers = _accounting_report_profile()
     report = {
         "dataset": "1,000,000 journal entries / 2,000,000 journal lines",
         "company_id": company.pk,
         "report_session_profile": {
-            "work_mem": "32MB",
-            "max_parallel_workers_per_gather": 0,
+            "work_mem": work_mem,
+            "max_parallel_workers_per_gather": parallel_workers,
             "jit": "off",
         },
         "plans": {},
@@ -126,8 +128,8 @@ def main():
             with transaction.atomic():
                 with connection.cursor() as cursor:
                     if connection.vendor == "postgresql":
-                        cursor.execute("SET LOCAL work_mem = '32MB'")
-                        cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+                        cursor.execute(f"SET LOCAL work_mem = '{work_mem}'")
+                        cursor.execute(f"SET LOCAL max_parallel_workers_per_gather = {parallel_workers}")
                         cursor.execute("SET LOCAL jit = off")
                     cursor.execute(
                         "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql,
