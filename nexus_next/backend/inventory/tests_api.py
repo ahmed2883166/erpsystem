@@ -456,6 +456,23 @@ class InventoryApiTests(APITestCase):
         self.assertEqual(self.product.costing_method, Product.CostingMethod.WEIGHTED_AVERAGE)
 
 
+    def test_products_support_stock_classes_and_services_have_no_stock_class(self):
+        goods = self.client.post("/api/inventory/products/", {
+            "company": self.company.pk, "unit": self.unit.pk,
+            "code": "CLASS-RAW-1", "name_ar": "مواد خام",
+            "product_type": "goods", "stock_class": "raw_material",
+        }, format="json")
+        self.assertEqual(goods.status_code, 201, goods.data)
+        self.assertEqual(goods.data["stock_class"], "raw_material")
+
+        service = self.client.post("/api/inventory/products/", {
+            "company": self.company.pk, "unit": self.unit.pk,
+            "code": "CLASS-SERVICE-1", "name_ar": "خدمة",
+            "product_type": "service", "stock_class": "finished_goods",
+        }, format="json")
+        self.assertEqual(service.status_code, 201, service.data)
+        self.assertIsNone(service.data["stock_class"])
+
     def test_stock_card_orders_same_day_events_by_posting_time_not_document_number(self):
         self.product = Product.objects.create(
             company=self.company, unit=self.unit, code="CARD-ORDER-1", name_ar="ترتيب بطاقة الصنف",
