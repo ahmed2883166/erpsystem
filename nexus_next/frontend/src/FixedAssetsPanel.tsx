@@ -9,7 +9,7 @@ import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type Fisca
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
 const emptyForm = {
-  branch: "", code: "", name_ar: "", description: "", acquisition_date: today, depreciation_start_date: today,
+  branch: "", code: "", name_ar: "", category: "other", description: "", location: "", custodian: "", serial_number: "", warranty_end_date: "", supplier_name: "", supplier_invoice: "", acquisition_date: today, depreciation_start_date: today,
   original_cost: "", salvage_value: "0", useful_life_months: "60", asset_account: "",
   accumulated_depreciation_account: "", depreciation_expense_account: "", acquisition_counter_account: "",
   disposal_gain_loss_account: "", disposal_loss_account: "", fiscal_year: "",
@@ -81,7 +81,7 @@ const create = async (event: FormEvent) => {
     setSaving(true); setError("");
     try {
       await fixedAssetsApi.create({
-        company: companyId, branch: Number(form.branch), code: form.code, name_ar: form.name_ar, description: form.description,
+        company: companyId, branch: Number(form.branch), code: form.code, name_ar: form.name_ar, category: form.category, description: form.description, location: form.location, custodian: form.custodian, serial_number: form.serial_number, warranty_end_date: form.warranty_end_date || null, supplier_name: form.supplier_name, supplier_invoice: form.supplier_invoice,
         acquisition_date: form.acquisition_date, depreciation_start_date: form.depreciation_start_date,
         original_cost: form.original_cost, salvage_value: form.salvage_value, useful_life_months: Number(form.useful_life_months),
         depreciation_method: "straight_line", asset_account: Number(form.asset_account),
@@ -164,6 +164,16 @@ const loadReport = async () => {
       <div className="asset-form-heading"><strong>تسجيل أصل جديد</strong><small>يتم إنشاء قيد الاقتناء وترحيله تلقائيًا داخل معاملة واحدة.</small></div>
       <label>كود الأصل<input required value={form.code} onChange={e=>setForm({...form,code:e.target.value})}/></label>
       <label>اسم الأصل<input required value={form.name_ar} onChange={e=>setForm({...form,name_ar:e.target.value})}/></label>
+      <label>مجموعة الأصل<select required value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>
+        <option value="land">أراضٍ</option><option value="building">مبانٍ</option><option value="vehicle">سيارات ووسائل نقل</option>
+        <option value="furniture">أثاث وتجهيزات</option><option value="equipment">معدات وآلات</option><option value="computers">أجهزة حاسب وتقنية</option><option value="other">أخرى</option>
+      </select></label>
+      <label>الموقع<input value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="المقر / المخزن / المكتب"/></label>
+      <label>المسؤول أو العهدة<input value={form.custodian} onChange={e=>setForm({...form,custodian:e.target.value})}/></label>
+      <label>الرقم التسلسلي<input value={form.serial_number} onChange={e=>setForm({...form,serial_number:e.target.value})}/></label>
+      <label>نهاية الضمان<input type="date" value={form.warranty_end_date} onChange={e=>setForm({...form,warranty_end_date:e.target.value})}/></label>
+      <label>المورد<input value={form.supplier_name} onChange={e=>setForm({...form,supplier_name:e.target.value})}/></label>
+      <label>رقم فاتورة المورد<input value={form.supplier_invoice} onChange={e=>setForm({...form,supplier_invoice:e.target.value})}/></label>
       <label>الفرع<select required value={form.branch} onChange={e=>setForm({...form,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
       <label>تاريخ الاقتناء<input required type="date" value={form.acquisition_date} onChange={e=>setForm({...form,acquisition_date:e.target.value})}/></label>
       <label>بداية الإهلاك<input required type="date" value={form.depreciation_start_date} onChange={e=>setForm({...form,depreciation_start_date:e.target.value})}/></label>
@@ -182,7 +192,7 @@ const loadReport = async () => {
     </form>
     <div className="table-toolbar"><strong>سجل الأصول</strong><span className="module-count">{loading ? "جارٍ التحميل…" : assets.length + " أصل"}</span></div>
     <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الأصل</th><th>التكلفة</th><th>مجمع الإهلاك</th><th>صافي القيمة الدفترية</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
-      {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}</td><td>{a.acquisition_journal ? formatMoney(a.original_cost) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.accumulated_depreciation) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.net_book_value) : "—"}</td><td><span className="status-pill posted">{!a.acquisition_journal ? "بانتظار اعتماد الاقتناء" : a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك / التصرف</button></td></tr>)}
+      {assets.map(a=><tr key={a.id}><td className="code-cell">{a.code}</td><td>{a.name_ar}<small className="table-subtitle">{({land:"أراضٍ",building:"مبانٍ",vehicle:"سيارات",furniture:"أثاث",equipment:"معدات",computers:"تقنية",other:"أخرى"} as Record<string,string>)[a.category]}{a.custodian ? " · العهدة: "+a.custodian : ""}</small></td><td>{a.acquisition_journal ? formatMoney(a.original_cost) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.accumulated_depreciation) : "—"}</td><td>{a.acquisition_journal ? formatMoney(a.net_book_value) : "—"}</td><td><span className="status-pill posted">{!a.acquisition_journal ? "بانتظار اعتماد الاقتناء" : a.status === "active" ? "نشط" : "مستبعد"}</span></td><td><button type="button" className="subtle-button" onClick={()=>void showSchedule(a)}>سجل الإهلاك / التصرف</button></td></tr>)}
     </tbody></table>{!assets.length && !loading && <div className="table-empty">لا توجد أصول مسجلة حتى الآن.</div>}</div>
     <div className="asset-reports">
       <div className="table-toolbar"><strong>تقارير الأصول والتدفقات الاستثمارية</strong><span className="module-count">حسب الشركة والفرع والفترة</span></div>
