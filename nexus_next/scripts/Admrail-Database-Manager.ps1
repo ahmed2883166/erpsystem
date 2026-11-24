@@ -33,16 +33,19 @@ function Save-ConfigValue([string]$Key,[string]$Value) {
     Move-Item $tmp $EnvFile -Force
 }
 function Get-PgTool([string]$Name) {
-    $cmd = Get-Command "$Name.exe" -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $base = Join-Path $env:ProgramFiles "PostgreSQL"
-    if (Test-Path $base) {
-        foreach ($d in (Get-ChildItem $base -Directory | Sort-Object Name -Descending)) {
-            $p = Join-Path $d.FullName "bin\$Name.exe"
-            if (Test-Path $p) { return $p }
+    $allowed = @('pg_dump', 'pg_restore', 'psql', 'createdb')
+    if ($allowed -notcontains $Name) { throw "Unsupported PostgreSQL tool: $Name" }
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles 'PostgreSQL') }
+    if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) { $roots += (Join-Path $env:ProgramW6432 'PostgreSQL') }
+    $versions = @('18', '17', '16', '15', '14')
+    foreach ($root in $roots) {
+        foreach ($version in $versions) {
+            $candidate = Join-Path $root ($version + '\bin\' + $Name + '.exe')
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
         }
     }
-    throw "أداة PostgreSQL $Name.exe غير موجودة. ثبّت Command Line Tools."
+    throw "Trusted PostgreSQL $Name.exe was not found under Program Files\PostgreSQL. Install the official PostgreSQL client tools."
 }
 function Assert-AppStopped {
     $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
