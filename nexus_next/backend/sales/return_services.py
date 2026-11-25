@@ -14,7 +14,7 @@ from accounting.services import get_account_for_role, post_journal
 from inventory.models import Product, StockMovement, StockMovementLine
 from inventory.services import post_stock_movement
 from audit.models import AuditEvent
-from .models import SalesInvoice, SalesReturn, SalesReturnLine
+from .models import CustomerRefund, SalesInvoice, SalesReturn, SalesReturnLine
 from .services import _branch_and_year_for_invoice
 
 
@@ -192,6 +192,8 @@ def reverse_sales_return(return_id, user, entry_date):
         raise ValidationError("لا يمكن عكس إلا مردود مبيعات مرحّل.")
     if document.reversal_journal_entry_id or document.reversal_stock_movement_id:
         raise ValidationError("تم عكس مردود المبيعات من قبل.")
+    if document.refunds.filter(status=CustomerRefund.Status.POSTED).exists():
+        raise ValidationError("يجب عكس رد المبلغ المرتبط بمردود المبيعات أولًا قبل عكس المردود.")
     if document.invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
         sales_invoice=document.invoice,
     ).filter(

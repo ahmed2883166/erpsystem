@@ -10,6 +10,7 @@ RESET_MODELS = (
     ("approvals", "FinancialApprovalRequest"),
     ("treasury", "BankStatementLine"),
     ("purchasing", "SupplierPayment"),
+    ("sales", "CustomerRefund"),
     ("sales", "CustomerReceiptBatchAllocation"),
     ("sales", "CustomerReceiptBatch"),
     ("sales", "CustomerReceipt"),

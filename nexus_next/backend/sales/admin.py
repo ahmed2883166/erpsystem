@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine
+from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, CustomerRefund, SalesDelivery, SalesInvoice, SalesInvoiceLine
 
 
 class SalesInvoiceLineInline(admin.TabularInline):
@@ -54,6 +54,24 @@ class CustomerReceiptBatchAllocationAdmin(admin.ModelAdmin):
     list_filter = ("batch__company", "batch__receipt_date")
     search_fields = ("batch__receipt_number", "invoice__invoice_number")
     readonly_fields = tuple(field.name for field in CustomerReceiptBatchAllocation._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+
+@admin.register(CustomerRefund)
+class CustomerRefundAdmin(admin.ModelAdmin):
+    list_display = ("refund_number", "company", "customer", "refund_date", "amount", "status")
+    list_filter = ("company", "branch", "status", "refund_date")
+    search_fields = ("refund_number", "customer__name_ar", "reference")
+    readonly_fields = tuple(field.name for field in CustomerRefund._meta.fields)
 
     def has_add_permission(self, request):
         return False
