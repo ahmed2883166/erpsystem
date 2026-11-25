@@ -1760,25 +1760,52 @@ class JournalEntryViewSet(AccountingViewSet):
             revaluation_date__gte=date_from,
             revaluation_date__lte=date_to,
             journal_entry__isnull=False,
-            journal_entry__status=JournalEntry.Status.POSTED,
+            journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             journal_entry__branch__in=visible_branches,
         ).select_related("account__account", "journal_entry").order_by(
             "revaluation_date", "account__code", "id"
         ))
-        effect_of_exchange_rate_changes = sum(
-            (row.difference for row in fx_revaluations), Decimal("0")
+        fx_reversals = list(TreasuryFxRevaluation.objects.filter(
+            company_id=company_id,
+            reversal_journal_entry__isnull=False,
+            reversal_journal_entry__entry_date__gte=date_from,
+            reversal_journal_entry__entry_date__lte=date_to,
+            reversal_journal_entry__status=JournalEntry.Status.POSTED,
+            reversal_journal_entry__branch__in=visible_branches,
+        ).select_related(
+            "account__account", "journal_entry", "reversal_journal_entry",
+        ).order_by("reversal_journal_entry__entry_date", "account__code", "id"))
+        effect_of_exchange_rate_changes = (
+            sum((row.difference for row in fx_revaluations), Decimal("0"))
+            - sum((row.difference for row in fx_reversals), Decimal("0"))
         )
         exchange_rate_effect_details = [{
             "account_id": row.account_id,
             "account_code": row.account.account.code,
             "account_name": row.account.name_ar,
             "currency": row.account.currency_code,
-            "revaluation_date": row.revaluation_date,
+            "event_type": "revaluation",
+            "event_date": row.revaluation_date,
+            "original_revaluation_date": row.revaluation_date,
             "rate": row.rate,
             "foreign_amount": row.foreign_amount,
             "difference": row.difference,
             "journal_number": row.journal_entry.entry_number,
-        } for row in fx_revaluations]
+            "original_journal_number": row.journal_entry.entry_number,
+        } for row in fx_revaluations] + [{
+            "account_id": row.account_id,
+            "account_code": row.account.account.code,
+            "account_name": row.account.name_ar,
+            "currency": row.account.currency_code,
+            "event_type": "reversal",
+            "event_date": row.reversal_journal_entry.entry_date,
+            "original_revaluation_date": row.revaluation_date,
+            "rate": row.rate,
+            "foreign_amount": row.foreign_amount,
+            "difference": -row.difference,
+            "journal_number": row.reversal_journal_entry.entry_number,
+            "original_journal_number": row.journal_entry.entry_number,
+        } for row in fx_reversals]
         net_increase_decrease_in_cash = net_change_in_cash + effect_of_exchange_rate_changes
         closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
         closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
