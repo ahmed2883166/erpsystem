@@ -29,7 +29,7 @@ def _invoice_open_balance(invoice, as_of):
         | Q(status=CustomerReceipt.Status.REVERSED, journal_entry__reversal_entry__entry_date__gt=as_of)
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
     batch_allocations = CustomerReceiptBatchAllocation.objects.filter(
-        invoice=invoice, batch__receipt_date__lte=as_of,
+        invoice=invoice, allocation_date__lte=as_of,
     ).filter(
         Q(batch__status=CustomerReceiptBatch.Status.POSTED)
         | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
@@ -44,39 +44,36 @@ def _invoice_open_balance(invoice, as_of):
     return max(invoice.grand_total - direct_paid - batch_paid - returned, Decimal("0"))
 
 
-def _check_allocation_target(batch, invoice, amount):
+def _check_allocation_target(batch, invoice, amount, allocation_date=None):
+    allocation_date = allocation_date or batch.receipt_date
     if invoice.status != SalesInvoice.Status.POSTED:
         raise ValidationError("لا يمكن تخصيص سند القبض إلا لفاتورة مبيعات مرحلة.")
     if invoice.company_id != batch.company_id or invoice.customer_id != batch.customer_id:
         raise ValidationError("الفاتورة لا تتبع العميل والشركة المحددين في سند القبض.")
     if invoice.transaction_currency_id:
         raise ValidationError("التخصيص المجمع متاح لفواتير العملة الأساسية فقط.")
-    if invoice.invoice_date > batch.receipt_date:
-        raise ValidationError("تاريخ سند القبض لا يجوز أن يسبق تاريخ الفاتورة.")
+    if invoice.invoice_date > allocation_date:
+        raise ValidationError("تاريخ التخصيص لا يجوز أن يسبق تاريخ الفاتورة.")
     invoice_branch = (
         resolve_warehouse_branch(batch.company, invoice.delivery.warehouse) if invoice.delivery_id else invoice.branch
     )
     if not invoice_branch or invoice_branch.pk != batch.branch_id:
         raise ValidationError("الفاتورة لا تتبع فرع سند القبض.")
-    remaining = _invoice_open_balance(invoice, batch.receipt_date)
+    remaining = _invoice_open_balance(invoice, allocation_date)
     if amount > remaining:
         raise ValidationError(
             f"التخصيص يتجاوز المتبقي على الفاتورة {invoice.invoice_number} ({remaining})."
         )
     later_direct = CustomerReceipt.objects.filter(
         invoice=invoice, status=CustomerReceipt.Status.POSTED,
-    ).filter(
-        Q(receipt_date__gt=batch.receipt_date)
-        | Q(receipt_date=batch.receipt_date, created_at__gt=batch.created_at)
+        receipt_date__gt=allocation_date,
     ).exists()
     later_batch = CustomerReceiptBatchAllocation.objects.filter(
         invoice=invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
-    ).exclude(batch=batch).filter(
-        Q(batch__receipt_date__gt=batch.receipt_date)
-        | Q(batch__receipt_date=batch.receipt_date, batch__created_at__gt=batch.created_at)
-    ).exists()
+        allocation_date__gt=allocation_date,
+    ).exclude(batch=batch).exists()
     if later_direct or later_batch:
-        raise ValidationError("لا يمكن تخصيص سند بتاريخ يسبق تحصيلًا أحدث على الفاتورة.")
+        raise ValidationError("لا يمكن تخصيص دفعة بتاريخ يسبق تحصيلًا أحدث على الفاتورة.")
 
 
 @transaction.atomic
@@ -116,7 +113,7 @@ def post_customer_receipt_batch(batch_id, user):
         invoice = invoices.get(allocation.invoice_id)
         if not invoice:
             raise ValidationError("إحدى الفواتير المخصصة غير موجودة.")
-        _check_allocation_target(batch, invoice, allocation.amount)
+        _check_allocation_target(batch, invoice, allocation.amount, allocation.allocation_date)
 
     receivable = _account(batch.company, AccountRole.Role.ACCOUNTS_RECEIVABLE)
     cash_role = AccountRole.Role.CASH if batch.method == CustomerReceipt.Method.CASH else AccountRole.Role.BANK
@@ -214,9 +211,10 @@ def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user):
         raise ValidationError("أدخل مبلغ تخصيص أكبر من صفر.")
     if amount > batch.unallocated_amount:
         raise ValidationError(f"مبلغ التخصيص يتجاوز الدفعة المقدمة المتاحة ({batch.unallocated_amount}).")
-    _check_allocation_target(batch, invoice, amount)
+    allocation_date = timezone.localdate()
+    _check_allocation_target(batch, invoice, amount, allocation_date)
     allocation = CustomerReceiptBatchAllocation.objects.create(
-        batch=batch, invoice=invoice, amount=amount, allocation_date=timezone.localdate(), created_by=user,
+        batch=batch, invoice=invoice, amount=amount, allocation_date=allocation_date, created_by=user,
     )
     AuditEvent.objects.create(
         actor=user, company=batch.company, branch=batch.branch,
@@ -264,16 +262,12 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
     for allocation in allocations:
         later_direct = CustomerReceipt.objects.filter(
             invoice=allocation.invoice, status=CustomerReceipt.Status.POSTED,
-        ).filter(
-            Q(receipt_date__gt=batch.receipt_date)
-            | Q(receipt_date=batch.receipt_date, created_at__gt=batch.created_at)
+            receipt_date__gt=allocation.allocation_date,
         ).exists()
         later_batch = CustomerReceiptBatchAllocation.objects.filter(
             invoice=allocation.invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
-        ).exclude(batch=batch).filter(
-            Q(batch__receipt_date__gt=batch.receipt_date)
-            | Q(batch__receipt_date=batch.receipt_date, batch__created_at__gt=batch.created_at)
-        ).exists()
+            allocation_date__gt=allocation.allocation_date,
+        ).exclude(batch=batch).exists()
         if later_direct or later_batch:
             raise ValidationError("يجب عكس أحدث سند قبض مخصص إلى الفاتورة أولًا.")
 
