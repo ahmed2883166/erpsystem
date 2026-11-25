@@ -784,6 +784,16 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
             ).values("invoice_id").annotate(total=Sum("grand_total"))
         }
+        batch_paid_by_invoice = {
+            row["invoice_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                invoice__in=invoices, batch__receipt_date__lte=as_of,
+                created_at__date__lte=as_of,
+            ).filter(
+                Q(batch__status=CustomerReceiptBatch.Status.POSTED)
+                | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
+            ).values("invoice_id").annotate(total=Sum("amount"))
+        }
         customers = {}
         totals = {
             "not_due": Decimal("0"), "1_30": Decimal("0"),
@@ -810,13 +820,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                     receipt.carrying_base_amount
                     if receipt.carrying_base_amount is not None else receipt.amount
                 )
-            batch_paid_as_of = CustomerReceiptBatchAllocation.objects.filter(
-                invoice=invoice, batch__receipt_date__lte=as_of,
-                created_at__date__lte=as_of,
-            ).filter(
-                Q(batch__status=CustomerReceiptBatch.Status.POSTED)
-                | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            batch_paid_as_of = batch_paid_by_invoice.get(invoice.pk, Decimal("0"))
             paid_as_of += batch_paid_as_of
             returned_as_of = returned_by_invoice.get(invoice.pk, Decimal("0"))
             balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
@@ -867,10 +871,14 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             advance_batches = advance_batches.filter(customer_id=customer_id)
         if branch_id:
             advance_batches = advance_batches.filter(branch_id=branch_id)
+        allocated_by_batch = {
+            row["batch_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                batch__in=advance_batches, created_at__date__lte=as_of,
+            ).values("batch_id").annotate(total=Sum("amount"))
+        }
         for batch in advance_batches:
-            allocated_as_of = batch.allocations.filter(
-                created_at__date__lte=as_of,
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            allocated_as_of = allocated_by_batch.get(batch.pk, Decimal("0"))
             unallocated = max(batch.amount - allocated_as_of, Decimal("0"))
             if unallocated <= 0:
                 continue
