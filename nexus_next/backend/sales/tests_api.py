@@ -133,6 +133,34 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(StockMovement.objects.filter(pk=movement_id).exists())
 
+    def test_sales_invoice_date_cannot_precede_delivery_date_at_create_or_post(self):
+        delivery_id, line_id = self._create_delivery("DEL-INVOICE-CHRONOLOGY")
+
+        rejected = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-BEFORE-DELIVERY", "invoice_date": "2026-03-09",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn("invoice_date", rejected.data)
+
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-POST-CHRONOLOGY", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        # Defend the posting service too if an invalid draft reaches it outside serializer validation.
+        SalesInvoice.objects.filter(pk=created.data["id"]).update(invoice_date=date(2026, 3, 9))
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 400, posted.data)
+        self.assertFalse(JournalEntry.objects.filter(
+            description__contains="INV-POST-CHRONOLOGY"
+        ).exists())
+
     def test_draft_sales_invoice_can_be_deleted_only_without_financial_dependencies(self):
         delivery_id, line_id = self._create_delivery("DEL-INVOICE-DELETE")
         payload = {
