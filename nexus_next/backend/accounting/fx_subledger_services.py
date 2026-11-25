@@ -123,7 +123,7 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
 
 def _branch_and_year(invoice, direction, entry_date):
     if direction == "receivable":
-        from sales.services import _branch_and_year as resolver
+        from sales.services import _branch_and_year_for_invoice as resolver
         return resolver(invoice, entry_date)
     from purchasing.services import _branch_and_year_for_invoice
     return _branch_and_year_for_invoice(invoice, entry_date)
