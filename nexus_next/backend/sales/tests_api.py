@@ -1893,3 +1893,124 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(reversed_return.data["status"], "reversed")
         self.assertIsNone(reversed_return.data["reversal_stock_movement"])
         self.assertEqual(StockMovement.objects.count(), movements_before)
+
+
+    def test_sales_order_draft_calculates_totals_and_confirmation_locks_changes(self):
+        movements_before = StockMovement.objects.count()
+        created = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk,
+            "order_number": "SO-001",
+            "order_date": "2026-03-15",
+            "requested_delivery_date": "2026-03-20",
+            "lines": [{
+                "product": self.product.pk, "quantity": "2",
+                "unit_price": "100", "tax_rate": "14", "discount_percent": "10",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["status"], "draft")
+        self.assertEqual(created.data["net_total"], "180.0000")
+        self.assertEqual(created.data["discount_total"], "20.0000")
+        self.assertEqual(created.data["tax_total"], "25.2000")
+        self.assertEqual(created.data["grand_total"], "205.2000")
+        self.assertEqual(len(created.data["order_lines"]), 1)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{created.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data["status"], "confirmed")
+
+        changed = self.client.patch(
+            f"/api/sales-documents/orders/{created.data['id']}/",
+            {"notes": "تعديل بعد الاعتماد"}, format="json",
+        )
+        self.assertEqual(changed.status_code, 400, changed.data)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+    def test_sales_order_rejects_services_and_invalid_delivery_date(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SO-SERVICE",
+            name_ar="خدمة غير مخزنية", product_type=Product.ProductType.SERVICE,
+            stock_class=None,
+        )
+        invalid_service = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-SERVICE",
+            "order_date": "2026-03-15",
+            "lines": [{"product": service.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(invalid_service.status_code, 400, invalid_service.data)
+
+        invalid_date = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-DATE",
+            "order_date": "2026-03-15", "requested_delivery_date": "2026-03-14",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(invalid_date.status_code, 400, invalid_date.data)
+
+
+    def test_sales_order_supports_multiple_partial_deliveries_without_overdelivery(self):
+        order = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-PARTIAL-001",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_line_id = order.data["order_lines"][0]["id"]
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        first = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-DEL-1", "delivery_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "2", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["order_snapshot"]["lines"][0]["order_line_id"], order_line_id)
+        self.assertEqual(first.data["order_snapshot"]["lines"][0]["unit_price"], "100.0000")
+
+        over_delivery = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-OVER", "delivery_date": "2026-03-12",
+            "lines": [{"product": self.product.pk, "quantity": "4", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(over_delivery.status_code, 400, over_delivery.data)
+
+        first_posted = self.client.post(
+            f"/api/sales-documents/deliveries/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        current = self.client.get(f"/api/sales-documents/orders/{order.data['id']}/")
+        self.assertEqual(current.data["status"], "partially_delivered")
+
+        second = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-DEL-2", "delivery_date": "2026-03-12",
+            "lines": [{"product": self.product.pk, "quantity": "3", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/sales-documents/deliveries/{second.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+        current = self.client.get(f"/api/sales-documents/orders/{order.data['id']}/")
+        self.assertEqual(current.data["status"], "delivered")
+
+        after_complete = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-AFTER", "delivery_date": "2026-03-13",
+            "lines": [{"product": self.product.pk, "quantity": "1", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(after_complete.status_code, 400, after_complete.data)

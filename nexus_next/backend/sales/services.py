@@ -16,7 +16,7 @@ from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
 
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
 
 def _account(company, role):
@@ -67,7 +67,20 @@ def post_sales_delivery(delivery_id, user):
     if not delivery.warehouse.is_active or delivery.warehouse.company_id != delivery.company_id:
         raise ValidationError("المخزن موقوف أو لا يتبع الشركة.")
     post_stock_movement(delivery.stock_movement_id, user)
-    return SalesDelivery.objects.select_related("stock_movement").get(pk=delivery.pk)
+    if delivery.order_id:
+        order = SalesOrder.objects.select_for_update().get(pk=delivery.order_id)
+        complete = True
+        for order_line in order.lines.all():
+            posted_quantity = SalesDeliveryAllocation.objects.filter(
+                order_line=order_line,
+                delivery__stock_movement__status=StockMovement.Status.POSTED,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if posted_quantity < order_line.quantity:
+                complete = False
+                break
+        order.status = SalesOrder.Status.DELIVERED if complete else SalesOrder.Status.PARTIALLY_DELIVERED
+        order.save(update_fields=("status", "updated_at"))
+    return SalesDelivery.objects.select_related("stock_movement", "order").get(pk=delivery.pk)
 
 
 @transaction.atomic
