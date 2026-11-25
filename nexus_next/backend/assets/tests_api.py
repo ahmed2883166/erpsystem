@@ -767,3 +767,41 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(invoice.journal_entry.lines.get(account=self.asset_gl).debit, Decimal("114000.0000"))
         self.assertEqual(invoice.journal_entry.lines.get(account=payable).credit, Decimal("114000.0000"))
         self.assertEqual(invoice.journal_entry.lines.count(), 2)
+
+    def test_asset_invoice_and_payment_errors_hide_internal_exception_details(self):
+        payload = self._payload()
+        payload["acquisition_mode"] = "supplier_invoice"
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+
+        invoice_error = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/purchase-invoice/",
+            {
+                "supplier": 999999, "invoice_number": "FA-SUP-INVALID",
+                "invoice_date": "2026-01-10", "net_amount": "1000.0000",
+                "fiscal_year": self.year.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(invoice_error.status_code, 400, invoice_error.data)
+        self.assertEqual(
+            str(invoice_error.data["detail"]),
+            "تعذر معالجة فاتورة شراء الأصل. راجع البيانات والمراجع المرتبطة ثم أعد المحاولة.",
+        )
+        self.assertNotIn("DoesNotExist", str(invoice_error.data))
+
+        payment_error = self.client.post(
+            f"/api/assets/fixed-assets/{asset_id}/supplier-payment/",
+            {
+                "payment_number": "FA-PAY-INVALID", "payment_date": "2026-01-15",
+                "payment_account": self.cash_gl.pk, "amount": "100.0000",
+            },
+            format="json",
+        )
+        self.assertEqual(payment_error.status_code, 400, payment_error.data)
+        self.assertEqual(
+            str(payment_error.data["detail"]),
+            "تعذر معالجة سند سداد الأصل. راجع البيانات والمراجع المرتبطة ثم أعد المحاولة.",
+        )
+        self.assertNotIn("DoesNotExist", str(payment_error.data))
