@@ -47,12 +47,21 @@ class SalesOrderLineInputSerializer(serializers.Serializer):
 class SalesOrderLineSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source="product.code", read_only=True)
     product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    allocated_quantity = serializers.SerializerMethodField()
+    remaining_quantity = serializers.SerializerMethodField()
+
+    def get_allocated_quantity(self, obj):
+        return str(obj.delivery_allocations.aggregate(total=Sum("quantity"))["total"] or Decimal("0"))
+
+    def get_remaining_quantity(self, obj):
+        allocated = obj.delivery_allocations.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+        return str(max(obj.quantity - allocated, Decimal("0")))
 
     class Meta:
         model = SalesOrderLine
-        fields = ("id", "product", "product_code", "product_name", "quantity", "unit_price",
-                  "tax_rate", "tax_code", "discount_percent", "discount_amount",
-                  "net_amount", "tax_amount", "total_amount")
+        fields = ("id", "product", "product_code", "product_name", "quantity", "allocated_quantity",
+                  "remaining_quantity", "unit_price", "tax_rate", "tax_code", "discount_percent",
+                  "discount_amount", "net_amount", "tax_amount", "total_amount")
         read_only_fields = fields
 
 
