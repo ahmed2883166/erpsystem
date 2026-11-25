@@ -616,8 +616,8 @@ def post_supplier_payment(payment_id, user):
             realized_gain, realized_loss = calculate_realized_fx(
                 "payable", historical_carrying, settlement.settlement_base_amount,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر احتساب تسوية العملة لسداد المورد.") from None
         carrying_amount = settlement.carrying_base_amount
         unrealized_adjustment = carrying_amount - historical_carrying
     else:
