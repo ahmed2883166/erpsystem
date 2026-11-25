@@ -14,6 +14,8 @@ ACTIVITY_LABELS = {
     "medical": "طبي",
     "restaurants": "مطاعم",
     "industrial": "صناعي",
+    "transport": "نقل وشحن",
+    "contracting": "مقاولات",
 }
 
 ACTIVITY_ACCOUNT_NAMES = {
@@ -22,6 +24,8 @@ ACTIVITY_ACCOUNT_NAMES = {
     "medical": ("إيرادات الخدمات الطبية", "تكلفة الخدمات والمستلزمات الطبية"),
     "restaurants": ("إيرادات المطاعم والمشروبات", "تكلفة الأغذية والمشروبات المباعة"),
     "industrial": ("إيرادات بيع المنتجات", "تكلفة المنتجات المباعة"),
+    "transport": ("إيرادات خدمات النقل والشحن", "تكاليف الرحلات والنقل والشحن"),
+    "contracting": ("إيرادات أعمال المقاولات", "تكاليف المشروعات والمقاولات"),
 }
 
 # code, name, nature, parent_code, is_group, role
