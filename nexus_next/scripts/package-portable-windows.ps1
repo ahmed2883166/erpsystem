@@ -178,7 +178,7 @@ Never expose ports 8000 or 5432 to employee devices.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Admrail-Database-Manager.cmd", "DATABASE-MANAGER-AR.md", "Remove-Old-Admrail-Database.ps1", "scripts/Admrail-Database-Manager.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Admrail-Database-Manager.cmd", "Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1", "Admrail-Owner-Toolkit/Start-Owner-Toolkit.cmd", "Admrail-Owner-Toolkit/README.md", "DATABASE-MANAGER-AR.md", "Remove-Old-Admrail-Database.ps1", "scripts/Admrail-Database-Manager.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
