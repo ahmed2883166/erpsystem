@@ -5,7 +5,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalLine
 from companies.models import Currency, ExchangeRate, FiscalYear
-from inventory.models import Product
+from inventory.models import Product, StockBalance
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
 from sales.models import CustomerReceiptBatch
