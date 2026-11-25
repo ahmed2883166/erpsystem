@@ -14,7 +14,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
-from sales.models import SalesInvoice, SalesQuotation, SalesDocumentTemplate
+from sales.models import CustomerReceipt, SalesInvoice, SalesQuotation, SalesDocumentTemplate
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -2291,4 +2291,145 @@ class SalesWorkflowTests(APITestCase):
             self.client.get(f"/api/sales-documents/orders/{order.data['id']}/").data["status"],
             "cancelled",
         )
+
+    def test_sales_workflow_end_to_end_from_quotation_to_reversed_return_and_receipt(self):
+        """Exercise a customer sale from quotation through stock, ledger, settlement and reversals."""
+        opening_stock = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+
+        quotation = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "quotation_number": "E2E-Q-001",
+            "quotation_date": "2026-11-25",
+            "valid_until": "2026-12-31",
+            "lines": [{
+                "product": self.product.pk,
+                "quantity": "2",
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(quotation.status_code, 201, quotation.data)
+        quotation_id = quotation.data["id"]
+        self.assertEqual(quotation.data["grand_total"], "228.0000")
+
+        sent = self.client.post(
+            f"/api/sales-documents/quotations/{quotation_id}/send/", {}, format="json"
+        )
+        self.assertEqual(sent.status_code, 200, sent.data)
+        accepted = self.client.post(
+            f"/api/sales-documents/quotations/{quotation_id}/accept/", {}, format="json"
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+
+        delivery = self.client.post(
+            f"/api/sales-documents/quotations/{quotation_id}/convert-to-delivery/",
+            {
+                "warehouse": self.warehouse.pk,
+                "delivery_number": "E2E-DEL-001",
+                "delivery_date": "2026-11-26",
+            },
+            format="json",
+        )
+        self.assertEqual(delivery.status_code, 201, delivery.data)
+        delivery_id = delivery.data["id"]
+        self.assertEqual(delivery.data["movement_status"], "draft")
+
+        posted_delivery = self.client.post(
+            f"/api/sales-documents/deliveries/{delivery_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_delivery.status_code, 200, posted_delivery.data)
+        delivery_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(delivery_balance.quantity, opening_stock.quantity - Decimal("2"))
+
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "E2E-INV-001",
+            "invoice_date": "2026-11-26",
+            "lines": [{
+                "delivery_line": delivery.data["line_items"][0]["id"],
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        self.assertEqual(posted_invoice.data["grand_total"], "228.0000")
+        self.assertEqual(posted_invoice.data["balance_due"], "228.0000")
+
+        self._post_customer_receipt(invoice_id, "E2E-RC-001", "2026-11-27", "100")
+        receipt_id = CustomerReceipt.objects.get(receipt_number="E2E-RC-001").pk
+        invoice_after_receipt = self.client.get(
+            f"/api/sales-documents/invoices/{invoice_id}/"
+        ).data
+        self.assertEqual(invoice_after_receipt["paid_total"], "100.0000")
+        self.assertEqual(invoice_after_receipt["balance_due"], "128.0000")
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice_id,
+            "return_number": "E2E-RET-001",
+            "return_date": "2026-11-28",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["grand_total"], "114.0000")
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity,
+            Decimal("4.0000"),
+        )
+        invoice_after_return = self.client.get(
+            f"/api/sales-documents/invoices/{invoice_id}/"
+        ).data
+        self.assertEqual(invoice_after_return["balance_due"], "14.0000")
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": "2026-11-29"},
+            format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity,
+            Decimal("3.0000"),
+        )
+        invoice_after_return_reversal = self.client.get(
+            f"/api/sales-documents/invoices/{invoice_id}/"
+        ).data
+        self.assertEqual(invoice_after_return_reversal["balance_due"], "128.0000")
+
+        reversed_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_id}/reverse/",
+            {"entry_date": "2026-11-30"},
+            format="json",
+        )
+        self.assertEqual(reversed_receipt.status_code, 200, reversed_receipt.data)
+        self.assertEqual(reversed_receipt.data["status"], "reversed")
+        final_invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
+        self.assertEqual(final_invoice["paid_total"], "0")
+        self.assertEqual(final_invoice["balance_due"], "228.0000")
+
+        posted_sales_entries = JournalEntry.objects.filter(
+            source_type=JournalEntry.Source.SALES,
+            status=JournalEntry.Status.POSTED,
+        )
+        self.assertGreaterEqual(posted_sales_entries.count(), 4)
+        for entry in posted_sales_entries:
+            debit_total = sum((line.debit for line in entry.lines.all()), Decimal("0"))
+            credit_total = sum((line.credit for line in entry.lines.all()), Decimal("0"))
+            self.assertEqual(debit_total, credit_total, entry.entry_number)
 
