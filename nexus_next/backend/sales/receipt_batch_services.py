@@ -216,7 +216,7 @@ def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user):
         raise ValidationError(f"مبلغ التخصيص يتجاوز الدفعة المقدمة المتاحة ({batch.unallocated_amount}).")
     _check_allocation_target(batch, invoice, amount)
     allocation = CustomerReceiptBatchAllocation.objects.create(
-        batch=batch, invoice=invoice, amount=amount, created_by=user,
+        batch=batch, invoice=invoice, amount=amount, allocation_date=timezone.localdate(), created_by=user,
     )
     AuditEvent.objects.create(
         actor=user, company=batch.company, branch=batch.branch,
