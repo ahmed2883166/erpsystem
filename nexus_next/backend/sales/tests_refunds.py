@@ -3,7 +3,7 @@ from decimal import Decimal
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, JournalEntry, JournalLine
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
 class CustomerRefundTests(APITestCase):
@@ -113,8 +113,8 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(posted.data["status"], "posted")
         self.assertEqual(posted.data["amount"], "40.0000")
         self.assertIsNotNone(posted.data["treasury_transaction"])
-        self._assert_balanced(posted.data["journal_number"] and posted.data["treasury_transaction"] and
-                              posted.data["treasury_transaction"])
+        treasury_doc = TreasuryTransaction.objects.get(pk=posted.data["treasury_transaction"])
+        self._assert_balanced(treasury_doc.journal_entry_id)
 
         blocked = self.client.post(
             f"/api/sales-documents/returns/{sales_return['id']}/reverse/",
