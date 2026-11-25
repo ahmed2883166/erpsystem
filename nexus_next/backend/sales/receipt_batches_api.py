@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.utils import timezone
@@ -74,7 +74,7 @@ class CustomerReceiptBatchViewSet(SalesBaseViewSet):
         try:
             invoice_id = int(request.data.get("invoice"))
             amount = Decimal(str(request.data.get("amount")))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, InvalidOperation):
             raise ValidationError({"allocation": "حدد الفاتورة ومبلغ التخصيص الصحيح."}) from None
         allocate_customer_receipt_batch(batch.pk, invoice_id, amount, request.user)
         batch.refresh_from_db()
