@@ -1952,3 +1952,63 @@ class SalesWorkflowTests(APITestCase):
             "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
         }, format="json")
         self.assertEqual(invalid_date.status_code, 400, invalid_date.data)
+
+
+    def test_sales_order_supports_multiple_partial_deliveries_without_overdelivery(self):
+        order = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-PARTIAL-001",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_line_id = order.data["order_lines"][0]["id"]
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        first = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-DEL-1", "delivery_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "2", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+
+        over_delivery = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-OVER", "delivery_date": "2026-03-12",
+            "lines": [{"product": self.product.pk, "quantity": "4", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(over_delivery.status_code, 400, over_delivery.data)
+
+        first_posted = self.client.post(
+            f"/api/sales-documents/deliveries/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        current = self.client.get(f"/api/sales-documents/orders/{order.data['id']}/")
+        self.assertEqual(current.data["status"], "partially_delivered")
+
+        second = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-DEL-2", "delivery_date": "2026-03-12",
+            "lines": [{"product": self.product.pk, "quantity": "3", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/sales-documents/deliveries/{second.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+        current = self.client.get(f"/api/sales-documents/orders/{order.data['id']}/")
+        self.assertEqual(current.data["status"], "delivered")
+
+        after_complete = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-PARTIAL-AFTER", "delivery_date": "2026-03-13",
+            "lines": [{"product": self.product.pk, "quantity": "1", "order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(after_complete.status_code, 400, after_complete.data)
