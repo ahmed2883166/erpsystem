@@ -1895,6 +1895,109 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(StockMovement.objects.count(), movements_before)
 
 
+    def test_foreign_currency_service_invoice_and_partial_receipts(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-FX-001",
+            name_ar="خدمة استشارية دولية", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 12), rate=Decimal("50"),
+        )
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 13), rate=Decimal("52"),
+        )
+        movements_before = StockMovement.objects.count()
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-SERVICE-FX-001",
+            "invoice_date": "2026-03-12",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-12",
+            "lines": [{
+                "product": service.pk, "quantity": "2",
+                "transaction_unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["transaction_grand_total"], "228.0000")
+        self.assertEqual(posted.data["grand_total"], "11400.0000")
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        first = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "invoice": created.data["id"], "receipt_number": "RC-SERVICE-FX-001",
+            "receipt_date": "2026-03-13", "method": "cash",
+            "amount": "5200", "transaction_currency": usd.pk,
+            "transaction_amount": "100", "exchange_rate": "52",
+            "exchange_rate_date": "2026-03-13",
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        first_posted = self.client.post(
+            f"/api/sales-documents/receipts/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/invoices/{created.data['id']}/").data["balance_due"],
+            "6400.0000",
+        )
+
+    def test_service_returns_cannot_exceed_original_quantity_across_documents(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-RET-LIMIT",
+            name_ar="خدمة دعم فني", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        movements_before = StockMovement.objects.count()
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-SERVICE-LIMIT",
+            "invoice_date": "2026-03-12",
+            "lines": [{
+                "product": service.pk, "quantity": "2",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        invoice_line_id = invoice.data["invoice_lines"][0]["id"]
+
+        first = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-SERVICE-LIMIT-1", "return_date": "2026-03-13",
+            "lines": [{"invoice_line": invoice_line_id, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        first_posted = self.client.post(
+            f"/api/sales-documents/returns/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+
+        excessive = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-SERVICE-LIMIT-2", "return_date": "2026-03-14",
+            "lines": [{"invoice_line": invoice_line_id, "quantity": "2"}],
+        }, format="json")
+        self.assertEqual(excessive.status_code, 201, excessive.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/returns/{excessive.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+        self.assertFalse(JournalEntry.objects.filter(
+            entry_number=f"SALE-RET-{excessive.data['id']}"
+        ).exists())
+
     def test_sales_order_draft_calculates_totals_and_confirmation_locks_changes(self):
         movements_before = StockMovement.objects.count()
         created = self.client.post("/api/sales-documents/orders/", {
