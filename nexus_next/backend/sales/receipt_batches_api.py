@@ -2,6 +2,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from rest_framework import decorators, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
@@ -76,7 +77,12 @@ class CustomerReceiptBatchViewSet(SalesBaseViewSet):
             amount = Decimal(str(request.data.get("amount")))
         except (TypeError, ValueError, InvalidOperation):
             raise ValidationError({"allocation": "حدد الفاتورة ومبلغ التخصيص الصحيح."}) from None
-        allocate_customer_receipt_batch(batch.pk, invoice_id, amount, request.user)
+        allocation_date = parse_date(str(request.data.get("allocation_date") or "")) or timezone.localdate()
+        if request.data.get("allocation_date") and not allocation_date:
+            raise ValidationError({"allocation_date": "صيغة تاريخ التخصيص يجب أن تكون YYYY-MM-DD."})
+        allocate_customer_receipt_batch(
+            batch.pk, invoice_id, amount, request.user, allocation_date=allocation_date,
+        )
         batch.refresh_from_db()
         return Response(self.get_serializer(batch).data, status=status.HTTP_200_OK)
 
