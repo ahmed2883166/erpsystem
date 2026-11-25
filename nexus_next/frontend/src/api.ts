@@ -854,16 +854,27 @@ export type CustomerDiscountRule = {
 };
 
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_currency_code: string | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
+export type CustomerReceiptBatchAllocation = {
+  id:number;invoice:number;invoice_number:string;invoice_date:string;amount:string;allocation_date:string;created_at:string;
+};
+export type CustomerReceiptBatch = {
+  id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
+  receipt_number:string;receipt_date:string;method:"cash"|"bank";payment_account:number|null;
+  payment_account_name:string|null;amount:string;allocated_amount:string;unallocated_amount:string;
+  allocation_lines:CustomerReceiptBatchAllocation[];reference:string;status:"draft"|"posted"|"reversed";
+  journal_entry:number|null;journal_number:string|null;reversal_journal_entry:number|null;
+  reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
+};
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
-  rows:{date:string;document_type:"invoice"|"receipt";document_number:string;description:string;debit:string;credit:string;balance:string}[];
+  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
 };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
-  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
-  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
-    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; balance_due: string }[] }[];
+  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string };
+  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string;
+    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; returned_as_of: string; balance_due: string }[] }[];
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export type SalesPerformanceReport = {
@@ -934,6 +945,16 @@ export const salesApi = {
   postReceipt: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/post/`, { method: "POST" }); },
   // عكس آخر سند قبض مرحّل مع إنشاء قيد عكسي مرتبط.
   reverseReceipt: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/reverse/`, { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }); },
+  // جلب سندات القبض المجمعة والدفعات المقدمة.
+  receiptBatches: (companyId:number) => request<CustomerReceiptBatch[]>(`/api/sales-documents/receipt-batches/?company=${companyId}&ordering=-receipt_date`),
+  // إنشاء سند قبض مجمع بمخصصات اختيارية على عدة فواتير.
+  createReceiptBatch: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>("/api/sales-documents/receipt-batches/", {method:"POST",body:JSON.stringify(payload)}); },
+  // ترحيل سند القبض المجمع إلى الخزينة وحساب العملاء.
+  postReceiptBatch: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/post/`, {method:"POST"}); },
+  // تخصيص جزء من دفعة مقدمة إلى فاتورة دون حركة نقدية إضافية.
+  allocateReceiptBatch: async (id:number,invoice:number,amount:string,allocation_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/allocate/`, {method:"POST",body:JSON.stringify({invoice,amount,allocation_date})}); },
+  // عكس سند قبض مجمع وقيد التحصيل المرتبط به.
+  reverseReceiptBatch: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
 };
 
 

@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from customers.models import CustomerDiscountRule
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate, SalesReturn, SalesOrder, SalesOrderLine, SalesDeliveryAllocation
+from .models import CustomerReceipt, CustomerReceiptBatch, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate, SalesReturn, SalesOrder, SalesOrderLine, SalesDeliveryAllocation
 from approvals.snapshots import invoice_discount_snapshot
 
 
@@ -616,20 +616,26 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         ), Decimal("0"))
         return str(total.quantize(Decimal("0.0001")))
 
+    def _paid_amount(self, obj):
+        direct_paid = (
+            sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
+            if obj.transaction_currency_id else
+            sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
+        )
+        batch_paid = sum(
+            (row.amount for row in obj.receipt_batch_allocations.all()
+             if row.batch.status == CustomerReceiptBatch.Status.POSTED),
+            Decimal("0"),
+        )
+        return direct_paid + batch_paid
+
     def get_paid_total(self, obj):
-        """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""
-        if obj.transaction_currency_id:
-            paid = sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        else:
-            paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        return str(paid)
+        """حساب إجمالي التحصيلات المباشرة والمخصصة من سندات القبض المجمعة."""
+        return str(self._paid_amount(obj))
 
     def get_balance_due(self, obj):
-        """حساب الرصيد المتبقي بعد خصم الدفعات المرحلة."""
-        if obj.transaction_currency_id:
-            paid = sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        else:
-            paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
+        """حساب الرصيد المتبقي بعد خصم التحصيلات والمردودات المرحلة."""
+        paid = self._paid_amount(obj)
         returned = obj.returns.filter(
             status=SalesReturn.Status.POSTED,
         ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")

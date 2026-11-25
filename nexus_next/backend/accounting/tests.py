@@ -2248,6 +2248,45 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(Decimal(row["difference"]), Decimal("125.2500"))
         self.assertEqual(row["unmatched_entries"][0]["entry_number"], "MANUAL-AR-001")
 
+    def test_customer_receipt_batch_is_included_once_in_customer_reconciliation(self):
+        from customers.models import Customer
+        from sales.models import CustomerReceiptBatch
+
+        customer = Customer.objects.create(
+            company=self.company, code="RECON-CUST-001", name_ar="عميل دفعة مجمعة",
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="BATCH-RECON-001", entry_date=date(2026, 3, 10),
+            description="تحصيل دفعة مقدمة للعميل",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.cash, debit=Decimal("125.0000"),
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.receivables, credit=Decimal("125.0000"),
+        )
+        post_journal(entry.pk)
+        CustomerReceiptBatch.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            receipt_number="BATCH-RECON-001", receipt_date=date(2026, 3, 10),
+            method="cash", amount=Decimal("125.0000"),
+            status=CustomerReceiptBatch.Status.POSTED, journal_entry=entry,
+            created_by=self.user,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        customers = next(row for row in result.data["rows"] if row["key"] == "customers")
+        self.assertEqual(customers["status"], "matched", customers)
+        self.assertEqual(Decimal(customers["subledger_balance"]), Decimal("-125.0000"))
+        self.assertEqual(Decimal(customers["gl_balance"]), Decimal("-125.0000"))
+        self.assertEqual(Decimal(customers["difference"]), Decimal("0"))
+        self.assertEqual(customers["source_journal_count"], 1)
+        self.assertEqual(customers["unmatched_entry_count"], 0)
+
     def test_missing_control_account_is_not_silently_reported_as_zero(self):
         result = self.client.get(
             f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"

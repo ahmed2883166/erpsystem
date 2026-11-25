@@ -6,8 +6,9 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import SalesDocumentPrint from "./SalesDocumentPrint";
 import SalesReportsPanel from "./SalesReportsPanel";
+import CustomerReceiptBatchesPanel from "./CustomerReceiptBatchesPanel";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type SalesOrder, type Company } from "./api";
+import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type CustomerReceiptBatch, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type SalesOrder, type Company } from "./api";
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string; order_line?: string };
@@ -18,7 +19,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: 
 
 // شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"quotations" | "orders" | "deliveries" | "invoices" | "receipts" | "returns" | "aging" | "reports">("deliveries");
+  const [tab, setTab] = useState<"quotations" | "orders" | "deliveries" | "invoices" | "receipts" | "returns" | "aging" | "reports" | "receipt-batches">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -31,11 +32,12 @@ export default function SalesPanel({ companyId }: Props) {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
+  const [receiptBatches, setReceiptBatches] = useState<CustomerReceiptBatch[]>([]);
   const [returns, setReturns] = useState<SalesReturn[]>([]);
   const [quotations, setQuotations] = useState<SalesQuotation[]>([]);
   const [editingQuotationId,setEditingQuotationId]=useState<number|null>(null);
   const [companyProfile, setCompanyProfile] = useState<Company|null>(null);
-  const [printTarget, setPrintTarget] = useState<{kind:"invoice"|"quotation"|"receipt"|"return";id:number}|null>(null);
+  const [printTarget, setPrintTarget] = useState<{kind:"invoice"|"quotation"|"receipt"|"return"|"receipt_batch";id:number}|null>(null);
   const [quoteLines, setQuoteLines] = useState<QuotationDraftLine[]>([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]);
   const [quoteForm, setQuoteForm] = useState({customer:"",quotation_number:"",quotation_date:new Date().toISOString().slice(0,10),valid_until:new Date(Date.now()+14*86400000).toISOString().slice(0,10),notes:""});
   const [convertingQuoteId, setConvertingQuoteId] = useState<number|null>(null);
@@ -65,11 +67,11 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, so, companyRows] = await Promise.all([
+      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, so, companyRows, rb] = await Promise.all([
         api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId), api.branches(companyId),
-        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), salesApi.orders(companyId), api.companies(),
+        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), salesApi.orders(companyId), api.companies(), salesApi.receiptBatches(companyId),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setOrders(so); setInvoices(i); setReceipts(r); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
+      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setOrders(so); setInvoices(i); setReceipts(r); setReceiptBatches(rb); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
       setReceiptForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
@@ -310,6 +312,7 @@ const post = async (action: () => Promise<unknown>) => {
       <button type="button" className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setEditingInvoiceId(null); }}>مردودات المبيعات <b>{returns.length}</b></button>
       <button type="button" className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setEditingInvoiceId(null); setAging(null); }}>أعمار مديونية العملاء</button>
       <button type="button" className={tab === "reports" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("reports"); setShowForm(false); setEditingInvoiceId(null); }}>تقارير المبيعات</button>
+      <button type="button" className={tab === "receipt-batches" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipt-batches"); setShowForm(false); setEditingInvoiceId(null); }}>تحصيل مجمع / دفعات مقدمة</button>
     </div>
     {tab === "aging" && <div className="inventory-form">
       <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={e => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
@@ -322,15 +325,17 @@ const post = async (action: () => Promise<unknown>) => {
           <div><span>61–90 يوم</span><strong>{money(aging.totals["61_90"])}</strong></div>
           <div><span>أكثر من 90 يوم</span><strong>{money(aging.totals.over_90)}</strong></div>
           <div><span>إجمالي المستحق</span><strong>{money(aging.totals.total_due)}</strong></div>
+          <div><span>دفعات مقدمة غير مخصصة</span><strong>{money(aging.totals.unallocated_advances)}</strong></div>
         </div>
-        <div className="data-table-wrap"><table><thead><tr><th>كود العميل</th><th>العميل</th><th>غير مستحق</th><th>1–30</th><th>31–60</th><th>61–90</th><th>أكثر من 90</th><th>الإجمالي</th></tr></thead>
-          <tbody>{aging.customers.map(row => <tr key={row.customer}><td className="code-cell">{row.customer_code}</td><td>{row.customer_name}<details className="aging-invoice-details"><summary>تفاصيل الفواتير ({row.invoices.length})</summary><div className="aging-invoice-list">{row.invoices.map(invoice => <div key={invoice.invoice}><span>{invoice.invoice_number} · استحقاق {invoice.due_date}</span><strong>{money(invoice.balance_due)}</strong></div>)}</div></details></td><td>{money(row.not_due)}</td><td>{money(row["1_30"])}</td><td>{money(row["31_60"])}</td><td>{money(row["61_90"])}</td><td>{money(row.over_90)}</td><td><strong>{money(row.total_due)}</strong></td></tr>)}</tbody>
+        <div className="data-table-wrap"><table><thead><tr><th>كود العميل</th><th>العميل</th><th>غير مستحق</th><th>1–30</th><th>31–60</th><th>61–90</th><th>أكثر من 90</th><th>الإجمالي</th><th>دفعات مقدمة</th></tr></thead>
+          <tbody>{aging.customers.map(row => <tr key={row.customer}><td className="code-cell">{row.customer_code}</td><td>{row.customer_name}<details className="aging-invoice-details"><summary>تفاصيل الفواتير ({row.invoices.length})</summary><div className="aging-invoice-list">{row.invoices.map(invoice => <div key={invoice.invoice}><span>{invoice.invoice_number} · استحقاق {invoice.due_date}</span><strong>{money(invoice.balance_due)}</strong></div>)}</div></details></td><td>{money(row.not_due)}</td><td>{money(row["1_30"])}</td><td>{money(row["31_60"])}</td><td>{money(row["61_90"])}</td><td>{money(row.over_90)}</td><td><strong>{money(row.total_due)}</strong></td><td>{money(row.unallocated_advances)}</td></tr>)}</tbody>
         </table>{aging.customers.length === 0 && <div className="table-empty">لا توجد أرصدة مستحقة على العملاء في تاريخ التقرير.</div>}</div>
         <p className="inventory-report-note">يعتمد التقرير على الفواتير المرحلة فقط، ويخصم سندات القبض المرحلة حتى تاريخ التقرير. تاريخ الاستحقاق = تاريخ الفاتورة + أجل السداد المسجل للعميل.</p>
       </div>}
     </div>}
     {tab === "reports" && <SalesReportsPanel companyId={companyId} />}
-    <div className="customer-toolbar" style={{display:tab === "reports" ? "none" : undefined}}><div className="customer-count">عدد المستندات <strong>{(tab === "orders" ? orders : tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : tab === "quotations" ? quotations : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } if (tab === "quotations") { setEditingQuotationId(null); setQuoteForm(old => ({...old, customer:"", quotation_number:"", notes:""})); setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "أمر بيع جديد" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : tab === "quotations" ? "عرض سعر جديد" : "التقرير"}</button></div>
+    {tab === "receipt-batches" && <CustomerReceiptBatchesPanel companyId={companyId} customers={customers} invoices={invoices} treasuryAccounts={treasuryAccounts} onRefresh={refresh} onPrint={batch=>setPrintTarget({kind:"receipt_batch",id:batch.id})} />}
+    <div className="customer-toolbar" style={{display:tab === "reports" || tab === "receipt-batches" ? "none" : undefined}}><div className="customer-count">عدد المستندات <strong>{(tab === "orders" ? orders : tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : tab === "quotations" ? quotations : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging" || tab === "reports" || tab === "receipt-batches"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } if (tab === "quotations") { setEditingQuotationId(null); setQuoteForm(old => ({...old, customer:"", quotation_number:"", notes:""})); setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "أمر بيع جديد" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : tab === "quotations" ? "عرض سعر جديد" : "التقرير"}</button></div>
 
     {showForm && tab === "orders" && <form className="inventory-form" onSubmit={createOrder}>
       <label>العميل<select required value={orderForm.customer} onChange={e=>setOrderForm({...orderForm,customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
@@ -489,6 +494,7 @@ const post = async (action: () => Promise<unknown>) => {
       invoice={printTarget.kind === "invoice" ? invoices.find(row => row.id === printTarget.id) || null : null}
       quotation={printTarget.kind === "quotation" ? quotations.find(row => row.id === printTarget.id) || null : null}
       receipt={printTarget.kind === "receipt" ? receipts.find(row => row.id === printTarget.id) || null : null}
+      receiptBatch={printTarget.kind === "receipt_batch" ? receiptBatches.find(row => row.id === printTarget.id) || null : null}
       salesReturn={printTarget.kind === "return" ? returns.find(row => row.id === printTarget.id) || null : null}
       onClose={() => setPrintTarget(null)}
     />}

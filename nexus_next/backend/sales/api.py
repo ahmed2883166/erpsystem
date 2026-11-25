@@ -19,7 +19,7 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
+from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
@@ -430,7 +430,7 @@ class SalesQuotationViewSet(SalesBaseViewSet):
 
 class SalesInvoiceViewSet(SalesBaseViewSet):
     serializer_class = SalesInvoiceSerializer
-    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "branch", "journal_entry", "transaction_currency").prefetch_related("lines__delivery_line__product", "lines__product", "lines__tax_code", "receipts", "approval_requests")
+    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "branch", "journal_entry", "transaction_currency").prefetch_related("lines__delivery_line__product", "lines__product", "lines__tax_code", "receipts", "receipt_batch_allocations__batch", "approval_requests")
     filterset_fields = ("company", "customer", "status", "invoice_date")
     search_fields = ("invoice_number", "customer__name_ar", "delivery__delivery_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
@@ -653,6 +653,38 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                     "description": f"عكس سند قبض العميل {receipt.receipt_number}",
                     "debit": carrying_amount, "credit": Decimal("0"), "sort": 3,
                 })
+        receipt_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, customer_id=customer_id,
+            branch__in=accessible_branches(request.user),
+            status__in=(CustomerReceiptBatch.Status.POSTED, CustomerReceiptBatch.Status.REVERSED),
+        ).select_related("journal_entry", "reversal_journal_entry").prefetch_related("allocations__invoice")
+        if branch_id:
+            receipt_batches = receipt_batches.filter(branch_id=branch_id)
+        statement_as_of = date_to or timezone.localdate()
+        for batch in receipt_batches:
+            invoice_numbers = ", ".join(
+                allocation.invoice.invoice_number
+                for allocation in batch.allocations.filter(
+                    allocation_date__lte=statement_as_of,
+                ).select_related("invoice")
+            )
+            description = (
+                f"سند قبض مجمع عن الفواتير {invoice_numbers}"
+                if invoice_numbers else "دفعة مقدمة غير مخصصة من العميل"
+            )
+            events.append({
+                "date": batch.receipt_date, "kind": "receipt_batch",
+                "number": batch.receipt_number, "description": description,
+                "debit": Decimal("0"), "credit": batch.amount, "sort": 1,
+            })
+            if batch.status == CustomerReceiptBatch.Status.REVERSED and batch.reversal_journal_entry_id:
+                events.append({
+                    "date": batch.reversal_date or batch.reversal_journal_entry.entry_date,
+                    "kind": "receipt_batch_reversal",
+                    "number": f"REV-{batch.receipt_number}",
+                    "description": f"عكس سند القبض المجمع {batch.receipt_number}",
+                    "debit": batch.amount, "credit": Decimal("0"), "sort": 3,
+                })
         returns = SalesReturn.objects.filter(
             invoice__in=invoices,
             status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
@@ -756,11 +788,22 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
             ).values("invoice_id").annotate(total=Sum("grand_total"))
         }
+        batch_paid_by_invoice = {
+            row["invoice_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                invoice__in=invoices, batch__receipt_date__lte=as_of,
+                allocation_date__lte=as_of,
+            ).filter(
+                Q(batch__status=CustomerReceiptBatch.Status.POSTED)
+                | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
+            ).values("invoice_id").annotate(total=Sum("amount"))
+        }
         customers = {}
         totals = {
             "not_due": Decimal("0"), "1_30": Decimal("0"),
             "31_60": Decimal("0"), "61_90": Decimal("0"),
             "over_90": Decimal("0"), "total_due": Decimal("0"),
+            "unallocated_advances": Decimal("0"),
         }
         for invoice in invoices:
             paid_as_of = Decimal("0")
@@ -781,6 +824,8 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                     receipt.carrying_base_amount
                     if receipt.carrying_base_amount is not None else receipt.amount
                 )
+            batch_paid_as_of = batch_paid_by_invoice.get(invoice.pk, Decimal("0"))
+            paid_as_of += batch_paid_as_of
             returned_as_of = returned_by_invoice.get(invoice.pk, Decimal("0"))
             balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
             if balance_due <= 0:
@@ -800,7 +845,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "not_due": Decimal("0"), "1_30": Decimal("0"),
                 "31_60": Decimal("0"), "61_90": Decimal("0"),
                 "over_90": Decimal("0"), "total_due": Decimal("0"),
-                "invoices": [],
+                "unallocated_advances": Decimal("0"), "invoices": [],
             })
             customer[bucket] += balance_due
             customer["total_due"] += balance_due
@@ -818,6 +863,40 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             })
             totals[bucket] += balance_due
             totals["total_due"] += balance_due
+
+        advance_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, branch__in=accessible_branches(request.user),
+            receipt_date__lte=as_of,
+        ).filter(
+            Q(status=CustomerReceiptBatch.Status.POSTED)
+            | Q(status=CustomerReceiptBatch.Status.REVERSED, reversal_date__gt=as_of)
+        ).select_related("customer")
+        if customer_id:
+            advance_batches = advance_batches.filter(customer_id=customer_id)
+        if branch_id:
+            advance_batches = advance_batches.filter(branch_id=branch_id)
+        allocated_by_batch = {
+            row["batch_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                batch__in=advance_batches, allocation_date__lte=as_of,
+            ).values("batch_id").annotate(total=Sum("amount"))
+        }
+        for batch in advance_batches:
+            allocated_as_of = allocated_by_batch.get(batch.pk, Decimal("0"))
+            unallocated = max(batch.amount - allocated_as_of, Decimal("0"))
+            if unallocated <= 0:
+                continue
+            customer = customers.setdefault(batch.customer_id, {
+                "customer": batch.customer_id,
+                "customer_code": batch.customer.code,
+                "customer_name": batch.customer.name_ar,
+                "not_due": Decimal("0"), "1_30": Decimal("0"),
+                "31_60": Decimal("0"), "61_90": Decimal("0"),
+                "over_90": Decimal("0"), "total_due": Decimal("0"),
+                "unallocated_advances": Decimal("0"), "invoices": [],
+            })
+            customer["unallocated_advances"] += unallocated
+            totals["unallocated_advances"] += unallocated
 
         for customer in customers.values():
             for key in (*totals.keys(),):
