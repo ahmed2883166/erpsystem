@@ -14,7 +14,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
-from sales.models import SalesQuotation, SalesDocumentTemplate
+from sales.models import SalesInvoice, SalesQuotation, SalesDocumentTemplate
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -60,10 +60,10 @@ class SalesWorkflowTests(APITestCase):
         )
         post_stock_movement(receipt.pk, self.user)
 
-    def _create_delivery(self, number="DEL-001"):
+    def _create_delivery(self, number="DEL-001", delivery_date="2026-03-10"):
         response = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk, "warehouse": self.warehouse.pk,
-            "delivery_number": number, "delivery_date": "2026-03-10",
+            "delivery_number": number, "delivery_date": delivery_date,
             "lines": [{"product": self.product.pk, "quantity": "2"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -309,7 +309,7 @@ class SalesWorkflowTests(APITestCase):
 
 
     def _create_posted_invoice(self, number, invoice_date):
-        delivery_id, line_id = self._create_delivery(f"DEL-{number}")
+        delivery_id, line_id = self._create_delivery(f"DEL-{number}", delivery_date=invoice_date)
         response = self.client.post("/api/sales-documents/invoices/", {
             "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
             "invoice_number": number, "invoice_date": invoice_date,
