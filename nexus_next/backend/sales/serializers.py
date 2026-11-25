@@ -475,6 +475,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
 
         if not delivery or delivery.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"delivery": "يجب ترحيل إذن التسليم أولًا."})
+        if invoice_date < delivery.delivery_date:
+            raise serializers.ValidationError({
+                "invoice_date": "تاريخ الفاتورة لا يجوز أن يسبق تاريخ إذن التسليم."
+            })
         if delivery.company_id != company.pk or delivery.customer_id != customer.pk:
             raise serializers.ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة."})
         if not customer.is_active:

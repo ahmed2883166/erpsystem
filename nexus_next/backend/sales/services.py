@@ -86,6 +86,8 @@ def post_sales_invoice(invoice_id, user):
         ):
             raise ValidationError("تجاوزت الفاتورة حد الخصم أو قيمة الفاتورة المعتمد؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل.")
     delivery = invoice.delivery
+    if invoice.invoice_date < delivery.delivery_date:
+        raise ValidationError("تاريخ الفاتورة لا يجوز أن يسبق تاريخ إذن التسليم.")
     if delivery.stock_movement.status != StockMovement.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
     lines = list(invoice.lines.select_related("delivery_line", "delivery_line__product"))
