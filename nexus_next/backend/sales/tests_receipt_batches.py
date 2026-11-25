@@ -109,7 +109,7 @@ class CustomerReceiptBatchTests(APITestCase):
 
         allocated = self.client.post(
             f"/api/sales-documents/receipt-batches/{advance.data['id']}/allocate/",
-            {"invoice": second_invoice, "amount": "30"},
+            {"invoice": second_invoice, "amount": "30", "allocation_date": "2026-03-13"},
             format="json",
         )
         self.assertEqual(allocated.status_code, 200, allocated.data)
