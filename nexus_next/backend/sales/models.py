@@ -703,10 +703,19 @@ class CustomerReceiptBatch(models.Model):
         ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT,
         related_name="customer_receipt_batches",
     )
+    # amount is always the company-base-currency carrying amount.
+    # FX refunds also retain their nominal amount and approved rate.
     amount = models.DecimalField(
         max_digits=20, decimal_places=4,
         validators=[MinValueValidator(Decimal("0.0001"))],
     )
+    transaction_currency = models.ForeignKey(
+        Currency, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refunds",
+    )
+    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
     reference = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     journal_entry = models.OneToOneField(
@@ -931,6 +940,23 @@ class CustomerRefund(models.Model):
             raise ValidationError({"source_receipt_batch": "سند القبض لا يتبع العميل والشركة المحددين."})
         if self.treasury_account_id and self.treasury_account.company_id != self.company_id:
             raise ValidationError({"treasury_account": "حساب الخزينة لا يتبع الشركة المحددة."})
+        fx_values = (
+            self.transaction_currency_id, self.transaction_amount,
+            self.exchange_rate, self.exchange_rate_date,
+        )
+        if any(value is not None for value in fx_values):
+            if any(value is None for value in fx_values):
+                raise ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
+            if not self.source_return_id or not self.source_return.invoice.transaction_currency_id:
+                raise ValidationError("رد العملة الأجنبية متاح لمردود فاتورة أجنبية فقط.")
+            if self.transaction_currency_id != self.source_return.invoice.transaction_currency_id:
+                raise ValidationError("عملة الرد يجب أن تطابق عملة الفاتورة الأصلية.")
+            if self.transaction_amount <= 0 or self.exchange_rate <= 0:
+                raise ValidationError("المبلغ الأجنبي وسعر الصرف يجب أن يكونا أكبر من صفر.")
+            if self.exchange_rate_date > self.refund_date:
+                raise ValidationError("تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ الرد.")
+        elif self.source_return_id and self.source_return.invoice.transaction_currency_id:
+            raise ValidationError("مردود الفاتورة الأجنبية يتطلب تحديد مبلغ الرد وسعر الصرف الأجنبي.")
 
     def save(self, *args, **kwargs):
         if self.pk and type(self).objects.filter(
