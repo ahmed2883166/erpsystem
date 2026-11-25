@@ -3,9 +3,9 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from decimal import Decimal
 
 from companies.models import Company, Branch, Currency, ExchangeRate
+from core.money import round_currency_amount
 from accounting.models import ChartOfAccount, JournalEntry
 
 
@@ -96,6 +96,10 @@ class TreasuryTransaction(models.Model):
     source_account = models.ForeignKey(TreasuryAccount, on_delete=models.PROTECT, related_name="outgoing_transactions")
     destination_account = models.ForeignKey(TreasuryAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="incoming_transfers")
     counter_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_counter_transactions")
+    reversal_of = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversal_transaction",
+    )
     kind = models.CharField(max_length=10, choices=Kind.choices)
     status = models.CharField(max_length=8, choices=Status.choices, default=Status.DRAFT)
     document_number = models.CharField(max_length=40)
@@ -173,9 +177,24 @@ class TreasuryTransaction(models.Model):
             ).exists()
             if not approved:
                 raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا مسجلًا للشركة والتاريخ.")
-            expected_base = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"))
+            expected_base = round_currency_amount(self.transaction_amount * self.exchange_rate, self.company.base_currency)
             if self.amount != expected_base:
                 raise ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
+        if self.reversal_of_id:
+            original = self.reversal_of
+            if (
+                self.kind != self.Kind.RECEIPT
+                or original.kind != self.Kind.PAYMENT
+                or original.status != self.Status.POSTED
+                or original.company_id != self.company_id
+                or original.source_account_id != self.source_account_id
+                or original.amount != self.amount
+                or original.transaction_currency_id != self.transaction_currency_id
+                or original.transaction_amount != self.transaction_amount
+                or original.exchange_rate != self.exchange_rate
+                or original.exchange_rate_date != self.exchange_rate_date
+            ):
+                raise ValidationError("حركة عكس العملة الأجنبية يجب أن تطابق سند الصرف الأصلي.")
         if self.kind == self.Kind.TRANSFER:
             if not self.destination_account_id or self.counter_account_id:
                 raise ValidationError("التحويل يتطلب خزينة مستقبلة ولا يقبل حسابًا مقابلًا.")

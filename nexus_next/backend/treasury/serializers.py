@@ -2,6 +2,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
+from core.money import round_currency_amount
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 
 
@@ -147,8 +148,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
                 rate_date=fx["exchange_rate_date"], rate=fx["exchange_rate"],
             ).exists():
                 raise serializers.ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا مسجلًا للشركة والتاريخ.")
-            from decimal import Decimal
-            expected_base = (fx["transaction_amount"] * fx["exchange_rate"]).quantize(Decimal("0.0001"))
+            expected_base = round_currency_amount(fx["transaction_amount"] * fx["exchange_rate"], company.base_currency)
             if amount != expected_base:
                 raise serializers.ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         kind = attrs.get("kind", getattr(self.instance, "kind", None))

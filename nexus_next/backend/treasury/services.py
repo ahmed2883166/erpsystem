@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from accounting.models import JournalEntry, JournalLine
 from companies.models import ExchangeRate, FiscalYear
+from core.money import round_currency_amount
 from .models import (
     TreasuryAccount, TreasuryTransaction, TreasuryFxPosition,
     TreasuryFxRevaluation,
@@ -83,7 +84,7 @@ def post_treasury_transaction(transaction_id, user=None):
     """ترحيل حركة خزينة مع احتساب متوسط التكلفة وفروق العملة المحققة."""
     doc = TreasuryTransaction.objects.select_for_update(of=("self",)).select_related(
         "company__base_currency", "branch", "fiscal_year", "source_account__account",
-        "destination_account__account", "counter_account", "transaction_currency",
+        "destination_account__account", "counter_account", "transaction_currency", "reversal_of",
     ).get(pk=transaction_id)
     if doc.status != TreasuryTransaction.Status.DRAFT:
         raise ValidationError("لا يمكن ترحيل إلا مستند خزينة مسودة.")
@@ -135,7 +136,7 @@ def post_treasury_transaction(transaction_id, user=None):
             raise ValidationError("الحركة الأجنبية تتطلب لقطة مبلغ وسعر صرف وتاريخ معتمد مكتملة.")
         if doc.transaction_currency.code != source.currency_code:
             raise ValidationError("عملة الحركة لا تطابق عملة حساب الخزينة.")
-        if doc.amount != _money(doc.transaction_amount * doc.exchange_rate):
+        if doc.amount != round_currency_amount(doc.transaction_amount * doc.exchange_rate, doc.company.base_currency):
             raise ValidationError("القيمة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
         source_position = _foreign_position(source)
         if source_position.foreign_amount < 0:
@@ -153,6 +154,22 @@ def post_treasury_transaction(transaction_id, user=None):
                     * doc.transaction_amount / source_position.foreign_amount
                 )
             fx_difference = _money(doc.amount - carrying_amount)
+        elif doc.reversal_of_id:
+            original = TreasuryTransaction.objects.select_for_update(of=("self",)).get(pk=doc.reversal_of_id)
+            if (
+                original.status != TreasuryTransaction.Status.POSTED
+                or original.kind != TreasuryTransaction.Kind.PAYMENT
+                or original.source_account_id != doc.source_account_id
+                or original.transaction_currency_id != doc.transaction_currency_id
+                or original.transaction_amount != doc.transaction_amount
+                or original.exchange_rate != doc.exchange_rate
+                or original.exchange_rate_date != doc.exchange_rate_date
+                or original.amount != doc.amount
+                or original.carrying_amount is None
+            ):
+                raise ValidationError("عكس حركة العملة الأجنبية لا يطابق حركة الصرف الأصلية.")
+            carrying_amount = original.carrying_amount
+            fx_difference = original.amount - carrying_amount
         else:
             carrying_amount = doc.amount
         doc.carrying_amount = carrying_amount
@@ -185,6 +202,12 @@ def post_treasury_transaction(transaction_id, user=None):
         if foreign:
             source_position.foreign_amount += doc.transaction_amount
             source_position.carrying_base_amount += carrying_amount
+            if doc.reversal_of_id:
+                from accounting.services import get_account_for_role
+                if fx_difference > 0:
+                    debit_lines.append((get_account_for_role(doc.company, "realized_fx_gain"), fx_difference))
+                elif fx_difference < 0:
+                    credit_lines.append((get_account_for_role(doc.company, "realized_fx_loss"), -fx_difference))
 
     elif doc.kind == TreasuryTransaction.Kind.PAYMENT:
         if not doc.counter_account.is_active or doc.counter_account.is_group or not doc.counter_account.allow_posting:
@@ -265,7 +288,7 @@ def post_treasury_transaction(transaction_id, user=None):
                 **(
                     fx_snapshot
                     if foreign and (
-                        doc.kind == TreasuryTransaction.Kind.RECEIPT
+                        (doc.kind == TreasuryTransaction.Kind.RECEIPT and account.pk == source.account_id and not doc.reversal_of_id)
                         or (doc.kind == TreasuryTransaction.Kind.PAYMENT and account.pk == doc.counter_account_id)
                     )
                     else {}
@@ -277,7 +300,7 @@ def post_treasury_transaction(transaction_id, user=None):
             JournalLine(
                 entry=entry, account=account, debit=0, credit=amount,
                 description=description,
-                **(fx_snapshot if foreign and doc.kind == TreasuryTransaction.Kind.RECEIPT else {}),
+                **(fx_snapshot if foreign and doc.kind == TreasuryTransaction.Kind.RECEIPT and account.pk == doc.counter_account_id else {}),
             )
             for account, amount in credit_lines if amount > 0
         ],

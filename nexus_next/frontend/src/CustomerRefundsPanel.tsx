@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { formatMoney } from "./formatters";
-import { salesApi, type CustomerRefund, type SalesInvoice, type SalesReturn, type CustomerReceiptBatch, type TreasuryAccount } from "./api";
+import { salesApi, type CustomerRefund, type SalesInvoice, type SalesReturn, type CustomerReceiptBatch, type TreasuryAccount, type Currency, type ExchangeRate } from "./api";
 
 type Props = {
   companyId: number;
@@ -10,6 +10,8 @@ type Props = {
   treasuryAccounts: TreasuryAccount[];
   baseCurrencyCode: string;
   baseCurrencyDecimalPlaces: number;
+  currencies: Currency[];
+  exchangeRates: ExchangeRate[];
   onRefresh: () => Promise<void>;
 };
 
@@ -17,7 +19,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: string) => formatMoney(value);
 
 export default function CustomerRefundsPanel({
-  companyId, invoices, returns, receiptBatches, treasuryAccounts, baseCurrencyCode, baseCurrencyDecimalPlaces, onRefresh,
+  companyId, invoices, returns, receiptBatches, treasuryAccounts, baseCurrencyCode, baseCurrencyDecimalPlaces, currencies, exchangeRates, onRefresh,
 }: Props) {
   const [rows, setRows] = useState<CustomerRefund[]>([]);
   const [sourceKind, setSourceKind] = useState<"return" | "advance">("return");
@@ -28,6 +30,7 @@ export default function CustomerRefundsPanel({
   const [refundDate, setRefundDate] = useState(today());
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
+  const [exchangeRateId, setExchangeRateId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -52,6 +55,33 @@ export default function CustomerRefundsPanel({
   const selectedReturn = availableReturns.find(row => row.id === Number(sourceReturn));
   const selectedBatch = availableBatches.find(row => row.id === Number(sourceBatch));
   const selectedInvoice = selectedReturn ? invoices.find(row => row.id === selectedReturn.invoice) : undefined;
+  const refundCurrencyId = sourceKind === "return" ? selectedInvoice?.transaction_currency : null;
+  const refundCurrency = currencies.find(row => row.id === refundCurrencyId);
+  const refundCurrencyCode = refundCurrency?.code || baseCurrencyCode;
+  const ratesForRefund = refundCurrencyId
+    ? exchangeRates.filter(row => row.currency === refundCurrencyId && row.rate_date <= refundDate)
+      .sort((a, b) => b.rate_date.localeCompare(a.rate_date) || b.id - a.id)
+    : [];
+  const selectedExchangeRate = ratesForRefund.find(row => row.id === Number(exchangeRateId)) || ratesForRefund[0];
+  const refundTreasuryAccounts = treasuryAccounts.filter(row => row.is_active && row.currency_code === refundCurrencyCode);
+  const refundedNominalByReturn = useMemo(() => {
+    const totals = new Map<number, number>();
+    for (const row of rows) {
+      if (row.source_return !== null && row.status === "posted" && row.transaction_amount) {
+        totals.set(row.source_return, (totals.get(row.source_return) || 0) + Number(row.transaction_amount));
+      }
+    }
+    return totals;
+  }, [rows]);
+  const selectedReturnNominalAvailable = selectedReturn?.transaction_grand_total
+    ? Math.max(Number(selectedReturn.transaction_grand_total) - (refundedNominalByReturn.get(selectedReturn.id) || 0), 0)
+    : 0;
+
+  useEffect(() => {
+    setTreasuryAccount("");
+    setAmount("");
+    setExchangeRateId("");
+  }, [refundCurrencyId, sourceKind]);
   const selectedReturnAvailable = selectedReturn
     ? Math.max(Number(selectedReturn.grand_total) - (refundedByReturn.get(selectedReturn.id) || 0), 0)
     : 0;
@@ -96,7 +126,12 @@ export default function CustomerRefundsPanel({
           ? { source_return: Number(sourceReturn) }
           : { source_receipt_batch: Number(sourceBatch) }),
         treasury_account: Number(treasuryAccount),
-        amount,
+        ...(refundCurrencyId && selectedExchangeRate ? {
+          transaction_currency: refundCurrencyId,
+          transaction_amount: amount,
+          exchange_rate: selectedExchangeRate.rate,
+          exchange_rate_date: selectedExchangeRate.rate_date,
+        } : { amount }),
         reference,
       });
       setRefundNumber("");
@@ -130,7 +165,7 @@ export default function CustomerRefundsPanel({
         <select required value={sourceReturn} onChange={e => setSourceReturn(e.target.value)}>
           <option value="">اختر مردودًا مرحّلًا</option>
           {availableReturns.map(row => <option key={row.id} value={row.id}>
-            {row.return_number} · {row.customer_name} · المتبقي من قيمة المردود {money(String(Math.max(Number(row.grand_total) - (refundedByReturn.get(row.id) || 0), 0)))}
+            {row.return_number} · {row.customer_name} · المتبقي {row.transaction_currency_code && row.transaction_grand_total ? `${money(String(Math.max(Number(row.transaction_grand_total) - (refundedNominalByReturn.get(row.id) || 0), 0)))} ${row.transaction_currency_code}` : money(String(Math.max(Number(row.grand_total) - (refundedByReturn.get(row.id) || 0), 0)))}
           </option>)}
         </select>
       </label> : <label>الدفعة المقدمة
@@ -144,7 +179,7 @@ export default function CustomerRefundsPanel({
       <label>حساب الصرف
         <select required value={treasuryAccount} onChange={e => setTreasuryAccount(e.target.value)}>
           <option value="">اختر الخزينة أو البنك</option>
-          {treasuryAccounts.filter(row => row.is_active && row.currency_code === baseCurrencyCode).map(row => <option key={row.id} value={row.id}>
+          {refundTreasuryAccounts.map(row => <option key={row.id} value={row.id}>
             {row.name_ar} · {row.kind === "cash" ? "خزينة" : "بنك"} · {row.currency_code}
           </option>)}
         </select>
@@ -155,18 +190,29 @@ export default function CustomerRefundsPanel({
       <label>تاريخ الرد
         <input required type="date" value={refundDate} onChange={e => setRefundDate(e.target.value)} />
       </label>
-      <label>المبلغ ({baseCurrencyCode || "عملة الشركة الأساسية"})
-        <input required type="number" min={10 ** -baseCurrencyDecimalPlaces} step={10 ** -baseCurrencyDecimalPlaces} value={amount} onChange={e => setAmount(e.target.value)} />
+      <label>المبلغ ({refundCurrencyCode || "عملة الشركة الأساسية"})
+        <input required type="number"
+          min={10 ** -(refundCurrency?.decimal_places ?? baseCurrencyDecimalPlaces)}
+          step={10 ** -(refundCurrency?.decimal_places ?? baseCurrencyDecimalPlaces)}
+          value={amount} onChange={e => setAmount(e.target.value)} />
       </label>
+      {refundCurrencyId && <label>سعر الصرف المعتمد وتاريخه
+        <select required value={selectedExchangeRate?.id || ""} onChange={e => setExchangeRateId(e.target.value)}>
+          <option value="">اختر سعر صرف معتمدًا</option>
+          {ratesForRefund.map(row => <option key={row.id} value={row.id}>
+            {row.rate_date} · {row.rate}
+          </option>)}
+        </select>
+      </label>}
       <label>مرجع / ملاحظات
         <input maxLength={120} value={reference} onChange={e => setReference(e.target.value)} />
       </label>
       <div className="inventory-form-actions inventory-wide">
-        <button className="primary-button" type="submit" disabled={busy || !customerId || !treasuryAccount || !refundNumber.trim() || !amount}>
+        <button className="primary-button" type="submit" disabled={busy || !customerId || !treasuryAccount || !refundNumber.trim() || !amount || (Boolean(refundCurrencyId) && !selectedExchangeRate)}>
           {busy ? "جارٍ الحفظ…" : "إنشاء مسودة رد"}
         </button>
       </div>
-      {selectedReturn && <p className="inventory-report-note inventory-wide">العميل: {selectedReturn.customer_name} · المتبقي القابل للرد بالعملة الأساسية: {money(String(selectedReturnAvailable))}. الصرف يقتصر على الرصيد الدائن الصافي للعميل بعد احتساب جميع فواتيره وتحصيلاته ومردوداته.</p>}
+      {selectedReturn && <p className="inventory-report-note inventory-wide">العميل: {selectedReturn.customer_name} · المتبقي بالعملة الأساسية: {money(String(selectedReturnAvailable))}. {refundCurrencyId ? `المتبقي الاسمي: ${money(String(selectedReturnNominalAvailable))} ${refundCurrencyCode}. سيتم الصرف من خزينة بنفس العملة وبسعر صرف معتمد.` : "الصرف بالعملة الأساسية."} الصرف يقتصر على الرصيد الدائن الصافي للعميل.</p>}
       {selectedBatch && <p className="inventory-report-note inventory-wide">العميل: {selectedBatch.customer_name} · المتاح غير المخصص حاليًا: {money(selectedBatch.unallocated_amount)}.</p>}
     </form>
     <div className="data-table-wrap">
@@ -178,7 +224,9 @@ export default function CustomerRefundsPanel({
           <td>{sourceLabel(row)}</td>
           <td>{row.refund_date}</td>
           <td>{row.treasury_account_name}</td>
-          <td>{money(row.amount)}</td>
+          <td>{row.transaction_currency_code && row.transaction_amount
+            ? `${money(row.transaction_amount)} ${row.transaction_currency_code} · ${money(row.amount)} ${baseCurrencyCode}`
+            : `${money(row.amount)} ${baseCurrencyCode}`}</td>
           <td><span className={`status-pill ${row.status === "posted" ? "posted" : row.status === "reversed" ? "reversed" : "draft"}`}>
             {row.status === "posted" ? "مرحّل" : row.status === "reversed" ? "معكوس" : "مسودة"}
           </span></td>

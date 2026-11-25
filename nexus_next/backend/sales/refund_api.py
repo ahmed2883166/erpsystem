@@ -16,7 +16,7 @@ class CustomerRefundViewSet(SalesBaseViewSet):
 
     serializer_class = CustomerRefundSerializer
     queryset = CustomerRefund.objects.select_related(
-        "company", "customer", "branch", "source_return",
+        "company", "customer", "branch", "transaction_currency", "source_return",
         "source_return__invoice", "source_receipt_batch",
         "treasury_account", "treasury_transaction",
         "treasury_transaction__journal_entry", "reversal_treasury_transaction",
