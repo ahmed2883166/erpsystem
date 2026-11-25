@@ -9,6 +9,7 @@ from rest_framework.exceptions import ValidationError
 from accounting.models import AccountRole, FiscalYear, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from audit.models import AuditEvent
+from companies.access import resolve_warehouse_branch
 from sales.models import (
     CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation,
     SalesInvoice, SalesReturn,
@@ -20,7 +21,7 @@ def _account(company, role):
     return get_account_for_role(company, role)
 
 
-def _invoice_open_balance(invoice, as_of, *, exclude_batch=None):
+def _invoice_open_balance(invoice, as_of):
     direct_paid = CustomerReceipt.objects.filter(
         invoice=invoice, status=CustomerReceipt.Status.POSTED, receipt_date__lte=as_of,
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
@@ -30,8 +31,6 @@ def _invoice_open_balance(invoice, as_of, *, exclude_batch=None):
         Q(batch__status=CustomerReceiptBatch.Status.POSTED)
         | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
     )
-    if exclude_batch is not None:
-        batch_allocations = batch_allocations.exclude(batch=exclude_batch)
     batch_paid = batch_allocations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
     returned = SalesReturn.objects.filter(
         invoice=invoice, return_date__lte=as_of,
@@ -52,11 +51,11 @@ def _check_allocation_target(batch, invoice, amount):
     if invoice.invoice_date > batch.receipt_date:
         raise ValidationError("تاريخ سند القبض لا يجوز أن يسبق تاريخ الفاتورة.")
     invoice_branch = (
-        invoice.delivery.warehouse.branch if invoice.delivery_id else invoice.branch
+        resolve_warehouse_branch(batch.company, invoice.delivery.warehouse) if invoice.delivery_id else invoice.branch
     )
     if invoice_branch and invoice_branch.pk != batch.branch_id:
         raise ValidationError("الفاتورة لا تتبع فرع سند القبض.")
-    remaining = _invoice_open_balance(invoice, batch.receipt_date, exclude_batch=batch)
+    remaining = _invoice_open_balance(invoice, batch.receipt_date)
     if amount > remaining:
         raise ValidationError(
             f"التخصيص يتجاوز المتبقي على الفاتورة {invoice.invoice_number} ({remaining})."
@@ -242,6 +241,21 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ سند القبض.")
 
     allocations = list(batch.allocations.select_related("invoice"))
+    if not allocations:
+        later_direct = CustomerReceipt.objects.filter(
+            customer=batch.customer, status=CustomerReceipt.Status.POSTED,
+        ).filter(
+            Q(receipt_date__gt=batch.receipt_date)
+            | Q(receipt_date=batch.receipt_date, created_at__gt=batch.created_at)
+        ).exists()
+        later_batches = CustomerReceiptBatch.objects.filter(
+            customer=batch.customer, status=CustomerReceiptBatch.Status.POSTED,
+        ).exclude(pk=batch.pk).filter(
+            Q(receipt_date__gt=batch.receipt_date)
+            | Q(receipt_date=batch.receipt_date, created_at__gt=batch.created_at)
+        ).exists()
+        if later_direct or later_batches:
+            raise ValidationError("يجب عكس أحدث دفعة مقدمة للعميل أولًا.")
     for allocation in allocations:
         later_direct = CustomerReceipt.objects.filter(
             invoice=allocation.invoice, status=CustomerReceipt.Status.POSTED,
