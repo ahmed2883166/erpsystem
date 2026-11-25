@@ -453,9 +453,11 @@ def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, posi
     return None
 
 
-def can_reverse_treasury_fx_revaluation(revaluation):
+def can_reverse_treasury_fx_revaluation(revaluation, *, entry_date=None):
     """Read-only eligibility check used by the revaluation history screen."""
-    return _treasury_fx_revaluation_reversal_blocker(revaluation) is None
+    return _treasury_fx_revaluation_reversal_blocker(
+        revaluation, entry_date=entry_date or timezone.localdate(),
+    ) is None
 
 
 @transaction.atomic
