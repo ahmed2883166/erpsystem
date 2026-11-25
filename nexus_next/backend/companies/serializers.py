@@ -1,19 +1,38 @@
 from django.db import transaction
 from rest_framework import serializers
-from .models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
+from .models import Branch, Company, CompanyActivity, CompanyMembership, Currency, ExchangeRate, FiscalYear
 
 class CurrencySerializer(serializers.ModelSerializer):
     class Meta:
         model = Currency
         fields = ("id", "code", "name_ar", "name_en", "symbol", "decimal_places", "is_active")
 
+class CompanyActivitiesField(serializers.ListField):
+    """يمثل الأنشطة المفعّلة كنصوص مع قراءة آمنة للشركات القديمة."""
+
+    child = serializers.ChoiceField(choices=Company.Activity.choices)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def get_attribute(self, instance):
+        return instance
+
+    def to_representation(self, company):
+        values = list(
+            company.activity_assignments.values_list("activity", flat=True)
+        )
+        return values or [company.activity]
+
+
 class CompanySerializer(serializers.ModelSerializer):
     base_currency_code = serializers.CharField(source="base_currency.code", read_only=True)
+    activities = CompanyActivitiesField(required=False)
 
     class Meta:
         model = Company
         fields = (
-            "id", "code", "name_ar", "name_en", "country", "activity",
+            "id", "code", "name_ar", "name_en", "country", "activity", "activities",
             "base_currency", "base_currency_code", "tax_registration_number",
             "address", "phone", "email", "is_active", "created_at", "updated_at",
         )
@@ -21,8 +40,15 @@ class CompanySerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        """إنشاء الشركة وفرعها الرئيسي كوحدة واحدة حتى لا تُترك شركة بلا فرع تشغيلي."""
+        """إنشاء الشركة وأنشطتها وفرعها الرئيسي كوحدة ذرية واحدة."""
+        activities = validated_data.pop("activities", None)
         company = super().create(validated_data)
+        enabled = list(dict.fromkeys(activities or [company.activity]))
+        if company.activity not in enabled:
+            enabled.insert(0, company.activity)
+        CompanyActivity.objects.bulk_create([
+            CompanyActivity(company=company, activity=value) for value in enabled
+        ])
         Branch.objects.get_or_create(
             company=company,
             code="MAIN",
@@ -34,13 +60,32 @@ class CompanySerializer(serializers.ModelSerializer):
         )
         return company
 
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        activities = validated_data.pop("activities", None)
+        company = super().update(instance, validated_data)
+        if activities is not None:
+            enabled = list(dict.fromkeys(activities))
+            if company.activity not in enabled:
+                raise serializers.ValidationError({
+                    "activities": "يجب أن يظل النشاط الأساسي ضمن الأنشطة المفعّلة."
+                })
+            CompanyActivity.objects.filter(company=company).delete()
+            CompanyActivity.objects.bulk_create([
+                CompanyActivity(company=company, activity=value) for value in enabled
+            ])
+        return company
+
     def validate(self, attrs):
-        """حماية مفاتيح تأسيس الشركة من التغيير بعد إنشائها حفاظًا على سلامة الحسابات والضرائب."""
+        """حماية الهوية المالية والتحقق من تضمين النشاط الأساسي ضمن الأنشطة."""
         if self.instance:
             protected = ("code", "country", "activity", "base_currency")
             changed = [
-                field for field in protected
-                if field in attrs and getattr(self.instance, field + ("_id" if field == "base_currency" else "")) != (
+                field
+                for field in protected
+                if field in attrs and getattr(
+                    self.instance, field + ("_id" if field == "base_currency" else "")
+                ) != (
                     attrs[field].pk if field == "base_currency" else attrs[field]
                 )
             ]
@@ -48,13 +93,22 @@ class CompanySerializer(serializers.ModelSerializer):
                 labels = {
                     "code": "كود الشركة",
                     "country": "الدولة",
-                    "activity": "النشاط",
+                    "activity": "النشاط الأساسي",
                     "base_currency": "العملة الأساسية",
                 }
                 raise serializers.ValidationError({
                     field: f"لا يمكن تغيير {labels[field]} بعد إنشاء الشركة؛ يلزم إجراء تحويل تأسيسي مستقل ومراجع."
                     for field in changed
                 })
+            requested_activities = attrs.get("activities")
+            if requested_activities is not None and self.instance.activity not in requested_activities:
+                raise serializers.ValidationError({
+                    "activities": "يجب أن يظل النشاط الأساسي ضمن الأنشطة المفعّلة."
+                })
+        elif "activities" in attrs and attrs.get("activity") not in attrs["activities"]:
+            raise serializers.ValidationError({
+                "activities": "يجب أن يتضمن الاختيار النشاط الأساسي المحدد."
+            })
         return attrs
 
 class BranchSerializer(serializers.ModelSerializer):
