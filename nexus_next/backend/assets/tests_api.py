@@ -511,6 +511,22 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(cash_flow.data["investing_cash_flow"], Decimal("-120000.0000"))
         self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
 
+        equity = self.client.get("/api/accounting/journal-entries/changes-in-equity/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(equity.status_code, 200, equity.data)
+        self.assertEqual(equity.data["period_net_profit"], Decimal("-30000.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("-30000.0000"))
+
+        direct_cash_flow = self.client.get("/api/accounting/journal-entries/direct-cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-01-01", "date_to": "2026-02-28",
+        })
+        self.assertEqual(direct_cash_flow.status_code, 200, direct_cash_flow.data)
+        self.assertEqual(direct_cash_flow.data["investing_cash_flow"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["net_change_in_cash"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["ledger_cash_change"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+
         reconciliation = self.client.get("/api/assets/fixed-assets/account-reconciliation/", {
             "company": self.company.pk, "as_of": "2026-02-28",
             "date_from": "2026-01-01", "date_to": "2026-02-28",
