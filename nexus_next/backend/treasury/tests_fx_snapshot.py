@@ -441,13 +441,26 @@ class TreasuryFxSnapshotTests(TestCase):
             foreign_amount=Decimal("50"), rate_date=date(2026, 3, 3),
         )
         post_treasury_transaction(payment.pk)
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 4), rate=Decimal("32"),
+        )
+        restoring_receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-REV-MOVE-RESTORE",
+            amount=Decimal("1600"), rate=Decimal("32"),
+            foreign_amount=Decimal("50"), rate_date=date(2026, 3, 4),
+        )
+        post_treasury_transaction(restoring_receipt.pk)
 
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        self.assertEqual(position.foreign_amount, Decimal("100.0000"))
+        self.assertEqual(position.carrying_base_amount, revaluation.new_carrying_amount)
         with self.assertRaises(ValidationError):
             reverse_treasury_fx_revaluation(
-                revaluation_id=revaluation.pk, entry_date=date(2026, 3, 4),
+                revaluation_id=revaluation.pk, entry_date=date(2026, 3, 5),
             )
-        position = TreasuryFxPosition.objects.get(account=self.bank)
-        self.assertEqual(position.foreign_amount, Decimal("50.0000"))
-        self.assertEqual(position.carrying_base_amount, Decimal("1600.0000"))
+        position.refresh_from_db()
+        self.assertEqual(position.foreign_amount, Decimal("100.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("3200.0000"))
         revaluation.refresh_from_db()
         self.assertIsNone(revaluation.reversal_journal_entry_id)
