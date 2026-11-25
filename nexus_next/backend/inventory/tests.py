@@ -111,6 +111,42 @@ class StockPostingServiceTests(TestCase):
             for link in movement.journal_links.select_related("journal_entry")
         ))
 
+        # Receipt: Dr Inventory 50 / Cr GRNI 50.
+        receipt_entry = receipt.journal_links.get().journal_entry
+        receipt_lines = {
+            line.account.code: line
+            for line in JournalLine.objects.filter(entry=receipt_entry).select_related("account")
+        }
+        self.assertEqual(receipt_lines["1200"].debit, Decimal("50.0000"))
+        self.assertEqual(receipt_lines["1200"].credit, Decimal("0.0000"))
+        self.assertEqual(receipt_lines["2100"].debit, Decimal("0.0000"))
+        self.assertEqual(receipt_lines["2100"].credit, Decimal("50.0000"))
+
+        # Issue: Dr COGS 15 / Cr Inventory 15; no cash/bank account is touched.
+        issue_entry = issue.journal_links.get().journal_entry
+        issue_lines = {
+            line.account.code: line
+            for line in JournalLine.objects.filter(entry=issue_entry).select_related("account")
+        }
+        self.assertEqual(issue_lines["5100"].debit, Decimal("15.0000"))
+        self.assertEqual(issue_lines["5100"].credit, Decimal("0.0000"))
+        self.assertEqual(issue_lines["1200"].debit, Decimal("0.0000"))
+        self.assertEqual(issue_lines["1200"].credit, Decimal("15.0000"))
+        self.assertFalse(JournalLine.objects.filter(
+            entry__in=(receipt_entry, issue_entry),
+            account__code__startswith="10",
+        ).exists())
+
+        # Combined ledger effect: inventory asset 35, GRNI liability 50,
+        # and cost of sales expense 15. The issue itself has no cash effect.
+        combined = JournalLine.objects.filter(entry__in=(receipt_entry, issue_entry)).values(
+            "account__code"
+        ).annotate(debit_total=Sum("debit"), credit_total=Sum("credit"))
+        by_code = {row["account__code"]: row for row in combined}
+        self.assertEqual(by_code["1200"]["debit_total"]-by_code["1200"]["credit_total"], Decimal("35.0000"))
+        self.assertEqual(by_code["2100"]["credit_total"]-by_code["2100"]["debit_total"], Decimal("50.0000"))
+        self.assertEqual(by_code["5100"]["debit_total"]-by_code["5100"]["credit_total"], Decimal("15.0000"))
+
     def test_issue_rolls_back_when_cost_layers_exceed_stock_balance_value(self):
         self.product.costing_method = Product.CostingMethod.FIFO
         self.product.save(update_fields=("costing_method",))
