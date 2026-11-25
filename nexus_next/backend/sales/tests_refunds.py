@@ -298,7 +298,7 @@ class CustomerRefundTests(APITestCase):
         invoice = self._create_posted_invoice("REFUND-INV-LIMIT")
         sales_return = self._create_posted_return(invoice, "REFUND-RET-LIMIT")
         too_much_return = self._create_refund(
-            "REFUND-RET-OVER", amount="100.0001", source_return=sales_return["id"],
+            "REFUND-RET-OVER", amount="100.01", source_return=sales_return["id"],
         )
         self.assertEqual(too_much_return.status_code, 201, too_much_return.data)
         rejected_return = self.client.post(
@@ -308,7 +308,7 @@ class CustomerRefundTests(APITestCase):
 
         batch = self._create_posted_advance("REFUND-ADV-LIMIT", "25")
         too_much_advance = self._create_refund(
-            "REFUND-ADV-OVER", amount="25.0001", source_batch=batch["id"],
+            "REFUND-ADV-OVER", amount="25.01", source_batch=batch["id"],
         )
         self.assertEqual(too_much_advance.status_code, 201, too_much_advance.data)
         rejected_advance = self.client.post(
