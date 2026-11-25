@@ -535,7 +535,10 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     def revalue(self, request, pk=None):
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
+        if invoice.branch_id:
+            if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         revaluation_date = parse_date(request.data.get("revaluation_date", ""))
         rate_date = parse_date(request.data.get("rate_date", ""))
