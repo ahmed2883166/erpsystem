@@ -787,7 +787,7 @@ export type SalesReturn = { id:number; company:number; invoice:number; invoice_n
 
 export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_purchase_order_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
-  delivery_line_id: number; product_id: number; product_code: string; product_name: string;
+  delivery_line_id: number | null; product_id: number; product_code: string; product_name: string;
   quantity: string; unit_price: string; tax_code_id: number | null; tax_code: string | null;
   tax_category: string | null; tax_rate: string; discount_percent: string;
   discount_amount: string; net_amount: string; tax_amount: string; total_amount: string;
