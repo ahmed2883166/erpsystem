@@ -1847,3 +1847,49 @@ class SalesWorkflowTests(APITestCase):
             self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data["balance_due"],
             "0.0000",
         )
+
+
+    def test_service_return_posts_credit_note_and_reverses_without_stock(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-RET-001",
+            name_ar="خدمة استشارية", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        movements_before = StockMovement.objects.count()
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-SERVICE-RET-001",
+            "invoice_date": "2026-03-12",
+            "lines": [{"product": service.pk, "quantity": "2", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        created = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-SERVICE-001", "return_date": "2026-03-13",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertIsNone(created.data["movement_status"])
+        self.assertEqual(created.data["line_items"][0]["cost_amount"], "0.0000")
+
+        posted = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["grand_total"], "114.0000")
+        self.assertIsNone(posted.data["cost_journal_entry"])
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+        self.assertIsNone(reversed_return.data["reversal_stock_movement"])
+        self.assertEqual(StockMovement.objects.count(), movements_before)
