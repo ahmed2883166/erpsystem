@@ -23,7 +23,10 @@ def _account(company, role):
 
 def _invoice_open_balance(invoice, as_of):
     direct_paid = CustomerReceipt.objects.filter(
-        invoice=invoice, status=CustomerReceipt.Status.POSTED, receipt_date__lte=as_of,
+        invoice=invoice, receipt_date__lte=as_of,
+    ).filter(
+        Q(status=CustomerReceipt.Status.POSTED)
+        | Q(status=CustomerReceipt.Status.REVERSED, journal_entry__reversal_entry__entry_date__gt=as_of)
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
     batch_allocations = CustomerReceiptBatchAllocation.objects.filter(
         invoice=invoice, batch__receipt_date__lte=as_of,
