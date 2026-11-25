@@ -430,7 +430,7 @@ class SalesQuotationViewSet(SalesBaseViewSet):
 
 class SalesInvoiceViewSet(SalesBaseViewSet):
     serializer_class = SalesInvoiceSerializer
-    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "branch", "journal_entry").prefetch_related("lines__delivery_line__product", "lines__product", "lines__tax_code", "receipts", "approval_requests")
+    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "branch", "journal_entry", "transaction_currency").prefetch_related("lines__delivery_line__product", "lines__product", "lines__tax_code", "receipts", "approval_requests")
     filterset_fields = ("company", "customer", "status", "invoice_date")
     search_fields = ("invoice_number", "customer__name_ar", "delivery__delivery_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
