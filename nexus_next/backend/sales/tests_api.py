@@ -280,6 +280,28 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.SALES, status="posted").count(), 1)
 
 
+    def test_customer_receipt_date_cannot_precede_invoice_date(self):
+        delivery_id, line_id = self._create_delivery("DEL-RECEIPT-DATE")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-RECEIPT-DATE", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": "RC-BEFORE-INVOICE", "receipt_date": "2026-03-09",
+            "method": "bank", "amount": "50",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 400, receipt.data)
+        self.assertIn("receipt_date", receipt.data)
+
     def _create_posted_invoice(self, number, invoice_date):
         delivery_id, line_id = self._create_delivery(f"DEL-{number}")
         response = self.client.post("/api/sales-documents/invoices/", {
