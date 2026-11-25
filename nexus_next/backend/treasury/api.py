@@ -241,9 +241,10 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "journal_entry", "reversal_journal_entry", "reversed_by",
         ).order_by("-revaluation_date", "-id")
         if not account.branch_id:
+            # Shared accounts have no branch metadata on zero-difference records;
+            # hide those records rather than exposing another branch's revaluation history.
             rows = rows.filter(
-                models.Q(journal_entry__branch__in=accessible_branches(request.user, account.company_id))
-                | models.Q(journal_entry__isnull=True)
+                journal_entry__branch__in=accessible_branches(request.user, account.company_id)
             )
         return response.Response([{
             "id": row.pk,
