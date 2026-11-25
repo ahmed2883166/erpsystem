@@ -527,9 +527,9 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         invoices = self.get_queryset().filter(
             company_id=company_id, customer_id=customer_id,
             status=SalesInvoice.Status.POSTED,
-        ).select_related("customer", "delivery__warehouse")
+        ).select_related("customer", "delivery__warehouse", "branch")
         if branch_id:
-            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id))
 
         events = []
         for invoice in invoices:
@@ -652,13 +652,13 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             company_id=company_id,
             status=SalesInvoice.Status.POSTED,
             invoice_date__lte=as_of,
-        ).select_related("customer", "delivery__warehouse").prefetch_related(
+        ).select_related("customer", "delivery__warehouse", "branch").prefetch_related(
             "receipts__journal_entry__reversal_entry"
         )
         if customer_id:
             invoices = invoices.filter(customer_id=customer_id)
         if branch_id:
-            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id))
 
         returned_by_invoice = {
             row["invoice_id"]: row["total"]
