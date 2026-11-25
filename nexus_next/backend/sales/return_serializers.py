@@ -78,8 +78,14 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         if len(ids) != len(set(ids)):
             raise serializers.ValidationError({"lines": "لا تكرر بند الفاتورة في نفس المردود."})
         for row in lines:
-            if row["invoice_line"].invoice_id != invoice.pk:
+            invoice_line = row["invoice_line"]
+            if invoice_line.invoice_id != invoice.pk:
                 raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون من الفاتورة المحددة."})
+            quantum = Decimal("1").scaleb(-invoice_line.product.unit.decimal_places)
+            if row["quantity"] != row["quantity"].quantize(quantum):
+                raise serializers.ValidationError({
+                    "lines": f"كمية المرتجع للصنف {invoice_line.product.code} تتجاوز دقة وحدة القياس ({invoice_line.product.unit.decimal_places} منازل عشرية)."
+                })
             if invoice.transaction_currency_id and (
                 row["invoice_line"].transaction_net_amount is None
                 or row["invoice_line"].transaction_tax_amount is None
