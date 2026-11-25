@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -12,7 +12,7 @@ from accounting.models import AccountRole, FiscalYear
 from accounting.services import get_account_for_role
 from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
-from sales.models import CustomerRefund, CustomerReceiptBatch, SalesReturn
+from sales.models import CustomerRefund, CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesReturn
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
 
@@ -54,8 +54,42 @@ def post_customer_refund(refund_id, user):
         latest_refund_date = posted_refunds.order_by("-refund_date").values_list("refund_date", flat=True).first()
         if latest_refund_date and refund.refund_date < latest_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق عن نفس المردود.")
-        already_refunded = posted_refunds.aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        available = max(source.grand_total - already_refunded, Decimal("0"))
+        already_refunded = CustomerRefund.objects.filter(
+            source_return__invoice_id=source.invoice_id,
+        ).filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
+        ).exclude(pk=refund.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        direct_receipts = CustomerReceipt.objects.filter(
+            invoice_id=source.invoice_id, receipt_date__lte=refund.refund_date,
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(
+                status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=refund.refund_date,
+            )
+        ).exclude(journal_entry__reversal_entry__entry_date__lte=refund.refund_date)
+        direct_paid = sum(
+            (
+                row.carrying_base_amount if row.carrying_base_amount is not None else row.amount
+                for row in direct_receipts
+            ),
+            Decimal("0"),
+        )
+        batch_paid = CustomerReceiptBatchAllocation.objects.filter(
+            invoice_id=source.invoice_id,
+            allocation_date__lte=refund.refund_date,
+            batch__receipt_date__lte=refund.refund_date,
+        ).filter(
+            Q(batch__status=CustomerReceiptBatch.Status.POSTED)
+            | Q(
+                batch__status=CustomerReceiptBatch.Status.REVERSED,
+                batch__reversal_date__gt=refund.refund_date,
+            )
+        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        available_credit = max(source.grand_total - already_refunded, Decimal("0"))
+        available_collected = max(direct_paid + batch_paid - already_refunded, Decimal("0"))
+        available = min(available_credit, available_collected)
         source_label = f"مردود المبيعات {source.return_number}"
     else:
         source = CustomerReceiptBatch.objects.select_for_update(of=("self",)).select_related(
