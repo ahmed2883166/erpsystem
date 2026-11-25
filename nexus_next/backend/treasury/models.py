@@ -3,7 +3,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from decimal import Decimal
 
 from companies.models import Company, Branch, Currency, ExchangeRate
 from core.money import round_currency_amount
