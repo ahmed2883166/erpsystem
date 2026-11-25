@@ -7,9 +7,9 @@ const money=(value:string,currency="")=>formatMoneyEnglish(value)+(currency?" "+
 export default function SalesDocumentPrint({company,invoice,quotation,receipt,salesReturn,onClose}:Props){
  const doc=invoice||quotation||receipt||salesReturn;
  const kind=invoice?"invoice":quotation?"quotation":receipt?"receipt":"return";
- const isInvoice=kind==="invoice",isQuotation=kind==="quotation",isReceipt=kind==="receipt";
+ const isInvoice=kind==="invoice",isQuotation=kind==="quotation",isReceipt=kind==="receipt",isReturn=kind==="return";
  const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
- useEffect(()=>{if(!company?.id)return;let active=true;const type=isQuotation?"quotation":isReceipt?"receipt":"invoice";void salesApi.documentTemplates(company.id).then(rows=>{if(active)setDefaultTemplate(rows.find(row=>row.document_type===type&&row.is_active&&row.is_default)||null);}).catch(()=>{if(active)setDefaultTemplate(null);});return()=>{active=false;};},[company?.id,kind]);
+ useEffect(()=>{if(!company?.id)return;let active=true;const type=isQuotation?"quotation":isReceipt?"receipt":isReturn?"return":"invoice";void salesApi.documentTemplates(company.id).then(rows=>{if(active)setDefaultTemplate(rows.find(row=>row.document_type===type&&row.is_active&&row.is_default)||null);}).catch(()=>{if(active)setDefaultTemplate(null);});return()=>{active=false;};},[company?.id,kind]);
  if(!doc)return null;
  const saved=(invoice||quotation)?.print_template_snapshot;
  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=saved&&Object.keys(saved).length>0?saved:{template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{}};
