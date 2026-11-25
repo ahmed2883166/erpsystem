@@ -671,6 +671,11 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"customer": "العميل موقوف."})
         if invoice.status != SalesInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مبيعات مرحلة."})
+        receipt_date = attrs.get("receipt_date")
+        if receipt_date and receipt_date < invoice.invoice_date:
+            raise serializers.ValidationError({
+                "receipt_date": "تاريخ سند القبض لا يجوز أن يسبق تاريخ فاتورة المبيعات."
+            })
         if invoice.company_id != company.pk or invoice.customer_id != customer.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة."})
         if invoice.transaction_currency_id:
