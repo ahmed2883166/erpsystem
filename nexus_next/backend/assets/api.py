@@ -1,5 +1,7 @@
 """واجهات الأصول الثابتة للاقتناء والإهلاك والاستبعاد وربط الخزينة."""
 
+import logging
+
 from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Sum
@@ -13,6 +15,8 @@ from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSu
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
 from .services import acquire_asset, depreciate_asset, dispose_asset, record_asset_impairment, reverse_asset_impairment, post_asset_purchase_invoice, post_asset_supplier_payment
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
+
+logger = logging.getLogger(__name__)
 
 
 class FixedAssetViewSet(viewsets.ModelViewSet):
@@ -631,11 +635,14 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_201_CREATED)
             invoice = post_asset_purchase_invoice(invoice.pk, request.user)
             asset.refresh_from_db()
-        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
-            raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
+        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation):
+            logger.exception("Asset purchase invoice request failed validation or posting.")
+            raise ValidationError(
+                "تعذر معالجة فاتورة شراء الأصل. راجع البيانات والمراجع المرتبطة ثم أعد المحاولة."
+            ) from None
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
-            raise ValidationError(detail) from exc
+            raise ValidationError(detail) from None
         return response.Response({
             "id": invoice.pk, "asset": asset.pk, "supplier": supplier.pk,
             "supplier_name": supplier.name_ar, "invoice_number": invoice.invoice_number,
@@ -689,11 +696,14 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                     "approval_request": approval.pk,
                 }, status=status.HTTP_201_CREATED)
             payment = post_asset_supplier_payment(payment.pk, request.user)
-        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
-            raise ValidationError(str(exc) or "بيانات سند السداد غير صحيحة.") from exc
+        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation):
+            logger.exception("Asset supplier payment request failed validation or posting.")
+            raise ValidationError(
+                "تعذر معالجة سند سداد الأصل. راجع البيانات والمراجع المرتبطة ثم أعد المحاولة."
+            ) from None
         except DjangoValidationError as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
-            raise ValidationError(detail) from exc
+            raise ValidationError(detail) from None
         return response.Response({
             "id": payment.pk, "invoice": invoice.pk, "payment_number": payment.payment_number,
             "payment_date": payment.payment_date, "amount": payment.amount,
