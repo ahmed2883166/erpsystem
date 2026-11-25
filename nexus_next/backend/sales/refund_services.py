@@ -312,6 +312,7 @@ def reverse_customer_refund(refund_id, user, entry_date):
         source_account=refund.treasury_account,
         counter_account=receivable,
         kind=TreasuryTransaction.Kind.RECEIPT,
+        reversal_of=original if refund.transaction_currency_id else None,
         document_number=f"SALE-REF-REV-{refund.pk}",
         transaction_date=entry_date,
         amount=refund.amount,
