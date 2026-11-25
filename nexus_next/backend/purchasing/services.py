@@ -1082,7 +1082,7 @@ def post_supplier_return(return_id, user):
     ).get(pk=return_id)
     if document.status != SupplierReturn.Status.DRAFT:
         raise ValidationError("مرتجع المورد مرحّل بالفعل.")
-    invoice = PurchaseInvoice.objects.select_for_update().select_related(
+    invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
         "company", "supplier", "receipt", "receipt__warehouse",
     ).get(pk=document.invoice_id)
     if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
