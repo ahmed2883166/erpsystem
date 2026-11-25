@@ -50,13 +50,13 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
   const [enabledActivities, setEnabledActivities] = useState<NonNullable<Company["activity"]>[]>(["commercial"]);
   const toggleEnabledActivity = (value: NonNullable<Company["activity"]>, checked: boolean) => {
-    setEnabledActivities(current => {
-      if (checked) return current.includes(value) ? current : [...current, value];
-      const next = current.filter(item => item !== value);
-      if (!next.length) return current;
-      if (activity === value) setActivity(next[0]);
-      return next;
-    });
+    if (checked) {
+      setEnabledActivities(current => current.includes(value) ? current : [...current, value]);
+      return;
+    }
+    if (enabledActivities.length <= 1) return;
+    if (activity === value) setActivity(enabledActivities.find(item => item !== value) || "commercial");
+    setEnabledActivities(current => current.filter(item => item !== value));
   };
   const [currencyId, setCurrencyId] = useState("");
   const [taxNumber, setTaxNumber] = useState("");
