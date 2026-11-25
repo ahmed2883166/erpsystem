@@ -207,8 +207,10 @@ def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user, allocati
         "delivery__warehouse", "branch",
     ).get(pk=invoice_id)
     amount = Decimal(str(amount))
-    if amount <= 0:
-        raise ValidationError("أدخل مبلغ تخصيص أكبر من صفر.")
+    if not amount.is_finite() or amount <= 0:
+        raise ValidationError("أدخل مبلغ تخصيص صحيحًا وأكبر من صفر.")
+    if amount >= Decimal("10000000000000000") or amount != amount.quantize(Decimal("0.0001")):
+        raise ValidationError("مبلغ التخصيص يجب ألا يتجاوز 16 رقمًا صحيحًا و4 منازل عشرية.")
     if amount > batch.unallocated_amount:
         raise ValidationError(f"مبلغ التخصيص يتجاوز الدفعة المقدمة المتاحة ({batch.unallocated_amount}).")
     allocation_date = allocation_date or timezone.localdate()
