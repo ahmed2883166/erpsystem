@@ -12,7 +12,8 @@ from accounting.models import AccountRole, FiscalYear, FxSubledgerRevaluation, J
 from accounting.services import get_account_for_role
 from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
-from sales.models import CustomerRefund, Customer, CustomerReceipt, CustomerReceiptBatch, SalesInvoice, SalesReturn
+from customers.models import Customer
+from sales.models import CustomerRefund, CustomerReceipt, CustomerReceiptBatch, SalesInvoice, SalesReturn
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
 
