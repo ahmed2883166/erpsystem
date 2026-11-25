@@ -381,6 +381,10 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertIsNotNone(reversed_second.reversal_journal_entry_id)
         position.refresh_from_db()
         self.assertEqual(position.carrying_base_amount, Decimal("3200.0000"))
+        with self.assertRaises(ValidationError):
+            reverse_treasury_fx_revaluation(
+                revaluation_id=first.pk, entry_date=date(2026, 3, 4),
+            )
 
         reversed_first = reverse_treasury_fx_revaluation(
             revaluation_id=first.pk, entry_date=date(2026, 3, 5),
