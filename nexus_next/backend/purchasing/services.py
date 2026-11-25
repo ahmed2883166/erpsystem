@@ -255,6 +255,135 @@ def post_purchase_receipt(receipt_id, user):
     return PurchaseReceipt.objects.select_related("stock_movement", "journal_entry").get(pk=receipt.pk)
 
 
+def _post_direct_expense_purchase_invoice(invoice, user):
+    """Post a non-stock supplier invoice to expense accounts, input VAT and AP."""
+    branch = invoice.branch
+    if not branch or branch.company_id != invoice.company_id or not branch.is_active:
+        raise ValidationError("حدد فرعًا نشطًا تابعًا للشركة قبل ترحيل الفاتورة.")
+    year = FiscalYear.objects.filter(
+        company=invoice.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=invoice.invoice_date, end_date__gte=invoice.invoice_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ فاتورة المورد.")
+
+    lines = list(invoice.lines.select_for_update(of=("self",)).select_related(
+        "expense_account", "cost_center", "tax_code",
+    ).order_by("pk"))
+    if not lines:
+        raise ValidationError("لا يمكن ترحيل فاتورة مورد بلا بنود.")
+    net_amount = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
+    tax_amount = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
+    recoverable_tax = sum(
+        (line.tax_amount for line in lines if not line.tax_code_id or line.tax_code.input_tax_recoverable),
+        Decimal("0"),
+    ).quantize(Decimal("0.0001"))
+    nonrecoverable_tax = (tax_amount - recoverable_tax).quantize(Decimal("0.0001"))
+    if net_amount <= 0 or tax_amount < 0:
+        raise ValidationError("يجب أن تكون قيمة الفاتورة موجبة والضريبة غير سالبة.")
+
+    for line in lines:
+        account = line.expense_account
+        if (not account or account.company_id != invoice.company_id
+                or account.nature != ChartOfAccount.Nature.EXPENSE
+                or not account.is_active or account.is_group or not account.allow_posting):
+            raise ValidationError("يوجد حساب مصروف غير صالح في أحد بنود الفاتورة.")
+        if line.cost_center_id and (
+            line.cost_center.company_id != invoice.company_id or not line.cost_center.is_active
+        ):
+            raise ValidationError("يوجد مركز تكلفة غير صالح في أحد بنود الفاتورة.")
+
+    if invoice.transaction_currency_id:
+        from accounting.fx_arap import validate_snapshot
+        approved = ExchangeRate.objects.filter(
+            company=invoice.company, currency=invoice.transaction_currency,
+            rate_date=invoice.exchange_rate_date, rate=invoice.exchange_rate,
+        ).first()
+        if not approved:
+            raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا بتاريخ فاتورة المورد.")
+        foreign_net = sum((line.transaction_net_amount or Decimal("0") for line in lines), Decimal("0"))
+        foreign_tax = sum((line.transaction_tax_amount or Decimal("0") for line in lines), Decimal("0"))
+        foreign_total = foreign_net + foreign_tax
+        try:
+            expected_base = validate_snapshot(
+                base_currency_code=invoice.company.base_currency.code,
+                currency_code=invoice.transaction_currency.code,
+                foreign_amount=foreign_total, rate=invoice.exchange_rate,
+                rate_date=invoice.exchange_rate_date, document_date=invoice.invoice_date,
+                approved_rate=approved.rate,
+            )
+        except ValueError:
+            raise ValidationError("تعذر التحقق من سعر الصرف لفاتورة المورد.") from None
+        if abs(expected_base - (net_amount + tax_amount)) > Decimal("0.0002") * max(len(lines), 1):
+            raise ValidationError("إجمالي الفاتورة الأجنبية لا يطابق القيمة بالعملة الأساسية.")
+        invoice.transaction_net_total = foreign_net
+        invoice.transaction_tax_total = foreign_tax
+        invoice.transaction_grand_total = foreign_total
+    elif any(line.transaction_unit_price is not None for line in lines):
+        raise ValidationError("توجد أسعار أجنبية دون تحديد عملة الفاتورة.")
+
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_tax else None
+    journal_lines = []
+    for line in lines:
+        nonrecoverable_line_tax = (
+            line.tax_amount
+            if line.tax_code_id and not line.tax_code.input_tax_recoverable
+            else Decimal("0")
+        )
+        debit_amount = (line.net_amount + nonrecoverable_line_tax).quantize(Decimal("0.0001"))
+        if debit_amount:
+            journal_lines.append(JournalLine(
+                account=line.expense_account,
+                description=line.description[:300],
+                debit=debit_amount, credit=0, cost_center=line.cost_center,
+            ))
+    if recoverable_tax:
+        if vat_input.pk == payable.pk:
+            raise ValidationError("يجب فصل حساب ضريبة المدخلات عن حساب الموردين.")
+        journal_lines.append(JournalLine(
+            account=vat_input, description="ضريبة مدخلات قابلة للاسترداد",
+            debit=recoverable_tax, credit=0,
+        ))
+    journal_lines.append(JournalLine(
+        account=payable,
+        description=f"إثبات مستحقات المورد {invoice.supplier.name_ar}",
+        debit=0, credit=net_amount + tax_amount,
+    ))
+    if sum((line.debit for line in journal_lines), Decimal("0")) != sum(
+        (line.credit for line in journal_lines), Decimal("0")
+    ):
+        raise ValidationError("قيد فاتورة المصروفات غير متوازن؛ راجع توزيع الضريبة.")
+
+    entry = JournalEntry.objects.create(
+        company=invoice.company, branch=branch, fiscal_year=year,
+        entry_number=f"PUR-INV-{invoice.pk}", entry_date=invoice.invoice_date,
+        description=f"فاتورة خدمات ومصروفات المورد {invoice.supplier.name_ar} رقم {invoice.invoice_number}"[:500],
+        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    )
+    for line in journal_lines:
+        line.entry = entry
+    JournalLine.objects.bulk_create(journal_lines)
+    try:
+        posted_entry = post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    invoice.net_total = net_amount
+    invoice.tax_total = tax_amount
+    invoice.grand_total = net_amount + tax_amount
+    invoice.journal_entry = posted_entry
+    invoice.status = PurchaseInvoice.Status.POSTED
+    invoice.posted_at = timezone.now()
+    invoice.save(update_fields=(
+        "net_total", "tax_total", "grand_total", "transaction_net_total",
+        "transaction_tax_total", "transaction_grand_total",
+        "journal_entry", "status", "posted_at",
+    ))
+    return invoice
+
+
 @transaction.atomic
 def post_purchase_invoice(invoice_id, user):
     """ترحيل فاتورة المورد وتسوية GRNI والضريبة القابلة للاسترداد ورسملة الضريبة غير القابلة للخصم."""
@@ -269,6 +398,9 @@ def post_purchase_invoice(invoice_id, user):
         require_financial_approval(FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, invoice)
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+    if invoice.invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+        return _post_direct_expense_purchase_invoice(invoice, user)
+
     # Serialize postings per receipt. This prevents two concurrent invoices from
     # consuming the same remaining receipt quantity.
     receipt = PurchaseReceipt.objects.select_for_update().select_related(
