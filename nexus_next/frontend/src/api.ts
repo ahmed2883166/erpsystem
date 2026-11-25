@@ -203,8 +203,8 @@ export type SupplierStatement = {
 };
 export type SupplierAging = {
   company: number; as_of: string;
-  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string };
-  suppliers: { supplier: number; supplier_code: string; supplier_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string;
+  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
+  suppliers: { supplier: number; supplier_code: string; supplier_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
     invoices: { invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; balance_due: string; document_type?: "asset_purchase_invoice"; asset_name?: string }[] }[];
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
@@ -868,13 +868,13 @@ export type CustomerReceiptBatch = {
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
-  rows:{date:string;document_type:"invoice"|"receipt";document_number:string;description:string;debit:string;credit:string;balance:string}[];
+  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
 };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
   totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string };
   customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string;
-    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; balance_due: string }[] }[];
+    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; returned_as_of: string; balance_due: string }[] }[];
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export type SalesPerformanceReport = {
