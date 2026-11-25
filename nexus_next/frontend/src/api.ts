@@ -311,7 +311,12 @@ export type IndirectCashFlowReport = {
   working_capital: { role: string; account_code: string; account_name: string; opening_balance: string; closing_balance: string; change: string; cash_flow_adjustment: string }[];
   missing_account_roles: string[]; operating_adjustments: string; operating_cash_flow: string;
   investing_cash_flow: string; financing_cash_flow: string; net_change_in_cash: string;
-  ledger_cash_change: string; reconciliation_difference: string;
+  effect_of_exchange_rate_changes: string; net_increase_decrease_in_cash: string;
+  exchange_rate_effect_details: {account_id:number;account_code:string;account_name:string;currency:string;
+    event_type:"revaluation"|"reversal";event_date:string;original_revaluation_date:string;rate:string;
+    foreign_amount:string;difference:string;journal_number:string;original_journal_number:string}[];
+  opening_cash_balance: string; closing_cash_balance: string; ledger_closing_cash_balance: string;
+  closing_balance_difference: string; ledger_cash_change: string; reconciliation_difference: string;
   investing_transactions: { id: number; transaction_date: string; document_number: string; description: string; kind: string; amount: string }[];
   financing_transactions: { id: number; transaction_date: string; document_number: string; description: string; kind: string; amount: string }[];
   note: string;
