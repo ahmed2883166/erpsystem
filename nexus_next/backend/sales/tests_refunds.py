@@ -4,9 +4,10 @@ from decimal import Decimal
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalLine
-from companies.models import Currency, ExchangeRate
+from companies.models import Currency, ExchangeRate, FiscalYear
 from inventory.models import Product
-from treasury.models import TreasuryAccount, TreasuryFxPosition, TreasuryTransaction
+from treasury.models import TreasuryAccount, TreasuryTransaction
+from treasury.services import post_treasury_transaction
 
 
 class CustomerRefundTests(APITestCase):
@@ -324,7 +325,8 @@ class CustomerRefundTests(APITestCase):
     def test_foreign_currency_return_refund_posts_and_reverses_exact_treasury_carrying_value(self):
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي", decimal_places=2)
         for rate_date, rate in (
-            (date(2026, 3, 10), "50"), (date(2026, 3, 11), "52"), (date(2026, 3, 13), "50"),
+            (date(2026, 3, 10), "50"), (date(2026, 3, 11), "52"),
+            (date(2026, 3, 12), "48"), (date(2026, 3, 13), "50"),
         ):
             ExchangeRate.objects.create(
                 company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate),
@@ -386,10 +388,24 @@ class CustomerRefundTests(APITestCase):
             kind=TreasuryAccount.Kind.BANK, code="USD-REFUND",
             name_ar="بنك الدولار", currency_code="USD",
         )
-        position = TreasuryFxPosition.objects.create(
-            account=foreign_treasury, foreign_amount=Decimal("100"),
-            carrying_base_amount=Decimal("4800"),
+        fiscal_year = FiscalYear.objects.get(
+            company=self.company, status=FiscalYear.Status.OPEN,
+            start_date__lte=date(2026, 3, 12), end_date__gte=date(2026, 3, 12),
         )
+        funding = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=fiscal_year,
+            source_account=foreign_treasury, counter_account=self.cash_account,
+            kind=TreasuryTransaction.Kind.RECEIPT, document_number="REFUND-FX-FUNDING",
+            transaction_date=date(2026, 3, 12), amount=Decimal("4800"),
+            transaction_currency=usd, transaction_amount=Decimal("100"),
+            exchange_rate=Decimal("48"), exchange_rate_date=date(2026, 3, 12),
+            description="تمويل حساب البنك الأجنبي للاختبار", created_by=self.user,
+        )
+        funding = post_treasury_transaction(funding.pk, self.user)
+        position = foreign_treasury.fx_position
+        self.assertEqual(funding.status, TreasuryTransaction.Status.POSTED)
+        self.assertEqual(position.foreign_amount, Decimal("100.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("4800.0000"))
 
         over_refund = self.client.post("/api/sales-documents/refunds/", {
             "company": self.company.pk, "customer": self.customer.pk,
