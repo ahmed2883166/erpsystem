@@ -1,6 +1,6 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from .models import Branch, Company, CompanyMembership, Currency, FiscalPeriod, FiscalYear, PlatformOwner
+from .models import Branch, Company, CompanyActivity, CompanyMembership, Currency, FiscalPeriod, FiscalYear, PlatformOwner
 
 
 class CompanySetupApiTests(APITestCase):
@@ -15,6 +15,94 @@ class CompanySetupApiTests(APITestCase):
             code="OTHER", name_ar="شركة غير مصرح بها", country="EG",
             activity="commercial", base_currency=self.currency,
         )
+
+    def test_company_creation_accepts_multiple_activities_and_returns_them(self):
+        owner = get_user_model().objects.create_user(
+            username="multi-activity-owner", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.post("/api/setup/companies/", {
+            "code": "MULTI-ACT",
+            "name_ar": "شركة متعددة الأنشطة",
+            "country": "EG",
+            "activity": "commercial",
+            "activities": ["commercial", "transport", "contracting"],
+            "base_currency": self.currency.pk,
+            "is_active": True,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            set(response.data["activities"]),
+            {"commercial", "transport", "contracting"},
+        )
+        self.assertTrue(Branch.objects.filter(
+            company_id=response.data["id"], is_head_office=True
+        ).exists())
+
+    def test_company_creation_rejects_activities_without_primary_activity(self):
+        owner = get_user_model().objects.create_user(
+            username="invalid-multi-activity-owner", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.post("/api/setup/companies/", {
+            "code": "INVALID-ACT",
+            "name_ar": "شركة بنشاط أساسي غير محدد",
+            "country": "EG",
+            "activity": "commercial",
+            "activities": ["transport", "contracting"],
+            "base_currency": self.currency.pk,
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(Company.objects.filter(code="INVALID-ACT").exists())
+
+    def test_company_api_preserves_primary_activity_for_legacy_records(self):
+        owner = get_user_model().objects.create_user(
+            username="legacy-activity-owner", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.get("/api/setup/companies/")
+        self.assertEqual(response.status_code, 200, response.data)
+        legacy = next(row for row in response.data if row["id"] == self.company.pk)
+        self.assertEqual(legacy["activity"], "service")
+        self.assertEqual(legacy["activities"], ["service"])
+
+    def test_company_admin_can_update_enabled_activities_without_changing_primary(self):
+        owner = get_user_model().objects.create_user(
+            username="update-multi-activity-owner", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        CompanyActivity.objects.create(company=self.company, activity="contracting")
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {"activities": ["service", "transport"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["activity"], "service")
+        self.assertEqual(
+            set(response.data["activities"]),
+            {"service", "transport"},
+        )
+        self.assertTrue(CompanyActivity.objects.get(company=self.company, activity="transport").is_active)
+        self.assertFalse(CompanyActivity.objects.get(company=self.company, activity="contracting").is_active)
+
+    def test_company_cannot_disable_its_primary_activity(self):
+        owner = get_user_model().objects.create_user(
+            username="remove-primary-activity-owner", password="test-password"
+        )
+        PlatformOwner.objects.create(user=owner)
+        self.client.force_authenticate(owner)
+        response = self.client.patch(
+            f"/api/setup/companies/{self.company.pk}/",
+            {"activities": ["transport", "contracting"]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(self.company.activity, "service")
 
     def test_protected_company_delete_returns_clear_client_error(self):
         branch = Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي")

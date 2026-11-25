@@ -72,8 +72,8 @@ class CompanyViewSet(viewsets.ModelViewSet):
         """تجهيز مجموعة السجلات المعروضة مع تطبيق نطاق الشركة والفرع وصلاحيات المستخدم."""
         if is_platform_owner(self.request.user):
             # Owner sees company registry metadata only; tenant ledgers remain membership-scoped.
-            return Company.objects.all().select_related("base_currency")
-        return accessible_companies(self.request.user).select_related("base_currency")
+            return Company.objects.all().select_related("base_currency").prefetch_related("activity_assignments")
+        return accessible_companies(self.request.user).select_related("base_currency").prefetch_related("activity_assignments")
 
     @action(detail=False, methods=("post",), url_path="create-with-admin")
     @transaction.atomic

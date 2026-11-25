@@ -716,6 +716,37 @@ class AccountingApiTests(TestCase):
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_GAIN).account.code, "7210")
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_LOSS).account.code, "6160")
 
+    def test_activity_chart_templates_support_transport_and_contracting_primary_activities(self):
+        expected = {
+            "transport": ("إيرادات خدمات النقل والشحن", "تكاليف الرحلات والنقل والشحن"),
+            "contracting": ("إيرادات أعمال المقاولات", "تكاليف المشروعات والمقاولات"),
+        }
+        for activity, (revenue_name, cost_name) in expected.items():
+            company = Company.objects.create(
+                code=f"TPL-{activity.upper()}", name_ar="شركة نشاط متخصص",
+                country="EG", activity=activity, base_currency=self.currency,
+            )
+            user = User.objects.create_user(
+                username=f"template-{activity}", password="test-password"
+            )
+            CompanyMembership.objects.create(
+                user=user, company=company, role="admin", all_branches=True
+            )
+            self.client.force_authenticate(user=user)
+            response = self.client.post(
+                "/api/accounting/account-templates/",
+                {"company": company.pk}, format="json",
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(
+                ChartOfAccount.objects.get(company=company, code="4110").name_ar,
+                revenue_name,
+            )
+            self.assertEqual(
+                ChartOfAccount.objects.get(company=company, code="5110").name_ar,
+                cost_name,
+            )
+
     def test_activity_chart_template_is_idempotent_and_never_overwrites_existing_role(self):
         company = Company.objects.create(
             code="TPL-SRV", name_ar="شركة خدمات", country="EG",
