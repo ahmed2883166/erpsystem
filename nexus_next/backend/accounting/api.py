@@ -1740,6 +1740,41 @@ class JournalEntryViewSet(AccountingViewSet):
             counter_account__isnull=True
         ).values("id", "transaction_date", "document_number", "kind", "amount"))
 
+
+        # Non-cash capital-asset recognition is disclosed separately from actual
+        # cash payments; only posted supplier settlements enter the cash section.
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+        non_cash_investing_transactions = []
+        asset_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id,
+            status=AssetPurchaseInvoice.Status.POSTED,
+            journal_entry__status=JournalEntry.Status.POSTED,
+            invoice_date__gte=date_from,
+            invoice_date__lte=date_to,
+            branch__in=visible_branches,
+        ).select_related("asset", "supplier").prefetch_related("payments")
+        for invoice in asset_invoices:
+            paid_during_period = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED
+                and date_from <= payment.payment_date <= date_to
+            ), Decimal("0"))
+            paid_by_period_end = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED
+                and payment.payment_date <= date_to
+            ), Decimal("0"))
+            non_cash_investing_transactions.append({
+                "document_type": "asset_purchase_invoice",
+                "invoice_number": invoice.invoice_number,
+                "asset_name": invoice.asset.name_ar,
+                "supplier_name": invoice.supplier.name_ar,
+                "recognition_date": invoice.invoice_date,
+                "gross_amount": invoice.grand_total,
+                "cash_paid_during_period": paid_during_period,
+                "unpaid_at_period_end": invoice.grand_total - paid_by_period_end,
+            })
+
         return response.Response({
             "company": company_id, "branch": int(branch_raw) if branch_raw else None,
             "date_from": date_from, "date_to": date_to,
@@ -1764,6 +1799,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "ledger_cash_change": ledger_cash_change,
             "reconciliation_difference": ledger_cash_change - net_change_in_cash,
             "uncategorized_counterparty_transactions": uncategorized_counterparties,
+            "non_cash_investing_transactions": non_cash_investing_transactions,
             "note": "تُعرض المقبوضات والمدفوعات النقدية الفعلية حسب تصنيف الحركة والحساب المقابل. يجب مراجعة تصنيف كل حركة (تشغيلي/استثماري/تمويلي) قبل اعتماد القائمة؛ التحويلات الداخلية والحركات غير النقدية مستبعدة، ويجب الإفصاح عن المعاملات الاستثمارية والتمويلية غير النقدية بصورة منفصلة.",
         })
 
