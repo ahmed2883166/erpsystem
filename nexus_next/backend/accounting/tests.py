@@ -1083,6 +1083,16 @@ class IndirectCashFlowApiTests(TestCase):
         JournalLine.objects.create(entry=prior_entry, account=capital, credit=Decimal("75"))
         post_journal(prior_entry.pk)
 
+        prior_snapshot_entry = JournalEntry.objects.create(
+            company=company, branch=snapshot_branch, fiscal_year=prior_year,
+            entry_number="BR-SNAPSHOT-PRIOR", entry_date=date(2025, 12, 31),
+            description="أرصدة سابقة قبل لقطة الفرع",
+        )
+        JournalLine.objects.create(entry=prior_snapshot_entry, account=cash, debit=Decimal("900"))
+        JournalLine.objects.create(entry=prior_snapshot_entry, account=receivable, debit=Decimal("100"))
+        JournalLine.objects.create(entry=prior_snapshot_entry, account=capital, credit=Decimal("1000"))
+        post_journal(prior_snapshot_entry.pk)
+
         opening_entry = JournalEntry.objects.create(
             company=company, branch=snapshot_branch, fiscal_year=current_year,
             entry_number="BR-SNAPSHOT-OPEN", entry_date=date(2026, 1, 1),
@@ -1103,13 +1113,26 @@ class IndirectCashFlowApiTests(TestCase):
             f"/api/accounting/journal-entries/indirect-cash-flow/?company={company.pk}"
             "&date_from=2026-01-01&date_to=2026-01-31"
         )
+        direct_cash_flow = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
         equity = client.get(
             f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
             "&date_from=2026-01-01&date_to=2026-01-31"
         )
 
         self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(direct_cash_flow.status_code, 200, direct_cash_flow.data)
         self.assertEqual(equity.status_code, 200, equity.data)
+        self.assertEqual(cash_flow.data["opening_cash_balance"], Decimal("120.0000"))
+        self.assertEqual(cash_flow.data["closing_cash_balance"], Decimal("120.0000"))
+        self.assertEqual(cash_flow.data["ledger_closing_cash_balance"], Decimal("120.0000"))
+        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(direct_cash_flow.data["opening_cash_balance"], Decimal("120.0000"))
+        self.assertEqual(direct_cash_flow.data["closing_cash_balance"], Decimal("120.0000"))
+        self.assertEqual(direct_cash_flow.data["ledger_closing_cash_balance"], Decimal("120.0000"))
+        self.assertEqual(direct_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
         receivable_row = next(
             row for row in cash_flow.data["working_capital"]
             if row["role"] == AccountRole.Role.ACCOUNTS_RECEIVABLE
