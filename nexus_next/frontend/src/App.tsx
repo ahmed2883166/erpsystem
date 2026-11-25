@@ -313,7 +313,7 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
     ["صافي التدفقات النقدية من الأنشطة",report.net_change_in_cash,"",report.net_change_in_cash],
     ["أثر تغير أسعار صرف العملات الأجنبية",report.effect_of_exchange_rate_changes,"",report.effect_of_exchange_rate_changes],
     ["صافي الزيادة/النقص في النقدية",report.net_increase_decrease_in_cash,"",report.net_increase_decrease_in_cash],
-    ...report.exchange_rate_effect_details.map(x=>[`أثر صرف — ${x.revaluation_date} — ${x.account_code} — ${x.currency}`,x.difference,"",x.journal_number]),
+    ...report.exchange_rate_effect_details.map(x=>[`${x.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"} — ${x.event_date} — ${x.account_code} — ${x.currency}`,x.difference,"",x.journal_number]),
     ["رصيد النقدية آخر الفترة",report.closing_cash_balance,"",""],
     ["رصيد الأستاذ آخر الفترة",report.ledger_closing_cash_balance,"",""],
     ["فرق رصيد الإقفال",report.closing_balance_difference,"",""],
@@ -358,9 +358,9 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
         </tbody></table></div>
       </section>)}
       <h3>أثر تغير أسعار صرف العملات الأجنبية على النقدية</h3>
-      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
-        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.revaluation_date}-${row.journal_number}`}><td>{row.revaluation_date}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}</td></tr>)}
-        {!report.exchange_rate_effect_details.length&&<tr><td colSpan={7}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
+      <div className="data-table-wrap"><table><thead><tr><th>نوع الحدث</th><th>تاريخ الحدث</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
+        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.event_type}-${row.event_date}-${row.journal_number}`}><td>{row.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"}</td><td>{row.event_date}{row.event_type==="reversal"?<small> أصل التقييم: {row.original_revaluation_date}</small>:null}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}</td></tr>)}
+        {!report.exchange_rate_effect_details.length&&<tr><td colSpan={8}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
       </tbody></table></div>
       <h3>الإفصاح عن الاستثمارات غير النقدية</h3>
       <div className="data-table-wrap"><table><thead><tr><th>الفاتورة / الأصل</th><th>القيمة الإجمالية</th><th>مدفوع خلال الفترة</th><th>غير مسدد بنهاية الفترة</th></tr></thead><tbody>
