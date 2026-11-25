@@ -52,6 +52,7 @@ class Migration(migrations.Migration):
                     ],
                     max_length=24,
                 )),
+                ("is_active", models.BooleanField(default=True)),
                 ("company", models.ForeignKey(
                     on_delete=django.db.models.deletion.CASCADE,
                     related_name="activity_assignments",
@@ -63,6 +64,10 @@ class Migration(migrations.Migration):
                 "verbose_name_plural": "أنشطة الشركات",
                 "ordering": ("activity",),
             },
+        ),
+        migrations.AddIndex(
+            model_name="companyactivity",
+            index=models.Index(fields=["company", "is_active"], name="company_activity_active_idx"),
         ),
         migrations.AddConstraint(
             model_name="companyactivity",
