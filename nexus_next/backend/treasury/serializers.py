@@ -2,6 +2,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
+from core.money import round_currency_amount
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 
 
