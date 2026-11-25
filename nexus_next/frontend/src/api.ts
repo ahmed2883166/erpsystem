@@ -768,7 +768,7 @@ export type SalesOrder = {
   order_number:string; order_date:string; requested_delivery_date:string|null;
   status:"draft"|"confirmed"|"partially_delivered"|"delivered"|"cancelled";
   net_total:string;discount_total:string;tax_total:string;grand_total:string;notes:string;
-  order_lines:{id:number;product:number;product_code:string;product_name:string;quantity:string;unit_price:string;
+  order_lines:{id:number;product:number;product_code:string;product_name:string;quantity:string;allocated_quantity:string;remaining_quantity:string;unit_price:string;
     tax_rate:string;tax_code:number|null;discount_percent:string;discount_amount:string;net_amount:string;tax_amount:string;total_amount:string}[];
   created_at:string;updated_at:string;
 };
