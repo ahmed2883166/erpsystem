@@ -132,8 +132,14 @@ class CustomerReceiptBatchTests(APITestCase):
                 "200.0000",
             )
 
+        journal_ids = [
+            posted.data["journal_entry"],
+            posted_advance.data["journal_entry"],
+            reversed_advance.data["reversal_journal_entry"],
+            reversed_batch.data["reversal_journal_entry"],
+        ]
         entries = JournalEntry.objects.filter(
-            company=self.company, source_type=JournalEntry.Source.SALES,
+            company=self.company, source_type=JournalEntry.Source.SALES, pk__in=journal_ids,
         )
         self.assertEqual(entries.count(), 4)
         for entry in entries:
