@@ -652,15 +652,20 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
         lines = validated_data.pop("lines", None)
         if lines is not None:
-            existing = {
-                (line.delivery_line_id, line.product_id): line for line in instance.lines.all()
-            }
-            for data in lines:
+            existing = list(instance.lines.order_by("id"))
+            if len(existing) != len(lines):
+                raise serializers.ValidationError({"lines": "لا يمكن إضافة أو حذف بنود من فاتورة موجودة؛ أنشئ الفاتورة من جديد قبل الترحيل."})
+            for line, data in zip(existing, lines):
                 delivery_line = data.pop("delivery_line", None)
-                product = data.get("product") or (delivery_line.product if delivery_line else None)
-                key = (delivery_line.pk if delivery_line else None, product.pk if product else None)
-                line = existing[key]
-                line.quantity = data.get("quantity", delivery_line.quantity if delivery_line else line.quantity)
+                product = data.pop("product", None)
+                if delivery_line is not None:
+                    line.delivery_line = delivery_line
+                    line.product = delivery_line.product
+                    line.quantity = delivery_line.quantity
+                else:
+                    if product is not None:
+                        line.product = product
+                    line.quantity = data.get("quantity", line.quantity)
                 line.unit_price = data.get("unit_price", line.unit_price)
                 line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
                 line.tax_rate = data.get("tax_rate", line.tax_rate)
