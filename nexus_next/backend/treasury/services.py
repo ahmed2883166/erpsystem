@@ -334,7 +334,7 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
     if TreasuryFxRevaluation.objects.filter(
         account=account,
         reversal_journal_entry__isnull=False,
-        reversal_journal_entry__entry_date__gt=revaluation_date,
+        reversal_journal_entry__entry_date__gte=revaluation_date,
         reversal_journal_entry__status=JournalEntry.Status.POSTED,
     ).exists():
         raise ValidationError("يوجد عكس تقييم بتاريخ لاحق؛ لا يمكن إنشاء تقييم قبل تاريخ العكس.")
@@ -390,7 +390,7 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
 
 
 
-def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, position=None):
+def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, position=None, entry_date=None):
     """Return a safe, user-facing reason when a treasury FX revaluation is not reversible."""
     if not revaluation.journal_entry_id:
         return "إعادة التقييم دون فرق محاسبي ولا يوجد قيد يمكن عكسه."
@@ -439,6 +439,17 @@ def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, posi
     ).exists()
     if later_movements:
         return "توجد حركة خزينة مرحّلة بعد إعادة التقييم؛ لا يمكن عكسه قبل معالجة الحركة اللاحقة."
+
+    if entry_date:
+        later_reversal_events = TreasuryFxRevaluation.objects.filter(
+            account=account,
+            revaluation_date__gt=revaluation.revaluation_date,
+            reversal_journal_entry__isnull=False,
+            reversal_journal_entry__entry_date__gte=entry_date,
+            reversal_journal_entry__status=JournalEntry.Status.POSTED,
+        ).exists()
+        if later_reversal_events:
+            return "تاريخ العكس يسبق أو يساوي عكس تقييم أحدث؛ التزم بعكس الأحداث بترتيبها الزمني."
     return None
 
 
@@ -456,7 +467,7 @@ def reverse_treasury_fx_revaluation(*, revaluation_id, entry_date, user=None):
     account = TreasuryAccount.objects.select_for_update(of=("self",)).get(pk=revaluation.account_id)
     position = TreasuryFxPosition.objects.select_for_update().filter(account=account).first()
     blocker = _treasury_fx_revaluation_reversal_blocker(
-        revaluation, account=account, position=position,
+        revaluation, account=account, position=position, entry_date=entry_date,
     )
     if blocker:
         raise ValidationError(blocker)
