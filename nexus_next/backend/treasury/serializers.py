@@ -148,7 +148,7 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
             ).exists():
                 raise serializers.ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا مسجلًا للشركة والتاريخ.")
             from decimal import Decimal
-            expected_base = (fx["transaction_amount"] * fx["exchange_rate"]).quantize(Decimal("0.0001"))
+            expected_base = round_currency_amount(fx["transaction_amount"] * fx["exchange_rate"], company.base_currency)
             if amount != expected_base:
                 raise serializers.ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         kind = attrs.get("kind", getattr(self.instance, "kind", None))
