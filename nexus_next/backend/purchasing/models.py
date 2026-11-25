@@ -243,7 +243,7 @@ class PurchaseInvoiceLine(models.Model):
         ).exists():
             raise ValidationError("لا يمكن تعديل سطور فاتورة مورد مرحلة.")
         if self.billed_quantity is None:
-            self.billed_quantity = self.receipt_line.quantity
+            self.billed_quantity = self.receipt_line.quantity if self.receipt_line_id else Decimal("1")
         self.calculate()
         return super().save(*args, **kwargs)
 
