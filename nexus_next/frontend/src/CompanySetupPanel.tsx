@@ -49,6 +49,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
   const [enabledActivities, setEnabledActivities] = useState<NonNullable<Company["activity"]>[]>(["commercial"]);
+  const [companyActivities, setCompanyActivities] = useState<NonNullable<Company["activity"]>[]>([]);
   const toggleEnabledActivity = (value: NonNullable<Company["activity"]>, checked: boolean) => {
     if (checked) {
       setEnabledActivities(current => current.includes(value) ? current : [...current, value]);
@@ -88,6 +89,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
     setProfileAddress(selectedCompany.address || "");
     setProfilePhone(selectedCompany.phone || "");
     setProfileEmail(selectedCompany.email || "");
+    setCompanyActivities(selectedCompany.activities?.length ? selectedCompany.activities : [selectedCompany.activity || "commercial"]);
   }, [selectedCompany?.id, selectedCompany?.updated_at]);
 
   // تحديث فروع وسنوات الشركة المحددة بعد الإنشاء أو التعديل.
@@ -181,6 +183,28 @@ const createCompany = async (event: FormEvent) => {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر حفظ بيانات الشركة.");
     } finally { setBusy(false); }
+  };
+
+  const saveCompanyActivities = async () => {
+    if (!companyId || !selectedCompany) return;
+    const primary = selectedCompany.activity || "commercial";
+    const activities = companyActivities.includes(primary) ? companyActivities : [primary, ...companyActivities];
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const updated = await api.updateCompany(companyId, { activities });
+      onCompanyUpdated(updated);
+      setCompanyActivities(updated.activities?.length ? updated.activities : [primary]);
+      setNotice("تم تحديث أنشطة الشركة مع الإبقاء على النشاط الأساسي.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحديث أنشطة الشركة.");
+    } finally { setBusy(false); }
+  };
+
+  const toggleCompanyActivity = (value: NonNullable<Company["activity"]>, checked: boolean) => {
+    if (value === (selectedCompany?.activity || "commercial")) return;
+    setCompanyActivities(current => checked
+      ? (current.includes(value) ? current : [...current, value])
+      : current.filter(item => item !== value));
   };
 
   // إضافة فرع جديد إلى الشركة الحالية.
@@ -337,6 +361,9 @@ const createYear = async (event: FormEvent) => {
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !profileName.trim()}>{busy ? "جارٍ حفظ البيانات…" : "حفظ بيانات الشركة"}</button></div>
         <p className="asset-report-note form-wide">الدولة والنشاط والعملة الأساسية معروضة أدناه كإعدادات تأسيسية؛ لا نغيّرها من تعديل الملف التعريفي حتى لا تتأثر المعالجة الضريبية أو الأرصدة المحاسبية القائمة.</p>
       </form>
+      <div className="setup-section-title"><div><h3>الأنشطة التشغيلية للشركة</h3><p>يمكن إضافة أو إيقاف الأنشطة الإضافية دون تغيير النشاط الأساسي أو التأثير على بيانات الشركة.</p></div></div>
+      <fieldset className="activity-selection"><legend>الأنشطة المفعّلة</legend><div className="activity-checkbox-grid">{Object.entries(activityLabels).map(([key, label]) => { const value = key as NonNullable<Company["activity"]>; const primary = value === (selectedCompany.activity || "commercial"); return <label key={key}><input type="checkbox" checked={primary || companyActivities.includes(value)} disabled={primary || busy} onChange={event => toggleCompanyActivity(value, event.target.checked)} />{label}{primary ? " · أساسي" : ""}</label>; })}</div><div className="form-actions"><button type="button" className="primary-button" disabled={busy || !companyActivities.length} onClick={() => void saveCompanyActivities()}>{busy ? "جارٍ حفظ الأنشطة…" : "حفظ الأنشطة"}</button></div></fieldset>
+
       <div className="setup-company-summary">
         <div><span>الشركة المحددة</span><strong>{selectedCompany.name_ar}</strong></div>
         <div><span>الكود</span><strong>{selectedCompany.code}</strong></div>
