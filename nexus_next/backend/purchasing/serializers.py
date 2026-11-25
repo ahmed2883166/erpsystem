@@ -375,6 +375,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
 
         if lines is None:
             return attrs
+        if any(not line.get("receipt_line") for line in lines):
+            raise serializers.ValidationError({"lines": "كل بند مخزني يجب أن يرتبط بسطر استلام."})
+        if any(line.get("expense_account") or line.get("cost_center") for line in lines):
+            raise serializers.ValidationError({"lines": "حساب المصروف ومركز التكلفة مخصصان لفواتير الخدمات والمصروفات المباشرة."})
         expected = set(receipt.stock_movement.lines.values_list("id", flat=True))
         supplied = [line["receipt_line"].pk for line in lines]
         if not lines or len(supplied) != len(set(supplied)):
