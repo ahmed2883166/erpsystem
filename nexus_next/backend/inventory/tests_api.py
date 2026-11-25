@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from .models import InventoryCount, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, UnitOfMeasure, Warehouse, WarehouseProductSetting
+from .models import InventoryCount, Product, ProductCategory, StockBalance, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine, UnitOfMeasure, Warehouse, WarehouseProductSetting
 
 
 class InventoryApiTests(APITestCase):
@@ -1021,6 +1021,66 @@ class InventoryApiTests(APITestCase):
         self.assertFalse(StockMovementJournalLink.objects.filter(movement_id=created.data["id"]).exists())
         self.assertFalse(JournalEntry.objects.filter(company=self.company).exists())
         self.assertEqual(StockMovement.objects.get(pk=created.data["id"]).status, StockMovement.Status.DRAFT)
+
+    def test_valuation_integrity_pending_movements_are_isolated_to_authorized_branches(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="PENDING-SCOPE-1",
+            name_ar="حركات معلقة حسب الفرع",
+        )
+        foreign_branch = Branch.objects.create(
+            company=self.company, code="B-PENDING-FOREIGN", name_ar="فرع غير مصرح",
+        )
+        allowed_warehouse = self._warehouse("PENDING-ALLOWED-WH")
+        foreign_warehouse = Warehouse.objects.create(
+            company=self.company, branch=foreign_branch,
+            code="PENDING-FOREIGN-WH", name_ar="مخزن الفرع غير المصرح",
+        )
+
+        movements = (
+            ("PENDING-ALLOWED-RECEIPT", StockMovement.MovementType.RECEIPT, None, allowed_warehouse),
+            ("PENDING-ALLOWED-ISSUE", StockMovement.MovementType.ISSUE, allowed_warehouse, None),
+            ("PENDING-FOREIGN-RECEIPT", StockMovement.MovementType.RECEIPT, None, foreign_warehouse),
+            ("PENDING-FOREIGN-ISSUE", StockMovement.MovementType.ISSUE, foreign_warehouse, None),
+            ("PENDING-CROSS-BRANCH-TRANSFER", StockMovement.MovementType.TRANSFER,
+             allowed_warehouse, foreign_warehouse),
+        )
+        for number, movement_type, source, destination in movements:
+            movement = StockMovement.objects.create(
+                company=self.company, movement_number=number, movement_type=movement_type,
+                movement_date=date(2026, 11, 21), source_warehouse=source,
+                destination_warehouse=destination, created_by=self.user,
+                status=StockMovement.Status.DRAFT,
+            )
+            StockMovementLine.objects.create(
+                movement=movement, product=self.product, quantity=Decimal("1"),
+                unit_cost=Decimal("10"), cost_amount=Decimal("10"),
+            )
+
+        limited_user = get_user_model().objects.create_user(
+            username="inventory-pending-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited_user)
+
+        response = self.client.get(
+            f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["scope_branch_ids"], [self.branch.pk])
+        self.assertEqual(response.data["pending_movements_count"], 2)
+        visible_numbers = {
+            row["movement_number"] for row in response.data["pending_movements"]
+        }
+        self.assertEqual(
+            visible_numbers,
+            {"PENDING-ALLOWED-RECEIPT", "PENDING-ALLOWED-ISSUE"},
+        )
+        self.assertNotIn("PENDING-FOREIGN-RECEIPT", visible_numbers)
+        self.assertNotIn("PENDING-FOREIGN-ISSUE", visible_numbers)
+        self.assertNotIn("PENDING-CROSS-BRANCH-TRANSFER", visible_numbers)
 
     def test_fifo_valuation_integrity_detects_balance_layer_value_mismatch(self):
         self.product = Product.objects.create(
