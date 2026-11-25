@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from customers.models import CustomerDiscountRule
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate, SalesReturn
 from approvals.snapshots import invoice_discount_snapshot
 
 
@@ -407,7 +407,10 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             paid = sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
         else:
             paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        return str(max(obj.grand_total - paid, Decimal("0")))
+        returned = obj.returns.filter(
+            status=SalesReturn.Status.POSTED,
+        ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+        return str(max(obj.grand_total - paid - returned, Decimal("0")))
 
     def get_approval_status(self, obj):
         """تحديد حالة الموافقة بناءً على حدود الاعتماد ولقطة الفاتورة الحالية."""
