@@ -1561,3 +1561,37 @@ class SalesWorkflowTests(APITestCase):
             "name": "Accountant Template", "style": "compact",
         }, format="json")
         self.assertEqual(denied.status_code, 403)
+
+
+    def test_invoice_posting_rolls_back_created_journal_when_accounting_post_fails(self):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+
+        delivery_id, line_id = self._create_delivery("DEL-ATOMIC-POST")
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "INV-ATOMIC-POST",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_id = created.data["id"]
+        journal_count_before = JournalEntry.objects.count()
+
+        with patch(
+            "sales.services.post_journal",
+            side_effect=DjangoValidationError("محاكاة فشل التحقق المحاسبي"),
+        ):
+            response = self.client.post(
+                f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json"
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        invoice = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
+        self.assertEqual(invoice["status"], "draft")
+        self.assertIsNone(invoice["journal_entry"])
+        self.assertEqual(JournalEntry.objects.count(), journal_count_before)
+        self.assertFalse(JournalEntry.objects.filter(
+            entry_number=f"SALE-INV-{invoice_id}"
+        ).exists())
