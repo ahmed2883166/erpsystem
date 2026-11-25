@@ -253,6 +253,8 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ سند القبض.")
     if batch.refunds.filter(status="posted").exists():
         raise ValidationError("يجب عكس رد المبلغ المرتبط بالدفعة المقدمة أولًا قبل عكس سند القبض.")
+    if batch.allocations.filter(invoice__returns__refunds__status="posted").exists():
+        raise ValidationError("يجب عكس ردود المبالغ الممولة من تخصيصات هذا السند أولًا قبل عكس سند القبض.")
 
     allocations = list(batch.allocations.select_related("invoice"))
     latest_allocation_date = max(
