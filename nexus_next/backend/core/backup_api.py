@@ -241,20 +241,20 @@ class BackupConfigurationView(APIView):
             if not raw:
                 raise ValidationError({"backup_path": "حدد مجلد النسخ الاحتياطي."})
             win = PureWindowsPath(raw)
-            if not win.is_absolute() or not win.drive or win.drive.upper().startswith("C:"):
-                raise ValidationError({"backup_path": "يجب اختيار مسار مطلق على قرص غير C، مثل D:\\NEXUS_Backups."})
-            if any(part in (".", "..") for part in win.parts):
+            if (
+                not win.is_absolute()
+                or not re.fullmatch(r"[A-Za-z]:", win.drive)
+                or win.drive.upper() == "C:"
+                or len(win.parts) < 2
+            ):
+                raise ValidationError({"backup_path": "يجب اختيار مجلد مطلق على قرص محلي غير C، مثل D:\\NEXUS_Backups."})
+            if any(part in ("", ".", "..") for part in win.parts[1:]):
                 raise ValidationError({"backup_path": "المسار يحتوي على أجزاء غير مسموح بها."})
-            # Revalidate only when the destination actually changes; unchanged
-            # stored paths must remain editable for schedule/retention settings.
+            # Accept only a local drive-letter path. Do not probe a request-
+            # supplied filesystem path in the web process; the backup runner
+            # validates access when it executes under the server account.
             current_path = PureWindowsPath(config.backup_path) if config.backup_path else None
             if current_path != win:
-                candidate = Path(raw)
-                if os.name == "nt":
-                    if not candidate.exists() or not candidate.is_dir():
-                        raise ValidationError({"backup_path": "المجلد غير موجود على جهاز الخادم."})
-                    if not os.access(candidate, os.W_OK):
-                        raise ValidationError({"backup_path": "لا توجد صلاحية كتابة في المجلد المحدد."})
                 config.backup_path = str(win)
         if "schedule" in request.data:
             if request.data["schedule"] not in BackupConfiguration.Schedule.values:
