@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from customers.models import CustomerDiscountRule
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate, SalesReturn, SalesOrder, SalesOrderLine
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate, SalesReturn, SalesOrder, SalesOrderLine, SalesDeliveryAllocation
 from approvals.snapshots import invoice_discount_snapshot
 
 
@@ -141,12 +141,16 @@ class DeliveryLineInputSerializer(serializers.Serializer):
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
     source_location = serializers.IntegerField(required=False, allow_null=True)
     expiry_date = serializers.DateField(required=False, allow_null=True)
+    order_line = serializers.PrimaryKeyRelatedField(queryset=SalesOrderLine.objects.select_related("order"), required=False, allow_null=True)
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
         if product.product_type != Product.ProductType.GOODS or not product.is_active:
             raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
+        order_line = attrs.get("order_line")
+        if order_line and order_line.product_id != product.pk:
+            raise serializers.ValidationError({"order_line": "بند أمر البيع لا يطابق الصنف المحدد."})
         if product.track_expiry and not attrs.get("expiry_date"):
             raise serializers.ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
         if not product.track_expiry and attrs.get("expiry_date"):
@@ -157,6 +161,7 @@ class DeliveryLineInputSerializer(serializers.Serializer):
 class SalesDeliverySerializer(serializers.ModelSerializer):
     delivery_number = serializers.CharField(max_length=37)
     lines = DeliveryLineInputSerializer(many=True, write_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
@@ -165,7 +170,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesDelivery
         fields = ("id", "company", "customer", "customer_name", "warehouse", "warehouse_name",
-                  "delivery_number", "delivery_date", "customer_reference", "notes",
+                  "delivery_number", "delivery_date", "customer_reference", "notes", "order", "order_number",
                   "movement_status", "line_items", "quotation_snapshot", "lines", "created_at")
         read_only_fields = ("movement_status", "line_items", "quotation_snapshot", "created_at")
 
@@ -175,6 +180,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
             "product_name": line.product.name_ar, "quantity": str(line.quantity),
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
+            "order_line": getattr(getattr(line, "sales_order_allocation", None), "order_line_id", None),
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
     def validate(self, attrs):
@@ -196,6 +202,17 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
         if warehouse and (warehouse.company_id != company.pk or not warehouse.is_active):
             raise serializers.ValidationError({"warehouse": "اختر مخزنًا نشطًا تابعًا للشركة."})
+        order = attrs.get("order", instance.order if instance else None)
+        if instance and "order" in attrs and attrs["order"] != instance.order:
+            raise serializers.ValidationError({"order": "لا يمكن تغيير أمر البيع المرتبط بإذن التسليم."})
+        if order:
+            if order.company_id != company.pk or order.customer_id != customer.pk or order.warehouse_id != warehouse.pk:
+                raise serializers.ValidationError({"order": "أمر البيع يجب أن يطابق الشركة والعميل والمخزن."})
+            if order.status not in (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED):
+                raise serializers.ValidationError({"order": "لا يمكن التسليم إلا من أمر بيع معتمد وغير مكتمل."})
+            delivery_date = attrs.get("delivery_date", instance.delivery_date if instance else None)
+            if delivery_date and delivery_date < order.order_date:
+                raise serializers.ValidationError({"delivery_date": "تاريخ التسليم لا يسبق تاريخ أمر البيع."})
         lines = attrs.get("lines")
         if lines is None:
             if instance:
@@ -203,9 +220,18 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         if not lines:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        if order:
+            if instance and "lines" in attrs:
+                raise serializers.ValidationError({"lines": "لا يمكن تغيير بنود إذن مرتبط بأمر بيع؛ أنشئ إذنًا جديدًا للكميات المتبقية."})
+            if not instance:
+                self._validate_order_allocations(order, lines)
+        elif any(line.get("order_line") for line in lines):
+            raise serializers.ValidationError({"lines": "حدد أمر البيع عند ربط بنوده بإذن التسليم."})
         for line in lines:
             if line["product"].company_id != company.pk or not line["product"].is_active or line["product"].product_type != Product.ProductType.GOODS:
                 raise serializers.ValidationError({"lines": "اختر أصنافًا مخزنية نشطة تتبع الشركة؛ الخدمات غير مدعومة في دورة التسليم الحالية."})
+            if order and (not line.get("order_line") or line["order_line"].order_id != order.pk):
+                raise serializers.ValidationError({"lines": "كل صنف في إذن مرتبط بأمر بيع يجب ربطه ببند من نفس الأمر."})
             location_id = line.get("source_location")
             if location_id:
                 location = StorageLocation.objects.filter(
@@ -216,24 +242,69 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
                 line["source_location_obj"] = location
         return attrs
 
+    def _validate_order_allocations(self, order, lines, exclude_delivery_id=None):
+        totals = {}
+        for row in lines:
+            order_line = row.get("order_line")
+            if not order_line or order_line.order_id != order.pk or order_line.product_id != row["product"].pk:
+                raise serializers.ValidationError({"lines": "اربط كل صنف ببند صحيح من أمر البيع."})
+            totals[order_line.pk] = totals.get(order_line.pk, Decimal("0")) + row["quantity"]
+        locked_lines = {
+            line.pk: line for line in SalesOrderLine.objects.select_for_update().filter(
+                pk__in=sorted(totals), order_id=order.pk
+            )
+        }
+        for line_id, requested in totals.items():
+            line = locked_lines.get(line_id)
+            if not line:
+                raise serializers.ValidationError({"lines": "بند أمر البيع غير موجود."})
+            delivered = SalesDeliveryAllocation.objects.filter(order_line_id=line_id)
+            if exclude_delivery_id:
+                delivered = delivered.exclude(delivery_id=exclude_delivery_id)
+            already_allocated = delivered.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if already_allocated + requested > line.quantity:
+                remaining = line.quantity - already_allocated
+                raise serializers.ValidationError({
+                    "lines": f"الكمية المطلوبة تتجاوز المتبقي في أمر البيع للصنف {line.product.name_ar}. المتبقي: {remaining}."
+                })
+
     @transaction.atomic
     def create(self, validated_data):
         """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         company, warehouse = validated_data["company"], validated_data["warehouse"]
+        order = validated_data.get("order")
+        if order:
+            order = SalesOrder.objects.select_for_update().get(pk=order.pk)
+            if order.status not in (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED):
+                raise serializers.ValidationError({"order": "أمر البيع غير متاح للتسليم."})
+            self._validate_order_allocations(order, lines)
+            validated_data["order"] = order
         user = self.context["request"].user
         movement = StockMovement.objects.create(
             company=company, movement_number=f"SD-{validated_data['delivery_number']}",
             movement_type=StockMovement.MovementType.ISSUE, movement_date=validated_data["delivery_date"],
             source_warehouse=warehouse, notes=validated_data.get("notes", ""), created_by=user,
         )
-        StockMovementLine.objects.bulk_create([
-            StockMovementLine(
-                movement=movement, product=line["product"], quantity=line["quantity"],
-                source_location=line.get("source_location_obj"), expiry_date=line.get("expiry_date"),
-            ) for line in lines
-        ])
-        return SalesDelivery.objects.create(**validated_data, stock_movement=movement, created_by=user)
+        delivery = SalesDelivery.objects.create(**validated_data, stock_movement=movement, created_by=user)
+        if order:
+            for row in lines:
+                movement_line = StockMovementLine.objects.create(
+                    movement=movement, product=row["product"], quantity=row["quantity"],
+                    source_location=row.get("source_location_obj"), expiry_date=row.get("expiry_date"),
+                )
+                SalesDeliveryAllocation.objects.create(
+                    delivery=delivery, order_line=row["order_line"],
+                    movement_line=movement_line, quantity=row["quantity"],
+                )
+        else:
+            StockMovementLine.objects.bulk_create([
+                StockMovementLine(
+                    movement=movement, product=line["product"], quantity=line["quantity"],
+                    source_location=line.get("source_location_obj"), expiry_date=line.get("expiry_date"),
+                ) for line in lines
+            ])
+        return delivery
 
     @transaction.atomic
     def update(self, instance, validated_data):
