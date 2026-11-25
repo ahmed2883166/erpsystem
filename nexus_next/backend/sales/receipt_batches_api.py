@@ -77,8 +77,9 @@ class CustomerReceiptBatchViewSet(SalesBaseViewSet):
             amount = Decimal(str(request.data.get("amount")))
         except (TypeError, ValueError, InvalidOperation):
             raise ValidationError({"allocation": "حدد الفاتورة ومبلغ التخصيص الصحيح."}) from None
-        allocation_date = parse_date(str(request.data.get("allocation_date") or "")) or timezone.localdate()
-        if request.data.get("allocation_date") and not allocation_date:
+        raw_allocation_date = request.data.get("allocation_date")
+        allocation_date = parse_date(str(raw_allocation_date)) if raw_allocation_date else timezone.localdate()
+        if not allocation_date:
             raise ValidationError({"allocation_date": "صيغة تاريخ التخصيص يجب أن تكون YYYY-MM-DD."})
         allocate_customer_receipt_batch(
             batch.pk, invoice_id, amount, request.user, allocation_date=allocation_date,
