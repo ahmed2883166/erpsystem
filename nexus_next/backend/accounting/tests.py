@@ -355,6 +355,8 @@ class DirectCashFlowApiTests(TestCase):
         self.assertEqual(result.data["net_change_in_cash"], Decimal("170.0000"))
         self.assertEqual(result.data["ledger_cash_change"], Decimal("170.0000"))
         self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(result.data["non_cash_investing_transactions"], [])
+        self.assertEqual(result.data["uncategorized_counterparty_transactions"], [])
 
 class AccountingApiTests(TestCase):
     def setUp(self):
