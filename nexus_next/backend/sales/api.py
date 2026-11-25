@@ -949,25 +949,62 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id)
             )
 
+        customer_raw = request.query_params.get("customer")
+        customer_id = None
+        if customer_raw:
+            try:
+                customer_id = int(customer_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"customer": "معرّف العميل غير صالح."}) from None
+            accessible_invoices = accessible_invoices.filter(customer_id=customer_id)
+
+        product_raw = request.query_params.get("product")
+        product_id = None
+        if product_raw:
+            try:
+                product_id = int(product_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+            accessible_invoices = accessible_invoices.filter(lines__product_id=product_id).distinct()
+
         invoices = accessible_invoices.filter(invoice_date__range=(date_from, date_to))
         returns = SalesReturn.objects.filter(
             invoice__in=accessible_invoices,
             status=SalesReturn.Status.POSTED,
             return_date__range=(date_from, date_to),
         )
+        if product_id is not None:
+            returns = returns.filter(lines__invoice_line__product_id=product_id).distinct()
         invoice_lines = SalesInvoiceLine.objects.filter(invoice__in=invoices)
         return_lines = SalesReturnLine.objects.filter(sales_return__in=returns)
+        if product_id is not None:
+            invoice_lines = invoice_lines.filter(product_id=product_id)
+            return_lines = return_lines.filter(invoice_line__product_id=product_id)
 
         def amount(value):
             return value if value is not None else Decimal("0")
 
-        sales_totals = invoices.aggregate(
-            net=Sum("net_total"), discount=Sum("discount_total"),
-            tax=Sum("tax_total"), total=Sum("grand_total"),
-        )
-        return_totals = returns.aggregate(
-            net=Sum("net_total"), tax=Sum("tax_total"), total=Sum("grand_total"),
-        )
+        if product_id is not None:
+            # عند اختيار صنف، تُحسب الإجماليات من بنوده فقط لا من إجمالي الفاتورة التي قد تضم أصنافًا أخرى.
+            sales_totals = invoice_lines.aggregate(
+                net=Sum("net_amount"), discount=Sum("discount_amount"),
+                tax=Sum("tax_amount"), total=Sum("total_amount"),
+            )
+            return_totals = return_lines.aggregate(
+                net=Sum("net_amount"), tax=Sum("tax_amount"), total=Sum("total_amount"),
+            )
+            invoice_count = invoice_lines.values("invoice_id").distinct().count()
+            return_count = return_lines.values("sales_return_id").distinct().count()
+        else:
+            sales_totals = invoices.aggregate(
+                net=Sum("net_total"), discount=Sum("discount_total"),
+                tax=Sum("tax_total"), total=Sum("grand_total"),
+            )
+            return_totals = returns.aggregate(
+                net=Sum("net_total"), tax=Sum("tax_total"), total=Sum("grand_total"),
+            )
+            invoice_count = invoices.count()
+            return_count = returns.count()
         sales_cost = amount(invoice_lines.aggregate(total=Sum("delivery_line__cost_amount"))["total"])
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
         sales_net = amount(sales_totals["net"])
@@ -1098,9 +1135,11 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             "date_from": date_from.isoformat(),
             "date_to": date_to.isoformat(),
             "branch": branch_id,
+            "customer_filter": customer_id,
+            "product_filter": product_id,
             "totals": {
-                "invoice_count": invoices.count(),
-                "return_count": returns.count(),
+                "invoice_count": invoice_count,
+                "return_count": return_count,
                 "sales_net": str(sales_net),
                 "discount_total": str(amount(sales_totals["discount"])),
                 "sales_tax": str(amount(sales_totals["tax"])),
