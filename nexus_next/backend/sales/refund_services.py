@@ -43,9 +43,13 @@ def post_customer_refund(refund_id, user):
             raise ValidationError("لا يمكن رد مبلغ إلا عن مردود مبيعات مرحّل وغير معكوس.")
         source_date = source.return_date
         source_branch_id = source.branch_id or source.invoice.branch_id
-        already_refunded = source.refunds.filter(
+        posted_refunds = source.refunds.filter(
             status=CustomerRefund.Status.POSTED,
-        ).exclude(pk=refund.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        ).exclude(pk=refund.pk)
+        latest_refund_date = posted_refunds.order_by("-refund_date").values_list("refund_date", flat=True).first()
+        if latest_refund_date and refund.refund_date < latest_refund_date:
+            raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق عن نفس المردود.")
+        already_refunded = posted_refunds.aggregate(total=Sum("amount"))["total"] or Decimal("0")
         available = max(source.grand_total - already_refunded, Decimal("0"))
         source_label = f"مردود المبيعات {source.return_number}"
     else:
@@ -61,6 +65,11 @@ def post_customer_refund(refund_id, user):
         ).first()
         if latest_allocation and refund.refund_date < latest_allocation:
             raise ValidationError("تاريخ رد الدفعة المقدمة لا يجوز أن يسبق آخر تخصيص لها.")
+        latest_refund_date = source.refunds.filter(
+            status=CustomerRefund.Status.POSTED,
+        ).exclude(pk=refund.pk).order_by("-refund_date").values_list("refund_date", flat=True).first()
+        if latest_refund_date and refund.refund_date < latest_refund_date:
+            raise ValidationError("تاريخ رد الدفعة المقدمة لا يجوز أن يسبق آخر رد سابق لها.")
         available = source.unallocated_amount + (
             refund.amount if refund.pk and refund.status == CustomerRefund.Status.POSTED else Decimal("0")
         )
@@ -148,6 +157,21 @@ def reverse_customer_refund(refund_id, user, entry_date):
         raise ValidationError("تم عكس رد المبلغ من قبل.")
     if entry_date < refund.refund_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ رد المبلغ.")
+    if refund.source_return_id:
+        later_refunds = CustomerRefund.objects.filter(
+            source_return_id=refund.source_return_id,
+            status=CustomerRefund.Status.POSTED,
+            refund_date__gt=refund.refund_date,
+        ).exclude(pk=refund.pk)
+    else:
+        later_refunds = CustomerRefund.objects.filter(
+            source_receipt_batch_id=refund.source_receipt_batch_id,
+            status=CustomerRefund.Status.POSTED,
+            refund_date__gt=refund.refund_date,
+        ).exclude(pk=refund.pk)
+    if later_refunds.exists():
+        raise ValidationError("يجب عكس أحدث رد مبلغ عن نفس المستند أولًا.")
+
     original = refund.treasury_transaction
     if not original.journal_entry_id or original.journal_entry.status != "posted":
         raise ValidationError("قيد رد المبلغ الأصلي ليس مرحّلًا.")
