@@ -81,6 +81,8 @@ class CompanySerializer(serializers.ModelSerializer):
                     activity=value,
                     defaults={"is_active": True},
                 )
+            if hasattr(company, "_prefetched_objects_cache"):
+                company._prefetched_objects_cache.pop("activity_assignments", None)
         return company
 
     def validate(self, attrs):
