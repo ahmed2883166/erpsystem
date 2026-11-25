@@ -422,10 +422,7 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(posted.data["transaction_amount"], "100.0000")
         original_treasury = TreasuryTransaction.objects.get(pk=posted.data["treasury_transaction"])
         self.assertEqual(original_treasury.carrying_amount, Decimal("4800.0000"))
-        self.assertEqual(original_treasury.journal_entry.lines.aggregate(
-            debit=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
-            credit=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"),
-        )["debit"], Decimal("5000.0000"))
+        self._assert_balanced(original_treasury.journal_entry_id)
         position.refresh_from_db()
         self.assertEqual(position.foreign_amount, Decimal("0.0000"))
         self.assertEqual(position.carrying_base_amount, Decimal("0.0000"))
