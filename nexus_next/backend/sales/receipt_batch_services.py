@@ -56,7 +56,7 @@ def _check_allocation_target(batch, invoice, amount):
     invoice_branch = (
         resolve_warehouse_branch(batch.company, invoice.delivery.warehouse) if invoice.delivery_id else invoice.branch
     )
-    if invoice_branch and invoice_branch.pk != batch.branch_id:
+    if not invoice_branch or invoice_branch.pk != batch.branch_id:
         raise ValidationError("الفاتورة لا تتبع فرع سند القبض.")
     remaining = _invoice_open_balance(invoice, batch.receipt_date)
     if amount > remaining:
