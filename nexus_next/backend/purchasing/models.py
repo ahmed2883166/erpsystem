@@ -75,7 +75,7 @@ class PurchaseInvoice(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_invoices")
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_invoices")
-    receipt = models.OneToOneField(PurchaseReceipt, on_delete=models.PROTECT, related_name="invoice")
+    receipt = models.ForeignKey(PurchaseReceipt, on_delete=models.PROTECT, related_name="invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
     transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
@@ -147,7 +147,8 @@ class PurchaseInvoice(models.Model):
 class PurchaseInvoiceLine(models.Model):
     """يمثل بندًا ماليًا وضريبيًا داخل فاتورة المشتريات."""
     invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="lines")
-    receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_line")
+    receipt_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    billed_quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
     transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
@@ -161,6 +162,10 @@ class PurchaseInvoiceLine(models.Model):
 
     class Meta:
         ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(fields=("invoice", "receipt_line"), name="uq_purchase_invoice_receipt_line"),
+            models.CheckConstraint(condition=models.Q(billed_quantity__gt=0), name="ck_purchase_invoice_line_qty_positive"),
+        ]
 
     def calculate(self):
         if self.tax_code_id:
@@ -172,7 +177,7 @@ class PurchaseInvoiceLine(models.Model):
                     or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح أو غير قابل للخصم لهذه الشركة أو تاريخ الفاتورة."})
             self.tax_rate = code.rate
-        quantity = self.receipt_line.quantity
+        quantity = self.billed_quantity
         if self.invoice.transaction_currency_id:
             if self.transaction_unit_price is None:
                 raise ValidationError({"transaction_unit_price": "سعر الوحدة بالعملة الأجنبية مطلوب."})
@@ -205,6 +210,8 @@ class PurchaseInvoiceLine(models.Model):
             pk=self.invoice_id, status=PurchaseInvoice.Status.POSTED
         ).exists():
             raise ValidationError("لا يمكن تعديل سطور فاتورة مورد مرحلة.")
+        if self.billed_quantity is None:
+            self.billed_quantity = self.receipt_line.quantity
         self.calculate()
         return super().save(*args, **kwargs)
 

@@ -157,6 +157,9 @@ class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
     receipt_line = serializers.PrimaryKeyRelatedField(
         queryset=StockMovementLine.objects.select_related("movement", "product")
     )
+    billed_quantity = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False,
+    )
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     transaction_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     tax_rate = serializers.DecimalField(
@@ -170,6 +173,9 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source="receipt_line.product.code", read_only=True)
     product_name = serializers.CharField(source="receipt_line.product.name_ar", read_only=True)
     quantity = serializers.DecimalField(
+        source="billed_quantity", max_digits=18, decimal_places=4, read_only=True
+    )
+    receipt_quantity = serializers.DecimalField(
         source="receipt_line.quantity", max_digits=18, decimal_places=4, read_only=True
     )
     recoverable_tax_amount = serializers.SerializerMethodField()
@@ -188,11 +194,11 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseInvoiceLine
         fields = (
-            "id", "receipt_line", "product_code", "product_name", "quantity",
+            "id", "receipt_line", "product_code", "product_name", "quantity", "billed_quantity", "receipt_quantity",
             "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "net_amount", "tax_amount", "recoverable_tax_amount", "nonrecoverable_tax_amount", "total_amount",
         )
         read_only_fields = (
-            "id", "product_code", "product_name", "quantity",
+            "id", "product_code", "product_name", "quantity", "billed_quantity", "receipt_quantity",
             "net_amount", "tax_amount", "total_amount",
         )
 
@@ -327,9 +333,35 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             return attrs
         expected = set(receipt.stock_movement.lines.values_list("id", flat=True))
         supplied = [line["receipt_line"].pk for line in lines]
-        if not lines or set(supplied) != expected or len(supplied) != len(expected):
-            raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن الاستلام مرة واحدة دون حذف أو تكرار."})
+        if not lines or len(supplied) != len(set(supplied)):
+            raise serializers.ValidationError({"lines": "أدخل بندًا واحدًا على الأقل دون تكرار سطر الاستلام."})
+        if not set(supplied).issubset(expected):
+            raise serializers.ValidationError({"lines": "يوجد سطر لا يتبع إذن الاستلام المحدد."})
         for line in lines:
+            receipt_line = line["receipt_line"]
+            if receipt_line.movement_id != receipt.stock_movement_id:
+                raise serializers.ValidationError({"lines": "سطر الصنف لا يتبع إذن الاستلام المحدد."})
+            previous = PurchaseInvoiceLine.objects.filter(
+                receipt_line=receipt_line,
+                invoice__status__in=(PurchaseInvoice.Status.DRAFT, PurchaseInvoice.Status.POSTED),
+            ).exclude(invoice=instance).aggregate(quantity=Sum("billed_quantity"))["quantity"] or Decimal("0")
+            existing_line = (
+                instance.lines.filter(receipt_line=receipt_line).first()
+                if instance else None
+            )
+            if "billed_quantity" not in line:
+                line["billed_quantity"] = (
+                    existing_line.billed_quantity if existing_line
+                    else receipt_line.quantity - previous
+                )
+            if line["billed_quantity"] <= 0:
+                raise serializers.ValidationError({
+                    "lines": f"لا توجد كمية متبقية قابلة للفوترة للصنف {receipt_line.product.code}."
+                })
+            if line["billed_quantity"] > receipt_line.quantity - previous:
+                raise serializers.ValidationError({
+                    "lines": f"الكمية المفوترة أو المحجوزة تتجاوز المتبقي من استلام الصنف {receipt_line.product.code}."
+                })
             if transaction_currency and line.get("transaction_unit_price") is None:
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
             if not transaction_currency and line.get("unit_price") is None:
@@ -338,7 +370,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
                          or code.category == TaxCode.Category.REVERSE_CHARGE
                          or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
-                raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو غير قابل للخصم للشركة أو تاريخ الفاتورة."})
+                raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو لا يسري على الشركة أو تاريخ الفاتورة."})
         return attrs
 
     @transaction.atomic
@@ -352,6 +384,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             PurchaseInvoiceLine.objects.create(
                 invoice=invoice,
                 receipt_line=line["receipt_line"],
+                billed_quantity=line["billed_quantity"],
                 unit_price=line.get("unit_price", Decimal("0")),
                 transaction_unit_price=line.get("transaction_unit_price"),
                 tax_rate=line["tax_rate"],
@@ -387,16 +420,29 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         invoice = super().update(invoice, validated_data)
         if lines is not None:
             existing = {line.receipt_line_id: line for line in invoice.lines.select_for_update()}
+            supplied_ids = set()
             for data in lines:
                 receipt_line = data["receipt_line"]
+                supplied_ids.add(receipt_line.pk)
                 line = existing.get(receipt_line.pk)
                 if line is None:
-                    raise serializers.ValidationError({"lines": "تعذر مطابقة سطر الفاتورة مع سطر الاستلام."})
-                line.unit_price = data.get("unit_price", line.unit_price)
-                line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
-                line.tax_rate = data.get("tax_rate", line.tax_rate)
-                line.tax_code = data.get("tax_code", line.tax_code)
+                    line = PurchaseInvoiceLine(
+                        invoice=invoice, receipt_line=receipt_line,
+                        billed_quantity=data["billed_quantity"],
+                        unit_price=data.get("unit_price", Decimal("0")),
+                        transaction_unit_price=data.get("transaction_unit_price"),
+                        tax_rate=data["tax_rate"], tax_code=data.get("tax_code"),
+                    )
+                else:
+                    line.billed_quantity = data["billed_quantity"]
+                    line.unit_price = data.get("unit_price", line.unit_price)
+                    line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
+                    line.tax_rate = data.get("tax_rate", line.tax_rate)
+                    line.tax_code = data.get("tax_code", line.tax_code)
                 line.save()
+            for receipt_line_id, old_line in existing.items():
+                if receipt_line_id not in supplied_ids:
+                    old_line.delete()
 
             invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
             invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
@@ -776,9 +822,9 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
                 invoice_line=invoice_line,
                 return_document__status=SupplierReturn.Status.POSTED,
             ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
-            if returned + line["quantity"] > invoice_line.receipt_line.quantity:
+            if returned + line["quantity"] > invoice_line.billed_quantity:
                 raise serializers.ValidationError({
-                    "lines": f"كمية المرتجع تتجاوز المتبقي للصنف {invoice_line.receipt_line.product.code}."
+                    "lines": f"كمية المرتجع تتجاوز الكمية المفوترة المتبقية للصنف {invoice_line.receipt_line.product.code}."
                 })
         return attrs
 

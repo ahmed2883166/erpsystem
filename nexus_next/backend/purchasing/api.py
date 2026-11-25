@@ -46,7 +46,7 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
 from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
@@ -289,24 +289,35 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
         qs = self.queryset.filter(
             company__in=companies, receipt_date__lte=as_of,
             stock_movement__status=StockMovement.Status.POSTED,
-        ).select_related("invoice")
+        ).prefetch_related("invoices__lines")
         if branch_id:
             qs = qs.filter(warehouse__branch_id=branch_id)
         else:
             branches = accessible_branches(request.user)
             defaults = _default_branch_company_ids(request.user, companies)
             qs = qs.filter(Q(warehouse__branch__in=branches) | Q(warehouse__branch__isnull=True, company_id__in=defaults))
-        # Keep receipts with no invoice or a draft invoice in GRNI; only a posted
-        # supplier invoice clears the receipt from this operational aging view.
-        qs = qs.filter(
-            Q(invoice__isnull=True) | ~Q(invoice__status=PurchaseInvoice.Status.POSTED)
-        ).order_by("receipt_date", "receipt_number")
+        # Partial invoices reduce GRNI by their posted net amount only. Draft
+        # invoices never clear the operational liability.
+        qs = qs.order_by("receipt_date", "receipt_number")
         rows = []
         aging = {"0_30": Decimal("0"), "31_60": Decimal("0"), "61_90": Decimal("0"), "over_90": Decimal("0")}
         monthly = {}
         grand_total = Decimal("0")
         for receipt in qs:
-            amount = sum((line.cost_amount for line in receipt.stock_movement.lines.all()), Decimal("0")).quantize(Decimal("0.0001"))
+            receipt_total = sum(
+                (line.cost_amount for line in receipt.stock_movement.lines.all()),
+                Decimal("0"),
+            ).quantize(Decimal("0.0001"))
+            receipt_invoices = list(receipt.invoices.all())
+            posted_invoices = [
+                invoice for invoice in receipt_invoices
+                if invoice.status == PurchaseInvoice.Status.POSTED and invoice.invoice_date <= as_of
+            ]
+            invoiced_net = sum(
+                (line.net_amount for invoice in posted_invoices for line in invoice.lines.all()),
+                Decimal("0"),
+            ).quantize(Decimal("0.0001"))
+            amount = max(receipt_total - invoiced_net, Decimal("0")).quantize(Decimal("0.0001"))
             if amount <= 0:
                 continue
             age_days = max((as_of - receipt.receipt_date).days, 0)
@@ -315,7 +326,19 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             grand_total += amount
             month = receipt.receipt_date.strftime("%Y-%m")
             monthly[month] = monthly.get(month, Decimal("0")) + amount
-            invoice = getattr(receipt, "invoice", None)
+            draft_invoices = [
+                invoice for invoice in receipt_invoices
+                if invoice.status == PurchaseInvoice.Status.DRAFT
+            ]
+            if invoiced_net > 0:
+                invoice_status = "partially_invoiced"
+            elif draft_invoices:
+                invoice_status = "draft"
+            else:
+                invoice_status = "not_invoiced"
+            invoice_numbers = [
+                invoice.invoice_number for invoice in [*posted_invoices, *draft_invoices]
+            ]
             rows.append({
                 "receipt_id": receipt.pk, "receipt_number": receipt.receipt_number,
                 "receipt_date": receipt.receipt_date.isoformat(), "age_days": age_days,
@@ -323,8 +346,9 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
                 "supplier_name": receipt.supplier.name_ar, "warehouse_id": receipt.warehouse_id,
                 "warehouse_name": receipt.warehouse.name_ar,
                 "branch_id": receipt.warehouse.branch_id,
-                "amount": str(amount), "invoice_status": invoice.status if invoice else "not_invoiced",
-                "invoice_number": invoice.invoice_number if invoice else None,
+                "amount": str(amount), "invoice_status": invoice_status,
+                "invoice_number": ", ".join(invoice_numbers) or None,
+                "invoiced_amount": str(invoiced_net),
             })
         # Reconcile the operational receipt subledger with the posted GRNI
         # control-account balance as of the same date and branch scope.
@@ -402,13 +426,24 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(Q(receipt__warehouse__branch__in=branches) | Q(receipt__warehouse__branch__isnull=True, company_id__in=defaults))
 
+    @transaction.atomic
     def create(self, request, *args, **kwargs):
-        """إنشاء مستند جديد والتحقق من مدخلاته وصلاحيات الشركة."""
+        """حجز إذن الاستلام أثناء التحقق والحفظ لمنع حجز الكمية مرتين بالتزامن."""
         try:
             company_id = int(request.data.get("company"))
+            receipt_id = int(request.data.get("receipt"))
         except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."}) from None
+            raise ValidationError({"receipt": "حدد الشركة وإذن الاستلام."}) from None
         self._check_write(company_id)
+        receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
+            "company", "warehouse", "warehouse__branch", "stock_movement",
+        ).filter(pk=receipt_id, company_id=company_id).first()
+        if not receipt:
+            raise ValidationError({"receipt": "إذن الاستلام غير موجود داخل الشركة المحددة."})
+        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        # The receipt row lock is held while serializer validation sums all
+        # draft and posted reservations and while the invoice is created.
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
@@ -419,6 +454,18 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        """قفل الفاتورة وإذن الاستلام قبل فحص حجوزات المسودة عند تعديلها."""
+        invoice = self.get_object()
+        locked_invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice.pk)
+        receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
+            "warehouse", "warehouse__branch",
+        ).get(pk=locked_invoice.receipt_id)
+        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        return super().update(request, *args, **kwargs)
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
@@ -596,8 +643,13 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                     "description": f"عكس مرتجع المورد {returned.return_number}",
                     "debit": Decimal("0"), "credit": returned.grand_total, "sort": 1,
                 })
+        # Keep refund history inside the same accessible invoice/branch scope.
+        # Reversed refunds remain visible with a balancing reversal event so the
+        # statement reproduces the supplier subledger at any reporting date.
         refunds = SupplierRefund.objects.filter(
-            company_id=company_id, supplier_id=supplier_id, status=SupplierRefund.Status.POSTED,
+            company_id=company_id, supplier_id=supplier_id,
+            return_document__invoice__in=invoices,
+            status__in=(SupplierRefund.Status.POSTED, SupplierRefund.Status.REVERSED),
         ).select_related("return_document")
         for refund in refunds:
             events.append({
@@ -606,6 +658,13 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 "description": f"استرداد نقدي من المورد عن المرتجع {refund.return_document.return_number}",
                 "debit": Decimal("0"), "credit": refund.amount, "sort": 1,
             })
+            if refund.status == SupplierRefund.Status.REVERSED and refund.reversal_date:
+                events.append({
+                    "date": refund.reversal_date, "kind": "supplier_refund_reversal",
+                    "number": f"REV-{refund.refund_number}",
+                    "description": f"عكس استرداد المورد {refund.refund_number}",
+                    "debit": refund.amount, "credit": Decimal("0"), "sort": 0,
+                })
         events.sort(key=lambda row: (row["date"], row["sort"], row["number"]))
 
         opening = sum(
@@ -1076,7 +1135,7 @@ class PurchaseRFQViewSet(PurchaseBaseViewSet):
     @action(detail=True, methods=("post",), url_path="convert-award")
     @transaction.atomic
     def convert_award(self, request, pk=None):
-        rfq = PurchaseRFQ.objects.select_for_update().select_related("awarded_quotation__supplier").get(pk=self.get_object().pk)
+        rfq = PurchaseRFQ.objects.select_for_update(of=("self",)).select_related("awarded_quotation__supplier").get(pk=self.get_object().pk)
         self._check_write(rfq.company_id)
         if rfq.status != PurchaseRFQ.Status.AWARDED or not rfq.awarded_quotation_id:
             raise ValidationError("لا يمكن إصدار أمر شراء قبل ترسية عرض مورد.")
