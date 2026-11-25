@@ -10,6 +10,9 @@ class CustomerReceiptBatchTests(APITestCase):
     def setUp(self):
         SalesWorkflowTests.setUp(self)
 
+    def _create_delivery(self, *args, **kwargs):
+        return SalesWorkflowTests._create_delivery(self, *args, **kwargs)
+
     def _create_posted_invoice(self, number):
         delivery_id, delivery_line_id = self._create_delivery(
             number.replace("INV", "DEL"),
