@@ -72,6 +72,10 @@ class Migration(migrations.Migration):
                     blank=True, null=True, on_delete=django.db.models.deletion.PROTECT,
                     related_name="customer_refund", to="treasury.treasurytransaction",
                 )),
+                ("reversal_treasury_transaction", models.OneToOneField(
+                    blank=True, null=True, on_delete=django.db.models.deletion.PROTECT,
+                    related_name="customer_refund_reversal", to="treasury.treasurytransaction",
+                )),
             ],
             options={"ordering": ("-refund_date", "-id")},
         ),
