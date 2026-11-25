@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import SalesDocumentPrint from "./SalesDocumentPrint";
+import SalesReportsPanel from "./SalesReportsPanel";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type SalesOrder, type Company } from "./api";
 
@@ -17,7 +18,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: 
 
 // شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"quotations" | "orders" | "deliveries" | "invoices" | "receipts" | "returns" | "aging">("deliveries");
+  const [tab, setTab] = useState<"quotations" | "orders" | "deliveries" | "invoices" | "receipts" | "returns" | "aging" | "reports">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -308,6 +309,7 @@ const post = async (action: () => Promise<unknown>) => {
       <button type="button" className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setEditingInvoiceId(null); }}>سندات القبض <b>{receipts.length}</b></button>
       <button type="button" className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setEditingInvoiceId(null); }}>مردودات المبيعات <b>{returns.length}</b></button>
       <button type="button" className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setEditingInvoiceId(null); setAging(null); }}>أعمار مديونية العملاء</button>
+      <button type="button" className={tab === "reports" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("reports"); setShowForm(false); setEditingInvoiceId(null); }}>تقارير المبيعات</button>
     </div>
     {tab === "aging" && <div className="inventory-form">
       <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={e => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
@@ -327,7 +329,8 @@ const post = async (action: () => Promise<unknown>) => {
         <p className="inventory-report-note">يعتمد التقرير على الفواتير المرحلة فقط، ويخصم سندات القبض المرحلة حتى تاريخ التقرير. تاريخ الاستحقاق = تاريخ الفاتورة + أجل السداد المسجل للعميل.</p>
       </div>}
     </div>}
-    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "orders" ? orders : tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : tab === "quotations" ? quotations : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } if (tab === "quotations") { setEditingQuotationId(null); setQuoteForm(old => ({...old, customer:"", quotation_number:"", notes:""})); setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "أمر بيع جديد" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : tab === "quotations" ? "عرض سعر جديد" : "التقرير"}</button></div>
+    {tab === "reports" && <SalesReportsPanel companyId={companyId} />}
+    <div className="customer-toolbar" style={{display:tab === "reports" ? "none" : undefined}}><div className="customer-count">عدد المستندات <strong>{(tab === "orders" ? orders : tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : tab === "quotations" ? quotations : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } if (tab === "quotations") { setEditingQuotationId(null); setQuoteForm(old => ({...old, customer:"", quotation_number:"", notes:""})); setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "أمر بيع جديد" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : tab === "quotations" ? "عرض سعر جديد" : "التقرير"}</button></div>
 
     {showForm && tab === "orders" && <form className="inventory-form" onSubmit={createOrder}>
       <label>العميل<select required value={orderForm.customer} onChange={e=>setOrderForm({...orderForm,customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
