@@ -3,14 +3,15 @@ from decimal import Decimal
 from rest_framework.test import APITestCase
 
 from accounting.models import JournalEntry, JournalLine
-from sales.tests_api import SalesWorkflowTests
 
 
 class CustomerReceiptBatchTests(APITestCase):
     def setUp(self):
+        from sales.tests_api import SalesWorkflowTests
         SalesWorkflowTests.setUp(self)
 
     def _create_delivery(self, *args, **kwargs):
+        from sales.tests_api import SalesWorkflowTests
         return SalesWorkflowTests._create_delivery(self, *args, **kwargs)
 
     def _create_posted_invoice(self, number):
