@@ -1099,3 +1099,71 @@ class InventoryApiTests(APITestCase):
             f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}&branch={restricted_branch.pk}",
         )
         self.assertEqual(response.status_code, 403, response.data)
+
+    def test_valuation_integrity_pending_movements_are_isolated_by_both_warehouse_branches(self):
+        self.product = Product.objects.create(
+            company=self.company, unit=self.unit, code="PENDING-SCOPE-1",
+            name_ar="اختبار عزل الحركات المعلقة",
+        )
+        allowed_warehouse = self._warehouse("PENDING-ALLOWED")
+        restricted_branch = Branch.objects.create(
+            company=self.company, code="B-PENDING-FOREIGN", name_ar="فرع غير مصرح",
+        )
+        restricted_warehouse = Warehouse.objects.create(
+            company=self.company, branch=restricted_branch,
+            code="PENDING-RESTRICTED", name_ar="مخزن الفرع غير المصرح",
+        )
+
+        allowed_receipt = self._movement(
+            "PENDING-ALLOW-RCV", "receipt", destination=allowed_warehouse,
+        )
+        allowed_issue = self._movement(
+            "PENDING-ALLOW-ISS", "issue", source=allowed_warehouse,
+        )
+        restricted_receipt = self._movement(
+            "PENDING-HIDE-RCV", "receipt", destination=restricted_warehouse,
+        )
+        restricted_issue = self._movement(
+            "PENDING-HIDE-ISS", "issue", source=restricted_warehouse,
+        )
+        allowed_to_restricted = self._movement(
+            "PENDING-HIDE-TRF-OUT", "transfer",
+            source=allowed_warehouse, destination=restricted_warehouse,
+        )
+        restricted_to_allowed = self._movement(
+            "PENDING-HIDE-TRF-IN", "transfer",
+            source=restricted_warehouse, destination=allowed_warehouse,
+        )
+
+        for response in (
+            allowed_receipt, allowed_issue, restricted_receipt, restricted_issue,
+            allowed_to_restricted, restricted_to_allowed,
+        ):
+            self.assertEqual(response.status_code, 201, response.data)
+
+        limited_user = get_user_model().objects.create_user(
+            username="inventory-pending-branch-limited", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant", all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited_user)
+
+        response = self.client.get(
+            f"/api/inventory/balances/valuation-integrity/?company={self.company.pk}"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["scope_branch_ids"], [self.branch.pk])
+        self.assertEqual(response.data["pending_movements_count"], 2, response.data)
+        visible_numbers = {
+            row["movement_number"] for row in response.data["pending_movements"]
+        }
+        self.assertEqual(
+            visible_numbers,
+            {"PENDING-ALLOW-RCV", "PENDING-ALLOW-ISS"},
+        )
+        self.assertEqual(
+            response.data["pending_movements_count"],
+            len(response.data["pending_movements"]),
+        )

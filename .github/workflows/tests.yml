@@ -4,17 +4,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Legacy NEXUS/Flask + SQLite validation is paused.
+# Keep it available for an explicit manual run only; AdmRail ERP v2 CI
+# is the automated validation workflow for the active product.
 on:
-  push:
-    branches:
-      - feature/company-setup-currency-tax-activity
-      - draft/postgresql-stock-compat
-      - work/phase6-industry-packs
-      - work/phase7-bootstrap-ux
-      - work/postgresql-native-rebuild
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   unit-tests:
