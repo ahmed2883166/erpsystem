@@ -2326,7 +2326,7 @@ class SalesWorkflowTests(APITestCase):
             f"/api/sales-documents/document-templates/?company={self.company.pk}&document_type=return"
         )
         self.assertEqual(templates.status_code, 200, templates.data)
-        rows = templates.data.get("results", templates.data)
+        rows = list(templates.data)
         self.assertEqual(len(rows), 2)
         defaults = [row for row in rows if row["is_default"]]
         self.assertEqual(len(defaults), 1)
@@ -2336,5 +2336,5 @@ class SalesWorkflowTests(APITestCase):
             f"/api/sales-documents/document-templates/?company={self.company.pk}&document_type=invoice"
         )
         self.assertEqual(invoice_templates.status_code, 200, invoice_templates.data)
-        self.assertEqual(invoice_templates.data.get("count", len(invoice_templates.data.get("results", []))), 0)
+        self.assertEqual(len(invoice_templates.data), 0)
 
