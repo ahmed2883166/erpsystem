@@ -855,7 +855,7 @@ export type CustomerDiscountRule = {
 
 export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_currency_code: string | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
 export type CustomerReceiptBatchAllocation = {
-  id:number;invoice:number;invoice_number:string;invoice_date:string;amount:string;created_at:string;
+  id:number;invoice:number;invoice_number:string;invoice_date:string;amount:string;allocation_date:string;created_at:string;
 };
 export type CustomerReceiptBatch = {
   id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
