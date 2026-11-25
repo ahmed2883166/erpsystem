@@ -39,7 +39,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name="customerreceiptbatch",
-            constraint=models.UniqueConstraint(fields=("company", "receipt_number"), name="uq_customer_receipt_batch_company_no"),
+            constraint=models.UniqueConstraint(fields=("company", "receipt_number"), name="uq_rcpt_batch_company_no"),
         ),
         migrations.AddIndex(
             model_name="customerreceiptbatch",
