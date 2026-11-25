@@ -395,6 +395,8 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(position.carrying_base_amount, Decimal("3000.0000"))
         first.refresh_from_db()
         second.refresh_from_db()
+        first.refresh_from_db()
+        second.refresh_from_db()
         first.journal_entry.refresh_from_db()
         second.journal_entry.refresh_from_db()
         self.assertEqual(first.journal_entry.status, JournalEntry.Status.REVERSED)
