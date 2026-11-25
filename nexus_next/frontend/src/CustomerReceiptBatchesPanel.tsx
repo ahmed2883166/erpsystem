@@ -3,7 +3,7 @@ import { api, salesApi, type Branch, type Customer, type CustomerReceiptBatch, t
 import { formatMoney } from "./formatters";
 
 type AllocationDraft = { invoice:string; amount:string };
-type PendingAllocation = { batchId:number; invoice:string; amount:string };
+type PendingAllocation = { batchId:number; invoice:string; amount:string; allocation_date:string };
 type Props = {
   companyId:number|null;
   customers:Customer[];
@@ -97,7 +97,7 @@ export default function CustomerReceiptBatchesPanel({
     setBusy(true);setError("");
     try{
       await salesApi.allocateReceiptBatch(
-        pendingAllocation.batchId,Number(pendingAllocation.invoice),pendingAllocation.amount,
+        pendingAllocation.batchId,Number(pendingAllocation.invoice),pendingAllocation.amount,pendingAllocation.allocation_date,
       );
       setPendingAllocation(null);await load();await onRefresh();
     }catch(reason){setError(reason instanceof Error?reason.message:"تعذر تخصيص الدفعة المقدمة.");}
@@ -131,6 +131,7 @@ export default function CustomerReceiptBatchesPanel({
     {pendingAllocation&&<form className="inventory-form" onSubmit={allocateAdvance}>
       <h3 className="inventory-wide">تخصيص دفعة مقدمة · {batches.find(row=>row.id===pendingAllocation.batchId)?.receipt_number}</h3>
       <label>الفاتورة<select required value={pendingAllocation.invoice} onChange={event=>setPendingAllocation(old=>old?{...old,invoice:event.target.value}:old)}><option value="">اختر فاتورة مستحقة</option>{invoices.filter(invoice=>invoice.customer===batches.find(row=>row.id===pendingAllocation.batchId)?.customer&&invoice.status==="posted"&&!invoice.transaction_currency&&Number(invoice.balance_due||0)>0).map(invoice=><option key={invoice.id} value={invoice.id}>{invoice.invoice_number} · متبقي {money(invoice.balance_due)}</option>)}</select></label>
+      <label>تاريخ التخصيص<input required type="date" value={pendingAllocation.allocation_date} onChange={event=>setPendingAllocation(old=>old?{...old,allocation_date:event.target.value}:old)}/></label>
       <label>مبلغ التخصيص<input required type="number" min="0.0001" step="0.0001" value={pendingAllocation.amount} onChange={event=>setPendingAllocation(old=>old?{...old,amount:event.target.value}:old)}/></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy||!pendingAllocation.invoice}>حفظ التخصيص</button><button className="subtle-button" type="button" onClick={()=>setPendingAllocation(null)}>إلغاء</button></div>
     </form>}
@@ -143,7 +144,7 @@ export default function CustomerReceiptBatchesPanel({
         <td><div className="table-actions">
           <button type="button" className="subtle-button" onClick={()=>onPrint(batch)}>معاينة / طباعة</button>
           {batch.status==="draft"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void postBatch(batch)}>ترحيل</button>}
-          {batch.status==="posted"&&<><button type="button" className="subtle-button" disabled={busy||Number(batch.unallocated_amount)<=0} onClick={()=>setPendingAllocation({batchId:batch.id,invoice:"",amount:batch.unallocated_amount})}>تخصيص دفعة</button><button type="button" className="subtle-button" disabled={busy} onClick={()=>void reverseBatch(batch)}>عكس</button></>}
+          {batch.status==="posted"&&<><button type="button" className="subtle-button" disabled={busy||Number(batch.unallocated_amount)<=0} onClick={()=>setPendingAllocation({batchId:batch.id,invoice:"",amount:batch.unallocated_amount,allocation_date:today()})}>تخصيص دفعة</button><button type="button" className="subtle-button" disabled={busy} onClick={()=>void reverseBatch(batch)}>عكس</button></>}
         </div></td>
       </tr>)}
     </tbody></table>{!batches.length&&<div className="table-empty">لا توجد سندات قبض مجمعة.</div>}</div>
