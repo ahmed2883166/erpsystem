@@ -144,8 +144,8 @@ class SubledgerReconciliationView(APIView):
         from hr.models import Employee, PayrollComponent, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
         # The warehouse branch is the source of truth for operational-document branch scope.
-        sales_invoice_scope = Q(delivery__warehouse__branch_id__in=branch_ids)
-        receipt_scope = Q(invoice__delivery__warehouse__branch_id__in=branch_ids)
+        sales_invoice_scope = Q(branch_id__in=branch_ids) | Q(delivery__warehouse__branch_id__in=branch_ids)
+        receipt_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__delivery__warehouse__branch_id__in=branch_ids)
         sales_return_scope = Q(warehouse__branch_id__in=branch_ids)
         purchase_invoice_scope = Q(branch_id__in=branch_ids) | Q(receipt__warehouse__branch_id__in=branch_ids)
         supplier_payment_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__receipt__warehouse__branch_id__in=branch_ids)
@@ -177,7 +177,11 @@ class SubledgerReconciliationView(APIView):
         ).filter(sales_return_scope)
         sales_fx = FxSubledgerRevaluation.objects.filter(
             company_id=company_id, sales_invoice__isnull=False, revaluation_date__lte=as_of
-        ).filter(Q(sales_invoice__delivery__warehouse__branch_id__in=branch_ids) | (Q(sales_invoice__delivery__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[])))
+        ).filter(
+            Q(sales_invoice__branch_id__in=branch_ids)
+            | Q(sales_invoice__delivery__warehouse__branch_id__in=branch_ids)
+            | (Q(sales_invoice__delivery__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
+        )
 
         purchase_invoices = PurchaseInvoice.objects.filter(
             company_id=company_id, invoice_date__lte=as_of, status=PurchaseInvoice.Status.POSTED
