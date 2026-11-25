@@ -995,3 +995,16 @@ body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
 .activity-checkbox-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px 14px}
 .activity-checkbox-grid label{display:flex;align-items:center;gap:8px;min-width:0;font-weight:500}
 .activity-checkbox-grid input[type="checkbox"]{width:16px;height:16px;accent-color:var(--accent,#2563eb)}
+
+
+/* طباعة تقرير أداء المبيعات فقط مع إخفاء الفلاتر وأزرار التصدير. */
+@media print{
+  @page{size:A4 landscape;margin:12mm}
+  body *{visibility:hidden!important}
+  .sales-performance-panel.print-active,.sales-performance-panel.print-active *{visibility:visible!important}
+  .sales-performance-panel.print-active{position:absolute!important;inset:0!important;width:100%!important;background:#fff!important;padding:0!important}
+  .sales-performance-panel.print-active .report-actions,
+  .sales-performance-panel.print-active form{display:none!important}
+  .sales-performance-panel.print-active .data-table-wrap{overflow:visible!important}
+  .sales-performance-panel.print-active table{width:100%!important;font-size:10px!important}
+}
