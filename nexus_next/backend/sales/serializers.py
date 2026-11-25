@@ -170,7 +170,7 @@ class DeliveryLineInputSerializer(serializers.Serializer):
 class SalesDeliverySerializer(serializers.ModelSerializer):
     delivery_number = serializers.CharField(max_length=37)
     lines = DeliveryLineInputSerializer(many=True, write_only=True)
-    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True, allow_null=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
