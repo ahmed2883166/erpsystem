@@ -67,9 +67,11 @@ class CompanyActivity(models.Model):
         Company, on_delete=models.CASCADE, related_name="activity_assignments"
     )
     activity = models.CharField(max_length=24, choices=Company.Activity.choices)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ("activity",)
+        indexes = [models.Index(fields=("company", "is_active"), name="company_activity_active_idx")]
         constraints = [
             models.UniqueConstraint(
                 fields=("company", "activity"), name="uq_company_enabled_activity"
