@@ -428,7 +428,14 @@ def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, posi
         status=TreasuryTransaction.Status.POSTED,
     ).filter(
         Q(transaction_date__gt=revaluation.revaluation_date)
-        | Q(transaction_date=revaluation.revaluation_date, posted_at__gt=revaluation.created_at)
+        | Q(
+            transaction_date=revaluation.revaluation_date,
+            posted_at__isnull=True,
+        )
+        | Q(
+            transaction_date=revaluation.revaluation_date,
+            posted_at__gt=revaluation.created_at,
+        )
     ).exists()
     if later_movements:
         return "توجد حركة خزينة مرحّلة بعد إعادة التقييم؛ لا يمكن عكسه قبل معالجة الحركة اللاحقة."
