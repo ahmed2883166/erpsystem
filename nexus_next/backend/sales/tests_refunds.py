@@ -222,6 +222,60 @@ class CustomerRefundTests(APITestCase):
         )
         self.assertEqual(reversed_batch.status_code, 200, reversed_batch.data)
 
+    def test_return_refund_cannot_exceed_cash_collected_on_original_invoice(self):
+        invoice = self._create_posted_invoice("REFUND-INV-PARTIAL-COLLECTION")
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "invoice": invoice["id"],
+            "receipt_number": "REFUND-PARTIAL-COLLECTION-REC",
+            "receipt_date": "2026-03-11",
+            "method": "cash",
+            "payment_account": self.cash_account.pk,
+            "amount": "25",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+
+        created_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice["id"],
+            "return_number": "REFUND-RET-PARTIAL-COLLECTION",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(created_return.status_code, 201, created_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{created_return.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        over_collected = self._create_refund(
+            "REFUND-RET-OVER-COLLECTED", amount="25.0001",
+            source_return=posted_return.data["id"],
+        )
+        self.assertEqual(over_collected.status_code, 201, over_collected.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/refunds/{over_collected.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+        valid = self._create_refund(
+            "REFUND-RET-VALID-COLLECTED", amount="25",
+            source_return=posted_return.data["id"],
+        )
+        self.assertEqual(valid.status_code, 201, valid.data)
+        posted_refund = self.client.post(
+            f"/api/sales-documents/refunds/{valid.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+
     def test_refund_cannot_exceed_return_credit_or_unallocated_advance(self):
         invoice = self._create_posted_invoice("REFUND-INV-LIMIT")
         sales_return = self._create_posted_return(invoice, "REFUND-RET-LIMIT")
