@@ -32,7 +32,7 @@ def _post_entry(entry, user):
 
 @transaction.atomic
 def post_sales_return(return_id, user):
-    sales_return = SalesReturn.objects.select_for_update().select_related(
+    sales_return = SalesReturn.objects.select_for_update(of=("self",)).select_related(
         "company", "invoice", "warehouse", "stock_movement"
     ).get(pk=return_id)
     if sales_return.status != SalesReturn.Status.DRAFT:
