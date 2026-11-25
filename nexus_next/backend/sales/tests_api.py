@@ -1517,6 +1517,46 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(SalesQuotation.objects.get(pk=created.data["id"]).status, SalesQuotation.Status.EXPIRED)
 
+    def test_expired_accepted_quotation_keeps_expired_status_when_conversion_is_rejected(self):
+        created = self.client.post("/api/sales-documents/quotations/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "quotation_number": "Q-EXPIRED-CONVERT",
+            "quotation_date": "2027-01-10",
+            "valid_until": "2027-01-20",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        quote_id = created.data["id"]
+
+        sent = self.client.post(
+            f"/api/sales-documents/quotations/{quote_id}/send/", {}, format="json"
+        )
+        self.assertEqual(sent.status_code, 200, sent.data)
+        accepted = self.client.post(
+            f"/api/sales-documents/quotations/{quote_id}/accept/", {}, format="json"
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+
+        movement_count = StockMovement.objects.count()
+        with patch("sales.api.timezone.localdate", return_value=date(2027, 1, 21)):
+            response = self.client.post(
+                f"/api/sales-documents/quotations/{quote_id}/convert-to-delivery/",
+                {
+                    "warehouse": self.warehouse.pk,
+                    "delivery_number": "DEL-EXPIRED-QUOTE",
+                    "delivery_date": "2027-01-21",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            SalesQuotation.objects.get(pk=quote_id).status,
+            SalesQuotation.Status.EXPIRED,
+        )
+        self.assertEqual(StockMovement.objects.count(), movement_count)
+
     def test_quotation_send_captures_company_default_print_template_snapshot(self):
         template = SalesDocumentTemplate.objects.create(
             company=self.company,
