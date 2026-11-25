@@ -62,6 +62,20 @@ class CustomerReceiptBatchTests(APITestCase):
             f"/api/sales-documents/receipt-batches/{created.data['id']}/post/", {}, format="json"
         )
         self.assertEqual(posted.status_code, 200, posted.data)
+        statement = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-10&date_to=2026-03-11"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        batch_events = [row for row in statement.data["rows"] if row["document_type"] == "receipt_batch"]
+        self.assertEqual(len(batch_events), 1)
+        self.assertEqual(batch_events[0]["credit"], "150.0000")
+        aging_after_batch = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-11"
+        )
+        self.assertEqual(aging_after_batch.status_code, 200, aging_after_batch.data)
+        self.assertEqual(aging_after_batch.data["totals"]["total_due"], "250.0000")
+        self.assertEqual(aging_after_batch.data["totals"]["unallocated_advances"], "0.0000")
         self.assertEqual(
             self.client.get(f"/api/sales-documents/invoices/{first_invoice}/").data["balance_due"],
             "100.0000",
@@ -87,6 +101,11 @@ class CustomerReceiptBatchTests(APITestCase):
             f"/api/sales-documents/receipt-batches/{advance.data['id']}/post/", {}, format="json"
         )
         self.assertEqual(posted_advance.status_code, 200, posted_advance.data)
+        aging_with_advance = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-12"
+        )
+        self.assertEqual(aging_with_advance.status_code, 200, aging_with_advance.data)
+        self.assertEqual(aging_with_advance.data["totals"]["unallocated_advances"], "30.0000")
 
         allocated = self.client.post(
             f"/api/sales-documents/receipt-batches/{advance.data['id']}/allocate/",
