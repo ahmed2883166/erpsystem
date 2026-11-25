@@ -1119,8 +1119,10 @@ class SalesWorkflowTests(APITestCase):
             "exchange_rate": "52", "exchange_rate_date": "2026-03-11",
         }, format="json")
         self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["transaction_currency_code"], "USD")
         first_posted = self.client.post(f"/api/sales-documents/receipts/{first.data['id']}/post/", {}, format="json")
         self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertEqual(first_posted.data["transaction_currency_code"], "USD")
         self.assertEqual(first_posted.data["carrying_base_amount"], "2000.0000")
         self.assertEqual(first_posted.data["realized_fx_gain"], "80.0000")
         gain_line = JournalLine.objects.get(entry_id=first_posted.data["journal_entry"], account__code="4900")
@@ -1314,6 +1316,8 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(posted_return.status_code, 200, posted_return.data)
         self.assertEqual(posted_return.data["status"], "posted")
+        self.assertEqual(posted_return.data["transaction_currency_code"], "USD")
+        self.assertEqual(posted_return.data["transaction_grand_total"], "100.0000")
 
         reversed_return = self.client.post(
             f"/api/sales-documents/returns/{created.data['id']}/reverse/",
