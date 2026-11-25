@@ -43,7 +43,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                   "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                   "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
                   "notes", "lines", "line_items", "created_at", "posted_at")
-        read_only_fields = ("warehouse", "status", "net_total", "tax_total", "grand_total",
+        read_only_fields = ("warehouse", "branch", "status", "net_total", "tax_total", "grand_total",
                             "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                             "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                             "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
@@ -92,7 +92,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         lines_data = validated_data.pop("lines")
         invoice = validated_data["invoice"]
         company = validated_data["company"]
-        warehouse = invoice.delivery.warehouse
+        warehouse = invoice.delivery.warehouse if invoice.delivery_id else None
         return_number = validated_data["return_number"]
         movement = None
         if invoice.delivery_id:
