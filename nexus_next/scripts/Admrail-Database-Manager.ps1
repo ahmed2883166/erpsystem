@@ -231,15 +231,35 @@ function Install-FreshDatabase {
 }
 function Rename-Db {
     Assert-AppStopped
-    $c = Read-Config; $old = $c.POSTGRES_DB; $new = (Read-Host "الاسم الجديد للقاعدة").Trim()
+    $c = Read-Config
+    $names = @(Get-DatabaseNames)
+    if ($names.Count -eq 0) { throw "لا توجد قواعد بيانات يمكن إعادة تسميتها." }
+    Write-Host "اختر قاعدة البيانات التي تريد تغيير اسمها:" -ForegroundColor Cyan
+    for ($i=0; $i -lt $names.Count; $i++) {
+        $marker = if ($names[$i] -eq $c.POSTGRES_DB) { "  <== قاعدة Admrail النشطة" } else { "" }
+        Write-Host ("[{0}] {1}{2}" -f ($i+1),$names[$i],$marker)
+    }
+    $pick = (Read-Host "رقم القاعدة (Enter للإلغاء)").Trim()
+    if (-not $pick) { return }
+    if ($pick -notmatch '^\d+$' -or [int]$pick -lt 1 -or [int]$pick -gt $names.Count) { throw "اختيار قاعدة البيانات غير صحيح." }
+    $old = [string]$names[[int]$pick-1]
+    $new = (Read-Host "الاسم الجديد للقاعدة [$old]").Trim()
     if ($new -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$' -or $new -eq $old) { throw "الاسم الجديد غير صالح أو مطابق للحالي." }
     $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname = '$($new.Replace("'","''"))';"
     if ($exists) { throw "الاسم الجديد مستخدم بالفعل." }
     $null = Save-VerifiedBackup $old
     $null = Invoke-Psql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$($old.Replace("'","''"))' AND pid <> pg_backend_pid();"
     $null = Invoke-Psql ("ALTER DATABASE " + (Quote-Name $old) + " RENAME TO " + (Quote-Name $new) + ";")
-    try { Save-ConfigValue "POSTGRES_DB" $new } catch { $null = Invoke-Psql ("ALTER DATABASE " + (Quote-Name $new) + " RENAME TO " + (Quote-Name $old) + ";"); throw "فشل تحديث ملف الاتصال وتم التراجع عن تغيير الاسم." }
-    Write-Host "تم تغيير الاسم وتحديث اتصال البرنامج دون تغيير البيانات." -ForegroundColor Green
+    if ($old -eq $c.POSTGRES_DB) {
+        try { Save-ConfigValue "POSTGRES_DB" $new }
+        catch {
+            $null = Invoke-Psql ("ALTER DATABASE " + (Quote-Name $new) + " RENAME TO " + (Quote-Name $old) + ";")
+            throw "فشل تحديث ملف الاتصال وتم التراجع عن تغيير الاسم."
+        }
+        Write-Host "تم تغيير اسم قاعدة Admrail النشطة وتحديث اتصال البرنامج دون تغيير البيانات." -ForegroundColor Green
+    } else {
+        Write-Host "تم تغيير اسم القاعدة المحددة. لم يتغير اتصال Admrail لأنه متصل بقاعدة أخرى." -ForegroundColor Green
+    }
 }
 function Delete-Db {
     Assert-AppStopped
