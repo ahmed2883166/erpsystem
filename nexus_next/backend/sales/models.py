@@ -685,3 +685,148 @@ class SalesOrderLine(models.Model):
         if self.order.status != SalesOrder.Status.DRAFT:
             raise ValidationError("لا يمكن حذف بنود أمر بيع معتمد.")
         return super().delete(*args, **kwargs)
+
+class CustomerReceiptBatch(models.Model):
+    """سند قبض واحد يوزع على عدة فواتير أو يسجل دفعة مقدمة غير مخصصة."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="customer_receipt_batches")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="receipt_batches")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="customer_receipt_batches")
+    receipt_number = models.CharField(max_length=40)
+    receipt_date = models.DateField()
+    method = models.CharField(max_length=8, choices=CustomerReceipt.Method.choices, default=CustomerReceipt.Method.BANK)
+    payment_account = models.ForeignKey(
+        ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_receipt_batches",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4,
+        validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    reference = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_receipt_batch",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_customer_receipt_batch",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_customer_receipt_batches",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_customer_receipt_batches",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-receipt_date", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "receipt_number"),
+                name="uq_rcpt_batch_company_no",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("company", "status", "receipt_date"),
+                name="sales_rcpt_batch_co_stat_idx",
+            ),
+            models.Index(fields=("branch", "receipt_date"), name="sales_rcpt_batch_branch_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    @property
+    def allocated_amount(self):
+        return self.allocations.aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
+
+    @property
+    def unallocated_amount(self):
+        return max(self.amount - self.allocated_amount, Decimal("0"))
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(
+            pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)
+        ).exists():
+            allowed = {
+                "status", "reversal_journal_entry", "reversal_date",
+                "reversed_at", "reversed_by",
+            }
+            fields = set(kwargs.get("update_fields") or ())
+            if not fields or not fields.issubset(allowed):
+                raise ValidationError("سند قبض العميل المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف سند قبض مجمع مرحّل.")
+        return super().delete(*args, **kwargs)
+
+
+class CustomerReceiptBatchAllocation(models.Model):
+    """تخصيص جزء من سند القبض المجمع إلى فاتورة عميل محددة."""
+    batch = models.ForeignKey(
+        CustomerReceiptBatch, on_delete=models.PROTECT, related_name="allocations",
+    )
+    invoice = models.ForeignKey(
+        SalesInvoice, on_delete=models.PROTECT, related_name="receipt_batch_allocations",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4,
+        validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_customer_receipt_batch_allocations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [
+            models.Index(fields=("invoice", "batch"), name="sales_rcpt_alloc_invoice_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.batch_id and self.invoice_id:
+            if (
+                self.batch.company_id != self.invoice.company_id
+                or self.batch.customer_id != self.invoice.customer_id
+            ):
+                raise ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة المحددين في سند القبض."})
+            if self.invoice.transaction_currency_id:
+                raise ValidationError("التخصيص المجمع متاح لفواتير العملة الأساسية فقط.")
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("سطر تخصيص سند القبض غير قابل للتعديل؛ أضف تخصيصًا جديدًا.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.batch.status != CustomerReceiptBatch.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف تخصيص من سند قبض مرحّل.")
+        return super().delete(*args, **kwargs)
+
