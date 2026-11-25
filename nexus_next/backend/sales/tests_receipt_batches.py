@@ -85,7 +85,7 @@ class CustomerReceiptBatchTests(APITestCase):
         )
         self.assertEqual(aging_after_batch.status_code, 200, aging_after_batch.data)
         self.assertEqual(aging_after_batch.data["totals"]["total_due"], "250.0000")
-        self.assertEqual(aging_after_batch.data["totals"]["unallocated_advances"], "0.0000")
+        self.assertEqual(Decimal(aging_after_batch.data["totals"]["unallocated_advances"]), Decimal("0"))
         self.assertEqual(
             self.client.get(f"/api/sales-documents/invoices/{first_invoice}/").data["balance_due"],
             "100.0000",
@@ -133,7 +133,7 @@ class CustomerReceiptBatchTests(APITestCase):
             f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-13"
         )
         self.assertEqual(aging_after_allocation.status_code, 200, aging_after_allocation.data)
-        self.assertEqual(aging_after_allocation.data["totals"]["unallocated_advances"], "0.0000")
+        self.assertEqual(Decimal(aging_after_allocation.data["totals"]["unallocated_advances"]), Decimal("0"))
         self.assertEqual(aging_after_allocation.data["totals"]["total_due"], "220.0000")
         self.assertEqual(
             self.client.get(f"/api/sales-documents/invoices/{second_invoice}/").data["balance_due"],
