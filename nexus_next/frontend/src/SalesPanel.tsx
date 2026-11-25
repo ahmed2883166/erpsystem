@@ -13,7 +13,7 @@ type DeliveryDraftLine = { product: string; quantity: string; expiry_date: strin
 type InvoiceDraftLine = { delivery_line?: number; product?: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string; discount_percent: string };
 type QuotationDraftLine = { product:string; quantity:string; unit_price:string; tax_rate:string; tax_code:string; discount_percent:string };
 const money = (value: string) => formatMoney(value);
-const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: "posted", reversed: "reversed", sent: "sent", accepted: "accepted", rejected: "rejected", expired: "expired", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
+const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: "posted", confirmed: "posted", delivered: "posted", cancelled: "reversed", partially_delivered: "partial", reversed: "reversed", sent: "sent", accepted: "accepted", rejected: "rejected", expired: "expired", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
 
 // شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
