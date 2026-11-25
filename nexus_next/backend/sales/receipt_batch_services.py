@@ -216,6 +216,11 @@ def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user, allocati
     allocation_date = allocation_date or timezone.localdate()
     if allocation_date < batch.receipt_date:
         raise ValidationError("تاريخ التخصيص لا يجوز أن يسبق تاريخ سند القبض.")
+    latest_refund_date = batch.refunds.filter(status="posted").order_by(
+        "-refund_date", "-id",
+    ).values_list("refund_date", flat=True).first()
+    if latest_refund_date and allocation_date < latest_refund_date:
+        raise ValidationError("تاريخ التخصيص لا يجوز أن يسبق تاريخ آخر رد من الدفعة المقدمة.")
     _check_allocation_target(batch, invoice, amount, allocation_date)
     allocation = CustomerReceiptBatchAllocation.objects.create(
         batch=batch, invoice=invoice, amount=amount, allocation_date=allocation_date, created_by=user,
