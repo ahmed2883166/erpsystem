@@ -777,7 +777,7 @@ export type SalesInvoice = { print_template_snapshot?: {template_id:number|null;
 
 export type SalesDocumentTemplate = {
   id:number; company:number; company_name:string;
-  document_type:"quotation"|"invoice"|"delivery"|"receipt";
+  document_type:"quotation"|"invoice"|"delivery"|"receipt"|"return";
   name:string; style:"classic"|"modern"|"compact";
   config:{accent_color?:string;show_tax_number?:boolean;show_discount?:boolean;show_tax?:boolean;show_bank_details?:boolean;bank_details?:string;footer_text?:string;language?:"ar"|"en"|"bilingual";font_scale?:"small"|"normal"|"large"};
   is_default:boolean;is_active:boolean;created_at:string;updated_at:string;

@@ -535,6 +535,7 @@ class SalesDocumentTemplate(models.Model):
         INVOICE = "invoice", "فاتورة مبيعات"
         DELIVERY = "delivery", "إذن تسليم"
         RECEIPT = "receipt", "سند قبض"
+        RETURN = "return", "مردود مبيعات"
 
     class Style(models.TextChoices):
         CLASSIC = "classic", "Classic"

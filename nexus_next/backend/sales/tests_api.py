@@ -2433,3 +2433,50 @@ class SalesWorkflowTests(APITestCase):
             credit_total = sum((line.credit for line in entry.lines.all()), Decimal("0"))
             self.assertEqual(debit_total, credit_total, entry.entry_number)
 
+    def test_sales_return_has_its_own_print_template_type(self):
+        admin = get_user_model().objects.create_user(
+            username="sales_return_template_admin", password="test-password"
+        )
+        CompanyMembership.objects.create(
+            user=admin, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(admin)
+
+        first = self.client.post("/api/sales-documents/document-templates/", {
+            "company": self.company.pk,
+            "document_type": "return",
+            "name": "Return Classic",
+            "style": "classic",
+            "is_default": True,
+            "config": {"show_tax": True, "show_discount": False},
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["document_type"], "return")
+
+        second = self.client.post("/api/sales-documents/document-templates/", {
+            "company": self.company.pk,
+            "document_type": "return",
+            "name": "Return Modern",
+            "style": "modern",
+            "is_default": True,
+            "config": {"accent_color": "#224466"},
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+
+        templates = self.client.get(
+            f"/api/sales-documents/document-templates/?company={self.company.pk}&document_type=return"
+        )
+        self.assertEqual(templates.status_code, 200, templates.data)
+        rows = list(templates.data)
+        self.assertEqual(len(rows), 2)
+        defaults = [row for row in rows if row["is_default"]]
+        self.assertEqual(len(defaults), 1)
+        self.assertEqual(defaults[0]["id"], second.data["id"])
+
+        invoice_templates = self.client.get(
+            f"/api/sales-documents/document-templates/?company={self.company.pk}&document_type=invoice"
+        )
+        self.assertEqual(invoice_templates.status_code, 200, invoice_templates.data)
+        self.assertEqual(len(invoice_templates.data), 0)
+
+
