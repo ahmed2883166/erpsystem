@@ -281,7 +281,11 @@ class SalesQuotationViewSet(SalesBaseViewSet):
         if quotation.valid_until < timezone.localdate():
             quotation.status = SalesQuotation.Status.EXPIRED
             quotation.save(update_fields=("status", "updated_at"))
-            raise ValidationError("انتهت صلاحية عرض السعر.")
+            # Return normally so the surrounding atomic block commits the EXPIRED status.
+            return Response(
+                {"detail": "انتهت صلاحية عرض السعر."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             warehouse_id = int(request.data.get("warehouse"))
         except (TypeError, ValueError):
