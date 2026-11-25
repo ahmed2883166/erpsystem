@@ -330,7 +330,14 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
     if rate_date > revaluation_date:
         raise ValidationError("تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ إعادة التقييم.")
     if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date__gt=revaluation_date).exists():
-        raise ValidationError("يوجد تقييم أو حدث إعادة تقييم أحدث؛ لا يمكن إنشاء تقييم بتاريخ رجعي.")
+        raise ValidationError("يوجد تقييم أحدث؛ لا يمكن إنشاء تقييم بتاريخ رجعي.")
+    if TreasuryFxRevaluation.objects.filter(
+        account=account,
+        reversal_journal_entry__isnull=False,
+        reversal_journal_entry__entry_date__gt=revaluation_date,
+        reversal_journal_entry__status=JournalEntry.Status.POSTED,
+    ).exists():
+        raise ValidationError("يوجد عكس تقييم بتاريخ لاحق؛ لا يمكن إنشاء تقييم قبل تاريخ العكس.")
     if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date=revaluation_date).exists():
         raise ValidationError("تمت إعادة تقييم هذا الحساب في التاريخ نفسه من قبل.")
     rate_row = ExchangeRate.objects.filter(
