@@ -202,6 +202,18 @@ function Show-Logs {
             Format-Table -AutoSize
     }
 }
+function Invoke-DatabaseManager {
+    $manager = Join-Path $script:AppRoot "scripts\Admrail-Database-Manager.ps1"
+    if (-not (Test-Path -LiteralPath $manager -PathType Leaf)) {
+        throw "أداة إدارة قواعد البيانات غير موجودة داخل scripts."
+    }
+    Write-Log "Owner opened PostgreSQL database and role manager."
+    & (Get-WindowsPowerShellPath) -NoLogo -NoProfile -ExecutionPolicy Bypass -File $manager
+    if ($LASTEXITCODE -ne 0) {
+        throw "توقفت أداة إدارة قواعد البيانات بخطأ. راجع الرسالة الظاهرة."
+    }
+    Write-Log "Owner database manager closed."
+}
 try {
     $script:AppRoot = Find-AppRoot
     Test-OwnerAuthentication
@@ -217,6 +229,7 @@ try {
         Write-Host "3) Restore backup to a NEW database"
         Write-Host "4) Apply Django migrations (backup + explicit confirmation)"
         Write-Host "5) View toolkit/application logs"
+        Write-Host "6) إدارة قواعد البيانات ومستخدمي PostgreSQL (مالك البرنامج فقط)"
         Write-Host "0) Exit"
         $choice = Read-Host "اختيارك"
         try {
@@ -226,6 +239,7 @@ try {
                 "3" { Invoke-Restore }
                 "4" { Invoke-Migrations }
                 "5" { Show-Logs }
+                "6" { Invoke-DatabaseManager }
                 "0" { $script:ExitRequested = $true }
                 default { Write-Host "اختيار غير صحيح." -ForegroundColor Yellow }
             }

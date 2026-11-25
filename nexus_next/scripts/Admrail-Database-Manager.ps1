@@ -231,15 +231,35 @@ function Install-FreshDatabase {
 }
 function Rename-Db {
     Assert-AppStopped
-    $c = Read-Config; $old = $c.POSTGRES_DB; $new = (Read-Host "الاسم الجديد للقاعدة").Trim()
+    $c = Read-Config
+    $names = @(Get-DatabaseNames)
+    if ($names.Count -eq 0) { throw "لا توجد قواعد بيانات يمكن إعادة تسميتها." }
+    Write-Host "اختر قاعدة البيانات التي تريد تغيير اسمها:" -ForegroundColor Cyan
+    for ($i=0; $i -lt $names.Count; $i++) {
+        $marker = if ($names[$i] -eq $c.POSTGRES_DB) { "  <== قاعدة Admrail النشطة" } else { "" }
+        Write-Host ("[{0}] {1}{2}" -f ($i+1),$names[$i],$marker)
+    }
+    $pick = (Read-Host "رقم القاعدة (Enter للإلغاء)").Trim()
+    if (-not $pick) { return }
+    if ($pick -notmatch '^\d+$' -or [int]$pick -lt 1 -or [int]$pick -gt $names.Count) { throw "اختيار قاعدة البيانات غير صحيح." }
+    $old = [string]$names[[int]$pick-1]
+    $new = (Read-Host "الاسم الجديد للقاعدة [$old]").Trim()
     if ($new -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$' -or $new -eq $old) { throw "الاسم الجديد غير صالح أو مطابق للحالي." }
     $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname = '$($new.Replace("'","''"))';"
     if ($exists) { throw "الاسم الجديد مستخدم بالفعل." }
     $null = Save-VerifiedBackup $old
     $null = Invoke-Psql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$($old.Replace("'","''"))' AND pid <> pg_backend_pid();"
     $null = Invoke-Psql ("ALTER DATABASE " + (Quote-Name $old) + " RENAME TO " + (Quote-Name $new) + ";")
-    try { Save-ConfigValue "POSTGRES_DB" $new } catch { $null = Invoke-Psql ("ALTER DATABASE " + (Quote-Name $new) + " RENAME TO " + (Quote-Name $old) + ";"); throw "فشل تحديث ملف الاتصال وتم التراجع عن تغيير الاسم." }
-    Write-Host "تم تغيير الاسم وتحديث اتصال البرنامج دون تغيير البيانات." -ForegroundColor Green
+    if ($old -eq $c.POSTGRES_DB) {
+        try { Save-ConfigValue "POSTGRES_DB" $new }
+        catch {
+            $null = Invoke-Psql ("ALTER DATABASE " + (Quote-Name $new) + " RENAME TO " + (Quote-Name $old) + ";")
+            throw "فشل تحديث ملف الاتصال وتم التراجع عن تغيير الاسم."
+        }
+        Write-Host "تم تغيير اسم قاعدة Admrail النشطة وتحديث اتصال البرنامج دون تغيير البيانات." -ForegroundColor Green
+    } else {
+        Write-Host "تم تغيير اسم القاعدة المحددة. لم يتغير اتصال Admrail لأنه متصل بقاعدة أخرى." -ForegroundColor Green
+    }
 }
 function Delete-Db {
     Assert-AppStopped
@@ -288,6 +308,128 @@ function Reset-AppPassword {
     Push-Location $Backend
     try { & $Python manage.py changepassword $u; if ($LASTEXITCODE -ne 0) { throw "لم يتم تغيير كلمة مرور مستخدم البرنامج." } } finally { Pop-Location }
 }
+function Get-LoginRoles {
+    $config = Read-Config
+    $appRole = $config.POSTGRES_USER.Replace("'","''")
+    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND rolname !~ '^pg_' AND rolname <> '$appRole' ORDER BY rolname;"
+    return @($raw -split "\r?\n" | Where-Object { $_ })
+}
+function Show-LoginRoles {
+    $sql = "SELECT rolname || ' | ' || CASE WHEN rolsuper OR rolreplication OR rolbypassrls OR rolcreatedb OR rolcreaterole THEN 'صلاحيات مرتفعة' ELSE 'مستخدم عادي' END || ' | ' || CASE WHEN rolcanlogin THEN 'دخول مفعّل' ELSE 'دخول موقوف' END FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;"
+    $raw = Invoke-Psql $sql
+    Write-Host "حسابات PostgreSQL وصلاحياتها:" -ForegroundColor Cyan
+    if (-not $raw) { Write-Host "لا توجد حسابات."; return }
+    $raw -split "\r?\n" | ForEach-Object { Write-Host (" - " + $_) }
+}
+function Invoke-RoleSqlFile([string]$Sql) {
+    $file = Join-Path $env:TEMP ("admrail-role-" + [guid]::NewGuid().ToString("N") + ".sql")
+    try {
+        [IO.File]::WriteAllText($file,$Sql,(New-Object System.Text.UTF8Encoding($false)))
+        $who = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        & icacls.exe $file /inheritance:r /grant:r "$($who):F" "SYSTEM:F" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "تعذر حماية ملف العملية المؤقت." }
+        $c = Read-Config; $psql = Get-PgTool "psql"; $env:PGPASSWORD = $script:AdminPassword
+        & $psql -X -q -v ON_ERROR_STOP=1 -h $c.POSTGRES_HOST -p $c.POSTGRES_PORT -U postgres -d postgres -f $file
+        if ($LASTEXITCODE -ne 0) { throw "رفض PostgreSQL العملية؛ لم يتم اعتبارها ناجحة." }
+    } finally {
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
+        Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
+    }
+}
+function Read-RolePassword([string]$Prompt) {
+    $secure = Read-Host $Prompt -AsSecureString
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
+}
+function Create-LoginRole {
+    $name = (Read-Host "اسم المستخدم الجديد").Trim()
+    if ($name -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$' -or $name -match '^pg_') { throw "اسم المستخدم غير صالح." }
+    $exists = Invoke-Psql "SELECT 1 FROM pg_roles WHERE rolname='$($name.Replace("'","''"))';"
+    if ($exists) { throw "اسم المستخدم موجود بالفعل." }
+    $password = Read-RolePassword "كلمة مرور المستخدم الجديد"
+    if ($password.Length -lt 12) { $password = $null; throw "كلمة المرور يجب ألا تقل عن 12 حرفًا." }
+    $confirm = Read-RolePassword "أعد كتابة كلمة المرور"
+    if ($password -cne $confirm) { $password = $null; $confirm = $null; throw "كلمتا المرور غير متطابقتين." }
+    $quoted = Quote-Name $name
+    $escapedPassword = $password.Replace("'","''")
+    try { Invoke-RoleSqlFile ("CREATE ROLE " + $quoted + " LOGIN PASSWORD '" + $escapedPassword + "';") }
+    finally { $password = $null; $confirm = $null; $escapedPassword = $null }
+    Write-Host "تم إنشاء حساب دخول PostgreSQL. لم تُمنح له صلاحيات إدارية أو صلاحيات قواعد بيانات تلقائيًا." -ForegroundColor Green
+}
+function Select-LoginRole {
+    $roles = @(Get-LoginRoles)
+    if ($roles.Count -eq 0) { throw "لا توجد حسابات مستخدمين عادية للاختيار." }
+    for ($i=0; $i -lt $roles.Count; $i++) { Write-Host ("[{0}] {1}" -f ($i+1),$roles[$i]) }
+    $choice = (Read-Host "اختر رقم المستخدم (Enter للإلغاء)").Trim()
+    if (-not $choice) { return $null }
+    if ($choice -notmatch '^\d+$' -or [int]$choice -lt 1 -or [int]$choice -gt $roles.Count) { throw "اختيار غير صحيح." }
+    return [string]$roles[[int]$choice-1]
+}
+function Update-LoginRole {
+    $name = Select-LoginRole
+    if (-not $name) { return }
+    Write-Host "1) تغيير كلمة المرور"
+    Write-Host "2) إيقاف تسجيل الدخول"
+    Write-Host "3) تفعيل تسجيل الدخول"
+    $action = Read-Host "اختر الإجراء"
+    $quoted = Quote-Name $name
+    $config = Read-Config
+    if ($action -eq "2" -and $name -eq $config.POSTGRES_USER) {
+        throw "لا يمكن إيقاف دخول مستخدم اتصال Admrail الحالي؛ سيؤدي ذلك إلى توقف البرنامج."
+    }
+    switch ($action) {
+        "1" {
+            $password = Read-RolePassword "كلمة المرور الجديدة"
+            if ($password.Length -lt 12) { $password = $null; throw "كلمة المرور يجب ألا تقل عن 12 حرفًا." }
+            $escaped = $password.Replace("'","''")
+            try { Invoke-RoleSqlFile ("ALTER ROLE " + $quoted + " PASSWORD '" + $escaped + "';") }
+            finally { $password = $null; $escaped = $null }
+        }
+        "2" { Invoke-RoleSqlFile ("ALTER ROLE " + $quoted + " NOLOGIN;") }
+        "3" { Invoke-RoleSqlFile ("ALTER ROLE " + $quoted + " LOGIN;") }
+        default { throw "اختيار غير صحيح." }
+    }
+    Write-Host "تم تنفيذ التعديل." -ForegroundColor Green
+}
+function Remove-LoginRole {
+    $name = Select-LoginRole
+    if (-not $name) { return }
+    $escaped = $name.Replace("'","''")
+    $info = (Invoke-Psql "SELECT json_build_object('superuser',rolsuper,'replication',rolreplication,'bypassrls',rolbypassrls,'createdb',rolcreatedb,'createrole',rolcreaterole)::text FROM pg_roles WHERE rolname='$escaped';") | ConvertFrom-Json
+    if (-not $info -or $info.superuser -or $info.replication -or $info.bypassrls -or $info.createdb -or $info.createrole) { throw "رفض الحذف: هذا الحساب يمتلك صلاحيات مرتفعة." }
+    $config = Read-Config
+    if ($name -eq $config.POSTGRES_USER) { throw "رفض الحذف: هذا هو مستخدم اتصال Admrail الحالي." }
+    $owned = [int](Invoke-Psql "SELECT count(*) FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname='$escaped');")
+    if ($owned -gt 0) { throw "رفض الحذف: المستخدم يمتلك قاعدة بيانات. انقل الملكية يدويًا بعد مراجعة المالك." }
+    Write-Host "سيحاول PostgreSQL حذف الحساب فقط. إذا كانت له صلاحيات أو كائنات مرتبطة فسيرفض الأمر ولن تُحذف تلك الكائنات." -ForegroundColor Yellow
+    if ((Read-Host "اكتب DELETE ROLE $name للتأكيد") -cne "DELETE ROLE $name") { Write-Host "تم الإلغاء."; return }
+    Invoke-RoleSqlFile ("DROP ROLE " + (Quote-Name $name) + ";")
+    Write-Host "تم حذف حساب الدخول." -ForegroundColor Green
+}
+function Manage-LoginRoles {
+    while ($true) {
+        Clear-Host
+        Write-Host "إدارة مستخدمي PostgreSQL" -ForegroundColor Cyan
+        Write-Host "1) عرض المستخدمين"
+        Write-Host "2) إنشاء مستخدم جديد"
+        Write-Host "3) تعديل مستخدم (كلمة المرور / تفعيل الدخول / إيقافه)"
+        Write-Host "4) حذف مستخدم غير مستخدم"
+        Write-Host "0) رجوع"
+        $choice = Read-Host "اختيارك"
+        try {
+            switch ($choice) {
+                "1" { Show-LoginRoles }
+                "2" { Create-LoginRole }
+                "3" { Update-LoginRole }
+                "4" { Remove-LoginRole }
+                "0" { return }
+                default { Write-Host "اختيار غير صحيح." }
+            }
+        } catch { Write-Host ("لم تكتمل العملية: " + $_.Exception.Message) -ForegroundColor Red }
+        if ($choice -ne "0") { [void](Read-Host "اضغط Enter للمتابعة") }
+    }
+}
 try {
     $svc = Get-Service -Name "postgresql-x64-16" -ErrorAction SilentlyContinue
     if (-not $svc -or $svc.Status -ne "Running") { throw "خدمة PostgreSQL 16 غير موجودة أو متوقفة." }
@@ -301,13 +443,14 @@ try {
         Write-Host "1 - فحص الاتصال وحالة القاعدة"
         Write-Host "2 - تحديث القاعدة الحالية مع الحفاظ على البيانات"
         Write-Host "3 - إنشاء قاعدة بيانات جديدة"
-        Write-Host "4 - تغيير اسم القاعدة الحالية"
+        Write-Host "4 - تغيير اسم قاعدة بيانات محددة"
         Write-Host "5 - حذف قاعدة قديمة غير نشطة بعد نسخة مشفرة"
         Write-Host "6 - تغيير كلمة مرور مستخدم PostgreSQL الخاص بالبرنامج"
         Write-Host "7 - تغيير كلمة مرور مستخدم Admrail"
         Write-Host "8 - استعادة نسخة إلى قاعدة منفصلة"
         Write-Host "9 - عرض قواعد البيانات وتحديد القاعدة النشطة"
         Write-Host "10 - تجهيز قاعدة جديدة واختيار قاعدة قديمة لحذفها بعد النجاح"
+        Write-Host "11 - إدارة مستخدمي PostgreSQL"
         Write-Host "0 - خروج"
         Write-Host "ملاحظة: استعادة كلمة مرور postgres المنسية تتطلب إجراء استرداد مسؤول Windows؛ الأداة لا تتجاوز حماية PostgreSQL." -ForegroundColor Yellow
         $choice = Read-Host "اختر رقم العملية"
@@ -328,6 +471,7 @@ try {
                 }
                 "9" { Show-DatabaseList }
                 "10" { Install-FreshDatabase }
+                "11" { Manage-LoginRoles }
                 "0" { break }
                 default { Write-Host "اختيار غير صحيح." }
             }
