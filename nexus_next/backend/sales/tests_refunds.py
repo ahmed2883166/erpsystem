@@ -46,7 +46,25 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         return created.data
 
+    def _post_invoice_receipt(self, invoice, number):
+        created = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "invoice": invoice["id"],
+            "receipt_number": number,
+            "receipt_date": "2026-03-11",
+            "method": "cash",
+            "payment_account": self.cash_account.pk,
+            "amount": invoice["grand_total"],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/sales-documents/receipts/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
     def _create_posted_return(self, invoice, number):
+        self._post_invoice_receipt(invoice, f"{number}-RECEIPT")
         created = self.client.post("/api/sales-documents/returns/", {
             "company": self.company.pk,
             "invoice": invoice["id"],
