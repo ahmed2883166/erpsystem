@@ -1295,6 +1295,11 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         ).exists()
         if later_receipts:
             raise ValidationError("يجب عكس أحدث سند قبض على الفاتورة أولًا.")
+        if CustomerRefund.objects.filter(
+            source_return__invoice_id=receipt.invoice_id,
+            status=CustomerRefund.Status.POSTED,
+        ).exists():
+            raise ValidationError("يجب عكس ردود المبالغ المرتبطة بمردودات الفاتورة أولًا قبل عكس سند قبضها.")
         if FxSubledgerRevaluation.objects.filter(
             sales_invoice_id=receipt.invoice_id,
         ).filter(
