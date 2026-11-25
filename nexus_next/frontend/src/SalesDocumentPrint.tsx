@@ -22,7 +22,7 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
     ? invoice!.transaction_currency_code
     : company?.base_currency_code||"";
   useEffect(()=>{
-    if(!company?.id||doc?.print_template_snapshot)return;
+    if(!company?.id||(doc?.print_template_snapshot&&Object.keys(doc.print_template_snapshot).length>0))return;
     let active=true;
     void salesApi.documentTemplates(company.id).then(rows=>{
       if(active)setDefaultTemplate(rows.find(row=>row.document_type===(isInvoice?"invoice":"quotation")&&row.is_active&&row.is_default)||null);
@@ -30,7 +30,8 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
     return ()=>{active=false;};
   },[company?.id,doc?.id,isInvoice,doc?.print_template_snapshot]);
   if(!doc)return null;
-  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=doc.print_template_snapshot||{
+  const savedSnapshot=doc.print_template_snapshot&&Object.keys(doc.print_template_snapshot).length>0?doc.print_template_snapshot:null;
+  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=savedSnapshot||{
     template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",
     style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{},
   };
