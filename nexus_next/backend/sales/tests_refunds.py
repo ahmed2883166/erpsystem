@@ -19,6 +19,10 @@ class CustomerRefundTests(APITestCase):
             name_ar="خزينة رد العملاء", opening_balance=Decimal("1000"),
         )
 
+    def _create_delivery(self, *args, **kwargs):
+        from sales.tests_api import SalesWorkflowTests
+        return SalesWorkflowTests._create_delivery(self, *args, **kwargs)
+
     def _create_posted_invoice(self, number):
         delivery_id, delivery_line_id = self._create_delivery(
             number.replace("INV", "DEL"),
