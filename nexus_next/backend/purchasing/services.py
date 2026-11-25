@@ -43,7 +43,7 @@ def _branch_and_year(receipt, entry_date):
 
 def _branch_and_year_for_invoice(invoice, entry_date):
     """Resolve branch and open fiscal year for either inventory or direct-expense invoices."""
-    if invoice.branch_id:
+    if invoice.invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE and invoice.branch_id:
         branch = invoice.branch
     elif invoice.receipt_id:
         branch = resolve_warehouse_branch(invoice.company, invoice.receipt.warehouse)
