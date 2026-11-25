@@ -660,11 +660,12 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         ).select_related("journal_entry", "reversal_journal_entry").prefetch_related("allocations__invoice")
         if branch_id:
             receipt_batches = receipt_batches.filter(branch_id=branch_id)
+        statement_as_of = date_to or timezone.localdate()
         for batch in receipt_batches:
             invoice_numbers = ", ".join(
                 allocation.invoice.invoice_number
                 for allocation in batch.allocations.filter(
-                    allocation_date__lte=date_to,
+                    allocation_date__lte=statement_as_of,
                 ).select_related("invoice")
             )
             description = (
