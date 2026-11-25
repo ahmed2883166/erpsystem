@@ -362,6 +362,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو لا يسري على الشركة أو تاريخ الفاتورة."})
             return attrs
 
+        if branch is not None:
+            raise serializers.ValidationError({"branch": "فرع فاتورة المخزون يُحدد من مخزن إذن الاستلام."})
         if not receipt or receipt.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"receipt": "يجب ترحيل إذن استلام البضاعة أولاً."})
         if company and receipt.company_id != company.pk:
