@@ -22,3 +22,12 @@ The toolkit searches parent folders for an application root containing `backend\
 - Backup requires a configured backup destination and initialized offline backup-encryption key.
 - Restore and migration functions are not considered production-validated until tested on the target Windows installation with a separate restore database.
 - Never distribute private owner signing keys or recovery secrets with this toolkit.
+
+
+## إدارة قواعد البيانات والمستخدمين
+- من القائمة الرئيسية اختر **6) إدارة قواعد البيانات ومستخدمي PostgreSQL** بعد تسجيل دخول مالك البرنامج.
+- تفتح أداة إدارة PostgreSQL المرفقة بالبرنامج، وتعرض أسماء قواعد البيانات الموجودة فعليًا على الخادم، مع تمييز قاعدة Admrail النشطة.
+- تشمل الأداة إنشاء قاعدة جديدة، تغيير اسم القاعدة النشطة، حذف قاعدة غير نشطة بعد نسخة احتياطية مشفرة وتأكيد الاسم، وعرض قواعد البيانات.
+- تتضمن إدارة أدوار PostgreSQL (المستخدمين): عرض الحسابات، إنشاء حساب دخول، تفعيل/إيقاف تسجيل الدخول، وتغيير كلمة المرور أو حذف حساب غير مستخدم بعد فحوصات الحماية.
+- كلمة مرور مسؤول PostgreSQL تُطلب داخل الأداة عند فتحها ولا تُحفظ في ملفات البرنامج. لا تُدخلها إلا على جهاز الخادم وبيد مالك البرنامج.
+- لا تعرض هذه الوظيفة داخل حسابات موظفي الشركات أو واجهة الويب.
