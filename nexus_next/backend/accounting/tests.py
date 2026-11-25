@@ -294,6 +294,18 @@ class DirectCashFlowApiTests(TestCase):
         loan = ChartOfAccount.objects.create(
             company=company, code="2501", name_ar="قرض بنكي", nature="liability",
         )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3001", name_ar="رأس المال", nature="equity",
+        )
+        opening_entry = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="DIRECT-CF-OPENING", entry_date=date(2026, 1, 5),
+            description="رصيد نقدية قبل بداية فترة القائمة",
+        )
+        JournalLine.objects.create(entry=opening_entry, account=cash, debit=Decimal("500.0000"))
+        JournalLine.objects.create(entry=opening_entry, account=capital, credit=Decimal("500.0000"))
+        post_journal(opening_entry.pk)
+
         treasury = TreasuryAccount.objects.create(
             company=company, branch=branch, account=cash,
             kind=TreasuryAccount.Kind.BANK, code="BANK-01",
@@ -341,7 +353,7 @@ class DirectCashFlowApiTests(TestCase):
         client.force_authenticate(user=user)
         result = client.get(
             f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
-            "&date_from=2026-01-01&date_to=2026-01-31"
+            "&date_from=2026-01-15&date_to=2026-01-31"
         )
 
         self.assertEqual(result.status_code, 200, result.data)
@@ -352,8 +364,12 @@ class DirectCashFlowApiTests(TestCase):
         self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.OPERATING]["net_cash_flow"], Decimal("100.0000"))
         self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.INVESTING]["net_cash_flow"], Decimal("-30.0000"))
         self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.FINANCING]["net_cash_flow"], Decimal("100.0000"))
+        self.assertEqual(result.data["opening_cash_balance"], Decimal("500.0000"))
         self.assertEqual(result.data["net_change_in_cash"], Decimal("170.0000"))
+        self.assertEqual(result.data["closing_cash_balance"], Decimal("670.0000"))
         self.assertEqual(result.data["ledger_cash_change"], Decimal("170.0000"))
+        self.assertEqual(result.data["ledger_closing_cash_balance"], Decimal("670.0000"))
+        self.assertEqual(result.data["closing_balance_difference"], Decimal("0.0000"))
         self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
         self.assertEqual(result.data["non_cash_investing_transactions"], [])
         self.assertEqual(result.data["uncategorized_counterparty_transactions"], [])
