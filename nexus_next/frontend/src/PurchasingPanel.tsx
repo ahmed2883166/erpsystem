@@ -119,7 +119,7 @@ const refresh = async () => {
   const filteredReturns = returns.filter((row) => [row.return_number, row.supplier_name, row.invoice_number].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredRefunds = refunds.filter((row) => [row.refund_number, row.supplier_name, row.return_number, row.reference].join(" ").toLowerCase().includes(search.toLowerCase()));
   const refundableReturns = returns.filter((row) => row.status === "posted");
-  const returnableInvoices = invoices.filter((invoice) => invoice.status === "posted" && Number(invoice.balance_due) > 0 && (!invoice.transaction_currency || !payments.some((payment) => payment.invoice === invoice.id && payment.status === "posted")));
+  const returnableInvoices = invoices.filter((invoice) => invoice.invoice_type === "inventory" && invoice.status === "posted" && Number(invoice.balance_due) > 0 && (!invoice.transaction_currency || !payments.some((payment) => payment.invoice === invoice.id && payment.status === "posted")));
 
   const findRate = (currencyId: string, onDate: string) => exchangeRates
     .filter(rate => rate.currency === Number(currencyId) && rate.rate_date <= onDate)
