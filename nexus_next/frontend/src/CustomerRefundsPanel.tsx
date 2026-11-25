@@ -8,6 +8,7 @@ type Props = {
   returns: SalesReturn[];
   receiptBatches: CustomerReceiptBatch[];
   treasuryAccounts: TreasuryAccount[];
+  baseCurrencyCode: string;
   onRefresh: () => Promise<void>;
 };
 
@@ -15,7 +16,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: string) => formatMoney(value);
 
 export default function CustomerRefundsPanel({
-  companyId, invoices, returns, receiptBatches, treasuryAccounts, onRefresh,
+  companyId, invoices, returns, receiptBatches, treasuryAccounts, baseCurrencyCode, onRefresh,
 }: Props) {
   const [rows, setRows] = useState<CustomerRefund[]>([]);
   const [sourceKind, setSourceKind] = useState<"return" | "advance">("return");
@@ -142,7 +143,7 @@ export default function CustomerRefundsPanel({
       <label>حساب الصرف
         <select required value={treasuryAccount} onChange={e => setTreasuryAccount(e.target.value)}>
           <option value="">اختر الخزينة أو البنك</option>
-          {treasuryAccounts.filter(row => row.is_active).map(row => <option key={row.id} value={row.id}>
+          {treasuryAccounts.filter(row => row.is_active && row.currency_code === baseCurrencyCode).map(row => <option key={row.id} value={row.id}>
             {row.name_ar} · {row.kind === "cash" ? "خزينة" : "بنك"} · {row.currency_code}
           </option>)}
         </select>
@@ -153,7 +154,7 @@ export default function CustomerRefundsPanel({
       <label>تاريخ الرد
         <input required type="date" value={refundDate} onChange={e => setRefundDate(e.target.value)} />
       </label>
-      <label>المبلغ
+      <label>المبلغ ({baseCurrencyCode || "عملة الشركة الأساسية"})
         <input required type="number" min="0.0001" step="0.0001" value={amount} onChange={e => setAmount(e.target.value)} />
       </label>
       <label>مرجع / ملاحظات
