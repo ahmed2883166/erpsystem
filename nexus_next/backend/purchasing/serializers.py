@@ -652,7 +652,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
             treasury_account = TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).first()
-            branch = resolve_warehouse_branch(company, invoice.receipt.warehouse)
+            branch = invoice.branch or (resolve_warehouse_branch(company, invoice.receipt.warehouse) if invoice.receipt_id else None)
             branch_id = branch.pk if branch else None
             if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                     or not account.is_active or account.is_group or not account.allow_posting
