@@ -861,6 +861,10 @@ class CustomerRefund(models.Model):
         "treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT,
         related_name="customer_refund",
     )
+    reversal_treasury_transaction = models.OneToOneField(
+        "treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refund_reversal",
+    )
     refund_number = models.CharField(max_length=40)
     refund_date = models.DateField()
     amount = models.DecimalField(
@@ -933,8 +937,8 @@ class CustomerRefund(models.Model):
             pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)
         ).exists():
             allowed = {
-                "status", "treasury_transaction", "reversal_journal_entry",
-                "reversal_date", "reversed_at", "reversed_by", "posted_at",
+                "status", "treasury_transaction", "reversal_treasury_transaction",
+                "reversal_journal_entry", "reversal_date", "reversed_at", "reversed_by", "posted_at",
             }
             fields = set(kwargs.get("update_fields") or ())
             if not fields or not fields.issubset(allowed):
