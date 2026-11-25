@@ -4,17 +4,63 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Exists, OuterRef, Q, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from accounting.models import AccountRole, FiscalYear
+from accounting.models import AccountRole, FiscalYear, FxSubledgerRevaluation, JournalEntry
 from accounting.services import get_account_for_role
 from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
-from sales.models import CustomerRefund, CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesReturn
+from sales.models import CustomerRefund, Customer, CustomerReceipt, CustomerReceiptBatch, SalesInvoice, SalesReturn
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
+
+
+
+def _customer_credit_balance(company_id, customer_id, as_of):
+    """رصيد العميل الصافي حتى التاريخ: السالب فقط هو الرصيد الدائن القابل للرد."""
+    invoices = SalesInvoice.objects.filter(
+        company_id=company_id, customer_id=customer_id,
+        status=SalesInvoice.Status.POSTED, invoice_date__lte=as_of,
+    )
+    invoice_total = invoices.aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    receipts = CustomerReceipt.objects.filter(
+        company_id=company_id, customer_id=customer_id,
+        status=CustomerReceipt.Status.POSTED, receipt_date__lte=as_of,
+    )
+    direct_paid = sum(
+        (row.carrying_base_amount if row.carrying_base_amount is not None else row.amount
+         for row in receipts),
+        Decimal("0"),
+    )
+    batch_paid = CustomerReceiptBatch.objects.filter(
+        company_id=company_id, customer_id=customer_id,
+        status=CustomerReceiptBatch.Status.POSTED, receipt_date__lte=as_of,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    returned = SalesReturn.objects.filter(
+        company_id=company_id, invoice__customer_id=customer_id,
+        status=SalesReturn.Status.POSTED, return_date__lte=as_of,
+    ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    refunded = CustomerRefund.objects.filter(
+        company_id=company_id, customer_id=customer_id,
+        status=CustomerRefund.Status.POSTED, refund_date__lte=as_of,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+    reversal_journals = JournalEntry.objects.filter(
+        reversal_of_id=OuterRef("journal_entry_id"),
+        entry_date__lte=as_of,
+        status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    )
+    fx_rows = FxSubledgerRevaluation.objects.filter(
+        company_id=company_id, sales_invoice__customer_id=customer_id,
+        revaluation_date__lte=as_of,
+    ).annotate(_reversed_by_as_of=Exists(reversal_journals)).filter(
+        Q(journal_entry__isnull=True)
+        | Q(journal_entry__status=JournalEntry.Status.POSTED)
+        | Q(journal_entry__status=JournalEntry.Status.REVERSED, _reversed_by_as_of=False)
+    )
+    fx_total = fx_rows.aggregate(total=Sum("difference"))["total"] or Decimal("0")
+    return invoice_total - direct_paid - batch_paid - returned + refunded + fx_total
 
 
 def _refund_error(exc):
@@ -33,8 +79,14 @@ def post_customer_refund(refund_id, user):
 
     if not refund.amount.is_finite() or refund.amount <= 0:
         raise ValidationError("أدخل مبلغ رد صحيحًا وأكبر من صفر.")
-    if refund.amount >= Decimal("10000000000000000") or refund.amount != refund.amount.quantize(Decimal("0.0001")):
-        raise ValidationError("مبلغ الرد يجب ألا يتجاوز 16 رقمًا صحيحًا و4 منازل عشرية.")
+    if refund.amount >= Decimal("10000000000000000"):
+        raise ValidationError("مبلغ الرد يتجاوز الحد الأقصى المسموح.")
+    currency_quantum = Decimal("1").scaleb(-refund.company.base_currency.decimal_places)
+    if refund.amount != refund.amount.quantize(currency_quantum):
+        raise ValidationError(
+            f"مبلغ الرد يجب أن يطابق دقة العملة الأساسية ({refund.company.base_currency.decimal_places} منازل عشرية)."
+        )
+    Customer.objects.select_for_update(of=("self",)).get(pk=refund.customer_id)
 
     if refund.source_return_id:
         source = SalesReturn.objects.select_for_update(of=("self",)).select_related(
@@ -61,32 +113,14 @@ def post_customer_refund(refund_id, user):
         if latest_invoice_refund_date and refund.refund_date < latest_invoice_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق على نفس الفاتورة.")
         return_refunded = posted_refunds.aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        invoice_refunded = CustomerRefund.objects.filter(
-            source_return__invoice_id=source.invoice_id,
-            status=CustomerRefund.Status.POSTED,
-        ).exclude(pk=refund.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        direct_receipts = CustomerReceipt.objects.filter(
-            invoice_id=source.invoice_id,
-            status=CustomerReceipt.Status.POSTED,
-            receipt_date__lte=refund.refund_date,
-        )
-        direct_paid = sum(
-            (
-                row.carrying_base_amount if row.carrying_base_amount is not None else row.amount
-                for row in direct_receipts
-            ),
+        available_return_credit = max(source.grand_total - return_refunded, Decimal("0"))
+        # لا يكفي أن يكون العميل قد دفع سابقًا؛ يجب أن يكون لديه رصيد دائن
+        # فعلي بعد جميع فواتيره وتحصيلاته ومردوداته وردوده على مستوى العميل.
+        available_customer_credit = max(
+            -_customer_credit_balance(refund.company_id, refund.customer_id, refund.refund_date),
             Decimal("0"),
         )
-        batch_paid = CustomerReceiptBatchAllocation.objects.filter(
-            invoice_id=source.invoice_id,
-            allocation_date__lte=refund.refund_date,
-            batch__receipt_date__lte=refund.refund_date,
-        ).filter(
-            batch__status=CustomerReceiptBatch.Status.POSTED,
-        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        available_credit = max(source.grand_total - return_refunded, Decimal("0"))
-        available_collected = max(direct_paid + batch_paid - invoice_refunded, Decimal("0"))
-        available = min(available_credit, available_collected)
+        available = min(available_return_credit, available_customer_credit)
         source_label = f"مردود المبيعات {source.return_number}"
     else:
         source = CustomerReceiptBatch.objects.select_for_update(of=("self",)).select_related(
