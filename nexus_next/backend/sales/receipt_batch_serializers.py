@@ -22,7 +22,7 @@ class CustomerReceiptBatchAllocationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CustomerReceiptBatchAllocation
-        fields = ("id", "invoice", "invoice_number", "invoice_date", "amount", "created_at")
+        fields = ("id", "invoice", "invoice_number", "invoice_date", "amount", "allocation_date", "created_at")
         read_only_fields = fields
 
 
@@ -145,6 +145,6 @@ class CustomerReceiptBatchSerializer(serializers.ModelSerializer):
         for row in allocations:
             CustomerReceiptBatchAllocation.objects.create(
                 batch=batch, invoice=row["invoice"], amount=row["amount"],
-                created_by=self.context["request"].user,
+                allocation_date=batch.receipt_date, created_by=self.context["request"].user,
             )
         return batch
