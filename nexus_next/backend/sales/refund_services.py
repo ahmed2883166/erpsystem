@@ -11,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 from accounting.models import AccountRole, FiscalYear
 from accounting.services import get_account_for_role
 from audit.models import AuditEvent
+from companies.access import resolve_warehouse_branch
 from sales.models import CustomerRefund, CustomerReceiptBatch, SalesReturn
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
@@ -37,12 +38,16 @@ def post_customer_refund(refund_id, user):
 
     if refund.source_return_id:
         source = SalesReturn.objects.select_for_update(of=("self",)).select_related(
-            "invoice", "branch", "company",
+            "invoice__delivery__warehouse", "invoice__branch", "branch", "company",
         ).get(pk=refund.source_return_id)
         if source.status != SalesReturn.Status.POSTED or source.reversal_journal_entry_id:
             raise ValidationError("لا يمكن رد مبلغ إلا عن مردود مبيعات مرحّل وغير معكوس.")
         source_date = source.return_date
         source_branch_id = source.branch_id or source.invoice.branch_id
+        if source_branch_id is None and source.invoice.delivery_id:
+            source_branch_id = resolve_warehouse_branch(
+                source.company, source.invoice.delivery.warehouse,
+            ).pk
         posted_refunds = source.refunds.filter(
             status=CustomerRefund.Status.POSTED,
         ).exclude(pk=refund.pk)
