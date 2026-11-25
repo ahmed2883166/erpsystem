@@ -180,8 +180,8 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
         model = SalesDelivery
         fields = ("id", "company", "customer", "customer_name", "warehouse", "warehouse_name",
                   "delivery_number", "delivery_date", "customer_reference", "notes", "order", "order_number",
-                  "movement_status", "line_items", "quotation_snapshot", "lines", "created_at")
-        read_only_fields = ("movement_status", "line_items", "quotation_snapshot", "created_at")
+                  "movement_status", "line_items", "quotation_snapshot", "order_snapshot", "lines", "created_at")
+        read_only_fields = ("movement_status", "line_items", "quotation_snapshot", "order_snapshot", "created_at")
 
     def get_line_items(self, obj):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
@@ -297,7 +297,27 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             movement_type=StockMovement.MovementType.ISSUE, movement_date=validated_data["delivery_date"],
             source_warehouse=warehouse, notes=validated_data.get("notes", ""), created_by=user,
         )
-        delivery = SalesDelivery.objects.create(**validated_data, stock_movement=movement, created_by=user)
+        order_snapshot = {}
+        if order:
+            order_snapshot = {
+                "order_id": order.pk,
+                "order_number": order.order_number,
+                "order_date": order.order_date.isoformat(),
+                "lines": [{
+                    "order_line_id": row["order_line"].pk,
+                    "product": row["product"].pk,
+                    "quantity": str(row["quantity"]),
+                    "unit_price": str(row["order_line"].unit_price),
+                    "tax_rate": str(row["order_line"].tax_rate),
+                    "tax_code": row["order_line"].tax_code_id,
+                    "discount_percent": str(row["order_line"].discount_percent),
+                    "discount_rule": None,
+                } for row in lines],
+            }
+        delivery = SalesDelivery.objects.create(
+            **validated_data, stock_movement=movement, created_by=user,
+            order_snapshot=order_snapshot,
+        )
         if order:
             for row in lines:
                 movement_line = StockMovementLine.objects.create(
