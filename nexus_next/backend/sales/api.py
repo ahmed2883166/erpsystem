@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -19,7 +19,7 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
@@ -830,6 +830,217 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             "branch_filter": branch_id,
             "totals": {key: str(value) for key, value in totals.items()},
             "customers": sorted(customers.values(), key=lambda row: row["customer_name"]),
+        })
+
+
+    @action(detail=False, methods=("get",), url_path="sales-performance")
+    def sales_performance(self, request):
+        """تقرير المبيعات والمرتجعات والربحية حسب العميل والصنف لفترة محددة."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير المبيعات."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        date_from_raw = request.query_params.get("date_from", "")
+        date_to_raw = request.query_params.get("date_to", "")
+        date_from = parse_date(date_from_raw)
+        date_to = parse_date(date_to_raw)
+        if not date_from:
+            raise ValidationError({"date_from": "حدد تاريخ بداية صحيحًا بصيغة YYYY-MM-DD."})
+        if not date_to:
+            raise ValidationError({"date_to": "حدد تاريخ نهاية صحيحًا بصيغة YYYY-MM-DD."})
+        if date_from > date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية يجب ألا يسبق تاريخ البداية."})
+
+        accessible_invoices = self.get_queryset().filter(
+            company_id=company_id, status=SalesInvoice.Status.POSTED,
+        )
+        branch_raw = request.query_params.get("branch")
+        branch_id = None
+        if branch_raw:
+            try:
+                branch_id = int(branch_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            accessible_invoices = accessible_invoices.filter(
+                Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id)
+            )
+
+        invoices = accessible_invoices.filter(invoice_date__range=(date_from, date_to))
+        returns = SalesReturn.objects.filter(
+            invoice__in=accessible_invoices,
+            status=SalesReturn.Status.POSTED,
+            return_date__range=(date_from, date_to),
+        )
+        invoice_lines = SalesInvoiceLine.objects.filter(invoice__in=invoices)
+        return_lines = SalesReturnLine.objects.filter(sales_return__in=returns)
+
+        def amount(value):
+            return value if value is not None else Decimal("0")
+
+        sales_totals = invoices.aggregate(
+            net=Sum("net_total"), discount=Sum("discount_total"),
+            tax=Sum("tax_total"), total=Sum("grand_total"),
+        )
+        return_totals = returns.aggregate(
+            net=Sum("net_total"), tax=Sum("tax_total"), total=Sum("grand_total"),
+        )
+        sales_cost = amount(invoice_lines.aggregate(total=Sum("delivery_line__cost_amount"))["total"])
+        return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
+        sales_net = amount(sales_totals["net"])
+        returned_net = amount(return_totals["net"])
+        net_sales = sales_net - returned_net
+        net_cost = sales_cost - return_cost
+
+        customer_sales = invoice_lines.values(
+            "invoice__customer_id", "invoice__customer__name_ar",
+        ).annotate(
+            invoice_count=Count("invoice_id", distinct=True),
+            quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
+            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+        )
+        customer_returns = return_lines.values(
+            "sales_return__invoice__customer_id",
+            "sales_return__invoice__customer__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"),
+            tax=Sum("tax_amount"), cost=Sum("cost_amount"),
+        )
+        customers = {}
+        for row in customer_sales:
+            key = row["invoice__customer_id"]
+            customers[key] = {
+                "customer": key,
+                "customer_name": row["invoice__customer__name_ar"],
+                "invoice_count": row["invoice_count"],
+                "quantity_sold": amount(row["quantity"]),
+                "quantity_returned": Decimal("0"),
+                "sales_net": amount(row["net"]),
+                "return_net": Decimal("0"),
+                "sales_tax": amount(row["tax"]),
+                "return_tax": Decimal("0"),
+                "sales_cost": amount(row["cost"]),
+                "return_cost": Decimal("0"),
+            }
+        for row in customer_returns:
+            key = row["sales_return__invoice__customer_id"]
+            customer = customers.setdefault(key, {
+                "customer": key,
+                "customer_name": row["sales_return__invoice__customer__name_ar"],
+                "invoice_count": 0,
+                "quantity_sold": Decimal("0"),
+                "quantity_returned": Decimal("0"),
+                "sales_net": Decimal("0"),
+                "return_net": Decimal("0"),
+                "sales_tax": Decimal("0"),
+                "return_tax": Decimal("0"),
+                "sales_cost": Decimal("0"),
+                "return_cost": Decimal("0"),
+            })
+            customer["quantity_returned"] += amount(row["quantity"])
+            customer["return_net"] += amount(row["net"])
+            customer["return_tax"] += amount(row["tax"])
+            customer["return_cost"] += amount(row["cost"])
+
+        product_sales = invoice_lines.values(
+            "product_id", "product__code", "product__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
+            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+            invoice_count=Count("invoice_id", distinct=True),
+        )
+        product_returns = return_lines.values(
+            "invoice_line__product_id", "invoice_line__product__code",
+            "invoice_line__product__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"),
+            tax=Sum("tax_amount"), cost=Sum("cost_amount"),
+        )
+        products = {}
+        for row in product_sales:
+            key = row["product_id"]
+            products[key] = {
+                "product": key,
+                "product_code": row["product__code"],
+                "product_name": row["product__name_ar"],
+                "invoice_count": row["invoice_count"],
+                "quantity_sold": amount(row["quantity"]),
+                "quantity_returned": Decimal("0"),
+                "sales_net": amount(row["net"]),
+                "return_net": Decimal("0"),
+                "sales_tax": amount(row["tax"]),
+                "return_tax": Decimal("0"),
+                "sales_cost": amount(row["cost"]),
+                "return_cost": Decimal("0"),
+            }
+        for row in product_returns:
+            key = row["invoice_line__product_id"]
+            product = products.setdefault(key, {
+                "product": key,
+                "product_code": row["invoice_line__product__code"],
+                "product_name": row["invoice_line__product__name_ar"],
+                "invoice_count": 0,
+                "quantity_sold": Decimal("0"),
+                "quantity_returned": Decimal("0"),
+                "sales_net": Decimal("0"),
+                "return_net": Decimal("0"),
+                "sales_tax": Decimal("0"),
+                "return_tax": Decimal("0"),
+                "sales_cost": Decimal("0"),
+                "return_cost": Decimal("0"),
+            })
+            product["quantity_returned"] += amount(row["quantity"])
+            product["return_net"] += amount(row["net"])
+            product["return_tax"] += amount(row["tax"])
+            product["return_cost"] += amount(row["cost"])
+
+        def serialize_group(row):
+            sales_net_value = row["sales_net"] - row["return_net"]
+            cost_value = row["sales_cost"] - row["return_cost"]
+            return {
+                **{key: value for key, value in row.items() if not key.endswith("_cost")},
+                "net_sales": str(sales_net_value),
+                "net_cost": str(cost_value),
+                "gross_profit": str(sales_net_value - cost_value),
+                "quantity_sold": str(row["quantity_sold"]),
+                "quantity_returned": str(row["quantity_returned"]),
+                "sales_net": str(row["sales_net"]),
+                "return_net": str(row["return_net"]),
+                "sales_tax": str(row["sales_tax"]),
+                "return_tax": str(row["return_tax"]),
+            }
+
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "branch": branch_id,
+            "totals": {
+                "invoice_count": invoices.count(),
+                "return_count": returns.count(),
+                "sales_net": str(sales_net),
+                "discount_total": str(amount(sales_totals["discount"])),
+                "sales_tax": str(amount(sales_totals["tax"])),
+                "sales_total": str(amount(sales_totals["total"])),
+                "return_net": str(returned_net),
+                "return_tax": str(amount(return_totals["tax"])),
+                "return_total": str(amount(return_totals["total"])),
+                "net_sales": str(net_sales),
+                "net_cost": str(net_cost),
+                "gross_profit": str(net_sales - net_cost),
+            },
+            "by_customer": sorted(
+                (serialize_group(row) for row in customers.values()),
+                key=lambda row: row["customer_name"],
+            ),
+            "by_product": sorted(
+                (serialize_group(row) for row in products.values()),
+                key=lambda row: row["product_name"],
+            ),
         })
 
 
