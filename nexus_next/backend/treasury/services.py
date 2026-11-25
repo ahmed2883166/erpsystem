@@ -287,7 +287,7 @@ def post_treasury_transaction(transaction_id, user=None):
                 **(
                     fx_snapshot
                     if foreign and (
-                        (doc.kind == TreasuryTransaction.Kind.RECEIPT and account.pk == source.account_id)
+                        (doc.kind == TreasuryTransaction.Kind.RECEIPT and account.pk == source.account_id and not doc.reversal_of_id)
                         or (doc.kind == TreasuryTransaction.Kind.PAYMENT and account.pk == doc.counter_account_id)
                     )
                     else {}
