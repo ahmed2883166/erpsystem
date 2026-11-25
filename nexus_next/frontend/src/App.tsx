@@ -313,7 +313,7 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
     ["صافي التدفقات النقدية من الأنشطة",report.net_change_in_cash,"",report.net_change_in_cash],
     ["أثر تغير أسعار صرف العملات الأجنبية",report.effect_of_exchange_rate_changes,"",report.effect_of_exchange_rate_changes],
     ["صافي الزيادة/النقص في النقدية",report.net_increase_decrease_in_cash,"",report.net_increase_decrease_in_cash],
-    ...report.exchange_rate_effect_details.map(x=>[`أثر صرف — ${x.revaluation_date} — ${x.account_code} — ${x.currency}`,x.difference,"",x.journal_number]),
+    ...report.exchange_rate_effect_details.map(x=>[`${x.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"} — ${x.event_date} — ${x.account_code} — ${x.currency}`,x.difference,"",x.journal_number]),
     ["رصيد النقدية آخر الفترة",report.closing_cash_balance,"",""],
     ["رصيد الأستاذ آخر الفترة",report.ledger_closing_cash_balance,"",""],
     ["فرق رصيد الإقفال",report.closing_balance_difference,"",""],
@@ -358,9 +358,9 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
         </tbody></table></div>
       </section>)}
       <h3>أثر تغير أسعار صرف العملات الأجنبية على النقدية</h3>
-      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
-        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.revaluation_date}-${row.journal_number}`}><td>{row.revaluation_date}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}</td></tr>)}
-        {!report.exchange_rate_effect_details.length&&<tr><td colSpan={7}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
+      <div className="data-table-wrap"><table><thead><tr><th>نوع الحدث</th><th>تاريخ الحدث</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
+        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.event_type}-${row.event_date}-${row.journal_number}`}><td>{row.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"}</td><td>{row.event_date}{row.event_type==="reversal"?<small> أصل التقييم: {row.original_revaluation_date}</small>:null}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}{row.event_type==="reversal"?<small> أصل: {row.original_journal_number}</small>:null}</td></tr>)}
+        {!report.exchange_rate_effect_details.length&&<tr><td colSpan={8}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
       </tbody></table></div>
       <h3>الإفصاح عن الاستثمارات غير النقدية</h3>
       <div className="data-table-wrap"><table><thead><tr><th>الفاتورة / الأصل</th><th>القيمة الإجمالية</th><th>مدفوع خلال الفترة</th><th>غير مسدد بنهاية الفترة</th></tr></thead><tbody>
@@ -397,7 +397,7 @@ function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }
   useEffect(() => { void load(); }, [companyId, branchId]);
   const money = (value: string) => formatMoney(value);
   return <div className="asset-reports">
-    <div className="work-panel-head"><div><h2>قائمة التدفقات النقدية — الطريقة غير المباشرة</h2><p>صافي الربح والتعديلات غير النقدية ورأس المال العامل ثم الاستثمار والتمويل</p></div><div className="report-actions"><button type="button" className="subtle-button" disabled={!report} onClick={()=>report&&downloadCsv(`indirect-cash-flow-${report.date_from}-${report.date_to}.csv`,["البند","القيمة","ملاحظات"],[["صافي الربح",report.net_profit,""],["تعديلات غير نقدية",report.non_cash_adjustments.net,""],["التدفقات التشغيلية",report.operating_cash_flow,""],["التدفقات الاستثمارية",report.investing_cash_flow,""],["التدفقات التمويلية",report.financing_cash_flow,""],["صافي التغير النقدي",report.net_change_in_cash,""],["التغير النقدي بالدفاتر",report.ledger_cash_change,""],["فرق المطابقة",report.reconciliation_difference,""],...report.working_capital.map(x=>[`رأس مال عامل — ${x.role} — ${x.account_code}`,x.cash_flow_adjustment,x.account_name]),...report.investing_transactions.map(x=>[`استثمار — ${x.document_number}`,x.amount,x.description]),...report.financing_transactions.map(x=>[`تمويل — ${x.document_number}`,x.amount,x.description])])}>تصدير CSV (Excel)</button><button type="button" className="subtle-button" onClick={(event)=>{const target=event.currentTarget.closest(".asset-reports");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة / PDF</button><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القائمة"}</button></div></div>
+    <div className="work-panel-head"><div><h2>قائمة التدفقات النقدية — الطريقة غير المباشرة</h2><p>صافي الربح والتعديلات غير النقدية ورأس المال العامل ثم الاستثمار والتمويل</p></div><div className="report-actions"><button type="button" className="subtle-button" disabled={!report} onClick={()=>report&&downloadCsv(`indirect-cash-flow-${report.date_from}-${report.date_to}.csv`,["البند","القيمة","ملاحظات"],[["صافي الربح",report.net_profit,""],["تعديلات غير نقدية",report.non_cash_adjustments.net,""],["التدفقات التشغيلية",report.operating_cash_flow,""],["التدفقات الاستثمارية",report.investing_cash_flow,""],["التدفقات التمويلية",report.financing_cash_flow,""],["صافي التدفقات من الأنشطة",report.net_change_in_cash,""],["أثر تغير أسعار الصرف",report.effect_of_exchange_rate_changes,""],["صافي الزيادة/النقص في النقدية",report.net_increase_decrease_in_cash,""],["رصيد أول الفترة",report.opening_cash_balance,""],["رصيد آخر الفترة",report.closing_cash_balance,""],["الرصيد الختامي بالدفاتر",report.ledger_closing_cash_balance,""],["التغير النقدي بالدفاتر",report.ledger_cash_change,""],["فرق المطابقة",report.reconciliation_difference,""],["فرق رصيد الإقفال",report.closing_balance_difference,""],...report.exchange_rate_effect_details.map(x=>[`${x.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"} — ${x.event_date} — ${x.account_code} — ${x.currency}`,x.difference,x.journal_number]),...report.working_capital.map(x=>[`رأس مال عامل — ${x.role} — ${x.account_code}`,x.cash_flow_adjustment,x.account_name]),...report.investing_transactions.map(x=>[`استثمار — ${x.document_number}`,x.amount,x.description]),...report.financing_transactions.map(x=>[`تمويل — ${x.document_number}`,x.amount,x.description])])}>تصدير CSV (Excel)</button><button type="button" className="subtle-button" onClick={(event)=>{const target=event.currentTarget.closest(".asset-reports");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة / PDF</button><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القائمة"}</button></div></div>
     <div className="asset-report-filters">
       <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
       <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
@@ -411,13 +411,24 @@ function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }
         <b>صافي التشغيل: {money(report.operating_cash_flow)}</b>
         <span>الاستثمار: {money(report.investing_cash_flow)}</span>
         <span>التمويل: {money(report.financing_cash_flow)}</span>
-        <b>صافي التغير النقدي: {money(report.net_change_in_cash)}</b>
+        <b>صافي التدفقات من الأنشطة: {money(report.net_change_in_cash)}</b>
+        <span>أثر تغير أسعار الصرف: {money(report.effect_of_exchange_rate_changes)}</span>
+        <b>صافي الزيادة/النقص في النقدية: {money(report.net_increase_decrease_in_cash)}</b>
       </div>
       <div className="asset-cashflow-totals">
+        <span>رصيد أول الفترة: {money(report.opening_cash_balance)}</span>
+        <span>رصيد آخر الفترة: {money(report.closing_cash_balance)}</span>
+        <span>الرصيد الختامي بالدفاتر: {money(report.ledger_closing_cash_balance)}</span>
         <span>تغير النقدية بالدفاتر: {money(report.ledger_cash_change)}</span>
         <b>فرق المطابقة: {money(report.reconciliation_difference)}</b>
+        <span>فرق رصيد الإقفال: {money(report.closing_balance_difference)}</span>
       </div>
       <div className="asset-report-note">{report.note}</div>
+      <h3>أثر تغير أسعار صرف العملات الأجنبية على النقدية</h3>
+      <div className="data-table-wrap"><table><thead><tr><th>نوع الحدث</th><th>تاريخ الحدث</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
+        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.event_type}-${row.event_date}-${row.journal_number}`}><td>{row.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"}</td><td>{row.event_date}{row.event_type==="reversal"?<small> أصل التقييم: {row.original_revaluation_date}</small>:null}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}{row.event_type==="reversal"?<small> أصل: {row.original_journal_number}</small>:null}</td></tr>)}
+        {!report.exchange_rate_effect_details.length&&<tr><td colSpan={8}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
+      </tbody></table></div>
       {!!report.missing_account_roles.length && <div className="error-banner">أدوار حسابات غير مربوطة: {report.missing_account_roles.join("، ")}</div>}
       <h3>تسويات رأس المال العامل</h3>
       <div className="data-table-wrap"><table><thead><tr><th>الدور</th><th>الحساب</th><th>رصيد أول المدة</th><th>رصيد آخر المدة</th><th>التغير</th><th>تأثيره النقدي</th></tr></thead><tbody>

@@ -14,7 +14,10 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
-from .services import post_treasury_transaction, revalue_treasury_fx_account
+from .services import (
+    post_treasury_transaction, revalue_treasury_fx_account,
+    reverse_treasury_fx_revaluation, can_reverse_treasury_fx_revaluation,
+)
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
@@ -176,6 +179,55 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "difference": result.difference,
             "journal_entry": result.journal_entry_id,
             "journal_number": result.journal_entry.entry_number if result.journal_entry_id else "",
+            "status": "posted" if result.journal_entry_id else "no_difference",
+            "can_reverse": can_reverse_treasury_fx_revaluation(result),
+            "reversal_journal_entry": result.reversal_journal_entry_id,
+            "reversal_journal_number": "",
+            "reversed_at": result.reversed_at,
+            "reversed_by_name": "",
+        }, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=("post",), url_path="reverse-revaluation")
+    def reverse_revaluation(self, request, pk=None):
+        """عكس آخر إعادة تقييم آمنة مع عكس القيد واستعادة القيمة الدفترية لمركز العملة."""
+        account = self.get_object()
+        self._scope(account.company_id)
+        self._write(account.company_id)
+        revaluation_id = request.data.get("revaluation_id")
+        if not str(revaluation_id or "").isdigit():
+            raise ValidationError({"revaluation_id": "حدد سجل إعادة التقييم المطلوب عكسه."})
+        revaluation = TreasuryFxRevaluation.objects.select_related(
+            "journal_entry",
+        ).filter(pk=int(revaluation_id), account=account).first()
+        if not revaluation:
+            raise ValidationError({"revaluation_id": "سجل إعادة التقييم لا يتبع حساب الخزينة المحدد."})
+        branch_id = (
+            account.branch_id
+            or (revaluation.journal_entry.branch_id if revaluation.journal_entry_id else None)
+        )
+        if branch_id and not can_access_branch(request.user, branch_id, account.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إعادة التقييم.")
+        entry_date_raw = request.data.get("entry_date")
+        entry_date = dateparse.parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        try:
+            result = reverse_treasury_fx_revaluation(
+                revaluation_id=revaluation.pk, entry_date=entry_date, user=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+        return response.Response({
+            "id": result.pk,
+            "status": "reversed",
+            "revaluation_date": result.revaluation_date,
+            "difference": result.difference,
+            "journal_number": result.journal_entry.entry_number if result.journal_entry_id else "",
+            "reversal_journal_entry": result.reversal_journal_entry_id,
+            "reversal_journal_number": (
+                result.reversal_journal_entry.entry_number if result.reversal_journal_entry_id else ""
+            ),
+            "reversed_at": result.reversed_at,
         }, status=status.HTTP_201_CREATED)
 
     @decorators.action(detail=True, methods=("get",), url_path="revaluations")
@@ -186,10 +238,18 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         if account.branch_id and not can_access_branch(request.user, account.branch_id, account.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع حساب الخزينة.")
         rows = TreasuryFxRevaluation.objects.filter(account=account).select_related(
-            "journal_entry"
+            "journal_entry", "reversal_journal_entry", "reversed_by",
         ).order_by("-revaluation_date", "-id")
+        if not account.branch_id:
+            # Shared accounts have no branch metadata on zero-difference records;
+            # hide those records rather than exposing another branch's revaluation history.
+            rows = rows.filter(
+                journal_entry__branch__in=accessible_branches(request.user, account.company_id)
+            )
         return response.Response([{
             "id": row.pk,
+            "account": row.account_id,
+            "currency": account.currency_code,
             "revaluation_date": row.revaluation_date,
             "rate_date": row.rate_date,
             "rate": row.rate,
@@ -199,6 +259,20 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "difference": row.difference,
             "journal_entry": row.journal_entry_id,
             "journal_number": row.journal_entry.entry_number if row.journal_entry_id else "",
+            "status": (
+                "reversed" if row.reversal_journal_entry_id
+                else "posted" if row.journal_entry_id else "no_difference"
+            ),
+            "can_reverse": can_reverse_treasury_fx_revaluation(row),
+            "reversal_journal_entry": row.reversal_journal_entry_id,
+            "reversal_journal_number": (
+                row.reversal_journal_entry.entry_number if row.reversal_journal_entry_id else ""
+            ),
+            "reversed_at": row.reversed_at,
+            "reversed_by_name": (
+                row.reversed_by.get_full_name() or row.reversed_by.username
+                if row.reversed_by_id else ""
+            ),
         } for row in rows])
 
     def perform_update(self, serializer):

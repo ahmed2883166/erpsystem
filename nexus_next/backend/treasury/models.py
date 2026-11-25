@@ -1,5 +1,6 @@
 """نماذج الخزائن والحسابات البنكية والحركات المالية ومطابقة كشوف البنوك."""
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from decimal import Decimal
@@ -247,6 +248,15 @@ class TreasuryFxRevaluation(models.Model):
     difference = models.DecimalField(max_digits=20, decimal_places=4)
     journal_entry = models.OneToOneField(
         JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_fx_revaluation",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        JournalEntry, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="treasury_fx_revaluation_reversal",
+    )
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="treasury_fx_revaluations_reversed",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

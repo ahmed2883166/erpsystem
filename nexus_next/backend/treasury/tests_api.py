@@ -407,6 +407,29 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(history.status_code, 200, history.data)
         self.assertEqual(len(history.data), 1)
         self.assertEqual(history.data[0]["journal_number"], revalued.data["journal_number"])
+        self.assertEqual(history.data[0]["status"], "posted")
+        self.assertTrue(history.data[0]["can_reverse"])
+
+        reversed_response = self.client.post(
+            f"/api/treasury/accounts/{foreign_bank.pk}/reverse-revaluation/",
+            {"revaluation_id": revalued.data["id"], "entry_date": "2026-04-01"},
+            format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 201, reversed_response.data)
+        self.assertEqual(reversed_response.data["status"], "reversed")
+        self.assertTrue(reversed_response.data["reversal_journal_number"])
+        account_detail = self.client.get(f"/api/treasury/accounts/{foreign_bank.pk}/")
+        self.assertEqual(account_detail.status_code, 200, account_detail.data)
+        self.assertEqual(account_detail.data["fx_position_foreign_amount"], Decimal("100.0000"))
+        self.assertEqual(account_detail.data["fx_position_carrying_base_amount"], Decimal("3000.0000"))
+        history = self.client.get(f"/api/treasury/accounts/{foreign_bank.pk}/revaluations/")
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertEqual(history.data[0]["status"], "reversed")
+        self.assertFalse(history.data[0]["can_reverse"])
+        self.assertEqual(
+            history.data[0]["reversal_journal_number"],
+            reversed_response.data["reversal_journal_number"],
+        )
 
         recon = self.client.post("/api/treasury/reconciliations/", {
             "company": self.company.pk, "bank_account": foreign_bank.pk,

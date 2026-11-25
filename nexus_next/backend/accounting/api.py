@@ -108,6 +108,65 @@ def _branch_aware_balance_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal
     return result
 
 
+
+
+def _treasury_fx_cash_flow_effect(company_id, date_from, date_to, visible_branches):
+    """Return IAS 7 FX effects on cash, keeping original and reversal events in their own periods."""
+    revaluations = list(TreasuryFxRevaluation.objects.filter(
+        company_id=company_id,
+        revaluation_date__gte=date_from,
+        revaluation_date__lte=date_to,
+        journal_entry__isnull=False,
+        journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+        journal_entry__branch__in=visible_branches,
+    ).select_related("account__account", "journal_entry").order_by(
+        "revaluation_date", "account__code", "id"
+    ))
+    reversals = list(TreasuryFxRevaluation.objects.filter(
+        company_id=company_id,
+        reversal_journal_entry__isnull=False,
+        reversal_journal_entry__entry_date__gte=date_from,
+        reversal_journal_entry__entry_date__lte=date_to,
+        reversal_journal_entry__status=JournalEntry.Status.POSTED,
+        reversal_journal_entry__branch__in=visible_branches,
+    ).select_related(
+        "account__account", "journal_entry", "reversal_journal_entry",
+    ).order_by("reversal_journal_entry__entry_date", "account__code", "id"))
+    effect = (
+        sum((row.difference for row in revaluations), Decimal("0"))
+        - sum((row.difference for row in reversals), Decimal("0"))
+    )
+    details = [{
+        "account_id": row.account_id,
+        "account_code": row.account.account.code,
+        "account_name": row.account.name_ar,
+        "currency": row.account.currency_code,
+        "event_type": "revaluation",
+        "event_date": row.revaluation_date,
+        "original_revaluation_date": row.revaluation_date,
+        "rate": row.rate,
+        "foreign_amount": row.foreign_amount,
+        "difference": row.difference,
+        "journal_number": row.journal_entry.entry_number,
+        "original_journal_number": row.journal_entry.entry_number,
+    } for row in revaluations] + [{
+        "account_id": row.account_id,
+        "account_code": row.account.account.code,
+        "account_name": row.account.name_ar,
+        "currency": row.account.currency_code,
+        "event_type": "reversal",
+        "event_date": row.reversal_journal_entry.entry_date,
+        "original_revaluation_date": row.revaluation_date,
+        "rate": row.rate,
+        "foreign_amount": row.foreign_amount,
+        "difference": -row.difference,
+        "journal_number": row.reversal_journal_entry.entry_number,
+        "original_journal_number": row.journal_entry.entry_number,
+    } for row in reversals]
+    details.sort(key=lambda item: (item["event_date"], item["account_code"], item["event_type"]))
+    return effect, details
+
+
 def _ensure_period_open(fiscal_year, entry_date):
     """تحويل أخطاء إقفال الفترة إلى استجابة تحقق مناسبة لواجهة API."""
     try:
@@ -1532,10 +1591,15 @@ class JournalEntryViewSet(AccountingViewSet):
             - (fx_loss_row.get("credit") or Decimal("0"))
         )
         unrealized_fx_adjustment = unrealized_fx_loss - unrealized_fx_gain
-        # FX revaluation changes both profit and the AR/AP carrying balance.
-        # Reverse its non-cash effect in working capital as it is added back
-        # (or deducted) below, so the same revaluation is not counted twice.
-        fx_working_capital_offset = -unrealized_fx_adjustment
+        # Non-cash FX effects on receivables/payables are handled through working
+        # capital. FX effects on treasury cash are removed from operating profit here
+        # and presented separately below, as required by IAS 7.
+        effect_of_exchange_rate_changes, exchange_rate_effect_details = (
+            _treasury_fx_cash_flow_effect(company_id, date_from, date_to, visible_branches)
+        )
+        fx_working_capital_offset = (
+            -unrealized_fx_adjustment - effect_of_exchange_rate_changes
+        )
         operating_adjustments += fx_working_capital_offset
         working_capital.append({
             "role": "unrealized_fx_revaluation_offset",
@@ -1605,13 +1669,37 @@ class JournalEntryViewSet(AccountingViewSet):
         treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
         treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
-        cash_lines = JournalLine.objects.filter(
-            account_id__in=cash_account_ids, entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-            entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
-        ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
-        cash_lines = cash_lines.filter(entry__branch__in=visible_branches)
+        cash_ledger_lines = JournalLine.objects.filter(
+            account_id__in=cash_account_ids,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            entry__company_id=company_id,
+            entry__entry_date__lte=date_to,
+        ).exclude(entry__source_type=JournalEntry.Source.CLOSING)
+        cash_ledger_lines = cash_ledger_lines.filter(entry__branch__in=visible_branches)
+        opening_cash_lines = cash_ledger_lines.filter(opening_balance_filter)
+        opening_totals = opening_cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        opening_cash_balance = (
+            (opening_totals["debit"] or Decimal("0"))
+            - (opening_totals["credit"] or Decimal("0"))
+        )
+        cash_lines = cash_ledger_lines.filter(entry__entry_date__gte=date_from).exclude(
+            entry__source_type=JournalEntry.Source.OPENING
+        )
         cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        ledger_cash_change = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+        ledger_cash_change = (
+            (cash_totals["debit"] or Decimal("0"))
+            - (cash_totals["credit"] or Decimal("0"))
+        )
+        closing_totals = cash_ledger_lines.filter(closing_balance_filter).aggregate(
+            debit=Sum("debit"), credit=Sum("credit")
+        )
+        ledger_closing_cash_balance = (
+            (closing_totals["debit"] or Decimal("0"))
+            - (closing_totals["credit"] or Decimal("0"))
+        )
+        net_increase_decrease_in_cash = net_change + effect_of_exchange_rate_changes
+        closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
+        closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
 
         return response.Response({
             "company": company_id, "branch": branch_id, "date_from": date_from, "date_to": date_to,
@@ -1631,8 +1719,15 @@ class JournalEntryViewSet(AccountingViewSet):
             "investing_cash_flow": investing_cash_flow,
             "financing_cash_flow": financing_cash_flow,
             "net_change_in_cash": net_change,
+            "effect_of_exchange_rate_changes": effect_of_exchange_rate_changes,
+            "net_increase_decrease_in_cash": net_increase_decrease_in_cash,
+            "exchange_rate_effect_details": exchange_rate_effect_details,
+            "opening_cash_balance": opening_cash_balance,
+            "closing_cash_balance": closing_cash_balance,
+            "ledger_closing_cash_balance": ledger_closing_cash_balance,
+            "closing_balance_difference": closing_balance_difference,
             "ledger_cash_change": ledger_cash_change,
-            "reconciliation_difference": ledger_cash_change - net_change,
+            "reconciliation_difference": ledger_cash_change - net_increase_decrease_in_cash,
             "investing_transactions": list(investing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
@@ -1640,7 +1735,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "financing_transactions": list(financing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
-            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة والمرتبات المستحقة وحصتي التأمينات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
+            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. يُعرض أثر تغير أسعار صرف العملات الأجنبية على النقدية كبند مستقل بعد التدفقات التشغيلية والاستثمارية والتمويلية، ويُستخدم في حساب رصيد النقدية الختامي ومطابقته مع الأستاذ. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة والمرتبات المستحقة وحصتي التأمينات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
         })
 
 
@@ -1729,10 +1824,38 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__entry_date__lte=date_to,
             entry__branch__in=visible_branches,
         ).exclude(entry__source_type=JournalEntry.Source.CLOSING)
-        opening_cash_lines = cash_ledger_lines.filter(
-            Q(entry__entry_date__lt=date_from)
-            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        cash_flow_branch_ids = list(visible_branches.values_list("pk", flat=True))
+        opening_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
+        ).order_by("-start_date").first()
+        opening_snapshot_branch_ids = set()
+        if opening_fiscal_year:
+            opening_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=opening_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_from, branch_id__in=cash_flow_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        opening_cash_filter = _branch_aware_opening_filter(
+            cash_flow_branch_ids, opening_snapshot_branch_ids, date_from,
+            opening_fiscal_year.start_date if opening_fiscal_year else date_from,
         )
+        closing_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_to, end_date__gte=date_to
+        ).order_by("-start_date").first()
+        closing_snapshot_branch_ids = set()
+        if closing_fiscal_year:
+            closing_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=closing_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_to, branch_id__in=cash_flow_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        closing_cash_filter = _branch_aware_balance_filter(
+            cash_flow_branch_ids, closing_snapshot_branch_ids, date_to,
+            closing_fiscal_year.start_date if closing_fiscal_year else date_to,
+        )
+        opening_cash_lines = cash_ledger_lines.filter(opening_cash_filter)
         opening_totals = opening_cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         opening_cash_balance = (
             (opening_totals["debit"] or Decimal("0"))
@@ -1747,7 +1870,9 @@ class JournalEntryViewSet(AccountingViewSet):
             (cash_totals["debit"] or Decimal("0"))
             - (cash_totals["credit"] or Decimal("0"))
         )
-        closing_totals = cash_ledger_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        closing_totals = cash_ledger_lines.filter(closing_cash_filter).aggregate(
+            debit=Sum("debit"), credit=Sum("credit")
+        )
         ledger_closing_cash_balance = (
             (closing_totals["debit"] or Decimal("0"))
             - (closing_totals["credit"] or Decimal("0"))
@@ -1755,30 +1880,9 @@ class JournalEntryViewSet(AccountingViewSet):
         # IAS 7: show exchange-rate effects on cash separately from the three activity classes.
         # Scope by the journal branch because a company-wide treasury account may be
         # revalued under a particular branch.
-        fx_revaluations = list(TreasuryFxRevaluation.objects.filter(
-            company_id=company_id,
-            revaluation_date__gte=date_from,
-            revaluation_date__lte=date_to,
-            journal_entry__isnull=False,
-            journal_entry__status=JournalEntry.Status.POSTED,
-            journal_entry__branch__in=visible_branches,
-        ).select_related("account__account", "journal_entry").order_by(
-            "revaluation_date", "account__code", "id"
-        ))
-        effect_of_exchange_rate_changes = sum(
-            (row.difference for row in fx_revaluations), Decimal("0")
+        effect_of_exchange_rate_changes, exchange_rate_effect_details = (
+            _treasury_fx_cash_flow_effect(company_id, date_from, date_to, visible_branches)
         )
-        exchange_rate_effect_details = [{
-            "account_id": row.account_id,
-            "account_code": row.account.account.code,
-            "account_name": row.account.name_ar,
-            "currency": row.account.currency_code,
-            "revaluation_date": row.revaluation_date,
-            "rate": row.rate,
-            "foreign_amount": row.foreign_amount,
-            "difference": row.difference,
-            "journal_number": row.journal_entry.entry_number,
-        } for row in fx_revaluations]
         net_increase_decrease_in_cash = net_change_in_cash + effect_of_exchange_rate_changes
         closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
         closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
