@@ -74,7 +74,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
                     default_company_ids.append(company_id)
             scoped = qs.filter(
                 Q(invoice__delivery__warehouse__branch__in=branches)
-                | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+                | Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(invoice__branch__in=branches)
             )
         company_id = parse_company_param(self.request)
