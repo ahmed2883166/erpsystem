@@ -58,10 +58,11 @@ class CustomerReceiptBatchSerializer(serializers.ModelSerializer):
         )
 
     def get_allocated_amount(self, obj):
-        return str(obj.allocated_amount)
+        return str(sum((row.amount for row in obj.allocations.all()), Decimal("0")))
 
     def get_unallocated_amount(self, obj):
-        return str(obj.unallocated_amount)
+        allocated = sum((row.amount for row in obj.allocations.all()), Decimal("0"))
+        return str(max(obj.amount - allocated, Decimal("0")))
 
     def validate(self, attrs):
         company = attrs.get("company")
