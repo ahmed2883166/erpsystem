@@ -3,21 +3,26 @@ def invoice_discount_snapshot(invoice):
     """Return a deterministic, JSON-safe snapshot of every invoiced line."""
     prefetched = getattr(invoice, "_prefetched_objects_cache", {}).get("lines")
     if prefetched is not None:
-        rows = sorted(prefetched, key=lambda line: (line.delivery_line_id, line.pk))
+        rows = sorted(prefetched, key=lambda line: (line.delivery_line_id or 0, line.pk))
     else:
         rows = invoice.lines.select_related(
-            "delivery_line__product", "tax_code"
+            "product", "tax_code"
         ).order_by("delivery_line_id", "pk")
     snapshot = []
     for line in rows:
-        product = line.delivery_line.product
+        product = getattr(line, "product", None)
+        if product is None:
+            product = line.delivery_line.product
         tax_code = line.tax_code
+        quantity = getattr(line, "quantity", None)
+        if quantity is None:
+            quantity = line.delivery_line.quantity
         snapshot.append({
             "delivery_line_id": line.delivery_line_id,
             "product_id": product.pk,
             "product_code": product.code,
             "product_name": product.name_ar,
-            "quantity": str(line.delivery_line.quantity),
+            "quantity": str(quantity),
             "unit_price": str(line.unit_price),
             "tax_code_id": tax_code.pk if tax_code else None,
             "tax_code": tax_code.code if tax_code else None,

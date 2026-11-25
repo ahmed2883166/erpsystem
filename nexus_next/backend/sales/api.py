@@ -343,7 +343,7 @@ class SalesQuotationViewSet(SalesBaseViewSet):
 
 class SalesInvoiceViewSet(SalesBaseViewSet):
     serializer_class = SalesInvoiceSerializer
-    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "journal_entry").prefetch_related("lines__delivery_line__product", "lines__tax_code", "receipts", "approval_requests")
+    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "branch", "journal_entry").prefetch_related("lines__delivery_line__product", "lines__product", "lines__tax_code", "receipts", "approval_requests")
     filterset_fields = ("company", "customer", "status", "invoice_date")
     search_fields = ("invoice_number", "customer__name_ar", "delivery__delivery_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
@@ -361,7 +361,8 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 default_company_ids.append(company_id)
         return qs.filter(
             Q(delivery__warehouse__branch__in=branches)
-            | Q(delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(delivery__isnull=False, delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(branch__in=branches)
         )
 
     def create(self, request, *args, **kwargs):
@@ -376,9 +377,12 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        warehouse = data["delivery"].warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        delivery = data.get("delivery")
+        if delivery:
+            if not _sales_warehouse_accessible(self.request.user, delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        elif not data.get("branch") or not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة الخدمة.")
         serializer.save()
 
     def perform_update(self, serializer):
@@ -387,19 +391,24 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         self._check_write(invoice.company_id)
         if invoice.status != SalesInvoice.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
     @transaction.atomic
     def perform_destroy(self, instance):
         """حذف فاتورة مسودة بلا تحصيل أو اعتماد أو مردود أو أثر إعادة تقييم."""
-        invoice = SalesInvoice.objects.select_for_update().select_related(
-            "company", "delivery__warehouse"
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related(
+            "company", "delivery__warehouse", "branch"
         ).get(pk=instance.pk)
         self._check_write(invoice.company_id)
-        if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if invoice.status != SalesInvoice.Status.DRAFT or invoice.journal_entry_id:
             raise ValidationError("لا يمكن حذف فاتورة مبيعات مرحلة أو مرتبطة بقيد.")
@@ -420,9 +429,11 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        elif not invoice.branch_id or not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة الخدمة.")
         invoice.print_template_snapshot = _document_template_snapshot(invoice.company, SalesDocumentTemplate.DocumentType.INVOICE)
         invoice.save(update_fields=("print_template_snapshot",))
         invoice = post_sales_invoice(invoice.pk, request.user)
@@ -433,7 +444,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
     def revalue(self, request, pk=None):
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not invoice.branch_id or not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         revaluation_date = parse_date(request.data.get("revaluation_date", ""))
         rate_date = parse_date(request.data.get("rate_date", ""))
@@ -513,9 +527,9 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         invoices = self.get_queryset().filter(
             company_id=company_id, customer_id=customer_id,
             status=SalesInvoice.Status.POSTED,
-        ).select_related("customer", "delivery__warehouse")
+        ).select_related("customer", "delivery__warehouse", "branch")
         if branch_id:
-            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id))
 
         events = []
         for invoice in invoices:
@@ -638,13 +652,13 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             company_id=company_id,
             status=SalesInvoice.Status.POSTED,
             invoice_date__lte=as_of,
-        ).select_related("customer", "delivery__warehouse").prefetch_related(
+        ).select_related("customer", "delivery__warehouse", "branch").prefetch_related(
             "receipts__journal_entry__reversal_entry"
         )
         if customer_id:
             invoices = invoices.filter(customer_id=customer_id)
         if branch_id:
-            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id))
 
         returned_by_invoice = {
             row["invoice_id"]: row["total"]
@@ -756,7 +770,8 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
                     default_company_ids.append(company_id)
         return qs.filter(
             Q(invoice__delivery__warehouse__branch__in=branches)
-            | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(invoice__branch__in=branches)
         )
 
     def create(self, request, *args, **kwargs):
@@ -771,8 +786,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        warehouse = data["invoice"].delivery.warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
+        invoice = data["invoice"]
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(self.request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
@@ -786,8 +805,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
-        warehouse = receipt.invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
+        invoice = receipt.invoice
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         receipt = post_customer_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
@@ -797,12 +820,15 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
     def reverse(self, request, pk=None):
         """عكس آخر سند قبض مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
         receipt = CustomerReceipt.objects.select_for_update(of=("self",)).select_related(
-            "invoice", "invoice__delivery__warehouse", "journal_entry"
+            "invoice", "invoice__delivery__warehouse", "invoice__branch", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(receipt.company_id)
-        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse").get(pk=receipt.invoice_id)
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related("delivery__warehouse", "branch").get(pk=receipt.invoice_id)
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         if receipt.status != CustomerReceipt.Status.POSTED or not receipt.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند قبض غير مرحّل.")

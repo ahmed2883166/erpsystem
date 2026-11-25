@@ -8,13 +8,13 @@ from .models import SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine
 
 
 class SalesReturnLineInputSerializer(serializers.Serializer):
-    invoice_line = serializers.PrimaryKeyRelatedField(queryset=SalesInvoiceLine.objects.select_related("invoice", "delivery_line", "delivery_line__product"))
+    invoice_line = serializers.PrimaryKeyRelatedField(queryset=SalesInvoiceLine.objects.select_related("invoice", "delivery_line", "product"))
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
 
 
 class SalesReturnLineSerializer(serializers.ModelSerializer):
-    product_code = serializers.CharField(source="invoice_line.delivery_line.product.code", read_only=True)
-    product_name = serializers.CharField(source="invoice_line.delivery_line.product.name_ar", read_only=True)
+    product_code = serializers.CharField(source="invoice_line.product.code", read_only=True)
+    product_name = serializers.CharField(source="invoice_line.product.name_ar", read_only=True)
 
     class Meta:
         model = SalesReturnLine
@@ -29,21 +29,21 @@ class SalesReturnSerializer(serializers.ModelSerializer):
     line_items = SalesReturnLineSerializer(source="lines", many=True, read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     customer_name = serializers.CharField(source="invoice.customer.name_ar", read_only=True)
-    movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
+    movement_status = serializers.CharField(source="stock_movement.status", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     cost_journal_number = serializers.CharField(source="cost_journal_entry.entry_number", read_only=True, allow_null=True)
     reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, allow_null=True)
 
     class Meta:
         model = SalesReturn
-        fields = ("id", "company", "invoice", "invoice_number", "customer_name", "warehouse",
+        fields = ("id", "company", "invoice", "invoice_number", "customer_name", "warehouse", "branch",
                   "return_number", "return_date", "status", "net_total", "tax_total", "grand_total",
                   "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                   "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                   "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                   "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",
                   "notes", "lines", "line_items", "created_at", "posted_at")
-        read_only_fields = ("warehouse", "status", "net_total", "tax_total", "grand_total",
+        read_only_fields = ("warehouse", "branch", "status", "net_total", "tax_total", "grand_total",
                             "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                             "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                             "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
@@ -67,8 +67,10 @@ class SalesReturnSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"invoice": "اختر فاتورة مبيعات مرحلة."})
         if invoice.company_id != company.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع الشركة المحددة."})
-        if not invoice.delivery.warehouse.is_active:
+        if invoice.delivery_id and not invoice.delivery.warehouse.is_active:
             raise serializers.ValidationError({"invoice": "مخزن الفاتورة الأصلية موقوف."})
+        if not invoice.delivery_id and (not invoice.branch_id or not invoice.branch.is_active):
+            raise serializers.ValidationError({"invoice": "فرع فاتورة الخدمة موقوف أو غير محدد."})
         lines = attrs.get("lines", [])
         if not lines:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
@@ -76,8 +78,14 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         if len(ids) != len(set(ids)):
             raise serializers.ValidationError({"lines": "لا تكرر بند الفاتورة في نفس المردود."})
         for row in lines:
-            if row["invoice_line"].invoice_id != invoice.pk:
+            invoice_line = row["invoice_line"]
+            if invoice_line.invoice_id != invoice.pk:
                 raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون من الفاتورة المحددة."})
+            quantum = Decimal("1").scaleb(-invoice_line.product.unit.decimal_places)
+            if row["quantity"] != row["quantity"].quantize(quantum):
+                raise serializers.ValidationError({
+                    "lines": f"كمية المرتجع للصنف {invoice_line.product.code} تتجاوز دقة وحدة القياس ({invoice_line.product.unit.decimal_places} منازل عشرية)."
+                })
             if invoice.transaction_currency_id and (
                 row["invoice_line"].transaction_net_amount is None
                 or row["invoice_line"].transaction_tax_amount is None
@@ -90,30 +98,37 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         lines_data = validated_data.pop("lines")
         invoice = validated_data["invoice"]
         company = validated_data["company"]
-        warehouse = invoice.delivery.warehouse
+        warehouse = invoice.delivery.warehouse if invoice.delivery_id else None
         return_number = validated_data["return_number"]
-        movement = StockMovement.objects.create(
-            company=company, movement_number=f"SR-{return_number}",
-            movement_type=StockMovement.MovementType.RECEIPT,
-            movement_date=validated_data["return_date"],
-            destination_warehouse=warehouse,
-            notes=validated_data.get("notes", ""), created_by=self.context["request"].user,
-        )
+        movement = None
+        if invoice.delivery_id:
+            warehouse = invoice.delivery.warehouse
+            movement = StockMovement.objects.create(
+                company=company, movement_number=f"SR-{return_number}",
+                movement_type=StockMovement.MovementType.RECEIPT,
+                movement_date=validated_data["return_date"],
+                destination_warehouse=warehouse,
+                notes=validated_data.get("notes", ""), created_by=self.context["request"].user,
+            )
+        else:
+            warehouse = None
         sales_return = SalesReturn.objects.create(
-            **validated_data, warehouse=warehouse, stock_movement=movement,
-            created_by=self.context["request"].user,
+            **validated_data, warehouse=warehouse, branch=invoice.branch if not movement else None,
+            stock_movement=movement, created_by=self.context["request"].user,
         )
         for row in lines_data:
-            source = row["invoice_line"].delivery_line
-            quantity = row["quantity"]
-            unit_cost = (source.cost_amount / source.quantity).quantize(Decimal("0.000001"))
-            movement_line = StockMovementLine.objects.create(
-                movement=movement, product=source.product, quantity=quantity,
-                unit_cost=unit_cost, destination_location=source.source_location,
-                expiry_date=source.expiry_date,
-            )
-            original_qty = source.quantity
             invoice_line = row["invoice_line"]
+            quantity = row["quantity"]
+            source = invoice_line.delivery_line
+            movement_line = None
+            if source:
+                unit_cost = (source.cost_amount / source.quantity).quantize(Decimal("0.000001"))
+                movement_line = StockMovementLine.objects.create(
+                    movement=movement, product=source.product, quantity=quantity,
+                    unit_cost=unit_cost, destination_location=source.source_location,
+                    expiry_date=source.expiry_date,
+                )
+            original_qty = invoice_line.quantity
             net = (invoice_line.net_amount * quantity / original_qty).quantize(Decimal("0.0001"))
             tax = (invoice_line.tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
             transaction_net = (
@@ -124,7 +139,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
                 (invoice_line.transaction_tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
                 if invoice.transaction_currency_id else None
             )
-            cost = (source.cost_amount * quantity / original_qty).quantize(Decimal("0.0001"))
+            cost = (source.cost_amount * quantity / original_qty).quantize(Decimal("0.0001")) if source else Decimal("0")
             SalesReturnLine.objects.create(
                 sales_return=sales_return, invoice_line=invoice_line,
                 movement_line=movement_line, quantity=quantity,
@@ -142,31 +157,35 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         if sales_return.status != SalesReturn.Status.DRAFT:
             raise serializers.ValidationError("لا يمكن تعديل مردود مبيعات مرحّل.")
         lines_data = validated_data.pop("lines", None)
-        movement = StockMovement.objects.select_for_update().get(pk=sales_return.stock_movement_id)
+        movement = StockMovement.objects.select_for_update().get(pk=sales_return.stock_movement_id) if sales_return.stock_movement_id else None
         if lines_data is not None:
             sales_return.lines.all().delete()
-            movement.lines.all().delete()
+            if movement:
+                movement.lines.all().delete()
             for row in lines_data:
-                source = row["invoice_line"].delivery_line
-                quantity = row["quantity"]
-                unit_cost = (source.cost_amount / source.quantity).quantize(Decimal("0.000001"))
-                movement_line = StockMovementLine.objects.create(
-                    movement=movement, product=source.product, quantity=quantity,
-                    unit_cost=unit_cost, destination_location=source.source_location,
-                    expiry_date=source.expiry_date,
-                )
                 invoice_line = row["invoice_line"]
-                net = (invoice_line.net_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
-                tax = (invoice_line.tax_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                source = invoice_line.delivery_line
+                quantity = row["quantity"]
+                movement_line = None
+                if source:
+                    unit_cost = (source.cost_amount / source.quantity).quantize(Decimal("0.000001"))
+                    movement_line = StockMovementLine.objects.create(
+                        movement=movement, product=source.product, quantity=quantity,
+                        unit_cost=unit_cost, destination_location=source.source_location,
+                        expiry_date=source.expiry_date,
+                    )
+                original_qty = invoice_line.quantity
+                net = (invoice_line.net_amount * quantity / original_qty).quantize(Decimal("0.0001"))
+                tax = (invoice_line.tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
                 transaction_net = (
-                    (invoice_line.transaction_net_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                    (invoice_line.transaction_net_amount * quantity / original_qty).quantize(Decimal("0.0001"))
                     if sales_return.invoice.transaction_currency_id else None
                 )
                 transaction_tax = (
-                    (invoice_line.transaction_tax_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                    (invoice_line.transaction_tax_amount * quantity / original_qty).quantize(Decimal("0.0001"))
                     if sales_return.invoice.transaction_currency_id else None
                 )
-                cost = (source.cost_amount * quantity / source.quantity).quantize(Decimal("0.0001"))
+                cost = (source.cost_amount * quantity / original_qty).quantize(Decimal("0.0001")) if source else Decimal("0")
                 SalesReturnLine.objects.create(
                     sales_return=sales_return, invoice_line=invoice_line,
                     movement_line=movement_line, quantity=quantity,
@@ -179,7 +198,8 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         for field, value in validated_data.items():
             setattr(sales_return, field, value)
         sales_return.save()
-        movement.movement_date = sales_return.return_date
-        movement.notes = sales_return.notes
-        movement.save(update_fields=("movement_date", "notes"))
+        if movement:
+            movement.movement_date = sales_return.return_date
+            movement.notes = sales_return.notes
+            movement.save(update_fields=("movement_date", "notes"))
         return sales_return

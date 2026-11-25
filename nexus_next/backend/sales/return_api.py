@@ -15,10 +15,10 @@ from .return_services import post_sales_return, reverse_sales_return
 class SalesReturnViewSet(SalesBaseViewSet):
     serializer_class = SalesReturnSerializer
     queryset = SalesReturn.objects.select_related(
-        "company", "invoice", "invoice__customer", "invoice__delivery",
-        "warehouse", "stock_movement", "journal_entry", "cost_journal_entry",
+        "company", "invoice", "invoice__customer", "invoice__delivery", "invoice__branch",
+        "warehouse", "branch", "stock_movement", "journal_entry", "cost_journal_entry",
         "reversal_stock_movement", "reversal_journal_entry", "reversed_by",
-    ).prefetch_related("lines__invoice_line__delivery_line__product")
+    ).prefetch_related("lines__invoice_line__delivery_line__product", "lines__invoice_line__product")
     filterset_fields = ("company", "invoice", "status", "return_date")
     search_fields = ("return_number", "invoice__invoice_number", "invoice__customer__name_ar")
     ordering_fields = ("return_date", "return_number", "created_at")
@@ -38,7 +38,8 @@ class SalesReturnViewSet(SalesBaseViewSet):
                 default_company_ids.append(company_id)
         return qs.filter(
             Q(warehouse__branch__in=branches)
-            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(warehouse__isnull=False, warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(branch__in=branches)
         )
 
     def create(self, request, *args, **kwargs):
@@ -52,8 +53,12 @@ class SalesReturnViewSet(SalesBaseViewSet):
         company_id = serializer.validated_data["company"].pk
         self._check_write(company_id)
         invoice = serializer.validated_data["invoice"]
-        if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مخزن الفاتورة الأصلية.")
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(self.request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة الأصلية.")
         serializer.save()
 
     def perform_update(self, serializer):
@@ -61,7 +66,11 @@ class SalesReturnViewSet(SalesBaseViewSet):
         self._check_write(sales_return.company_id)
         if sales_return.status != SalesReturn.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل مردود مبيعات مرحّل.")
-        if not _sales_warehouse_accessible(self.request.user, sales_return.warehouse):
+        if sales_return.warehouse_id:
+            accessible = _sales_warehouse_accessible(self.request.user, sales_return.warehouse)
+        else:
+            accessible = bool(sales_return.branch_id and can_access_branch(self.request.user, sales_return.branch_id, sales_return.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى مخزن المردود.")
         serializer.save()
 
@@ -69,7 +78,11 @@ class SalesReturnViewSet(SalesBaseViewSet):
     def post(self, request, pk=None):
         sales_return = self.get_object()
         self._check_write(sales_return.company_id)
-        if not _sales_warehouse_accessible(request.user, sales_return.warehouse):
+        if sales_return.warehouse_id:
+            accessible = _sales_warehouse_accessible(request.user, sales_return.warehouse)
+        else:
+            accessible = bool(sales_return.branch_id and can_access_branch(request.user, sales_return.branch_id, sales_return.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى مخزن المردود.")
         sales_return = post_sales_return(sales_return.pk, request.user)
         return Response(self.get_serializer(sales_return).data, status=status.HTTP_200_OK)
@@ -79,7 +92,11 @@ class SalesReturnViewSet(SalesBaseViewSet):
         """عكس مردود المبيعات بقيد عكسي وحركة صرف من طبقات الاستلام الأصلية."""
         sales_return = self.get_object()
         self._check_write(sales_return.company_id)
-        if not _sales_warehouse_accessible(request.user, sales_return.warehouse):
+        if sales_return.warehouse_id:
+            accessible = _sales_warehouse_accessible(request.user, sales_return.warehouse)
+        else:
+            accessible = bool(sales_return.branch_id and can_access_branch(request.user, sales_return.branch_id, sales_return.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى مخزن المردود.")
         raw_date = request.data.get("entry_date") or timezone.localdate().isoformat()
         entry_date = dateparse.parse_date(str(raw_date))

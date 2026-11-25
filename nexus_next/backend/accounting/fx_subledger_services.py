@@ -123,8 +123,8 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
 
 def _branch_and_year(invoice, direction, entry_date):
     if direction == "receivable":
-        from sales.services import _branch_and_year as resolver
-        return resolver(invoice.delivery, entry_date)
+        from sales.services import _branch_and_year_for_invoice as resolver
+        return resolver(invoice, entry_date)
     from purchasing.services import _branch_and_year_for_invoice
     return _branch_and_year_for_invoice(invoice, entry_date)
 
@@ -134,7 +134,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
     """Revalue the outstanding AR/AP amount and post unrealized FX gain/loss."""
     if direction == "receivable":
         invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related(
-            "company", "transaction_currency", "delivery__warehouse",
+            "company", "transaction_currency", "delivery__warehouse", "branch",
         ).get(pk=invoice_id)
         invoice_model = SalesInvoice
     elif direction == "payable":

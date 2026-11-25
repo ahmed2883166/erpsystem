@@ -8,7 +8,7 @@ from django.db import models
 
 from accounting.models import ChartOfAccount, TaxCode
 from core.money import round_currency_amount
-from companies.models import Company, Currency, ExchangeRate
+from companies.models import Branch, Company, Currency, ExchangeRate
 from customers.models import Customer, CustomerDiscountRule
 from inventory.models import Product, StockMovement, StockMovementLine, Warehouse
 
@@ -174,7 +174,8 @@ class SalesInvoice(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_invoices")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_invoices")
-    delivery = models.OneToOneField(SalesDelivery, on_delete=models.PROTECT, related_name="invoice")
+    delivery = models.OneToOneField(SalesDelivery, null=True, blank=True, on_delete=models.PROTECT, related_name="invoice")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
     transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoices")
@@ -236,12 +237,20 @@ class SalesInvoice(models.Model):
             self.delivery.company_id != self.company_id or self.delivery.customer_id != self.customer_id
         ):
             raise ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة المحددين."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if not self.delivery_id and not self.branch_id:
+            raise ValidationError({"branch": "حدد فرع فاتورة الخدمة."})
+        if self.delivery_id and self.branch_id and self.delivery.warehouse.branch_id and self.delivery.warehouse.branch_id != self.branch_id:
+            raise ValidationError({"branch": "فرع الفاتورة يجب أن يطابق فرع إذن التسليم."})
 
 
 class SalesInvoiceLine(models.Model):
-    """يمثل بند البيع المرتبط بصنف تم تسليمه."""
+    """يمثل بند بيع بضاعة مسلمة أو خدمة مفوترة مباشرة."""
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="lines")
-    delivery_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_invoice_line")
+    delivery_line = models.OneToOneField(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_line")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_invoice_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, default=1, validators=[MinValueValidator(Decimal("0.0001"))])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
     transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
@@ -269,10 +278,19 @@ class SalesInvoiceLine(models.Model):
                     or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح لهذه الشركة أو تاريخ الفاتورة."})
             self.tax_rate = code.rate
+        if self.product_id and self.product.company_id != self.invoice.company_id:
+            raise ValidationError({"product": "الصنف أو الخدمة لا يتبع شركة الفاتورة."})
+        if self.delivery_line_id:
+            if self.delivery_line.product_id != self.product_id or self.product.product_type != Product.ProductType.GOODS:
+                raise ValidationError({"delivery_line": "بند التسليم يجب أن يطابق صنفًا مخزنيًا."})
+            if self.quantity != self.delivery_line.quantity:
+                self.quantity = self.delivery_line.quantity
+        elif self.product.product_type != Product.ProductType.SERVICE:
+            raise ValidationError({"product": "الفوترة المباشرة متاحة للخدمات فقط."})
         if self.invoice.transaction_currency_id:
             if self.transaction_unit_price is None:
                 raise ValidationError({"transaction_unit_price": "سعر الوحدة بالعملة الأجنبية مطلوب."})
-            foreign_gross = (self.delivery_line.quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
+            foreign_gross = (self.quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
             foreign_discount = (foreign_gross * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
             self.transaction_net_amount = foreign_gross - foreign_discount
             self.transaction_tax_amount = round_currency_amount(self.transaction_net_amount * self.tax_rate / Decimal("100"), self.invoice.transaction_currency)
@@ -286,7 +304,7 @@ class SalesInvoiceLine(models.Model):
             if self.transaction_unit_price is not None:
                 raise ValidationError({"transaction_unit_price": "لا تستخدم سعر وحدة أجنبيًا مع فاتورة بالعملة الأساسية."})
             self.transaction_net_amount = self.transaction_tax_amount = self.transaction_total_amount = None
-            gross_amount = (self.delivery_line.quantity * self.unit_price).quantize(Decimal("0.0001"))
+            gross_amount = (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
             self.discount_amount = (gross_amount * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
             self.net_amount = gross_amount - self.discount_amount
             self.tax_amount = round_currency_amount(self.net_amount * self.tax_rate / Decimal("100"), self.invoice.company.base_currency)
@@ -376,8 +394,9 @@ class SalesReturn(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_returns")
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="returns")
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_returns")
-    stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_return")
+    warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_returns")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_returns")
+    stock_movement = models.OneToOneField(StockMovement, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return")
     return_number = models.CharField(max_length=37)
     return_date = models.DateField()
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
@@ -435,17 +454,22 @@ class SalesReturn(models.Model):
             or self.invoice.status != SalesInvoice.Status.POSTED
         ):
             raise ValidationError({"invoice": "يجب اختيار فاتورة مبيعات مرحلة تابعة للشركة."})
-        if self.warehouse_id and (
-            self.warehouse.company_id != self.company_id
-            or (self.invoice_id and self.invoice.delivery.warehouse_id != self.warehouse_id)
-        ):
-            raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+        if self.invoice_id and self.invoice.delivery_id:
+            if not self.warehouse_id or self.warehouse.company_id != self.company_id or self.invoice.delivery.warehouse_id != self.warehouse_id:
+                raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+            if self.branch_id and self.warehouse.branch_id and self.branch_id != self.warehouse.branch_id:
+                raise ValidationError({"branch": "فرع المردود لا يطابق فرع المخزن."})
+        elif self.invoice_id:
+            if self.warehouse_id or not self.branch_id or self.branch.company_id != self.company_id or self.branch_id != self.invoice.branch_id:
+                raise ValidationError({"branch": "مردود الخدمة يجب أن يتبع فرع فاتورة الخدمة دون حركة مخزنية."})
         if self.stock_movement_id and (
-            self.stock_movement.company_id != self.company_id
+            not self.warehouse_id or self.stock_movement.company_id != self.company_id
             or self.stock_movement.destination_warehouse_id != self.warehouse_id
             or self.stock_movement.movement_type != StockMovement.MovementType.RECEIPT
         ):
             raise ValidationError({"stock_movement": "حركة الاستلام لا تطابق مردود المبيعات."})
+        if self.invoice_id and not self.invoice.delivery_id and self.stock_movement_id:
+            raise ValidationError({"stock_movement": "مردود الخدمة لا ينشئ حركة مخزنية."})
         if self.invoice_id and self.return_date and self.return_date < self.invoice.invoice_date:
             raise ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
 
@@ -454,7 +478,7 @@ class SalesReturnLine(models.Model):
     """بند مردود يحتفظ بلقطة السعر والضريبة والتكلفة من الفاتورة الأصلية."""
     sales_return = models.ForeignKey(SalesReturn, on_delete=models.PROTECT, related_name="lines")
     invoice_line = models.ForeignKey(SalesInvoiceLine, on_delete=models.PROTECT, related_name="return_lines")
-    movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_return_line")
+    movement_line = models.OneToOneField(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_line")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)

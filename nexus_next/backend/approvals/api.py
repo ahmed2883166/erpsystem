@@ -59,7 +59,7 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
         qs = SalesInvoiceApproval.objects.filter(
             company__in=accessible_companies(self.request.user)
-        ).select_related("company", "invoice", "invoice__customer", "requested_by", "decided_by", "invoice__delivery__warehouse")
+        ).select_related("company", "invoice", "invoice__customer", "requested_by", "decided_by", "invoice__delivery__warehouse", "invoice__branch")
         if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             scoped = qs
         else:
@@ -74,7 +74,8 @@ class SalesInvoiceApprovalViewSet(viewsets.ReadOnlyModelViewSet):
                     default_company_ids.append(company_id)
             scoped = qs.filter(
                 Q(invoice__delivery__warehouse__branch__in=branches)
-                | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+                | Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+                | Q(invoice__branch__in=branches)
             )
         company_id = parse_company_param(self.request)
         return scoped.filter(company_id=company_id) if company_id else scoped
