@@ -135,6 +135,8 @@ class PurchaseInvoice(models.Model):
             raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
         if self.invoice_type == self.InvoiceType.INVENTORY and not self.receipt_id:
             raise ValidationError({"receipt": "فاتورة المشتريات المخزنية تتطلب إذن استلام."})
+        if self.invoice_type == self.InvoiceType.INVENTORY and self.branch_id:
+            raise ValidationError({"branch": "فرع فاتورة المخزون يُحدد من مخزن إذن الاستلام."})
         if self.invoice_type == self.InvoiceType.DIRECT_EXPENSE and (self.receipt_id or not self.branch_id):
             raise ValidationError({"branch": "فاتورة الخدمات والمصروفات المباشرة تتطلب فرعًا ولا ترتبط بإذن استلام."})
         if self.status == self.Status.POSTED and self.pk:
