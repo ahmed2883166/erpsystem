@@ -294,7 +294,10 @@ export type DirectCashFlowReport = {
     details: { counter_account_id: number|null; counter_account_code: string|null; counter_account_name: string; kind: "receipt"|"payment"; inflows: string; outflows: string }[] }[];
   operating_cash_flow: string; investing_cash_flow: string; financing_cash_flow: string;
   opening_cash_balance: string; closing_cash_balance: string; ledger_closing_cash_balance: string;
-  closing_balance_difference: string; net_change_in_cash: string; ledger_cash_change: string; reconciliation_difference: string;
+  closing_balance_difference: string; net_change_in_cash: string; effect_of_exchange_rate_changes: string;
+  net_increase_decrease_in_cash: string; ledger_cash_change: string; reconciliation_difference: string;
+  exchange_rate_effect_details: {account_id:number;account_code:string;account_name:string;currency:string;
+    revaluation_date:string;rate:string;foreign_amount:string;difference:string;journal_number:string}[];
   uncategorized_counterparty_transactions: {id:number;transaction_date:string;document_number:string;kind:string;amount:string}[];
   non_cash_investing_transactions: {document_type:string;invoice_number:string;asset_name:string;supplier_name:string;recognition_date:string;gross_amount:string;cash_paid_during_period:string;unpaid_at_period_end:string}[];
   note: string;
