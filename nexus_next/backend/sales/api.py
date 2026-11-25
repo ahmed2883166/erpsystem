@@ -19,7 +19,7 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate, SalesOrder
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
 from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
@@ -119,6 +119,23 @@ class SalesOrderViewSet(SalesBaseViewSet):
 
     @action(detail=True, methods=("post",))
     @transaction.atomic
+    def cancel(self, request, pk=None):
+        order = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)), pk=self.kwargs["pk"],
+        )
+        self.check_object_permissions(request, order)
+        self._check_write(order.company_id)
+        if order.status not in (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED):
+            raise ValidationError("لا يمكن إلغاء أمر البيع في حالته الحالية.")
+        if order.deliveries.filter(stock_movement__status=StockMovement.Status.DRAFT).exists():
+            raise ValidationError("احذف أذون التسليم المسودة أولًا قبل إلغاء أمر البيع.")
+        order.status = SalesOrder.Status.CANCELLED
+        order.save(update_fields=("status", "updated_at"))
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
     def confirm(self, request, pk=None):
         order = get_object_or_404(
             self.get_queryset().select_for_update(of=("self",)), pk=self.kwargs["pk"],
@@ -192,6 +209,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         if hasattr(instance, "invoice"):
             raise ValidationError("لا يمكن حذف إذن تسليم مرتبط بفاتورة.")
         movement = instance.stock_movement
+        SalesDeliveryAllocation.objects.filter(delivery=instance).delete()
         instance.delete()
         movement.delete()
 
