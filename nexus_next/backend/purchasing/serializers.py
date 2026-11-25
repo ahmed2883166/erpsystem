@@ -854,6 +854,8 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
         lines = attrs.get("lines", [])
         if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
+        if invoice.invoice_type != PurchaseInvoice.InvoiceType.INVENTORY or not invoice.receipt_id:
+            raise serializers.ValidationError({"invoice": "مرتجع المورد متاح لفواتير الأصناف المخزنية المرتبطة باستلام فقط."})
         if invoice.transaction_currency_id and (
             SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
             or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).filter(
