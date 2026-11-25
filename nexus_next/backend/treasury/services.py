@@ -398,6 +398,8 @@ def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, posi
         return "تم عكس إعادة التقييم من قبل."
     if revaluation.journal_entry.status != JournalEntry.Status.POSTED:
         return "قيد إعادة التقييم الأصلي ليس في حالة ترحيل تسمح بالعكس."
+    if entry_date and entry_date < revaluation.revaluation_date:
+        return "تاريخ قيد العكس لا يجوز أن يسبق تاريخ إعادة التقييم."
 
     account = account or revaluation.account
     position = position or TreasuryFxPosition.objects.filter(account=account).first()
