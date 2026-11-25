@@ -251,8 +251,8 @@ class BackupConfigurationView(APIView):
             if any(part in ("", ".", "..") for part in win.parts[1:]):
                 raise ValidationError({"backup_path": "المسار يحتوي على أجزاء غير مسموح بها."})
             # Accept only a local drive-letter path. Do not probe a request-
-            # supplied filesystem path in the web process; the backup runner
-            # validates access when it executes under the server account.
+            # supplied filesystem path in the web process. An unavailable
+            # destination is reported by the actual backup operation.
             current_path = PureWindowsPath(config.backup_path) if config.backup_path else None
             if current_path != win:
                 config.backup_path = str(win)
