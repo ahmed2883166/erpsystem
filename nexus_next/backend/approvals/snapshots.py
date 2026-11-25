@@ -64,6 +64,10 @@ def financial_document_snapshot(document_type, document):
             "date": document.invoice_date.isoformat(),
             "supplier_id": document.supplier_id,
             "supplier_name": document.supplier.name_ar,
+            "invoice_type": document.invoice_type,
+            "branch_id": document.branch_id,
+            "branch_code": document.branch.code if document.branch_id else None,
+            "branch_name": document.branch.name_ar if document.branch_id else None,
             "receipt_id": document.receipt_id,
             "net_total": str(document.net_total),
             "tax_total": str(document.tax_total),
@@ -71,11 +75,18 @@ def financial_document_snapshot(document_type, document):
             "lines": [
                 {
                     "receipt_line_id": line.receipt_line_id,
-                    "product_id": line.receipt_line.product_id,
-                    "product_code": line.receipt_line.product.code,
-                    "product_name": line.receipt_line.product.name_ar,
+                    "product_id": line.receipt_line.product_id if line.receipt_line_id else None,
+                    "product_code": line.receipt_line.product.code if line.receipt_line_id else None,
+                    "product_name": line.receipt_line.product.name_ar if line.receipt_line_id else None,
+                    "description": line.description,
+                    "expense_account_id": line.expense_account_id,
+                    "expense_account_code": line.expense_account.code if line.expense_account_id else None,
+                    "expense_account_name": line.expense_account.name_ar if line.expense_account_id else None,
+                    "cost_center_id": line.cost_center_id,
+                    "cost_center_code": line.cost_center.code if line.cost_center_id else None,
+                    "cost_center_name": line.cost_center.name_ar if line.cost_center_id else None,
                     "quantity": str(line.billed_quantity),
-                    "receipt_quantity": str(line.receipt_line.quantity),
+                    "receipt_quantity": str(line.receipt_line.quantity) if line.receipt_line_id else None,
                     "unit_price": str(line.unit_price),
                     "tax_code": line.tax_code.code if line.tax_code_id else None,
                     "tax_rate": str(line.tax_rate),
@@ -84,7 +95,7 @@ def financial_document_snapshot(document_type, document):
                     "total_amount": str(line.total_amount),
                 }
                 for line in document.lines.select_related(
-                    "receipt_line__product", "tax_code"
+                    "receipt_line__product", "expense_account", "cost_center", "tax_code"
                 ).order_by("pk")
             ],
         }

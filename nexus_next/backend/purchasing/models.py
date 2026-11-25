@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
-from accounting.models import ChartOfAccount, JournalEntry, TaxCode
+from accounting.models import ChartOfAccount, CostCenter, JournalEntry, TaxCode
 from core.money import round_currency_amount
 from companies.models import Branch, Company, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
@@ -74,8 +74,14 @@ class PurchaseInvoice(models.Model):
         POSTED = "posted", "مرحّلة"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_invoices")
+    class InvoiceType(models.TextChoices):
+        INVENTORY = "inventory", "مشتريات مخزنية"
+        DIRECT_EXPENSE = "direct_expense", "خدمات ومصروفات مباشرة"
+
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_invoices")
-    receipt = models.ForeignKey(PurchaseReceipt, on_delete=models.PROTECT, related_name="invoices")
+    invoice_type = models.CharField(max_length=20, choices=InvoiceType.choices, default=InvoiceType.INVENTORY)
+    receipt = models.ForeignKey(PurchaseReceipt, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
     transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
@@ -125,6 +131,14 @@ class PurchaseInvoice(models.Model):
             self.receipt.company_id != self.company_id or self.receipt.supplier_id != self.supplier_id
         ):
             raise ValidationError({"receipt": "إذن الاستلام لا يتبع المورد والشركة المحددين."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if self.invoice_type == self.InvoiceType.INVENTORY and not self.receipt_id:
+            raise ValidationError({"receipt": "فاتورة المشتريات المخزنية تتطلب إذن استلام."})
+        if self.invoice_type == self.InvoiceType.INVENTORY and self.branch_id:
+            raise ValidationError({"branch": "فرع فاتورة المخزون يُحدد من مخزن إذن الاستلام."})
+        if self.invoice_type == self.InvoiceType.DIRECT_EXPENSE and (self.receipt_id or not self.branch_id):
+            raise ValidationError({"branch": "فاتورة الخدمات والمصروفات المباشرة تتطلب فرعًا ولا ترتبط بإذن استلام."})
         if self.status == self.Status.POSTED and self.pk:
             old = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
             if old == self.Status.POSTED:
@@ -147,7 +161,10 @@ class PurchaseInvoice(models.Model):
 class PurchaseInvoiceLine(models.Model):
     """يمثل بندًا ماليًا وضريبيًا داخل فاتورة المشتريات."""
     invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="lines")
-    receipt_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    receipt_line = models.ForeignKey(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    description = models.CharField(max_length=240, blank=True)
+    expense_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_expense_lines")
+    cost_center = models.ForeignKey(CostCenter, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
     billed_quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
@@ -198,12 +215,29 @@ class PurchaseInvoiceLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.invoice_id and self.receipt_line_id:
-            receipt = self.invoice.receipt
-            if self.receipt_line.movement_id != receipt.stock_movement_id:
+        if not self.invoice_id:
+            return
+        if self.invoice.invoice_type == PurchaseInvoice.InvoiceType.INVENTORY:
+            if not self.receipt_line_id or not self.invoice.receipt_id:
+                raise ValidationError({"receipt_line": "فاتورة المشتريات المخزنية تتطلب سطر استلام."})
+            if self.receipt_line.movement_id != self.invoice.receipt.stock_movement_id:
                 raise ValidationError({"receipt_line": "سطر الصنف لا يتبع إذن الاستلام المحدد."})
             if self.receipt_line.product.product_type != "goods":
                 raise ValidationError({"receipt_line": "لا يمكن فوترة خدمة من خلال استلام مخزني."})
+            if self.expense_account_id or self.cost_center_id:
+                raise ValidationError({"expense_account": "لا تستخدم حساب مصروف أو مركز تكلفة في سطر مخزني."})
+        else:
+            if self.receipt_line_id:
+                raise ValidationError({"receipt_line": "الفاتورة المباشرة لا ترتبط بسطر استلام مخزني."})
+            if not self.expense_account_id:
+                raise ValidationError({"expense_account": "حدد حساب المصروف لكل بند."})
+            account = self.expense_account
+            if (account.company_id != self.invoice.company_id or account.nature != ChartOfAccount.Nature.EXPENSE or not account.is_active or account.is_group or not account.allow_posting):
+                raise ValidationError({"expense_account": "اختر حساب مصروف نشطًا وتفصيليًا وقابلًا للترحيل من نفس الشركة."})
+            if self.cost_center_id and (self.cost_center.company_id != self.invoice.company_id or not self.cost_center.is_active):
+                raise ValidationError({"cost_center": "مركز التكلفة غير نشط أو لا يتبع الشركة."})
+            if not self.description.strip():
+                raise ValidationError({"description": "وصف بند الخدمة أو المصروف مطلوب."})
 
     def save(self, *args, **kwargs):
         if self.invoice_id and PurchaseInvoice.objects.filter(
@@ -211,7 +245,7 @@ class PurchaseInvoiceLine(models.Model):
         ).exists():
             raise ValidationError("لا يمكن تعديل سطور فاتورة مورد مرحلة.")
         if self.billed_quantity is None:
-            self.billed_quantity = self.receipt_line.quantity
+            self.billed_quantity = self.receipt_line.quantity if self.receipt_line_id else Decimal("1")
         self.calculate()
         return super().save(*args, **kwargs)
 

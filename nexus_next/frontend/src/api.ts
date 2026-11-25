@@ -136,7 +136,24 @@ export type SupplierQuotation = {
   total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
 };
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
-export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; billed_quantity: string; receipt_quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+export type PurchaseInvoice = {
+  id:number; company:number; supplier:number; supplier_name:string;
+  invoice_type:"inventory"|"direct_expense"; branch:number|null; branch_name:string|null;
+  receipt:number|null; receipt_number:string|null; invoice_number:string; invoice_date:string;
+  transaction_currency:number|null; exchange_rate:string|null; exchange_rate_date:string|null;
+  transaction_net_total:string|null; transaction_tax_total:string|null; transaction_grand_total:string|null;
+  status:"draft"|"posted"; net_total:string; tax_total:string; grand_total:string; paid_total:string; balance_due:string;
+  notes:string; journal_entry:number|null; journal_number:string|null;
+  invoice_lines:{
+    id:number; receipt_line:number|null; product_code:string|null; product_name:string|null;
+    description:string; expense_account:number|null; expense_account_name:string|null;
+    cost_center:number|null; cost_center_name:string|null; quantity:string; billed_quantity:string;
+    receipt_quantity:string|null; unit_price:string; transaction_unit_price:string|null;
+    transaction_net_amount:string|null; transaction_tax_amount:string|null; transaction_total_amount:string|null;
+    tax_rate:string; net_amount:string; tax_amount:string; total_amount:string;
+  }[];
+  created_at:string; posted_at:string|null;
+};
 export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
 // قراءة رمز CSRF من ملفات تعريف الارتباط لاستخدامه في الطلبات التي تغيّر البيانات.
 function csrfToken(): string { const item = document.cookie.split("; ").find((part) => part.startsWith("csrftoken=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
