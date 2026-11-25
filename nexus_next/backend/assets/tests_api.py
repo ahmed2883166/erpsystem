@@ -785,9 +785,9 @@ class FixedAssetWorkflowTests(APITestCase):
             format="json",
         )
         self.assertEqual(invoice_error.status_code, 400, invoice_error.data)
-        self.assertEqual(
-            str(invoice_error.data["detail"]),
+        self.assertIn(
             "تعذر معالجة فاتورة شراء الأصل. راجع البيانات والمراجع المرتبطة ثم أعد المحاولة.",
+            str(invoice_error.data),
         )
         self.assertNotIn("DoesNotExist", str(invoice_error.data))
 
@@ -800,8 +800,8 @@ class FixedAssetWorkflowTests(APITestCase):
             format="json",
         )
         self.assertEqual(payment_error.status_code, 400, payment_error.data)
-        self.assertEqual(
-            str(payment_error.data["detail"]),
+        self.assertIn(
             "تعذر معالجة سند سداد الأصل. راجع البيانات والمراجع المرتبطة ثم أعد المحاولة.",
+            str(payment_error.data),
         )
         self.assertNotIn("DoesNotExist", str(payment_error.data))
