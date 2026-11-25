@@ -8,7 +8,7 @@ The sales API supports consolidated customer receipts in the company's base curr
 2. Each allocation contains an invoice ID and an amount. Every invoice must be posted, belong to the same customer/company and branch, be dated no later than the receipt, and use the company base currency.
 3. Post the batch with `POST /api/sales-documents/receipt-batches/{id}/post/`. Posting creates one balanced cash/bank-to-receivables journal entry for the full receipt amount.
 4. Any amount not allocated to invoices remains a customer advance. It is still credited to the customer receivables subledger and appears as an unallocated balance.
-5. Allocate a posted advance later with `POST /api/sales-documents/receipt-batches/{id}/allocate/`, passing an invoice ID and amount. This changes only the customer subledger allocation; it does not create another cash movement or journal entry.
+5. Allocate a posted advance later with `POST /api/sales-documents/receipt-batches/{id}/allocate/`, passing an invoice ID, amount, and allocation date. This changes only the customer subledger allocation; it does not create another cash movement or journal entry. The allocation date controls historical invoice aging, so a later allocation does not rewrite an earlier as-of report.
 6. Reverse the whole batch with `POST /api/sales-documents/receipt-batches/{id}/reverse/`. The reversal creates a linked reversing journal and removes all of the batch's allocations from current invoice balances.
 
 ## Controls
