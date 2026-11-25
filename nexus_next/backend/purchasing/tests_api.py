@@ -17,7 +17,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, SupplierPayment, SupplierReturn
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -77,6 +77,9 @@ class PurchasingWorkflowTests(APITestCase):
         receipt_line_id = response.data["line_items"][0]["id"]
         response = self.client.post(f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
+        receipt_journal = JournalEntry.objects.get(entry_number=response.data["journal_number"])
+        self.assertEqual(receipt_journal.source_type, JournalEntry.Source.INVENTORY)
+        self.assertEqual(receipt_journal.status, JournalEntry.Status.POSTED)
         return receipt_id, receipt_line_id
 
     def test_posted_purchase_receipt_update_is_rejected_without_partial_changes(self):
@@ -575,6 +578,16 @@ class PurchasingWorkflowTests(APITestCase):
                        "purchase_order_line": order_line_id}],
         }, format="json")
         self.assertEqual(receipt.status_code, 201, receipt.data)
+
+        reserved_over_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-RESERVED-OVER",
+            "receipt_date": "2026-03-06",
+            "lines": [{"product": self.product.pk, "quantity": "7", "unit_cost": "100",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(reserved_over_receipt.status_code, 400, reserved_over_receipt.data)
+
         posted = self.client.post(f"/api/purchasing/receipts/{receipt.data['id']}/post/", {}, format="json")
         self.assertEqual(posted.status_code, 200, posted.data)
         order = self.client.get(f"/api/purchasing/orders/{order_id}/").data
@@ -615,7 +628,7 @@ class PurchasingWorkflowTests(APITestCase):
         response = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity, Decimal("2"))
-        self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).exists())
+        self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 0)
 
         # A draft mismatch remains correctable; the corrected invoice can clear GRNI.
         corrected = self.client.patch(
@@ -1518,6 +1531,13 @@ class PurchasingWorkflowTests(APITestCase):
             supplier_credit_balance(self.company.pk, self.supplier.pk, date(2026, 3, 14)),
             Decimal("114.0000"),
         )
+        statement_after_reversal = self.client.get(
+            f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
+        )
+        self.assertEqual(statement_after_reversal.status_code, 200, statement_after_reversal.data)
+        self.assertEqual(statement_after_reversal.data["rows"][-2]["document_type"], "supplier_refund")
+        self.assertEqual(statement_after_reversal.data["rows"][-1]["document_type"], "supplier_refund_reversal")
+        self.assertEqual(statement_after_reversal.data["closing_balance"], "-114.0000")
         repeated = self.client.post(
             f"/api/purchasing/refunds/{refund.data['id']}/reverse/",
             {"entry_date": "2026-03-15"}, format="json",
@@ -1786,3 +1806,356 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
         self.assertEqual(reversed_return.data["status"], "reversed")
+
+
+    def test_purchase_requisition_requires_separate_review_and_converts_once(self):
+        from purchasing.models import PurchaseRequisition
+
+        created = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk,
+            "request_number": "REQ-001",
+            "request_date": "2026-03-10",
+            "required_date": "2026-03-20",
+            "department": "المخازن",
+            "purpose": "تغطية احتياج التشغيل",
+            "lines": [{
+                "product": self.product.pk,
+                "requested_quantity": "5",
+                "estimated_unit_price": "90",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        requisition_id = created.data["id"]
+
+        submitted = self.client.post(f"/api/purchasing/requisitions/{requisition_id}/submit/", {}, format="json")
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(submitted.data["status"], PurchaseRequisition.Status.SUBMITTED)
+
+        self_review = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "approve"}, format="json",
+        )
+        self.assertEqual(self_review.status_code, 403)
+
+        reviewer = get_user_model().objects.create_user(username="buyer-reviewer", password="test-password")
+        CompanyMembership.objects.create(user=reviewer, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(reviewer)
+        approved = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "approve", "note": "تمت مراجعة الاحتياج"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["status"], PurchaseRequisition.Status.APPROVED)
+
+        converted = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/convert/",
+            {"supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+             "order_number": "PO-REQ-001", "order_date": "2026-03-11",
+             "expected_date": "2026-03-20"}, format="json",
+        )
+        self.assertEqual(converted.status_code, 201, converted.data)
+        order = PurchaseOrder.objects.get(pk=converted.data["purchase_order_id"])
+        self.assertEqual(order.lines.get().quantity, Decimal("5"))
+        self.assertEqual(order.lines.get().unit_price, Decimal("90"))
+        requisition = PurchaseRequisition.objects.get(pk=requisition_id)
+        self.assertEqual(requisition.status, PurchaseRequisition.Status.CONVERTED)
+        self.assertEqual(requisition.converted_order_id, order.pk)
+
+        duplicate_conversion = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/convert/",
+            {"supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+             "order_number": "PO-REQ-002", "order_date": "2026-03-11"}, format="json",
+        )
+        self.assertEqual(duplicate_conversion.status_code, 400)
+
+
+    def test_purchase_order_over_limit_waits_for_separate_manager_approval(self):
+        DiscountApprovalPolicy.objects.create(
+            company=self.company, max_purchase_order_amount=Decimal("500"),
+            created_by=self.user, updated_by=self.user,
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-APPROVAL-001",
+            "order_date": "2026-03-10", "expected_date": "2026-03-20",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_price": "300", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        pending = self.client.post(
+            f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json"
+        )
+        self.assertEqual(pending.status_code, 202, pending.data)
+        request = FinancialApprovalRequest.objects.get(purchase_order_id=order.data["id"])
+        self.assertEqual(request.requested_amount, Decimal("600.0000"))
+        self.assertEqual(request.requested_limit, Decimal("500.0000"))
+        self.assertEqual(PurchaseOrder.objects.get(pk=order.data["id"]).status, PurchaseOrder.Status.DRAFT)
+
+        manager = get_user_model().objects.create_user(username="po-approval-admin", password="test-password")
+        CompanyMembership.objects.create(user=manager, company=self.company, role="admin", all_branches=True)
+        self.client.force_authenticate(manager)
+        approved = self.client.post(
+            f"/api/approvals/financial-requests/{request.pk}/approve/",
+            {"note": "اعتماد أمر الشراء بعد مراجعة العرض"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["document_type"], FinancialApprovalRequest.DocumentType.PURCHASE_ORDER)
+        self.assertEqual(PurchaseOrder.objects.get(pk=order.data["id"]).status, PurchaseOrder.Status.CONFIRMED)
+
+
+    def test_purchase_receipt_rejects_unit_cost_above_approved_order_price(self):
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "order_number": "PO-PRICE-MATCH",
+            "order_date": "2026-03-10", "expected_date": "2026-03-20",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        order_line_id = order.data["line_items"][0]["id"]
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk, "purchase_order": order.data["id"],
+            "receipt_number": "PRICE-MISMATCH", "receipt_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_cost": "101",
+                       "purchase_order_line": order_line_id}],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 400, receipt.data)
+        self.assertIn("سعر أمر الشراء", str(receipt.data))
+
+
+    def test_grni_aging_report_includes_posted_uninvoiced_receipts(self):
+        self._create_and_post_receipt()
+        response = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["grand_total"], "200.0000")
+        self.assertEqual(response.data["aging"]["0_30"], "200.0000")
+        self.assertEqual(response.data["rows"][0]["receipt_number"], "GR-001")
+        self.assertEqual(response.data["monthly_summary"][0]["month"], "2026-03")
+        self.assertEqual(
+            response.data["gl_reconciliation"]["operational_open_receipts"], "200.0000"
+        )
+        grni_debug_lines = list(JournalLine.objects.filter(
+            account__code="2100", entry__company=self.company,
+        ).values("entry_id", "debit", "credit", "entry__source_type", "entry__description"))
+        self.assertEqual(
+            response.data["gl_reconciliation"]["posted_gl_balance"], "200.0000",
+            grni_debug_lines,
+        )
+        self.assertEqual(response.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(response.data["gl_reconciliation"]["reconciled"])
+
+    def test_grni_aging_report_keeps_receipt_with_draft_supplier_invoice(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-GRNI",
+            "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        self.assertEqual(invoice.data["status"], "draft")
+
+        response = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["grand_total"], "200.0000")
+        self.assertEqual(response.data["rows"][0]["invoice_status"], "draft")
+
+
+    def test_partial_supplier_invoices_clear_grni_by_billed_quantity(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PART-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["invoice_lines"][0]["quantity"], "0.7500")
+        first_posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertEqual(first_posted.data["net_total"], "75.0000")
+        self.assertEqual(first_posted.data["tax_total"], "10.5000")
+
+        after_first = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(after_first.status_code, 200, after_first.data)
+        self.assertEqual(after_first.data["grand_total"], "125.0000")
+        self.assertEqual(after_first.data["rows"][0]["invoice_status"], "partially_invoiced")
+        self.assertEqual(after_first.data["rows"][0]["invoiced_amount"], "75.0000")
+        self.assertEqual(after_first.data["gl_reconciliation"]["posted_gl_balance"], "125.0000")
+        self.assertEqual(after_first.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(after_first.data["gl_reconciliation"]["reconciled"])
+
+        second = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PART-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.2500",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/purchasing/invoices/{second.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+        self.assertEqual(second_posted.data["net_total"], "125.0000")
+
+        after_second = self.client.get(
+            f"/api/purchasing/receipts/grni-aging/?company={self.company.pk}&as_of=2026-03-10"
+        )
+        self.assertEqual(after_second.status_code, 200, after_second.data)
+        self.assertEqual(after_second.data["grand_total"], "0.0000")
+        self.assertEqual(after_second.data["gl_reconciliation"]["posted_gl_balance"], "0.0000")
+        self.assertEqual(after_second.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(after_second.data["gl_reconciliation"]["reconciled"])
+
+    def test_partial_supplier_invoices_cannot_overbill_a_receipt_line(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-OVER-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.5000",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        overbilled = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-OVER-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(overbilled.status_code, 400, overbilled.data)
+        self.assertFalse(PurchaseInvoice.objects.filter(invoice_number="INV-OVER-002").exists())
+        self.assertEqual(
+            PurchaseInvoiceLine.objects.filter(
+                receipt_line_id=receipt_line_id, invoice__status=PurchaseInvoice.Status.POSTED,
+            ).aggregate(total=Sum("billed_quantity"))["total"],
+            Decimal("1.5000"),
+        )
+
+
+    def test_nonrecoverable_tax_waits_for_full_receipt_billing_then_capitalizes_once(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        tax_code = TaxCode.objects.create(
+            company=self.company, country="EG", code="NR14", name_ar="ضريبة غير قابلة للخصم",
+            category=TaxCode.Category.STANDARD, rate=Decimal("14"),
+            effective_from=date(2026, 1, 1), input_tax_recoverable=False,
+        )
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-NR-PART-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_code": tax_code.pk,
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        first_posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+        self.assertFalse(PurchaseInvoiceTaxAllocation.objects.filter(invoice_id=first.data["id"]).exists())
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).inventory_value,
+            Decimal("200.0000"),
+        )
+        pending_return = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": first.data["id"], "return_number": "RET-NR-PENDING",
+            "return_date": "2026-03-11",
+            "lines": [{
+                "invoice_line": first.data["invoice_lines"][0]["id"],
+                "quantity": "0.2500",
+            }],
+        }, format="json")
+        self.assertEqual(pending_return.status_code, 201, pending_return.data)
+        blocked_return = self.client.post(
+            f"/api/purchasing/returns/{pending_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(blocked_return.status_code, 400, blocked_return.data)
+
+        second = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-NR-PART-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.2500",
+                "unit_price": "100", "tax_code": tax_code.pk,
+            }],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/purchasing/invoices/{second.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.inventory_value, Decimal("228.0000"))
+        allocations = PurchaseInvoiceTaxAllocation.objects.filter(invoice_id=second.data["id"])
+        self.assertEqual(allocations.aggregate(total=Sum("inventory_amount"))["total"], Decimal("28.0000"))
+        clearing = ChartOfAccount.objects.get(company=self.company, code="2190")
+        clearing_totals = JournalLine.objects.filter(account=clearing).aggregate(
+            debit=Sum("debit"), credit=Sum("credit"),
+        )
+        self.assertEqual(clearing_totals["debit"], Decimal("28.0000"))
+        self.assertEqual(clearing_totals["credit"], Decimal("28.0000"))
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{pending_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["status"], "posted")
+
+
+    def test_draft_supplier_invoice_reserves_only_its_billed_quantity(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        first = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-RESERVE-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "1.2500",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+
+        remaining_invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-RESERVE-002", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.7500",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(remaining_invoice.status_code, 201, remaining_invoice.data)
+
+        over_reserved = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-DRAFT-RESERVE-003", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "0.1000",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(over_reserved.status_code, 400, over_reserved.data)
+        self.assertFalse(PurchaseInvoice.objects.filter(invoice_number="INV-DRAFT-RESERVE-003").exists())

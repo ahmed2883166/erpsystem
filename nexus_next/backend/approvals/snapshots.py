@@ -34,6 +34,29 @@ def invoice_discount_snapshot(invoice):
 
 def financial_document_snapshot(document_type, document):
     """Capture immutable, JSON-safe approval details for purchasing and payment documents."""
+    if document_type == "purchase_order":
+        return {
+            "document_type": document_type,
+            "document_number": document.order_number,
+            "date": document.order_date.isoformat(),
+            "supplier_id": document.supplier_id,
+            "supplier_name": document.supplier.name_ar,
+            "warehouse_id": document.warehouse_id,
+            "warehouse_name": document.warehouse.name_ar,
+            "expected_date": document.expected_date.isoformat() if document.expected_date else None,
+            "grand_total": str(document.grand_total),
+            "lines": [
+                {
+                    "product_id": line.product_id,
+                    "product_code": line.product.code,
+                    "product_name": line.product.name_ar,
+                    "quantity": str(line.quantity),
+                    "unit_price": str(line.unit_price),
+                    "tax_rate": str(line.tax_rate),
+                }
+                for line in document.lines.select_related("product").order_by("pk")
+            ],
+        }
     if document_type == "purchase_invoice":
         return {
             "document_type": document_type,
@@ -51,7 +74,8 @@ def financial_document_snapshot(document_type, document):
                     "product_id": line.receipt_line.product_id,
                     "product_code": line.receipt_line.product.code,
                     "product_name": line.receipt_line.product.name_ar,
-                    "quantity": str(line.receipt_line.quantity),
+                    "quantity": str(line.billed_quantity),
+                    "receipt_quantity": str(line.receipt_line.quantity),
                     "unit_price": str(line.unit_price),
                     "tax_code": line.tax_code.code if line.tax_code_id else None,
                     "tax_rate": str(line.tax_rate),

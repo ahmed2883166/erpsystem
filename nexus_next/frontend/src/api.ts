@@ -98,13 +98,45 @@ export type Customer = {
 };
 export type PurchaseOrder = {
   id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string;
-  order_number: string; order_date: string; expected_date: string | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
+  order_number: string; order_date: string; expected_date: string | null; grand_total: string; approval_status: "pending" | "approved" | "rejected" | "superseded" | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
   notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string;
     received_quantity: string; remaining_quantity: string; unit_price: string; tax_rate: string }[];
   created_at: string; confirmed_at: string | null;
 };
+export type PurchaseRequisition = {
+  id: number; company: number; request_number: string; request_date: string; required_date: string | null;
+  department: string; purpose: string; notes: string;
+  status: "draft" | "submitted" | "approved" | "rejected" | "converted" | "cancelled";
+  requested_by: number; requested_by_name: string; reviewed_by: number | null; reviewed_by_name: string | null;
+  reviewed_at: string | null; review_note: string; converted_order: number | null;
+  line_items: { id: number; product: number; product_code: string; product_name: string;
+    requested_quantity: string; estimated_unit_price: string | null; notes: string }[];
+  created_at: string;
+};
+
+export type PurchaseRFQ = {
+  id: number; company: number; source_requisition: number | null; rfq_number: string; issue_date: string; closing_date: string;
+  status: "draft" | "open" | "closed" | "awarded" | "cancelled"; terms: string;
+  line_items: {id:number;product:number;product_code:string;product_name:string;quantity:string;notes:string}[];
+  supplier_list: {id:number;code:string;name:string;status:string}[];
+  awarded_quotation: number | null; converted_order: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
+};
+
+export type GRNIAgingReport = {
+  company:number; as_of:string; grand_total:string;
+  aging: { "0_30":string; "31_60":string; "61_90":string; over_90:string };
+  monthly_summary:{month:string;amount:string}[];
+  rows:{receipt_id:number;receipt_number:string;receipt_date:string;age_days:number;aging_bucket:string;supplier_id:number;supplier_name:string;warehouse_id:number;warehouse_name:string;branch_id:number|null;amount:string;invoiced_amount:string;invoice_status:string;invoice_number:string|null}[];
+};
+
+export type SupplierQuotation = {
+  id:number; rfq:number; supplier:number; supplier_name:string; quotation_number:string; quotation_date:string;
+  valid_until:string; delivery_days:number; payment_terms:string; notes:string; status:"submitted"|"withdrawn";
+  line_items:{id:number;rfq_line:number;product_code:string;product_name:string;quantity:string;unit_price:string;discount_percent:string;tax_rate:string;net_amount:string;tax_amount:string;total_amount:string}[];
+  total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
+};
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
-export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; billed_quantity: string; receipt_quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
 // قراءة رمز CSRF من ملفات تعريف الارتباط لاستخدامه في الطلبات التي تغيّر البيانات.
 function csrfToken(): string { const item = document.cookie.split("; ").find((part) => part.startsWith("csrftoken=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
@@ -159,12 +191,28 @@ export type SupplierAging = {
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
+  requisitions: (companyId: number) => request<PurchaseRequisition[]>(`/api/purchasing/requisitions/?company=${companyId}&ordering=-request_date`),
+  createRequisition: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>("/api/purchasing/requisitions/", { method: "POST", body: JSON.stringify(payload) }); },
+  submitRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/submit/`, { method: "POST" }); },
+  reviewRequisition: async (id: number, decision: "approve" | "reject", note = "") => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/review/`, { method: "POST", body: JSON.stringify({ decision, note }) }); },
+  convertRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<{ requisition: PurchaseRequisition; purchase_order_id: number }>(`/api/purchasing/requisitions/${id}/convert/`, { method: "POST", body: JSON.stringify(payload) }); },
+  cancelRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/cancel/`, { method: "POST" }); },
+
+  grniAging: (companyId:number, asOf:string) => request<GRNIAgingReport>(`/api/purchasing/receipts/grni-aging/?company=${companyId}&as_of=${asOf}`),
+  rfqs: (companyId: number) => request<PurchaseRFQ[]>(`/api/purchasing/rfqs/?company=${companyId}&ordering=-issue_date`),
+  quotations: (companyId: number) => request<SupplierQuotation[]>(`/api/purchasing/quotations/?rfq__company=${companyId}&ordering=-quotation_date`),
+  createRFQ: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRFQ>("/api/purchasing/rfqs/", { method:"POST", body:JSON.stringify(payload) }); },
+  openRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/open/`, {method:"POST"}); },
+  closeRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/close/`, {method:"POST"}); },
+  awardRFQ: async (id:number, quotation:number, reason:string) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/award/`, {method:"POST",body:JSON.stringify({quotation,reason})}); },
+  convertAward: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<{rfq:PurchaseRFQ;purchase_order_id:number}>(`/api/purchasing/rfqs/${id}/convert-award/`,{method:"POST",body:JSON.stringify(payload)}); },
+  createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
   createOrder: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>("/api/purchasing/orders/", { method: "POST", body: JSON.stringify(payload) }); },
   // تأكيد أمر الشراء المحدد للانتقال إلى مرحلة التنفيذ.
-  confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
+  confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder | {status:"pending_approval";detail:string;approval_request_id:number;order:PurchaseOrder}>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
   // إلغاء أمر شراء مسودة أو معتمد قبل تسجيل أي استلام.
   cancelOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/cancel/`, { method: "POST" }); },
 
@@ -690,7 +738,7 @@ export type SalesQuotation = {
 };
 export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; movement_status:string; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;cost_amount:string}[]; created_at:string; posted_at:string|null };
 
-export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
+export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_purchase_order_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
   delivery_line_id: number; product_id: number; product_code: string; product_name: string;
   quantity: string; unit_price: string; tax_code_id: number | null; tax_code: string | null;
@@ -707,8 +755,8 @@ export type SalesInvoiceApproval = {
 };
 export type FinancialApprovalRequest = {
   id: number; company: number;
-  document_type: "purchase_invoice" | "supplier_payment" | "treasury_payment" | "asset_purchase_invoice" | "asset_supplier_payment";
-  purchase_invoice: number | null; supplier_payment: number | null; treasury_transaction: number | null;
+  document_type: "purchase_invoice" | "purchase_order" | "supplier_payment" | "treasury_payment" | "asset_purchase_invoice" | "asset_supplier_payment";
+  purchase_invoice: number | null; purchase_order: number | null; supplier_payment: number | null; treasury_transaction: number | null;
   asset_purchase_invoice: number | null; asset_supplier_payment: number | null;
   document_number: string; document_total: string;
   requested_by: number; requested_by_name: string; requested_limit: string; requested_amount: string;

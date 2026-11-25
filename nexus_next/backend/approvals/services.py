@@ -11,6 +11,7 @@ from .snapshots import financial_document_snapshot
 
 LIMIT_FIELD = {
     FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "max_purchase_invoice_amount",
+    FinancialApprovalRequest.DocumentType.PURCHASE_ORDER: "max_purchase_order_amount",
     FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "max_payment_amount",
     FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "max_payment_amount",
     FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE: "max_purchase_invoice_amount",
@@ -21,6 +22,7 @@ LIMIT_FIELD = {
 def _document_relation(document_type):
     return {
         FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "purchase_invoice",
+        FinancialApprovalRequest.DocumentType.PURCHASE_ORDER: "purchase_order",
         FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "supplier_payment",
         FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "treasury_transaction",
         FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE: "asset_purchase_invoice",
@@ -32,7 +34,7 @@ def _document_relation(document_type):
 def refresh_financial_approval(document_type, document, user):
     """Create a fresh immutable request when a draft exceeds its company's configured limit."""
     relation = _document_relation(document_type)
-    amount = Decimal(document.grand_total if document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount)
+    amount = Decimal(document.grand_total if document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.PURCHASE_ORDER, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount)
     policy = DiscountApprovalPolicy.objects.filter(company_id=document.company_id).first()
     limit = getattr(policy, LIMIT_FIELD[document_type], None) if policy else None
     if document_type == FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT:
@@ -73,7 +75,7 @@ def refresh_financial_approval(document_type, document, user):
 def require_financial_approval(document_type, document):
     """Block posting unless the latest approval matches the exact current draft snapshot."""
     relation = _document_relation(document_type)
-    amount = Decimal(document.grand_total if document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount)
+    amount = Decimal(document.grand_total if document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.PURCHASE_ORDER, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount)
     policy = DiscountApprovalPolicy.objects.filter(company_id=document.company_id).first()
     limit = getattr(policy, LIMIT_FIELD[document_type], None) if policy else None
     if document_type == FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT:
