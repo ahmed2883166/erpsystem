@@ -540,3 +540,110 @@ class SalesDocumentTemplate(models.Model):
             raise ValidationError({"style": "نمط القالب غير صالح."})
         if not isinstance(self.config, dict):
             raise ValidationError({"config": "إعدادات القالب يجب أن تكون كائن إعدادات."})
+
+
+
+class SalesOrder(models.Model):
+    """أمر بيع معتمد كأساس لتجهيز وتسليم البضائع على دفعات."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        CONFIRMED = "confirmed", "معتمد"
+        PARTIALLY_DELIVERED = "partially_delivered", "تم التسليم جزئيًا"
+        DELIVERED = "delivered", "تم التسليم"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_orders")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_orders")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_orders")
+    order_number = models.CharField(max_length=80)
+    order_date = models.DateField()
+    requested_delivery_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
+    net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-order_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "order_number"), name="uq_sales_order_company_no"),
+            models.CheckConstraint(
+                condition=models.Q(requested_delivery_date__isnull=True) | models.Q(requested_delivery_date__gte=models.F("order_date")),
+                name="ck_sales_order_delivery_date",
+            ),
+        ]
+        indexes = [models.Index(fields=("company", "status", "order_date"), name="sales_order_co_status_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.warehouse_id and self.warehouse.company_id != self.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+        if self.requested_delivery_date and self.order_date and self.requested_delivery_date < self.order_date:
+            raise ValidationError({"requested_delivery_date": "تاريخ التسليم المطلوب لا يسبق تاريخ أمر البيع."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("أمر البيع المعتمد لا يمكن تعديله.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر بيع معتمد.")
+        return super().delete(*args, **kwargs)
+
+
+class SalesOrderLine(models.Model):
+    """بند أمر البيع؛ تحفظ الكمية والسعر والضريبة وقت الاتفاق مع العميل."""
+    order = models.ForeignKey(SalesOrder, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_order_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_order_lines")
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    discount_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+
+    def calculate(self):
+        if self.product.company_id != self.order.company_id or not self.product.is_active or self.product.product_type != Product.ProductType.GOODS:
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا نشطًا تابعًا لشركة أمر البيع."})
+        if self.tax_code_id:
+            code = self.tax_code
+            if (not code.is_active or code.company_id != self.order.company_id
+                    or code.country != self.order.company.country
+                    or code.category == TaxCode.Category.REVERSE_CHARGE
+                    or code.effective_from > self.order.order_date
+                    or (code.effective_to and code.effective_to < self.order.order_date)):
+                raise ValidationError({"tax_code": "كود الضريبة غير صالح لأمر البيع."})
+            self.tax_rate = code.rate
+        gross = (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
+        self.discount_amount = (gross * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
+        self.net_amount = gross - self.discount_amount
+        self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+        self.total_amount = self.net_amount + self.tax_amount
+
+    def save(self, *args, **kwargs):
+        if self.order_id and self.order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود أمر بيع معتمد.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف بنود أمر بيع معتمد.")
+        return super().delete(*args, **kwargs)
