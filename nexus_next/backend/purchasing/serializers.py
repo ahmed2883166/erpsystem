@@ -7,7 +7,7 @@ from rest_framework import serializers
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
-from accounting.models import ChartOfAccount, FxSubledgerRevaluation, JournalEntry, TaxCode
+from accounting.models import ChartOfAccount, CostCenter, FxSubledgerRevaluation, JournalEntry, TaxCode
 from companies.access import resolve_warehouse_branch
 from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
@@ -155,8 +155,12 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
 
 class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
     receipt_line = serializers.PrimaryKeyRelatedField(
-        queryset=StockMovementLine.objects.select_related("movement", "product")
+        queryset=StockMovementLine.objects.select_related("movement", "product"),
+        required=False, allow_null=True,
     )
+    description = serializers.CharField(max_length=240, required=False, allow_blank=True)
+    expense_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all(), required=False, allow_null=True)
+    cost_center = serializers.PrimaryKeyRelatedField(queryset=CostCenter.objects.all(), required=False, allow_null=True)
     billed_quantity = serializers.DecimalField(
         max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False,
     )
@@ -170,13 +174,15 @@ class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
 
 
 class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
-    product_code = serializers.CharField(source="receipt_line.product.code", read_only=True)
-    product_name = serializers.CharField(source="receipt_line.product.name_ar", read_only=True)
+    product_code = serializers.CharField(source="receipt_line.product.code", read_only=True, allow_null=True)
+    product_name = serializers.CharField(source="receipt_line.product.name_ar", read_only=True, allow_null=True)
+    expense_account_name = serializers.CharField(source="expense_account.name_ar", read_only=True, allow_null=True)
+    cost_center_name = serializers.CharField(source="cost_center.name_ar", read_only=True, allow_null=True)
     quantity = serializers.DecimalField(
         source="billed_quantity", max_digits=18, decimal_places=4, read_only=True
     )
     receipt_quantity = serializers.DecimalField(
-        source="receipt_line.quantity", max_digits=18, decimal_places=4, read_only=True
+        source="receipt_line.quantity", max_digits=18, decimal_places=4, read_only=True, allow_null=True
     )
     recoverable_tax_amount = serializers.SerializerMethodField()
     nonrecoverable_tax_amount = serializers.SerializerMethodField()
@@ -194,7 +200,8 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseInvoiceLine
         fields = (
-            "id", "receipt_line", "product_code", "product_name", "quantity", "billed_quantity", "receipt_quantity",
+            "id", "receipt_line", "product_code", "product_name", "description", "expense_account", "expense_account_name",
+            "cost_center", "cost_center_name", "quantity", "billed_quantity", "receipt_quantity",
             "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "net_amount", "tax_amount", "recoverable_tax_amount", "nonrecoverable_tax_amount", "total_amount",
         )
         read_only_fields = (
@@ -207,7 +214,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     lines = PurchaseInvoiceLineInputSerializer(many=True, write_only=True)
     invoice_lines = PurchaseInvoiceLineSerializer(source="lines", many=True, read_only=True)
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
-    receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True)
+    receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True, allow_null=True)
+    branch_name = serializers.CharField(source="branch.name_ar", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
@@ -226,7 +234,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseInvoice
         fields = (
-            "id", "company", "supplier", "supplier_name", "receipt", "receipt_number",
+            "id", "company", "supplier", "supplier_name", "invoice_type", "branch", "branch_name", "receipt", "receipt_number",
             "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "tax_total",
             "grand_total", "paid_total", "balance_due", "tax_allocations", "notes", "journal_entry", "journal_number", "invoice_lines",
             "lines", "created_at", "posted_at",
@@ -275,6 +283,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         if supplier and not supplier.is_active and not instance:
             raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن إنشاء فاتورة جديدة له."})
         receipt = attrs.get("receipt", instance.receipt if instance else None)
+        invoice_type = attrs.get("invoice_type", instance.invoice_type if instance else PurchaseInvoice.InvoiceType.INVENTORY)
+        branch = attrs.get("branch", instance.branch if instance else None)
         invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
         transaction_currency = attrs.get("transaction_currency", instance.transaction_currency if instance else None)
         exchange_rate = attrs.get("exchange_rate", instance.exchange_rate if instance else None)
@@ -287,6 +297,8 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 "company": instance.company_id,
                 "supplier": instance.supplier_id,
                 "receipt": instance.receipt_id,
+                "invoice_type": instance.invoice_type,
+                "branch": instance.branch_id,
                 "invoice_number": instance.invoice_number,
                 "invoice_date": instance.invoice_date,
             }
@@ -317,6 +329,39 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         elif exchange_rate is not None or exchange_rate_date is not None:
             raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
 
+        lines = attrs.get("lines")
+        if invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            if receipt is not None:
+                raise serializers.ValidationError({"receipt": "فاتورة الخدمات والمصروفات لا ترتبط بإذن استلام."})
+            if not branch or branch.company_id != company.pk or not branch.is_active:
+                raise serializers.ValidationError({"branch": "اختر فرعًا نشطًا تابعًا للشركة."})
+            if lines is None:
+                return attrs
+            if not lines:
+                raise serializers.ValidationError({"lines": "أدخل بند خدمة أو مصروف واحدًا على الأقل."})
+            for line in lines:
+                if line.get("receipt_line") is not None:
+                    raise serializers.ValidationError({"lines": "لا تستخدم سطر استلام في فاتورة مباشرة."})
+                line["billed_quantity"] = line.get("billed_quantity") or Decimal("1")
+                account = line.get("expense_account")
+                if not account or account.company_id != company.pk or account.nature != ChartOfAccount.Nature.EXPENSE or not account.is_active or account.is_group or not account.allow_posting:
+                    raise serializers.ValidationError({"lines": "كل بند مباشر يتطلب حساب مصروف نشطًا وتفصيليًا وقابلًا للترحيل."})
+                cost_center = line.get("cost_center")
+                if cost_center and (cost_center.company_id != company.pk or not cost_center.is_active):
+                    raise serializers.ValidationError({"lines": "مركز التكلفة يجب أن يكون نشطًا ويتبع نفس الشركة."})
+                if not str(line.get("description") or "").strip():
+                    raise serializers.ValidationError({"lines": "وصف كل بند خدمة أو مصروف مطلوب."})
+                if transaction_currency and line.get("transaction_unit_price") is None:
+                    raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
+                if not transaction_currency and line.get("unit_price") is None:
+                    raise serializers.ValidationError({"lines": "قيمة البند بالعملة الأساسية مطلوبة."})
+                code = line.get("tax_code")
+                if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
+                             or code.category == TaxCode.Category.REVERSE_CHARGE
+                             or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
+                    raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو لا يسري على الشركة أو تاريخ الفاتورة."})
+            return attrs
+
         if not receipt or receipt.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"receipt": "يجب ترحيل إذن استلام البضاعة أولاً."})
         if company and receipt.company_id != company.pk:
@@ -328,7 +373,6 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         if receipt.stock_movement.movement_type != StockMovement.MovementType.RECEIPT:
             raise serializers.ValidationError({"receipt": "الإذن المرتبط ليس استلامًا مخزنيًا."})
 
-        lines = attrs.get("lines")
         if lines is None:
             return attrs
         expected = set(receipt.stock_movement.lines.values_list("id", flat=True))
@@ -383,7 +427,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         for line in lines:
             PurchaseInvoiceLine.objects.create(
                 invoice=invoice,
-                receipt_line=line["receipt_line"],
+                receipt_line=line.get("receipt_line"),
+                description=line.get("description", ""),
+                expense_account=line.get("expense_account"),
+                cost_center=line.get("cost_center"),
                 billed_quantity=line["billed_quantity"],
                 unit_price=line.get("unit_price", Decimal("0")),
                 transaction_unit_price=line.get("transaction_unit_price"),
