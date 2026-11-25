@@ -1002,7 +1002,8 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
     queryset = SupplierPayment.objects.select_related(
-        "company", "supplier", "invoice", "journal_entry", "journal_entry__reversal_entry"
+        "company", "supplier", "invoice", "invoice__branch", "invoice__receipt__warehouse",
+        "journal_entry", "journal_entry__reversal_entry"
     ).all()
     filterset_fields = ("company", "supplier", "invoice", "status", "payment_date", "method")
     search_fields = ("payment_number", "reference", "supplier__name_ar", "invoice__invoice_number")
@@ -1015,8 +1016,9 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         branches = accessible_branches(self.request.user)
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(
-            Q(invoice__receipt__warehouse__branch__in=branches)
-            | Q(invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+            Q(invoice__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
         )
 
     def create(self, request, *args, **kwargs):
