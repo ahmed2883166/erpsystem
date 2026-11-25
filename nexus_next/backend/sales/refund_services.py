@@ -88,6 +88,14 @@ def post_customer_refund(refund_id, user):
             f"مبلغ الرد يجب أن يطابق دقة العملة الأساسية ({refund.company.base_currency.decimal_places} منازل عشرية)."
         )
     Customer.objects.select_for_update(of=("self",)).get(pk=refund.customer_id)
+    latest_customer_refund_date = CustomerRefund.objects.filter(
+        company_id=refund.company_id, customer_id=refund.customer_id,
+        status=CustomerRefund.Status.POSTED,
+    ).exclude(pk=refund.pk).order_by("-refund_date", "-id").values_list(
+        "refund_date", flat=True,
+    ).first()
+    if latest_customer_refund_date and refund.refund_date < latest_customer_refund_date:
+        raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد مرحّل لهذا العميل.")
 
     if refund.source_return_id:
         source = SalesReturn.objects.select_for_update(of=("self",)).select_related(
