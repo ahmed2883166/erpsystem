@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -106,9 +106,7 @@ def post_customer_refund(refund_id, user):
         ).exclude(pk=refund.pk).order_by("-refund_date").values_list("refund_date", flat=True).first()
         if latest_refund_date and refund.refund_date < latest_refund_date:
             raise ValidationError("تاريخ رد الدفعة المقدمة لا يجوز أن يسبق آخر رد سابق لها.")
-        available = source.unallocated_amount + (
-            refund.amount if refund.pk and refund.status == CustomerRefund.Status.POSTED else Decimal("0")
-        )
+        available = source.unallocated_amount
         source_label = f"الدفعة المقدمة {source.receipt_number}"
 
     if refund.refund_date < source_date:
