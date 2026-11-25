@@ -61,7 +61,7 @@ class SalesDelivery(models.Model):
 class SalesDeliveryAllocation(models.Model):
     """ربط بند إذن التسليم ببند أمر البيع لمنع تجاوز الكمية المتفق عليها."""
     delivery = models.ForeignKey(SalesDelivery, on_delete=models.PROTECT, related_name="order_allocations")
-    order_line = models.ForeignKey(SalesOrderLine, on_delete=models.PROTECT, related_name="delivery_allocations")
+    order_line = models.ForeignKey("sales.SalesOrderLine", on_delete=models.PROTECT, related_name="delivery_allocations")
     movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_order_allocation")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
 
