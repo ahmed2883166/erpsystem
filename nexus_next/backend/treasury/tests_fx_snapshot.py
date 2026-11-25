@@ -403,6 +403,16 @@ class TreasuryFxSnapshotTests(TestCase):
             reverse_treasury_fx_revaluation(
                 revaluation_id=first.pk, entry_date=date(2026, 3, 6),
             )
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 4), rate=Decimal("34"),
+        )
+        with self.assertRaises(ValidationError):
+            revalue_treasury_fx_account(
+                account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+                revaluation_date=date(2026, 3, 4), rate_date=date(2026, 3, 4),
+                branch=self.branch,
+            )
 
     def test_treasury_fx_revaluation_cannot_be_reversed_after_later_cash_movement(self):
         self.setUp_fx_roles()
