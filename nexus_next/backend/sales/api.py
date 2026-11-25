@@ -662,7 +662,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             receipt_batches = receipt_batches.filter(branch_id=branch_id)
         for batch in receipt_batches:
             invoice_numbers = ", ".join(
-                allocation.invoice.invoice_number for allocation in batch.allocations.all()
+                allocation.invoice.invoice_number
+                for allocation in batch.allocations.filter(
+                    allocation_date__lte=date_to,
+                ).select_related("invoice")
             )
             description = (
                 f"سند قبض مجمع عن الفواتير {invoice_numbers}"
