@@ -1,6 +1,6 @@
 from rest_framework.test import APITestCase
 from django.contrib.auth import get_user_model
-from .models import Branch, Company, CompanyMembership, Currency, FiscalPeriod, FiscalYear, PlatformOwner
+from .models import Branch, Company, CompanyActivity, CompanyMembership, Currency, FiscalPeriod, FiscalYear, PlatformOwner
 
 
 class CompanySetupApiTests(APITestCase):
@@ -86,6 +86,8 @@ class CompanySetupApiTests(APITestCase):
             set(response.data["activities"]),
             {"service", "transport", "contracting"},
         )
+        self.assertTrue(CompanyActivity.objects.get(company=self.company, activity="transport").is_active)
+        self.assertFalse(CompanyActivity.objects.get(company=self.company, activity="contracting").is_active)
 
     def test_company_cannot_disable_its_primary_activity(self):
         owner = get_user_model().objects.create_user(
