@@ -403,6 +403,64 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).count(), 1)
         self.assertEqual(JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES).count(), 1)
 
+    def test_direct_service_invoice_posts_expense_input_vat_and_supplier_payable_without_stock_receipt(self):
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense",
+            "branch": self.branch.pk,
+            "invoice_number": "EXP-SVC-001",
+            "invoice_date": "2026-03-15",
+            "lines": [{
+                "description": "صيانة أجهزة الشركة",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "100.0000",
+                "tax_rate": "14.0000",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertIsNone(created.data["receipt"])
+        self.assertEqual(created.data["invoice_type"], "direct_expense")
+        self.assertEqual(Decimal(created.data["grand_total"]), Decimal("114.0000"))
+
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        invoice = PurchaseInvoice.objects.get(pk=created.data["id"])
+        self.assertEqual(invoice.status, PurchaseInvoice.Status.POSTED)
+        self.assertEqual(invoice.branch_id, self.branch.pk)
+        self.assertIsNone(invoice.receipt_id)
+
+        lines = list(invoice.journal_entry.lines.select_related("account").order_by("id"))
+        amounts = {
+            (line.account.code, "debit" if line.debit else "credit"): line.debit or line.credit
+            for line in lines
+        }
+        self.assertEqual(amounts[("6000", "debit")], Decimal("100.0000"))
+        self.assertEqual(amounts[("1300", "debit")], Decimal("14.0000"))
+        self.assertEqual(amounts[("2200", "credit")], Decimal("114.0000"))
+        self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
+
+    def test_direct_service_invoice_requires_branch_and_expense_account(self):
+        missing_branch = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "invoice_number": "EXP-SVC-002",
+            "invoice_date": "2026-03-15",
+            "lines": [{"description": "اشتراك إنترنت", "expense_account": 1, "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(missing_branch.status_code, 400, missing_branch.data)
+
+        missing_account = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "EXP-SVC-003", "invoice_date": "2026-03-15",
+            "lines": [{"description": "اشتراك إنترنت", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(missing_account.status_code, 400, missing_account.data)
+
     def test_supplier_payment_reduces_invoice_balance_and_blocks_overpayment(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         invoice_response = self.client.post("/api/purchasing/invoices/", {
