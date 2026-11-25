@@ -1,0 +1,479 @@
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import app as nexus_app
+import report_exports as report_exports_module
+
+
+class AuditLogTests(unittest.TestCase):
+    def setUp(self):
+        nexus_app.app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+        self.temp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp.name) / "audit.db"
+        self.connection = sqlite3.connect(self.db_path)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("CREATE TABLE users(id INTEGER PRIMARY KEY, username TEXT, full_name TEXT)")
+        self.connection.execute("INSERT INTO users VALUES(1,'admin','مدير النظام')")
+        self.connection.execute("INSERT INTO users VALUES(17,'tester','مستخدم اختبار')")
+        self.connection.execute("CREATE TABLE company_settings(setting_key TEXT PRIMARY KEY, setting_value TEXT NOT NULL)")
+        self.connection.execute("INSERT INTO company_settings VALUES('company_name','NEXUS Audit Test')")
+        self.connection.execute("INSERT INTO company_settings VALUES('base_currency','EGP')")
+        self.connection.execute("""
+            CREATE TABLE audit_log(
+                id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT,
+                created_at TEXT, entity_type TEXT, entity_id TEXT, remote_addr TEXT, outcome TEXT,
+                actor_name TEXT, before_values TEXT, after_values TEXT, submitted_values TEXT, reason TEXT, request_id TEXT
+            )
+        """)
+        self.connection.commit()
+
+    def _open_connection(self):
+        connection = sqlite3.connect(self.db_path)
+        connection.row_factory = sqlite3.Row
+        return connection
+
+    def tearDown(self):
+        self.connection.close()
+        self.temp.cleanup()
+
+    def test_log_records_authenticated_actor_and_request_context(self):
+        with nexus_app.app.test_request_context("/", environ_base={"REMOTE_ADDR": "192.0.2.10"}):
+            nexus_app.session["user_id"] = 17
+            with patch.object(nexus_app, "db", side_effect=self._open_connection):
+                nexus_app.log(
+                    "journal_posted", "قيد #42",
+                    entity_type="journal", entity_id=42, outcome="success"
+                )
+        row = self.connection.execute("SELECT * FROM audit_log").fetchone()
+        self.assertEqual(row["user_id"], 17)
+        self.assertEqual(row["action"], "journal_posted")
+        self.assertEqual(row["entity_type"], "journal")
+        self.assertEqual(row["entity_id"], "42")
+        self.assertEqual(row["remote_addr"], "192.0.2.10")
+        self.assertEqual(row["outcome"], "success")
+        self.assertNotIn("password", (row["details"] or "").lower())
+
+    def test_operational_audit_snapshot_supports_composite_key_child_table(self):
+        self.connection.executescript("""
+            CREATE TABLE supplier_bills(id INTEGER PRIMARY KEY, bill_no TEXT);
+            CREATE TABLE supplier_bill_receipts(
+                bill_id INTEGER NOT NULL, receipt_id INTEGER NOT NULL,
+                matched_amount TEXT NOT NULL, PRIMARY KEY(bill_id,receipt_id)
+            );
+            INSERT INTO supplier_bills VALUES(7,'BILL-7');
+            INSERT INTO supplier_bill_receipts VALUES(7,3,'120.00');
+            INSERT INTO supplier_bill_receipts VALUES(7,2,'80.00');
+        """)
+        self.connection.commit()
+        with patch.object(nexus_app, "db", side_effect=self._open_connection):
+            snapshot = nexus_app._operational_audit_snapshot(
+                "purchase.post_bill", {"bill_id": 7}
+            )
+        self.assertEqual(snapshot["record"]["bill_no"], "BILL-7")
+        self.assertEqual(
+            [(row["receipt_id"], row["matched_amount"]) for row in snapshot["details"]],
+            [(2, "80.00"), (3, "120.00")],
+        )
+
+    def test_audit_page_requires_permission_and_renders_log_rows(self):
+        self.connection.execute(
+            """INSERT INTO audit_log
+               (user_id,action,details,created_at,entity_type,entity_id,remote_addr,outcome)
+               VALUES(1,'journal_posted','قيد #42','2026-11-12T10:00:00+02:00','journal','42','192.0.2.10','success')"""
+        )
+        self.connection.commit()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=1, username="admin", full_name="مدير النظام",
+                           role="admin", permissions=["audit.view"])
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get("/security/audit-log")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("journal_posted", response.get_data(as_text=True))
+        with client.session_transaction() as session:
+            session["permissions"] = []
+        response = client.get("/security/audit-log")
+        self.assertEqual(response.status_code, 302)
+
+    def test_audit_filters_apply_entity_outcome_and_date_together(self):
+        self.connection.executemany(
+            """INSERT INTO audit_log
+               (user_id,action,details,created_at,entity_type,entity_id,outcome)
+               VALUES(?,?,?,?,?,?,?)""",
+            [
+                (17,"module_operation","sale ok","2026-11-12T10:00:00+02:00","sales","10","success"),
+                (17,"module_operation","sale failed","2026-11-12T11:00:00+02:00","sales","11","failure"),
+                (17,"module_operation","purchase failed","2026-11-12T12:00:00+02:00","purchase","12","failure"),
+                (17,"module_operation","old sale failed","2026-11-10T12:00:00+02:00","sales","13","failure"),
+            ],
+        )
+        self.connection.commit()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer",
+                           permissions=["audit.view"])
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get(
+                "/security/audit-log?entity_type=sales&outcome=failure"
+                "&date_from=2026-11-11&date_to=2026-11-12"
+            )
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sale failed", body)
+        self.assertNotIn("sale ok", body)
+        self.assertNotIn("purchase failed", body)
+        self.assertNotIn("old sale failed", body)
+
+    def test_operational_mutation_hook_records_real_success_and_failure_outcomes(self):
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context(
+            "/sales/invoices/44", method="POST",
+            data={"customer_name": "عميل تجريبي", "password": "do-not-store"},
+        ):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="sales.test_mutation")
+            nexus_app.request.view_args = {"invoice_id": 44}
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=200)
+                nexus_app.audit_operational_mutations(response)
+
+        with nexus_app.app.test_request_context("/sales/invoices/45", method="POST"):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="sales.test_mutation")
+            nexus_app.request.view_args = {"invoice_id": 45}
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                nexus_app.flash("تعذر تنفيذ العملية بسبب بيانات غير صحيحة.", "error")
+                response = nexus_app.app.response_class("", status=302)
+                nexus_app.audit_operational_mutations(response)
+
+        rows = self.connection.execute(
+            "SELECT action,details,entity_type,entity_id,outcome,submitted_values FROM audit_log ORDER BY id"
+        ).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["action"], "module_operation")
+        self.assertEqual(rows[0]["entity_type"], "sales")
+        self.assertEqual(rows[0]["entity_id"], "44")
+        self.assertEqual(rows[0]["outcome"], "success")
+        self.assertIn("عميل تجريبي", rows[0]["submitted_values"])
+        self.assertIn("[REDACTED]", rows[0]["submitted_values"])
+        self.assertNotIn("do-not-store", rows[0]["submitted_values"])
+        self.assertEqual(rows[1]["entity_id"], "45")
+        self.assertEqual(rows[1]["outcome"], "failure")
+
+
+    def test_audit_captures_transaction_and_custody_route_ids(self):
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context("/bank/reconcile/91", method="POST"):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="bank.reconcile")
+            nexus_app.request.view_args = {"transaction_id": 91}
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=200)
+                nexus_app.audit_operational_mutations(response)
+
+        row = self.connection.execute(
+            "SELECT entity_type,entity_id,outcome FROM audit_log"
+        ).fetchone()
+        self.assertEqual(row["entity_type"], "bank")
+        self.assertEqual(row["entity_id"], "91")
+        self.assertEqual(row["outcome"], "success")
+
+    def test_purchase_blueprint_mutations_are_included_in_operational_audit(self):
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context(
+            "/purchases/receipts/23", method="POST",
+            data={"supplier_id": "5", "password": "must-not-be-stored"},
+        ):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="purchase.test_receipt")
+            nexus_app.request.view_args = {"receipt_id": 23}
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=200)
+                nexus_app.audit_operational_mutations(response)
+
+        row = self.connection.execute(
+            "SELECT action,entity_type,entity_id,outcome,submitted_values FROM audit_log"
+        ).fetchone()
+        self.assertEqual(row["action"], "module_operation")
+        self.assertEqual(row["entity_type"], "purchase")
+        self.assertEqual(row["entity_id"], "23")
+        self.assertEqual(row["outcome"], "success")
+        self.assertIn("[REDACTED]", row["submitted_values"])
+        self.assertNotIn("must-not-be-stored", row["submitted_values"])
+
+    def test_audit_only_user_can_download_current_screen_pdf(self):
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer", permissions=["audit.view"])
+
+        def open_database(_db_path):
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.dict(nexus_app.app.config, {"WTF_CSRF_ENABLED": False}):
+            with patch.object(report_exports_module, "connect_database", side_effect=open_database):
+                response = client.post(
+                    "/reports/export/current-screen/pdf",
+                    json={"title": "سجل التدقيق", "tables": [{
+                        "title": "العمليات",
+                        "rows": [["العملية", "النتيجة"], ["journal_posted", "ناجحة"]],
+                    }]},
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_log_change_stores_before_after_reason_actor_and_request_id(self):
+        with nexus_app.app.test_request_context(
+            "/accounts/10/edit", method="POST", environ_base={"REMOTE_ADDR": "192.0.2.20"}
+        ):
+            nexus_app.session["user_id"] = 17
+            nexus_app.g.audit_request_id = "request-test-001"
+            with patch.object(nexus_app, "db", side_effect=self._open_connection):
+                nexus_app.log_change(
+                    "account_updated", "account", 10,
+                    {"code": "1000", "name_ar": "الصندوق", "password": "old-secret"},
+                    {"code": "1001", "name_ar": "الصندوق الرئيسي", "password": "new-secret"},
+                    details="1001", reason="تصحيح اسم الحساب",
+                )
+        row = self.connection.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual(row["actor_name"], "مستخدم اختبار")
+        self.assertEqual(row["entity_id"], "10")
+        self.assertEqual(row["reason"], "تصحيح اسم الحساب")
+        self.assertEqual(row["request_id"], "request-test-001")
+        self.assertIn('"code": "1000"', row["before_values"])
+        self.assertIn('"code": "1001"', row["after_values"])
+        self.assertIn("[REDACTED]", row["before_values"])
+        self.assertNotIn("old-secret", row["before_values"])
+        self.assertEqual(row["remote_addr"], "192.0.2.20")
+
+    def test_operational_snapshot_captures_parent_and_detail_rows(self):
+        self.connection.executescript("""
+            CREATE TABLE stocktakes(
+                id INTEGER PRIMARY KEY, count_no TEXT, status TEXT, notes TEXT
+            );
+            CREATE TABLE stocktake_lines(
+                id INTEGER PRIMARY KEY, stocktake_id INTEGER, product_id INTEGER,
+                counted_qty TEXT, variance_qty TEXT
+            );
+            INSERT INTO stocktakes VALUES(31,'ST-031','draft','جرد تجريبي');
+            INSERT INTO stocktake_lines VALUES(1,31,7,'12','2');
+        """)
+        self.connection.commit()
+        with patch.object(nexus_app, "db", side_effect=self._open_connection):
+            before = nexus_app._operational_audit_snapshot(
+                "stock.approve_count", {"stocktake_id": 31}
+            )
+            self.connection.execute("UPDATE stocktakes SET status='approved' WHERE id=31")
+            self.connection.execute(
+                "UPDATE stocktake_lines SET variance_qty='3' WHERE stocktake_id=31"
+            )
+            self.connection.commit()
+            after = nexus_app._operational_audit_snapshot(
+                "stock.approve_count", {"stocktake_id": 31}
+            )
+        self.assertEqual(before["record"]["status"], "draft")
+        self.assertEqual(before["details"][0]["variance_qty"], "2")
+        self.assertEqual(after["record"]["status"], "approved")
+        self.assertEqual(after["details"][0]["variance_qty"], "3")
+
+    def test_sales_discount_approval_snapshot_captures_decision_without_invoice_payload(self):
+        self.connection.executescript("""
+            CREATE TABLE sales_discount_approval_requests(
+                id INTEGER PRIMARY KEY, request_no TEXT, status TEXT,
+                discount_amount TEXT, discount_percent TEXT, request_type TEXT,
+                reviewed_by INTEGER, decision_reason TEXT, payload_json TEXT
+            );
+            INSERT INTO sales_discount_approval_requests VALUES(
+                91,'SDR-91','pending','25.00','12.50','invoice',NULL,'',
+                '{"customer_id":7,"items":[{"product_id":3,"unit_price":"200"}]}'
+            );
+        """)
+        self.connection.commit()
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            before = nexus_app._operational_audit_snapshot(
+                "sales.discount_approval", {"request_id": 91}
+            )
+            self.connection.execute(
+                "UPDATE sales_discount_approval_requests SET status='approved',reviewed_by=1 WHERE id=91"
+            )
+            self.connection.commit()
+            after = nexus_app._operational_audit_snapshot(
+                "sales.discount_approval", {"request_id": 91}
+            )
+        self.assertEqual(before["record"]["status"], "pending")
+        self.assertEqual(after["record"]["status"], "approved")
+        self.assertEqual(after["record"]["reviewed_by"], 1)
+        self.assertNotIn("payload_json", before["record"])
+        self.assertNotIn("payload_json", after["record"])
+
+    def test_sales_invoice_workflow_snapshot_tracks_status_without_copying_payload(self):
+        self.connection.executescript("""
+            CREATE TABLE sales_invoice_workflows(
+                id INTEGER PRIMARY KEY, workflow_no TEXT, status TEXT,
+                created_by INTEGER, submitted_by INTEGER, approved_by INTEGER,
+                payload_json TEXT
+            );
+            INSERT INTO sales_invoice_workflows VALUES(
+                55,'SIVD-55','draft',17,NULL,NULL,
+                '{"customer_id":7,"items":[{"product_id":3,"unit_price":"200"}]}'
+            );
+        """)
+        self.connection.commit()
+        with patch.object(nexus_app, "db", side_effect=self._open_connection):
+            before = nexus_app._operational_audit_snapshot(
+                "sales.edit_invoice_workflow", {"workflow_id": 55}
+            )
+            self.connection.execute(
+                "UPDATE sales_invoice_workflows SET status='pending_approval',submitted_by=17 WHERE id=55"
+            )
+            self.connection.commit()
+            after = nexus_app._operational_audit_snapshot(
+                "sales.submit_invoice_workflow", {"workflow_id": 55}
+            )
+        self.assertEqual(before["record"]["status"], "draft")
+        self.assertEqual(after["record"]["status"], "pending_approval")
+        self.assertEqual(after["record"]["submitted_by"], 17)
+        self.assertNotIn("payload_json", before["record"])
+        self.assertNotIn("payload_json", after["record"])
+
+    def test_audit_view_is_a_separate_permission_and_route(self):
+        self.assertIn("audit.view", nexus_app.PERMISSION_LABELS)
+        self.assertIn("audit.view", nexus_app.PERMISSIONS["admin"])
+        self.assertNotIn("audit.view", nexus_app.PERMISSIONS["accountant"])
+        endpoints = {rule.endpoint for rule in nexus_app.app.url_map.iter_rules()}
+        self.assertIn("audit_log", endpoints)
+
+
+    def test_created_operational_document_is_audited_with_generated_id_and_lines(self):
+        self.connection.executescript("""
+            CREATE TABLE goods_receipts(
+                id INTEGER PRIMARY KEY, receipt_no TEXT, supplier_id INTEGER,
+                total_value TEXT, status TEXT
+            );
+            CREATE TABLE goods_receipt_lines(
+                id INTEGER PRIMARY KEY, receipt_id INTEGER, product_id INTEGER,
+                quantity TEXT, total_cost TEXT
+            );
+            INSERT INTO goods_receipts VALUES(73,'GRN-TEST-073',9,'125.00','posted');
+            INSERT INTO goods_receipt_lines VALUES(1,73,4,'5','125.00');
+        """)
+        self.connection.commit()
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with nexus_app.app.test_request_context("/purchases/receipts/new", method="POST"):
+            nexus_app.session["user_id"] = 17
+            nexus_app.request.url_rule = SimpleNamespace(endpoint="purchase.new_receipt")
+            nexus_app.request.view_args = {}
+            nexus_app.g.audit_created_record = (
+                "goods_receipts", 73, "goods_receipt_lines", "receipt_id"
+            )
+            with patch.object(nexus_app, "db", side_effect=open_database):
+                response = nexus_app.app.response_class("Saved", status=302)
+                nexus_app.audit_operational_mutations(response)
+
+        row = self.connection.execute(
+            "SELECT entity_type,entity_id,outcome,before_values,after_values FROM audit_log"
+        ).fetchone()
+        self.assertEqual(row["entity_type"], "purchase")
+        self.assertEqual(row["entity_id"], "73")
+        self.assertEqual(row["outcome"], "success")
+        self.assertIsNone(row["before_values"])
+        self.assertIn('"receipt_no": "GRN-TEST-073"', row["after_values"])
+        self.assertIn('"quantity": "5"', row["after_values"])
+
+
+    def test_activity_monitor_shows_login_and_sensitive_change_events(self):
+        self.connection.executemany(
+            """INSERT INTO audit_log
+               (user_id,action,details,created_at,entity_type,entity_id,outcome,before_values,after_values)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            [
+                (17,"login","تسجيل دخول","2026-11-15T08:00:00+02:00","auth",None,"success",None,None),
+                (None,"login_failed","username=unknown","2026-11-15T08:10:00+02:00","auth",None,"failure",None,None),
+                (17,"account_updated","تعديل حساب","2026-11-15T08:20:00+02:00","account","10","success",'{"name":"قديم"}','{"name":"جديد"}'),
+            ],
+        )
+        self.connection.commit()
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer", permissions=["audit.view"])
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get("/security/activity-monitor")
+            self.assertEqual(response.status_code, 200)
+            body = response.get_data(as_text=True)
+            self.assertIn("login_failed", body)
+            self.assertIn("account_updated", body)
+            response = client.get("/security/activity-monitor?category=login")
+            body = response.get_data(as_text=True)
+            self.assertIn("login_failed", body)
+            self.assertNotIn("account_updated", body)
+            response = client.get("/security/activity-monitor?category=changes")
+            body = response.get_data(as_text=True)
+            self.assertIn("account_updated", body)
+            self.assertNotIn("login_failed", body)
+
+    def test_logout_is_written_to_auth_audit_before_session_clear(self):
+        client = nexus_app.app.test_client()
+        with client.session_transaction() as session:
+            session.update(user_id=17, username="tester", role="viewer", permissions=["audit.view"])
+
+        def open_database():
+            connection = sqlite3.connect(self.db_path)
+            connection.row_factory = sqlite3.Row
+            return connection
+
+        with patch.object(nexus_app, "db", side_effect=open_database):
+            response = client.get("/logout")
+        self.assertEqual(response.status_code, 302)
+        row = self.connection.execute(
+            "SELECT action,entity_type,outcome FROM audit_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(row["action"], "logout")
+        self.assertEqual(row["entity_type"], "auth")
+        self.assertEqual(row["outcome"], "success")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import os
 from pathlib import Path
 
@@ -20,7 +21,6 @@ def default_backup_key_path() -> Path:
 def _dpapi(data: bytes, *, protect: bool) -> bytes:
     if os.name != "nt":
         raise BackupCryptoError("حماية مفتاح النسخ التلقائي متاحة على Windows فقط.")
-    import ctypes
     from ctypes import wintypes
 
     class DataBlob(ctypes.Structure):
@@ -32,6 +32,8 @@ def _dpapi(data: bytes, *, protect: bool) -> bytes:
 
     crypt32 = ctypes.WinDLL("crypt32.dll", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32.dll", use_last_error=True)
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
     source, source_buffer = blob(data)
     entropy, entropy_buffer = blob(DPAPI_ENTROPY)
     output = DataBlob()
@@ -58,13 +60,13 @@ def _dpapi(data: bytes, *, protect: bool) -> bytes:
             None, None, 0, ctypes.byref(output),
         )
         if description:
-            kernel32.LocalFree(description)
+            kernel32.LocalFree(ctypes.cast(description, ctypes.c_void_p))
     if not ok:
         raise OSError(ctypes.get_last_error(), "Windows DPAPI operation failed")
     try:
         return ctypes.string_at(output.pbData, output.cbData)
     finally:
-        kernel32.LocalFree(output.pbData)
+        kernel32.LocalFree(ctypes.cast(output.pbData, ctypes.c_void_p))
 
 
 def protect_machine_key(key: bytes) -> bytes:
@@ -130,12 +132,16 @@ def restore_backup_key(
     return target
 
 
-def machine_backup_passphrase(key_file: str | Path | None = None) -> str:
-    """Return a high-entropy passphrase derived from the DPAPI-unwrapped key."""
+def machine_backup_key(key_file: str | Path | None = None) -> bytes:
+    """Read the random backup key after Windows DPAPI machine unprotection."""
     path = Path(key_file) if key_file else default_backup_key_path()
     if not path.is_file():
         raise BackupCryptoError(
             "مفتاح التشفير التلقائي غير مهيأ. شغّل init_backup_encryption أولًا."
         )
-    key = unprotect_machine_key(path.read_bytes())
-    return base64.urlsafe_b64encode(key).decode("ascii")
+    return unprotect_machine_key(path.read_bytes())
+
+
+def machine_backup_passphrase(key_file: str | Path | None = None) -> str:
+    """Return a high-entropy passphrase derived from the DPAPI-unwrapped key."""
+    return base64.urlsafe_b64encode(machine_backup_key(key_file)).decode("ascii")

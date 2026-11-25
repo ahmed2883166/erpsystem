@@ -1,0 +1,828 @@
+"""Read-only post-copy verification for SQLite -> PostgreSQL NEXUS migrations.
+
+Checks every table/column/row count plus exact-decimal accounting, party, and
+inventory valuation control totals. It never changes either database.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sqlite3
+from decimal import Decimal, InvalidOperation
+from datetime import date, datetime, time, timezone
+from pathlib import Path
+from urllib.parse import quote
+
+
+
+def _ident(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", value):
+        raise ValueError(f"Unsafe PostgreSQL identifier: {value!r}")
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _decimal(value) -> Decimal:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return Decimal("0")
+    try:
+        return Decimal(str(value).strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"Non-numeric value found in financial control field: {value!r}") from exc
+
+
+def _sqlite_grouped_sum(conn, table, amount_column, group_columns=()):
+    qtable = '"' + table.replace('"', '""') + '"'
+    qamount = '"' + amount_column.replace('"', '""') + '"'
+    qgroups = [ '"' + col.replace('"', '""') + '"' for col in group_columns ]
+    select = ", ".join(qgroups + [qamount])
+    rows = conn.execute(f"SELECT {select} FROM {qtable}").fetchall()
+    totals = {}
+    for row in rows:
+        key = tuple(row[i] for i in range(len(group_columns)))
+        totals[key] = totals.get(key, Decimal("0")) + _decimal(row[len(group_columns)])
+    return totals
+
+
+def _pg_grouped_sum(conn, schema, table, amount_column, group_columns=()):
+    qtable = _ident(schema) + "." + _ident(table)
+    qamount = _ident(amount_column)
+    qgroups = [_ident(col) for col in group_columns]
+    group_sql = ", ".join(qgroups)
+    select_sql = (group_sql + ", " if group_sql else "") + (
+        "COALESCE(SUM(COALESCE(NULLIF(BTRIM(" + qamount +
+        "::text), ''), '0')::numeric), 0) AS total_value"
+    )
+    sql = f"SELECT {select_sql} FROM {qtable}"
+    if group_sql:
+        sql += f" GROUP BY {group_sql}"
+    result = {}
+    for row in conn.execute(sql).fetchall():
+        key = tuple(row[col] for col in group_columns)
+        result[key] = _decimal(row["total_value"])
+    return result
+
+
+def _compare_decimal_maps(label, source, target, issues):
+    keys = sorted(set(source) | set(target), key=lambda item: tuple(str(x) for x in item))
+    for key in keys:
+        left = source.get(key, Decimal("0"))
+        right = target.get(key, Decimal("0"))
+        if left != right:
+            issues.append({
+                "control": label,
+                "key": list(key),
+                "sqlite": str(left),
+                "postgres": str(right),
+            })
+
+
+def _unbalanced_groups(debit_totals, credit_totals):
+    """Return journal groups whose debit and credit totals do not balance."""
+    unbalanced = []
+    for key in sorted(set(debit_totals) | set(credit_totals),
+                      key=lambda item: tuple(str(value) for value in item)):
+        debit = debit_totals.get(key, Decimal("0"))
+        credit = credit_totals.get(key, Decimal("0"))
+        if debit != credit:
+            unbalanced.append({
+                "key": list(key),
+                "debit": str(debit),
+                "credit": str(credit),
+                "difference": str(debit - credit),
+            })
+    return unbalanced
+
+
+def _missing_control_columns(required, source_available, target_available):
+    """Return explicit source/target schema gaps for a requested control."""
+    required = set(required)
+    source_missing = sorted(required - set(source_available))
+    target_missing = sorted(required - set(target_available))
+    return source_missing, target_missing
+
+
+def _journal_entry_key(columns):
+    """Identify the journal-line FK needed for per-entry control totals."""
+    available = set(columns)
+    return next(
+        (name for name in ("journal_entry_id", "entry_id", "journal_id")
+         if name in available),
+        None,
+    )
+
+
+def _inventory_valuation_required(source_tables):
+    """Require valuation controls whenever core inventory tables are present."""
+    inventory_core = {"stock_products", "stock_movements", "stock_warehouses"}
+    return bool(set(source_tables) & inventory_core)
+
+
+def _sqlite_legacy_unlinked_transfer_layer_count(conn):
+    """Count transfer/relocation valuation layers whose receipt ancestry is unknown."""
+    return int(conn.execute("""
+        SELECT COUNT(*)
+        FROM stock_valuation_layers l
+        JOIN stock_movements m ON m.id=l.source_movement_id
+        WHERE m.movement_type IN ('transfer','relocate')
+          AND l.receipt_line_id IS NULL
+    """).fetchone()[0])
+
+
+def _sqlite_foreign_key_map(conn, tables):
+    """Return normalized FK definitions, preserving composite-key column order."""
+    result = []
+    for table in sorted(tables):
+        quoted = '"' + table.replace('"', '""') + '"'
+        rows = conn.execute(f"PRAGMA foreign_key_list({quoted})").fetchall()
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row["id"], []).append(row)
+        for key in sorted(grouped):
+            parts = sorted(grouped[key], key=lambda item: item["seq"])
+            result.append((
+                table,
+                tuple(item["from"] for item in parts),
+                parts[0]["table"],
+                tuple(item["to"] for item in parts),
+                str(parts[0]["on_update"]).upper(),
+                str(parts[0]["on_delete"]).upper(),
+            ))
+    return sorted(result)
+
+
+def _pg_foreign_key_map(conn, schema):
+    """Read PostgreSQL FK definitions in ordinal order, including composite keys."""
+    rows = conn.execute(
+        """
+        SELECT src.relname AS table_name,
+               src_att.attname AS column_name,
+               tgt.relname AS foreign_table_name,
+               tgt_att.attname AS foreign_column_name,
+               con.confupdtype AS update_action,
+               con.confdeltype AS delete_action,
+               ord.ordinality,
+               con.conname AS constraint_name
+          FROM pg_constraint con
+          JOIN pg_class src ON src.oid = con.conrelid
+          JOIN pg_namespace src_ns ON src_ns.oid = src.relnamespace
+          JOIN pg_class tgt ON tgt.oid = con.confrelid
+          JOIN LATERAL unnest(con.conkey, con.confkey)
+               WITH ORDINALITY AS ord(source_attnum, target_attnum, ordinality)
+            ON TRUE
+          JOIN pg_attribute src_att
+            ON src_att.attrelid = src.oid AND src_att.attnum = ord.source_attnum
+          JOIN pg_attribute tgt_att
+            ON tgt_att.attrelid = tgt.oid AND tgt_att.attnum = ord.target_attnum
+         WHERE con.contype = 'f' AND src_ns.nspname = %s
+         ORDER BY src.relname, con.conname, ord.ordinality
+        """,
+        (schema,),
+    ).fetchall()
+    actions = {
+        "a": "NO ACTION",
+        "r": "RESTRICT",
+        "c": "CASCADE",
+        "n": "SET NULL",
+        "d": "SET DEFAULT",
+    }
+    grouped = {}
+    for row in rows:
+        key = (row["table_name"], row["constraint_name"])
+        grouped.setdefault(key, []).append(row)
+    result = []
+    for (table, _), parts in grouped.items():
+        parts.sort(key=lambda item: item["ordinality"])
+        result.append((
+            table,
+            tuple(item["column_name"] for item in parts),
+            parts[0]["foreign_table_name"],
+            tuple(item["foreign_column_name"] for item in parts),
+            actions[parts[0]["update_action"]],
+            actions[parts[0]["delete_action"]],
+        ))
+    return sorted(result)
+
+
+def _foreign_key_differences(source, target):
+    """Report missing and unexpected FK relationships without hiding duplicates."""
+    from collections import Counter
+    source_counts = Counter(source)
+    target_counts = Counter(target)
+    missing = []
+    extra = []
+    for item in source:
+        if target_counts[item]:
+            target_counts[item] -= 1
+        else:
+            missing.append(item)
+    for item in target:
+        if source_counts[item]:
+            source_counts[item] -= 1
+        else:
+            extra.append(item)
+    return missing, extra
+
+
+def _verification_passed(issues, controls_skipped, row_counts, source_tables):
+    """A copy cannot pass while any required financial control was skipped."""
+    return (
+        not issues
+        and not controls_skipped
+        and len(row_counts) == len(source_tables)
+    )
+
+
+
+def _canonical_cell(value, postgres_type: str):
+    """Canonicalize one SQLite/PG value using the target PostgreSQL type.
+
+    NULL and empty text remain distinct. Numeric values compare by value rather
+    than scale; bytea/memoryview and temporal values use stable representations.
+    """
+    if value is None:
+        return ["null"]
+    kind = (postgres_type or "").lower()
+    if kind in {"numeric", "decimal", "real", "double precision"}:
+        try:
+            number = Decimal(str(value))
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError(f"Cannot canonicalize numeric value {value!r}") from exc
+        if not number.is_finite():
+            return ["number", str(number)]
+        if number == 0:
+            canonical_number = "0"
+        else:
+            # Avoid Decimal.normalize(): it obeys the active precision context
+            # and can round high-precision ERP amounts before hashing.
+            canonical_number = format(number, "f")
+            if "." in canonical_number:
+                canonical_number = canonical_number.rstrip("0").rstrip(".")
+        return ["number", canonical_number]
+    if kind in {"smallint", "integer", "bigint"}:
+        number = Decimal(str(value))
+        if number != number.to_integral_value():
+            raise ValueError(f"Non-integral value in PostgreSQL {kind} column: {value!r}")
+        return ["integer", str(int(number))]
+    if kind == "boolean":
+        if isinstance(value, bool):
+            flag = value
+        elif str(value).strip().lower() in {"true", "t"}:
+            flag = True
+        elif str(value).strip().lower() in {"false", "f"}:
+            flag = False
+        elif str(value).strip() in {"0", "1"}:
+            flag = str(value).strip() == "1"
+        else:
+            raise ValueError(f"Invalid boolean value: {value!r}")
+        return ["boolean", flag]
+    if kind == "bytea":
+        raw = bytes(value) if isinstance(value, (bytes, bytearray, memoryview)) else None
+        if raw is None:
+            raise ValueError(f"Invalid bytea value: {type(value).__name__}")
+        return ["bytes", raw.hex()]
+    if kind == "date":
+        parsed = value.date() if isinstance(value, datetime) else value
+        if not isinstance(parsed, date):
+            parsed = date.fromisoformat(str(parsed).strip())
+        return ["date", parsed.isoformat()]
+    if "timestamp" in kind:
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).strip().replace("Z", "+00:00")
+        )
+        if "with time zone" in kind and parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc)
+        return ["timestamp", parsed.isoformat(timespec="microseconds")]
+    if kind in {"time", "time without time zone", "time with time zone"}:
+        parsed = value if isinstance(value, time) else time.fromisoformat(str(value).strip())
+        return ["time", parsed.isoformat(timespec="microseconds")]
+    if kind in {"json", "jsonb"}:
+        parsed = json.loads(value) if isinstance(value, str) else value
+        return ["json", json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))]
+    if kind == "uuid":
+        return ["uuid", str(value).lower()]
+    if kind in {"character varying", "character", "text", "name"}:
+        return ["text", str(value)]
+    # Fail closed for uncommon PostgreSQL types rather than silently coercing.
+    raise ValueError(f"Unsupported PostgreSQL type for content verification: {postgres_type!r}")
+
+
+def _content_fingerprint(rows, columns, postgres_types, batch_size=500):
+    """Order-independent, bounded-memory multiset fingerprint for table rows."""
+    modulus = 1 << 256
+    sum_hashes = 0
+    xor_hashes = 0
+    count = 0
+    for row in rows:
+        values = [_canonical_cell(row[column], postgres_types[column]) for column in columns]
+        encoded = json.dumps(values, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        digest = int.from_bytes(hashlib.sha256(encoded).digest(), "big")
+        sum_hashes = (sum_hashes + digest) % modulus
+        xor_hashes ^= digest
+        count += 1
+    return {
+        "count": count,
+        "sum_sha256": f"{sum_hashes:064x}",
+        "xor_sha256": f"{xor_hashes:064x}",
+    }
+
+
+def _cursor_rows(cursor, batch_size=500):
+    while True:
+        batch = cursor.fetchmany(batch_size)
+        if not batch:
+            return
+        yield from batch
+
+
+
+def verify_copy(
+    sqlite_path: str, postgres_dsn: str, schema: str = "nexus",
+    snapshot_manifest: str | None = None,
+    expected_baseline_sha256: str | None = None,
+) -> dict:
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+    except ImportError as exc:
+        raise RuntimeError("Install psycopg[binary]>=3.2,<4.0 to verify PostgreSQL copies.") from exc
+    _ident(schema)
+    if __package__:
+        from .snapshot_sqlite_before_postgres import verify_sqlite_snapshot
+    else:
+        from snapshot_sqlite_before_postgres import verify_sqlite_snapshot
+    snapshot_result = verify_sqlite_snapshot(sqlite_path, snapshot_manifest)
+    if not snapshot_result.get("verified"):
+        raise ValueError("SQLite snapshot verification did not pass; verification is blocked.")
+    source_path = Path(sqlite_path).expanduser().resolve(strict=True)
+    uri = "file:" + quote(source_path.as_posix(), safe="/:") + "?mode=ro"
+    src = sqlite3.connect(uri, uri=True, timeout=10)
+    src.row_factory = sqlite3.Row
+    dst = None
+    try:
+        src.execute("PRAGMA query_only = ON")
+        src.execute("BEGIN")
+        integrity = [row[0] for row in src.execute("PRAGMA integrity_check")]
+        fk_issues = [dict(row) for row in src.execute("PRAGMA foreign_key_check")]
+        if integrity != ["ok"] or fk_issues:
+            raise ValueError("SQLite source integrity/FK checks failed; verification is blocked.")
+
+        source_tables = [row[0] for row in src.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        )]
+        source_columns = {
+            table: [row["name"] for row in src.execute(
+                'PRAGMA table_info("' + table.replace('"', '""') + '")'
+            )]
+            for table in source_tables
+        }
+        source_identity_columns = []
+        for table in source_tables:
+            metadata = src.execute(
+                'PRAGMA table_info("' + table.replace('"', '""') + '")'
+            ).fetchall()
+            primary = [row for row in metadata if int(row["pk"] or 0)]
+            if (
+                len(primary) == 1
+                and (primary[0]["type"] or "").strip().upper() == "INTEGER"
+                # This cache-version table is a fixed singleton (id=1), not
+                # an auto-numbered entity. The reviewed PostgreSQL baseline keeps
+                # its BIGINT primary key non-identity, matching this source rule.
+                and not (
+                    table == "management_dashboard_data_version"
+                    and primary[0]["name"] == "id"
+                )
+            ):
+                source_identity_columns.append(
+                    table + "." + primary[0]["name"]
+                )
+        source_identity_columns.sort()
+        dst = psycopg.connect(postgres_dsn, connect_timeout=10, autocommit=False,
+                              row_factory=dict_row)
+        dst.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        dst.execute("SET LOCAL search_path TO " + _ident(schema))
+        marker_exists = dst.execute(
+            """SELECT 1 FROM information_schema.tables
+               WHERE table_schema = %s AND table_name = 'nexus_schema_installation'
+                 AND table_type = 'BASE TABLE'""",
+            (schema,),
+        ).fetchone()
+        if marker_exists is None:
+            raise ValueError(
+                "Target schema has no NEXUS baseline installation marker; "
+                "verification is blocked."
+            )
+        marker = dst.execute(
+            "SELECT baseline_sha256 FROM " + _ident(schema) +
+            "." + _ident("nexus_schema_installation") + " WHERE id = 1"
+        ).fetchone()
+        baseline_sha256 = marker["baseline_sha256"] if marker else None
+        if not isinstance(baseline_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", baseline_sha256.strip()
+        ):
+            raise ValueError(
+                "Target schema baseline fingerprint is missing or invalid; "
+                "verification is blocked."
+            )
+        if (
+            not isinstance(expected_baseline_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_baseline_sha256)
+        ):
+            raise ValueError(
+                "The reviewed baseline SHA-256 is required; verification is blocked."
+            )
+        if baseline_sha256.strip() != expected_baseline_sha256:
+            raise ValueError(
+                "Target PostgreSQL schema was installed from a different baseline; "
+                "verification is blocked."
+            )
+        target_tables = {
+            row["table_name"] for row in dst.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema=%s AND table_type='BASE TABLE'", (schema,)
+            ).fetchall()
+            if row["table_name"] != "nexus_schema_installation"
+        }
+        issues = []
+        target_identity_columns = [
+            row["table_name"] + "." + row["column_name"]
+            for row in dst.execute(
+                """SELECT table_name, column_name
+                   FROM information_schema.columns
+                   WHERE table_schema = %s AND is_identity = 'YES'
+                   ORDER BY table_name, column_name""",
+                (schema,),
+            ).fetchall()
+        ]
+        if source_identity_columns != target_identity_columns:
+            issues.append({
+                "control": "identity_column_coverage",
+                "sqlite": source_identity_columns,
+                "postgres": target_identity_columns,
+            })
+        # Every identity column must own a real sequence whose next value will
+        # not collide with an explicitly copied primary key.
+        from psycopg import sql as pg_sql
+        for identity in source_identity_columns:
+            table, column = identity.split(".", 1)
+            sequence_name_row = dst.execute(
+                "SELECT pg_get_serial_sequence(%s, %s) AS sequence_name",
+                (schema + "." + table, column),
+            ).fetchone()
+            sequence_name = sequence_name_row["sequence_name"] if sequence_name_row else None
+            if not sequence_name:
+                issues.append({
+                    "control": "identity_sequence_missing",
+                    "table": table, "column": column,
+                })
+                continue
+            sequence_object = dst.execute(
+                """SELECT n.nspname AS schema_name, c.relname AS sequence_name
+                   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE c.oid = to_regclass(%s) AND c.relkind = 'S'""",
+                (sequence_name,),
+            ).fetchone()
+            if not sequence_object:
+                issues.append({
+                    "control": "identity_sequence_missing",
+                    "table": table, "column": column,
+                    "sequence": sequence_name,
+                })
+                continue
+            sequence_state = dst.execute(
+                pg_sql.SQL("SELECT last_value, is_called FROM {}.{}").format(
+                    pg_sql.Identifier(sequence_object["schema_name"]),
+                    pg_sql.Identifier(sequence_object["sequence_name"]),
+                )
+            ).fetchone()
+            maximum_id = dst.execute(
+                "SELECT MAX(" + _ident(column) + ") AS max_id FROM "
+                + _ident(schema) + "." + _ident(table)
+            ).fetchone()["max_id"]
+            last_value = int(sequence_state["last_value"])
+            is_called = bool(sequence_state["is_called"])
+            if maximum_id is not None and (
+                last_value < int(maximum_id)
+                or (last_value == int(maximum_id) and not is_called)
+            ):
+                issues.append({
+                    "control": "identity_sequence_behind_data",
+                    "table": table, "column": column,
+                    "max_id": int(maximum_id),
+                    "last_value": last_value, "is_called": is_called,
+                })
+        missing = sorted(set(source_tables) - target_tables)
+        extra = sorted(target_tables - set(source_tables))
+        if missing or extra:
+            issues.append({"control": "table_coverage", "missing": missing, "extra": extra})
+
+        row_counts = {}
+        target_columns_by_table = {}
+        controls = []
+        controls_skipped = []
+        for table in source_tables:
+            if table not in target_tables:
+                continue
+            src_cols = source_columns[table]
+            target_cols = [row["column_name"] for row in dst.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position",
+                (schema, table),
+            ).fetchall()]
+            target_columns_by_table[table] = target_cols
+            if set(src_cols) != set(target_cols):
+                issues.append({
+                    "control": "column_coverage", "table": table,
+                    "missing": sorted(set(src_cols) - set(target_cols)),
+                    "extra": sorted(set(target_cols) - set(src_cols)),
+                })
+                continue
+            source_count = src.execute(
+                'SELECT COUNT(*) FROM "' + table.replace('"', '""') + '"'
+            ).fetchone()[0]
+            target_count = dst.execute(
+                "SELECT COUNT(*) AS n FROM " + _ident(schema) + "." + _ident(table)
+            ).fetchone()["n"]
+            row_counts[table] = {"sqlite": source_count, "postgres": target_count}
+            if source_count != target_count:
+                issues.append({
+                    "control": "row_count", "table": table,
+                    "sqlite": source_count, "postgres": target_count,
+                })
+                continue
+
+            # Compare every business row, not only totals. The two fingerprints
+            # are order-independent so differing collations/orderings cannot
+            # hide or manufacture a mismatch; each side is streamed in batches.
+            type_rows = dst.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema=%s AND table_name=%s",
+                (schema, table),
+            ).fetchall()
+            postgres_types = {row["column_name"]: row["data_type"] for row in type_rows}
+            try:
+                source_sql = "SELECT " + ", ".join(
+                    '"' + column.replace('"', '""') + '"' for column in src_cols
+                ) + ' FROM "' + table.replace('"', '""') + '"'
+                target_select = []
+                for column in src_cols:
+                    if table == "management_dashboard_data_version" and column == "version":
+                        # The copy process intentionally bumps this cache token
+                        # once after restoring its triggers. Normalize only that
+                        # documented +1 so the verifier still checks the exact
+                        # source value and rejects any other target mutation.
+                        target_select.append(
+                            "(" + _ident(column) + " - 1) AS " + _ident(column)
+                        )
+                    else:
+                        target_select.append(_ident(column))
+                target_sql = "SELECT " + ", ".join(
+                    target_select
+                ) + " FROM " + _ident(schema) + "." + _ident(table)
+                source_cursor = src.execute(source_sql)
+                with dst.cursor(name="nexus_verify_" + str(len(row_counts))) as target_cursor:
+                    target_cursor.execute(target_sql)
+                    source_fingerprint = _content_fingerprint(
+                        _cursor_rows(source_cursor), src_cols, postgres_types
+                    )
+                    target_fingerprint = _content_fingerprint(
+                        _cursor_rows(target_cursor), src_cols, postgres_types
+                    )
+                if source_fingerprint != target_fingerprint:
+                    issues.append({
+                        "control": "row_content",
+                        "table": table,
+                        "sqlite": source_fingerprint,
+                        "postgres": target_fingerprint,
+                    })
+            except (ValueError, TypeError, InvalidOperation) as exc:
+                controls_skipped.append({
+                    "control": "row_content",
+                    "table": table,
+                    "reason": "unsupported_or_invalid_value",
+                    "detail": str(exc)[:300],
+                })
+
+        sqlite_fks = _sqlite_foreign_key_map(src, source_tables)
+        postgres_fks = _pg_foreign_key_map(dst, schema)
+        missing_fks, extra_fks = _foreign_key_differences(sqlite_fks, postgres_fks)
+        if missing_fks or extra_fks:
+            issues.append({
+                "control": "foreign_key_coverage",
+                "missing_in_postgres": [list(item) for item in missing_fks[:200]],
+                "extra_in_postgres": [list(item) for item in extra_fks[:200]],
+                "source_count": len(sqlite_fks),
+                "target_count": len(postgres_fks),
+            })
+        def compare_control(table, amount, groups, label):
+            if table not in source_tables or table not in target_tables:
+                controls_skipped.append({
+                    "control": label,
+                    "reason": "table_missing",
+                })
+                return
+            required = {amount, *groups}
+            source_available = set(source_columns.get(table, []))
+            target_available = set(target_columns_by_table.get(table, []))
+            missing_source, missing_target = _missing_control_columns(
+                required, source_available, target_available
+            )
+            if missing_source or missing_target:
+                controls_skipped.append({
+                    "control": label,
+                    "reason": "required_columns_missing",
+                    "missing_in_sqlite": missing_source,
+                    "missing_in_postgres": missing_target,
+                })
+                return
+            source_map = _sqlite_grouped_sum(src, table, amount, groups)
+            target_map = _pg_grouped_sum(dst, schema, table, amount, groups)
+            _compare_decimal_maps(label, source_map, target_map, issues)
+            controls.append(label)
+
+        if "journal_lines" not in source_tables:
+            controls_skipped.append({
+                "control": "journal_lines.required",
+                "reason": "source_table_missing",
+            })
+        if "journal_lines" in source_tables:
+            compare_control("journal_lines", "debit", (), "journal_lines.debit_total")
+            compare_control("journal_lines", "credit", (), "journal_lines.credit_total")
+            # Compare totals per journal as well as globally. This catches a
+            # migration that preserves grand totals but assigns lines to the
+            # wrong entry. Support the common legacy FK column spellings.
+            journal_columns = set(source_columns["journal_lines"])
+            entry_key = _journal_entry_key(journal_columns)
+            if entry_key:
+                compare_control(
+                    "journal_lines", "debit", (entry_key,),
+                    "journal_lines.debit_by_entry",
+                )
+                compare_control(
+                    "journal_lines", "credit", (entry_key,),
+                    "journal_lines.credit_by_entry",
+                )
+                source_unbalanced = _unbalanced_groups(
+                    _sqlite_grouped_sum(src, "journal_lines", "debit", (entry_key,)),
+                    _sqlite_grouped_sum(src, "journal_lines", "credit", (entry_key,)),
+                )
+                target_unbalanced = _unbalanced_groups(
+                    _pg_grouped_sum(dst, schema, "journal_lines", "debit", (entry_key,)),
+                    _pg_grouped_sum(dst, schema, "journal_lines", "credit", (entry_key,)),
+                )
+                if source_unbalanced or target_unbalanced:
+                    issues.append({
+                        "control": "journal_lines.entry_balance",
+                        "unbalanced_sqlite_entries": source_unbalanced[:200],
+                        "unbalanced_postgres_entries": target_unbalanced[:200],
+                    })
+            else:
+                controls_skipped.append({
+                    "control": "journal_lines.by_entry",
+                    "reason": "journal_entry_reference_missing",
+                    "expected_one_of": ["journal_entry_id", "entry_id", "journal_id"],
+                })
+            if "account_id" in journal_columns:
+                compare_control(
+                    "journal_lines", "debit", ("account_id",),
+                    "trial_balance.debit_by_account",
+                )
+                compare_control(
+                    "journal_lines", "credit", ("account_id",),
+                    "trial_balance.credit_by_account",
+                )
+            else:
+                controls_skipped.append({
+                    "control": "trial_balance.by_account",
+                    "reason": "account_reference_missing",
+                })
+            if "customer_id" in journal_columns:
+                compare_control("journal_lines", "debit", ("customer_id",), "customer.debit_by_id")
+                compare_control("journal_lines", "credit", ("customer_id",), "customer.credit_by_id")
+            if "supplier_id" in journal_columns:
+                compare_control("journal_lines", "debit", ("supplier_id",), "supplier.debit_by_id")
+                compare_control("journal_lines", "credit", ("supplier_id",), "supplier.credit_by_id")
+
+        if (
+            _inventory_valuation_required(source_tables)
+            and "stock_valuation_layers" not in source_tables
+        ):
+            controls_skipped.append({
+                "control": "stock_valuation_layers.required",
+                "reason": "source_table_missing",
+            })
+        if "stock_valuation_layers" in source_tables:
+            for amount in ("qty_in", "qty_remaining", "value_remaining"):
+                compare_control("stock_valuation_layers", amount, (), f"stock_valuation_layers.{amount}_total")
+                compare_control(
+                    "stock_valuation_layers", amount, ("product_id", "warehouse_id"),
+                    f"stock_valuation_layers.{amount}_by_product_warehouse",
+                )
+
+        # A byte-for-byte copy can still preserve an operational lineage defect.
+        # Legacy transfer layers without receipt_line_id cannot be safely attributed
+        # to a GRNI receipt, so block migration sign-off until they are reviewed.
+        if ({"stock_valuation_layers", "stock_movements"}.issubset(source_tables)
+                and {"stock_valuation_layers", "stock_movements"}.issubset(target_tables)):
+            required_lineage = {
+                "stock_valuation_layers": {"source_movement_id", "receipt_line_id"},
+                "stock_movements": {"id", "movement_type"},
+            }
+            missing_lineage = {
+                table: {
+                    "sqlite": sorted(columns - set(source_columns.get(table, []))),
+                    "postgres": sorted(columns - set(target_columns_by_table.get(table, []))),
+                }
+                for table, columns in required_lineage.items()
+                if (columns - set(source_columns.get(table, []))
+                    or columns - set(target_columns_by_table.get(table, [])))
+            }
+            if missing_lineage:
+                controls_skipped.append({
+                    "control": "inventory.transfer_receipt_lineage",
+                    "reason": "required_columns_missing",
+                    "missing": missing_lineage,
+                })
+            else:
+                source_unlinked = _sqlite_legacy_unlinked_transfer_layer_count(src)
+                target_unlinked = dst.execute(
+                    "SELECT COUNT(*) AS n FROM " + _ident(schema) + "." +
+                    _ident("stock_valuation_layers") + " l JOIN " + _ident(schema) + "." +
+                    _ident("stock_movements") + " m ON m.id=l.source_movement_id "
+                    "WHERE m.movement_type IN ('transfer','relocate') "
+                    "AND l.receipt_line_id IS NULL"
+                ).fetchone()["n"]
+                if source_unlinked != target_unlinked:
+                    issues.append({
+                        "control": "inventory.transfer_receipt_lineage.count",
+                        "sqlite": source_unlinked,
+                        "postgres": target_unlinked,
+                    })
+                else:
+                    controls.append("inventory.transfer_receipt_lineage.count")
+                if source_unlinked:
+                    controls_skipped.append({
+                        "control": "inventory.transfer_receipt_lineage",
+                        "reason": "legacy_transfer_layers_require_manual_lineage_review",
+                        "sqlite_unlinked_layer_count": source_unlinked,
+                        "postgres_unlinked_layer_count": target_unlinked,
+                    })
+
+        dst.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        dst.rollback()
+        return {
+            "read_only": True,
+            "source_integrity_ok": True,
+            "source_foreign_keys_ok": True,
+            "schema": schema,
+            "baseline_sha256": baseline_sha256.strip(),
+            "snapshot_sha256": snapshot_result["sha256"],
+            "snapshot_manifest": snapshot_result["manifest"],
+            "source_table_count": len(source_tables),
+            "matched_table_count": len(row_counts),
+            "source_row_count": sum(item["sqlite"] for item in row_counts.values()),
+            "target_row_count": sum(item["postgres"] for item in row_counts.values()),
+            "financial_and_inventory_controls": controls,
+            "financial_and_inventory_controls_skipped": controls_skipped,
+            "issue_count": len(issues),
+            "issues": issues[:200],
+            "passed": _verification_passed(
+                issues, controls_skipped, row_counts, source_tables
+            ),
+            "requires_review": bool(controls_skipped),
+            "row_counts": row_counts,
+        }
+    finally:
+        src.close()
+        if dst is not None:
+            dst.close()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sqlite", required=True)
+    parser.add_argument("--postgres-dsn", default=os.environ.get("NEXUS_POSTGRES_DSN"))
+    parser.add_argument("--schema", default="nexus")
+    parser.add_argument("--snapshot-manifest",
+                        help="Manifest for this exact SQLite snapshot; defaults to adjacent manifest")
+    parser.add_argument("--baseline-sql", required=True,
+                        help="Exact reviewed baseline SQL used to install PostgreSQL schema")
+    args = parser.parse_args(argv)
+    if not args.postgres_dsn:
+        parser.error("Provide --postgres-dsn or set NEXUS_POSTGRES_DSN.")
+    expected_baseline_sha256 = hashlib.sha256(
+        Path(args.baseline_sql).expanduser().read_text(encoding="utf-8").encode("utf-8")
+    ).hexdigest()
+    result = verify_copy(
+        args.sqlite, args.postgres_dsn, args.schema, args.snapshot_manifest,
+        expected_baseline_sha256,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result["passed"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

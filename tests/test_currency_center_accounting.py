@@ -1,0 +1,465 @@
+"""Accounting safety baseline for the foreign-currency subledger."""
+import os
+import sqlite3
+import unittest
+from decimal import Decimal
+
+import currency_center
+
+
+class CurrencyDatabaseErrorDetectionTests(unittest.TestCase):
+    def test_sqlite_errors_are_recognized(self):
+        self.assertTrue(currency_center._is_database_error(sqlite3.OperationalError("locked")))
+
+    def test_psycopg_errors_are_recognized_without_importing_driver(self):
+        class DriverError(Exception):
+            pass
+        DriverError.__module__ = "psycopg.errors"
+        self.assertTrue(currency_center._is_database_error(DriverError("database failure")))
+
+    def test_unexpected_programming_errors_are_not_swallowed(self):
+        self.assertFalse(currency_center._is_database_error(RuntimeError("bug")))
+
+
+class CurrencyAmountTests(unittest.TestCase):
+    def test_decimal_parser_rejects_invalid_and_non_finite_values(self):
+        for value in ("not-a-number", "NaN", "Infinity", "-Infinity"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    currency_center.D(value)
+
+    def test_money_rounds_half_up_to_two_decimal_places(self):
+        self.assertEqual(currency_center.M("1.005"), Decimal("1.01"))
+        self.assertEqual(currency_center.M("1.004"), Decimal("1.00"))
+        self.assertEqual(currency_center.M("-1.005"), Decimal("-1.01"))
+
+
+class CurrencyWriteLockTests(unittest.TestCase):
+    def test_sqlite_write_lock_starts_immediate_transaction(self):
+        conn = sqlite3.connect(":memory:", isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("""
+                CREATE TABLE fx_transactions (
+                    id INTEGER PRIMARY KEY,
+                    balance_foreign TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO fx_transactions(id,balance_foreign,status) VALUES(1,'100.00','open')"
+            )
+            currency_center._begin_fx_write(conn)
+            self.assertTrue(conn.in_transaction)
+            row = currency_center._open_fx_transaction_for_update(conn, 1)
+            self.assertEqual(row["balance_foreign"], "100.00")
+            conn.rollback()
+        finally:
+            conn.close()
+
+
+class CurrencyBalanceUpdateTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("""
+            CREATE TABLE fx_transactions(
+                id INTEGER PRIMARY KEY,
+                balance_foreign TEXT NOT NULL,
+                balance_base TEXT NOT NULL,
+                status TEXT NOT NULL
+            )
+        """)
+        self.conn.execute(
+            "INSERT INTO fx_transactions(id,balance_foreign,balance_base,status) "
+            "VALUES(1,'100.00','500.00','open')"
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_partial_settlement_keeps_transaction_open(self):
+        currency_center.update_open_fx_balance(
+            self.conn, 1, "100.00", Decimal("60.00"), Decimal("300.00")
+        )
+        row = self.conn.execute(
+            "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+        ).fetchone()
+        self.assertEqual(row["balance_foreign"], "60.00")
+        self.assertEqual(row["balance_base"], "300.00")
+        self.assertEqual(row["status"], "open")
+
+    def test_full_settlement_marks_transaction_settled(self):
+        currency_center.update_open_fx_balance(
+            self.conn, 1, "100.00", Decimal("0.00"), Decimal("0.00")
+        )
+        row = self.conn.execute(
+            "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+        ).fetchone()
+        self.assertEqual(row["balance_foreign"], "0")
+        self.assertEqual(row["balance_base"], "0.00")
+        self.assertEqual(row["status"], "settled")
+
+    def test_journal_and_settlement_roll_back_when_fx_balance_update_fails(self):
+        """The posted journal and settlement row must share the FX balance transaction."""
+        conn = sqlite3.connect(":memory:", isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.executescript("""
+                CREATE TABLE accounts(
+                    id INTEGER PRIMARY KEY, is_group INTEGER NOT NULL,
+                    active INTEGER NOT NULL, account_type TEXT
+                );
+                CREATE TABLE journal_entries(
+                    id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL,
+                    reference TEXT NOT NULL UNIQUE, description TEXT,
+                    status TEXT NOT NULL, created_by INTEGER, created_at TEXT
+                );
+                CREATE TABLE journal_lines(
+                    id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL,
+                    account_id INTEGER NOT NULL, debit TEXT NOT NULL,
+                    credit TEXT NOT NULL, memo TEXT
+                );
+                CREATE TABLE fx_transactions(
+                    id INTEGER PRIMARY KEY, balance_foreign TEXT NOT NULL,
+                    balance_base TEXT NOT NULL, status TEXT NOT NULL
+                );
+                CREATE TABLE fx_settlements(
+                    id INTEGER PRIMARY KEY, transaction_id INTEGER NOT NULL,
+                    settlement_date TEXT NOT NULL, foreign_amount TEXT NOT NULL
+                );
+                INSERT INTO accounts VALUES(1,0,1,'asset'),(2,0,1,'revenue');
+                INSERT INTO fx_transactions VALUES(1,'100.00','500.00','open');
+            """)
+            currency_center._begin_fx_write(conn)
+            currency_center.post_journal(
+                conn, "2026-11-17", "FX-ATOMICITY-TEST", "اختبار ذرية التسوية",
+                [(1, Decimal("50.00"), Decimal("0"), "مدين"),
+                 (2, Decimal("0"), Decimal("50.00"), "دائن")],
+                1,
+            )
+            conn.execute(
+                "INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount) "
+                "VALUES(1,'2026-11-17','10.00')"
+            )
+            with self.assertRaisesRegex(ValueError, "تغير رصيد المعاملة"):
+                currency_center.update_open_fx_balance(
+                    conn, 1, "stale-balance", Decimal("90.00"), Decimal("450.00")
+                )
+            conn.rollback()
+
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_entries").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM journal_lines").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM fx_settlements").fetchone()[0], 0)
+            row = conn.execute(
+                "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+            ).fetchone()
+            self.assertEqual(
+                (row["balance_foreign"], row["balance_base"], row["status"]),
+                ("100.00", "500.00", "open"),
+            )
+        finally:
+            conn.close()
+
+    def test_stale_expected_balance_is_rejected_without_overwriting(self):
+        with self.assertRaisesRegex(ValueError, "تغير رصيد المعاملة"):
+            currency_center.update_open_fx_balance(
+                self.conn, 1, "90.00", Decimal("50.00"), Decimal("250.00")
+            )
+        row = self.conn.execute(
+            "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+        ).fetchone()
+        self.assertEqual(row["balance_foreign"], "100.00")
+        self.assertEqual(row["balance_base"], "500.00")
+        self.assertEqual(row["status"], "open")
+
+
+@unittest.skipUnless(
+    os.environ.get("NEXUS_TEST_POSTGRES_DSN"),
+    "PostgreSQL integration DSN not configured",
+)
+class CurrencyBalanceUpdatePostgreSQLTests(unittest.TestCase):
+    def test_fx_write_lock_and_row_lock_work_in_disposable_schema(self):
+        import uuid
+        import psycopg
+        from psycopg.rows import dict_row
+
+        schema = "nexus_fx_lock_" + uuid.uuid4().hex[:12]
+        conn = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
+        )
+        try:
+            with conn.transaction():
+                conn.execute(f'CREATE SCHEMA "{schema}"')
+                conn.execute(f'SET LOCAL search_path TO "{schema}"')
+                conn.execute("""
+                    CREATE TABLE fx_transactions (
+                        id BIGINT PRIMARY KEY,
+                        balance_foreign TEXT NOT NULL,
+                        status TEXT NOT NULL
+                    )
+                """)
+                conn.execute(
+                    "INSERT INTO fx_transactions(id,balance_foreign,status) VALUES(1,'100.00','open')"
+                )
+                currency_center._begin_fx_write(conn)
+                row = currency_center._open_fx_transaction_for_update(conn, 1)
+                self.assertEqual(row["balance_foreign"], "100.00")
+                raise RuntimeError("rollback disposable schema")
+        except RuntimeError as exc:
+            self.assertEqual(str(exc), "rollback disposable schema")
+        finally:
+            conn.close()
+
+
+
+    def test_full_settlement_updates_row_in_rolled_back_schema(self):
+        import uuid
+        import psycopg
+        from psycopg.rows import dict_row
+
+        schema = "nexus_fx_balance_" + uuid.uuid4().hex[:12]
+        conn = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
+        )
+        try:
+            try:
+                with conn.transaction():
+                    conn.execute(f'CREATE SCHEMA "{schema}"')
+                    conn.execute(f'SET LOCAL search_path TO "{schema}"')
+                    conn.execute("""
+                        CREATE TABLE fx_transactions (
+                            id BIGINT PRIMARY KEY,
+                            balance_foreign TEXT NOT NULL,
+                            balance_base TEXT NOT NULL,
+                            status TEXT NOT NULL
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO fx_transactions
+                            (id,balance_foreign,balance_base,status)
+                        VALUES (1,'100.00','500.00','open')
+                    """)
+                    currency_center.update_open_fx_balance(
+                        conn, 1, "100.00", Decimal("0.00"), Decimal("0.00")
+                    )
+                    row = conn.execute("""
+                        SELECT balance_foreign,balance_base,status
+                        FROM fx_transactions WHERE id=1
+                    """).fetchone()
+                    self.assertEqual(
+                        (row["balance_foreign"], row["balance_base"], row["status"]),
+                        ("0", "0.00", "settled"),
+                    )
+                    raise RuntimeError("rollback disposable schema")
+            except RuntimeError as exc:
+                self.assertEqual(str(exc), "rollback disposable schema")
+        finally:
+            conn.close()
+
+
+    def test_journal_and_fx_settlement_roll_back_atomically_in_postgresql(self):
+        """A failed FX balance compare-and-update must roll back the journal too."""
+        import uuid
+        import psycopg
+        from psycopg.rows import dict_row
+
+        schema = "nexus_fx_atomic_" + uuid.uuid4().hex[:12]
+        conn = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=dict_row
+        )
+        try:
+            conn.execute(f'CREATE SCHEMA "{schema}"')
+            conn.commit()
+            conn.execute(f'SET search_path TO "{schema}"')
+            conn.commit()
+            conn.execute("""
+                CREATE TABLE accounts (
+                    id BIGINT PRIMARY KEY, is_group BOOLEAN NOT NULL,
+                    active BOOLEAN NOT NULL, account_type TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE journal_entries (
+                    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    entry_date TEXT NOT NULL, reference TEXT NOT NULL UNIQUE,
+                    description TEXT, status TEXT NOT NULL, created_by BIGINT,
+                    created_at TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE journal_lines (
+                    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    entry_id BIGINT NOT NULL, account_id BIGINT NOT NULL,
+                    debit TEXT NOT NULL, credit TEXT NOT NULL, memo TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE fx_transactions (
+                    id BIGINT PRIMARY KEY, balance_foreign TEXT NOT NULL,
+                    balance_base TEXT NOT NULL, status TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE fx_settlements (
+                    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    transaction_id BIGINT NOT NULL, settlement_date TEXT NOT NULL,
+                    foreign_amount TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO accounts VALUES (1,FALSE,TRUE,'asset'),(2,FALSE,TRUE,'revenue')"
+            )
+            conn.execute(
+                "INSERT INTO fx_transactions VALUES (1,'100.00','500.00','open')"
+            )
+            conn.commit()
+
+            with self.assertRaisesRegex(ValueError, "تغير رصيد المعاملة"):
+                with conn.transaction():
+                    currency_center._begin_fx_write(conn)
+                    currency_center.post_journal(
+                        conn, "2026-11-17", "FX-PG-ATOMICITY-TEST",
+                        "اختبار ذرية تسوية العملة PostgreSQL",
+                        [(1, Decimal("50.00"), Decimal("0"), "مدين"),
+                         (2, Decimal("0"), Decimal("50.00"), "دائن")],
+                        1,
+                    )
+                    conn.execute(
+                        "INSERT INTO fx_settlements(transaction_id,settlement_date,foreign_amount) "
+                        "VALUES(1,'2026-11-17','10.00')"
+                    )
+                    currency_center.update_open_fx_balance(
+                        conn, 1, "stale-balance", Decimal("90.00"), Decimal("450.00")
+                    )
+
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) AS n FROM journal_entries").fetchone()["n"], 0
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) AS n FROM journal_lines").fetchone()["n"], 0
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) AS n FROM fx_settlements").fetchone()["n"], 0
+            )
+            row = conn.execute(
+                "SELECT balance_foreign,balance_base,status FROM fx_transactions WHERE id=1"
+            ).fetchone()
+            self.assertEqual(
+                (row["balance_foreign"], row["balance_base"], row["status"]),
+                ("100.00", "500.00", "open"),
+            )
+        finally:
+            try:
+                conn.rollback()
+                conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                conn.commit()
+            finally:
+                conn.close()
+
+
+    def test_row_lock_serializes_two_connections_and_prevents_stale_balance(self):
+        """A waiter must read the balance committed by the transaction holding FOR UPDATE."""
+        import threading
+        import time
+        import uuid
+        import psycopg
+        from psycopg.rows import dict_row
+
+        schema = "nexus_fx_race_" + uuid.uuid4().hex[:12]
+        dsn = os.environ["NEXUS_TEST_POSTGRES_DSN"]
+        first = psycopg.connect(dsn, row_factory=dict_row)
+        second = psycopg.connect(dsn, row_factory=dict_row)
+        monitor = psycopg.connect(dsn, autocommit=True, row_factory=dict_row)
+        started = threading.Event()
+        acquired = threading.Event()
+        observed = {}
+        errors = []
+        worker = None
+        try:
+            first.execute(f'CREATE SCHEMA "{schema}"')
+            first.commit()
+            first.execute(f'SET search_path TO "{schema}"')
+            second.execute(f'SET search_path TO "{schema}"')
+            first.execute("""
+                CREATE TABLE fx_transactions (
+                    id BIGINT PRIMARY KEY,
+                    balance_foreign TEXT NOT NULL,
+                    status TEXT NOT NULL
+                )
+            """)
+            first.execute(
+                "INSERT INTO fx_transactions(id,balance_foreign,status) VALUES(1,'100.00','open')"
+            )
+            first.commit()
+
+            currency_center._begin_fx_write(first)
+            row = currency_center._open_fx_transaction_for_update(first, 1)
+            self.assertEqual(row["balance_foreign"], "100.00")
+
+            def waiter():
+                try:
+                    _ = currency_center._begin_fx_write(second)
+                    started.set()
+                    locked_row = currency_center._open_fx_transaction_for_update(second, 1)
+                    observed["balance"] = locked_row["balance_foreign"]
+                    acquired.set()
+                    second.commit()
+                except Exception as exc:  # surfaced in the main test thread
+                    errors.append(exc)
+                    acquired.set()
+
+            second_pid = second.execute("SELECT pg_backend_pid() AS pid").fetchone()["pid"]
+            worker = threading.Thread(target=waiter, daemon=True)
+            worker.start()
+            self.assertTrue(started.wait(2), "second connection did not start")
+            deadline = time.monotonic() + 5
+            waiting_on_lock = False
+            while time.monotonic() < deadline:
+                activity = monitor.execute(
+                    "SELECT wait_event_type FROM pg_stat_activity WHERE pid=%s",
+                    (second_pid,),
+                ).fetchone()
+                if activity and activity["wait_event_type"] == "Lock":
+                    waiting_on_lock = True
+                    break
+                if acquired.is_set():
+                    break
+                time.sleep(0.02)
+            self.assertTrue(
+                waiting_on_lock,
+                "second connection never entered a PostgreSQL lock wait while first held the row",
+            )
+            self.assertFalse(acquired.is_set())
+
+            first.execute(
+                "UPDATE fx_transactions SET balance_foreign='60.00' WHERE id=1"
+            )
+            first.commit()
+            self.assertTrue(acquired.wait(5), "second connection stayed blocked after commit")
+            worker.join(timeout=2)
+            self.assertFalse(worker.is_alive(), "row-lock waiter did not finish")
+            self.assertFalse(errors, f"row-lock waiter failed: {errors!r}")
+            self.assertEqual(observed.get("balance"), "60.00")
+        finally:
+            try:
+                # Release the row lock before waiting for the worker, then ensure
+                # its connection is no longer using the disposable schema.
+                first.rollback()
+                if worker is not None:
+                    worker.join(timeout=5)
+                second.rollback()
+                if worker is not None and worker.is_alive():
+                    second.close()
+                    worker.join(timeout=5)
+                first.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                first.commit()
+            finally:
+                first.close()
+                if not second.closed:
+                    second.close()
+                monitor.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

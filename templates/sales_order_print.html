@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}أمر بيع {{ order.order_no }} | NEXUS ERP{% endblock %}
+{% block content %}
+<section class="panel print-document">
+<div class="no-print actions"><button type="button" onclick="window.print()">طباعة أمر البيع / PDF</button></div>
+{% set document_title = 'أمر بيع' %}{% set document_number = order.order_no %}{% set document_date = order.order_date %}
+{% include "partials/print_brand_header.html" %}
+<div class="form-row"><div><b>العميل:</b> {{ order.customer_name }} ({{ order.customer_code }})</div><div><b>الرقم الضريبي:</b> {{ order.customer_tax_number or '—' }}</div><div><b>العرض المرجعي:</b> {{ order.quote_no }}</div><div><b>التسليم المتوقع:</b> {{ order.expected_date or '—' }}</div><div><b>الحالة:</b> {{ order.status }}</div></div>
+<div class="table-wrap"><table><thead><tr><th>الصنف / الوصف</th><th>الكمية المطلوبة</th><th>سعر الوحدة</th><th>قيمة البند</th></tr></thead><tbody>{% for x in lines %}<tr><td>{{ x.sku or '' }} {{ x.product_name or x.description }}</td><td>{{ x.ordered_qty }}</td><td>{{ x.unit_price|money }}</td><td>{{ x.ordered_value|money }}</td></tr>{% else %}<tr><td colspan="4">لا توجد بنود.</td></tr>{% endfor %}</tbody></table></div>
+<div class="invoice-totals"><p>إجمالي البنود: {{ gross_order_value|money }}</p><p>الخصم: {{ order_discount|money }}</p><p>الصافي: {{ net_order_value|money }}</p><p>الضريبة التقديرية: {{ estimated_tax|money }}</p><h3>الإجمالي التقديري: {{ estimated_total|money }} {{ settings.get('base_currency','') }}</h3></div>
+<p class="muted">أمر البيع مستند تشغيلي ولا يمثل بمفرده فاتورة ضريبية أو قيدًا محاسبيًا.</p>
+</section>
+{% endblock %}
