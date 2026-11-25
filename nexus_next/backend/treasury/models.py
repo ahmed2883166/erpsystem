@@ -96,6 +96,10 @@ class TreasuryTransaction(models.Model):
     source_account = models.ForeignKey(TreasuryAccount, on_delete=models.PROTECT, related_name="outgoing_transactions")
     destination_account = models.ForeignKey(TreasuryAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="incoming_transfers")
     counter_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="treasury_counter_transactions")
+    reversal_of = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversal_transaction",
+    )
     kind = models.CharField(max_length=10, choices=Kind.choices)
     status = models.CharField(max_length=8, choices=Status.choices, default=Status.DRAFT)
     document_number = models.CharField(max_length=40)
