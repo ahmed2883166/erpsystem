@@ -7,7 +7,7 @@ import decimal
 class Migration(migrations.Migration):
     dependencies = [
         ("sales", "0017_sales_orders"),
-        ("inventory", "0001_initial"),
+        ("inventory", "0018_stock_line_product_movement_index"),
     ]
 
     operations = [
