@@ -129,7 +129,7 @@ export default function CustomerRefundsPanel({
         <select required value={sourceReturn} onChange={e => setSourceReturn(e.target.value)}>
           <option value="">اختر مردودًا مرحّلًا</option>
           {availableReturns.map(row => <option key={row.id} value={row.id}>
-            {row.return_number} · {row.customer_name} · المتاح {money(String(Math.max(Number(row.grand_total) - (refundedByReturn.get(row.id) || 0), 0)))}
+            {row.return_number} · {row.customer_name} · المتبقي من قيمة المردود {money(String(Math.max(Number(row.grand_total) - (refundedByReturn.get(row.id) || 0), 0)))}
           </option>)}
         </select>
       </label> : <label>الدفعة المقدمة
@@ -165,7 +165,7 @@ export default function CustomerRefundsPanel({
           {busy ? "جارٍ الحفظ…" : "إنشاء مسودة رد"}
         </button>
       </div>
-      {selectedReturn && <p className="inventory-report-note inventory-wide">العميل: {selectedReturn.customer_name} · المتبقي القابل للرد بالعملة الأساسية: {money(String(selectedReturnAvailable))}. لا يمكن صرف أكثر من المبلغ المحصل فعليًا عن الفاتورة.</p>}
+      {selectedReturn && <p className="inventory-report-note inventory-wide">العميل: {selectedReturn.customer_name} · المتبقي القابل للرد بالعملة الأساسية: {money(String(selectedReturnAvailable))}. الصرف يقتصر على الرصيد الدائن الصافي للعميل بعد احتساب جميع فواتيره وتحصيلاته ومردوداته.</p>}
       {selectedBatch && <p className="inventory-report-note inventory-wide">العميل: {selectedBatch.customer_name} · المتاح غير المخصص حاليًا: {money(selectedBatch.unallocated_amount)}.</p>}
     </form>
     <div className="data-table-wrap">
