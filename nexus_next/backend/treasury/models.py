@@ -177,7 +177,7 @@ class TreasuryTransaction(models.Model):
             ).exists()
             if not approved:
                 raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا مسجلًا للشركة والتاريخ.")
-            expected_base = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"))
+            expected_base = round_currency_amount(self.transaction_amount * self.exchange_rate, self.company.base_currency)
             if self.amount != expected_base:
                 raise ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         if self.reversal_of_id:
