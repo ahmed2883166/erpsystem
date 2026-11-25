@@ -19,9 +19,11 @@ class CompanyActivitiesField(serializers.ListField):
         return instance
 
     def to_representation(self, company):
-        values = list(
-            company.activity_assignments.values_list("activity", flat=True)
-        )
+        values = [
+            assignment.activity
+            for assignment in company.activity_assignments.all()
+            if assignment.is_active
+        ]
         return values or [company.activity]
 
 
@@ -70,10 +72,15 @@ class CompanySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "activities": "يجب أن يظل النشاط الأساسي ضمن الأنشطة المفعّلة."
                 })
-            CompanyActivity.objects.filter(company=company).delete()
-            CompanyActivity.objects.bulk_create([
-                CompanyActivity(company=company, activity=value) for value in enabled
-            ])
+            CompanyActivity.objects.filter(company=company).exclude(
+                activity__in=enabled
+            ).update(is_active=False)
+            for value in enabled:
+                CompanyActivity.objects.update_or_create(
+                    company=company,
+                    activity=value,
+                    defaults={"is_active": True},
+                )
         return company
 
     def validate(self, attrs):
