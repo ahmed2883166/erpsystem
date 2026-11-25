@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from accounting.models import JournalEntry, JournalLine
 from companies.models import ExchangeRate, FiscalYear
+from core.money import round_currency_amount
 from .models import (
     TreasuryAccount, TreasuryTransaction, TreasuryFxPosition,
     TreasuryFxRevaluation,
