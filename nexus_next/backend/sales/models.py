@@ -796,6 +796,7 @@ class CustomerReceiptBatchAllocation(models.Model):
         max_digits=20, decimal_places=4,
         validators=[MinValueValidator(Decimal("0.0001"))],
     )
+    allocation_date = models.DateField()
     created_by = models.ForeignKey(
         "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
         related_name="created_customer_receipt_batch_allocations",
