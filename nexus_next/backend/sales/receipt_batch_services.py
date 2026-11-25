@@ -196,7 +196,7 @@ def post_customer_receipt_batch(batch_id, user):
 
 
 @transaction.atomic
-def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user):
+def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user, allocation_date=None):
     """تخصيص دفعة مقدمة قائمة إلى فاتورة دون إنشاء حركة نقدية أو قيد جديد."""
     batch = CustomerReceiptBatch.objects.select_for_update(of=("self",)).select_related(
         "company", "customer", "branch",
@@ -211,7 +211,9 @@ def allocate_customer_receipt_batch(batch_id, invoice_id, amount, user):
         raise ValidationError("أدخل مبلغ تخصيص أكبر من صفر.")
     if amount > batch.unallocated_amount:
         raise ValidationError(f"مبلغ التخصيص يتجاوز الدفعة المقدمة المتاحة ({batch.unallocated_amount}).")
-    allocation_date = timezone.localdate()
+    allocation_date = allocation_date or timezone.localdate()
+    if allocation_date < batch.receipt_date:
+        raise ValidationError("تاريخ التخصيص لا يجوز أن يسبق تاريخ سند القبض.")
     _check_allocation_target(batch, invoice, amount, allocation_date)
     allocation = CustomerReceiptBatchAllocation.objects.create(
         batch=batch, invoice=invoice, amount=amount, allocation_date=allocation_date, created_by=user,
@@ -244,6 +246,12 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ سند القبض.")
 
     allocations = list(batch.allocations.select_related("invoice"))
+    latest_allocation_date = max(
+        (row.allocation_date for row in allocations),
+        default=batch.receipt_date,
+    )
+    if entry_date < latest_allocation_date:
+        raise ValidationError("تاريخ العكس لا يجوز أن يسبق آخر تاريخ تخصيص للدفعة.")
     if not allocations:
         later_direct = CustomerReceipt.objects.filter(
             customer=batch.customer, status=CustomerReceipt.Status.POSTED,
