@@ -1,4 +1,5 @@
 import django.core.validators
+from decimal import Decimal
 import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
@@ -18,7 +19,7 @@ class Migration(migrations.Migration):
                 ("receipt_number", models.CharField(max_length=40)),
                 ("receipt_date", models.DateField()),
                 ("method", models.CharField(choices=[("cash", "نقدي"), ("bank", "تحويل بنكي")], default="bank", max_length=8)),
-                ("amount", models.DecimalField(decimal_places=4, max_digits=20, validators=[django.core.validators.MinValueValidator(0.0001)])),
+                ("amount", models.DecimalField(decimal_places=4, max_digits=20, validators=[django.core.validators.MinValueValidator(Decimal("0.0001"))])),
                 ("reference", models.CharField(blank=True, max_length=120)),
                 ("status", models.CharField(choices=[("draft", "مسودة"), ("posted", "مرحّل"), ("reversed", "معكوس")], default="draft", max_length=10)),
                 ("reversal_date", models.DateField(blank=True, null=True)),
