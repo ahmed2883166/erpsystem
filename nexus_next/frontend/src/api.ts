@@ -878,7 +878,7 @@ export type CustomerAging = {
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export type SalesPerformanceReport = {
-  company:number;date_from:string;date_to:string;branch:number|null;
+  company:number;date_from:string;date_to:string;branch:number|null;customer_filter:number|null;product_filter:number|null;
   totals:{
     invoice_count:number;return_count:number;sales_net:string;discount_total:string;sales_tax:string;sales_total:string;
     return_net:string;return_tax:string;return_total:string;net_sales:string;net_cost:string;gross_profit:string;
@@ -894,7 +894,13 @@ export type SalesPerformanceReport = {
 };
 
 export const salesApi = {
-  salesPerformance: (companyId:number,dateFrom:string,dateTo:string,branchId?:number) => request<SalesPerformanceReport>(`/api/sales-documents/invoices/sales-performance/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branchId?`&branch=${branchId}`:""}`),
+  salesPerformance: (companyId:number,dateFrom:string,dateTo:string,branchId?:number,customerId?:number,productId?:number) => {
+    const q=new URLSearchParams({company:String(companyId),date_from:dateFrom,date_to:dateTo});
+    if(branchId)q.set("branch",String(branchId));
+    if(customerId)q.set("customer",String(customerId));
+    if(productId)q.set("product",String(productId));
+    return request<SalesPerformanceReport>(`/api/sales-documents/invoices/sales-performance/?${q.toString()}`);
+  },
   // جلب كشف حساب العميل مع رصيد أول وآخر المدة والحركات المرحلة.
   customerStatement: (companyId:number, customerId:number, dateFrom="", dateTo="") => request<CustomerStatement>(`/api/sales-documents/invoices/customer-statement/?company=${companyId}&customer=${customerId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
   documentTemplates: (companyId:number) => request<SalesDocumentTemplate[]>(`/api/sales-documents/document-templates/?company=${companyId}&ordering=document_type`),
