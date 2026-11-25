@@ -6,6 +6,7 @@ from django.db import models
 from decimal import Decimal
 
 from companies.models import Company, Branch, Currency, ExchangeRate
+from core.money import round_currency_amount
 from accounting.models import ChartOfAccount, JournalEntry
 
 
