@@ -2489,3 +2489,42 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(statement.status_code, 200, statement.data)
         self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_refund")
         self.assertEqual(statement.data["closing_balance"], "-64.0000")
+
+
+    def test_duplicate_supplier_invoice_number_is_rejected_without_duplicate_posting(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        payload = {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "receipt": receipt_id,
+            "invoice_number": "INV-DUPLICATE-CHECK",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id,
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }
+        first = self.client.post("/api/purchasing/invoices/", payload, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        journal_count = JournalEntry.objects.filter(company=self.company).count()
+        duplicate = self.client.post("/api/purchasing/invoices/", payload, format="json")
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+        self.assertEqual(
+            PurchaseInvoice.objects.filter(
+                company=self.company, invoice_number="INV-DUPLICATE-CHECK",
+            ).count(),
+            1,
+        )
+        self.assertEqual(JournalEntry.objects.filter(company=self.company).count(), journal_count)
+        self.assertEqual(
+            JournalLine.objects.filter(account__code="2200", entry__company=self.company).aggregate(
+                total=Sum("credit"),
+            )["total"],
+            Decimal("228.0000"),
+        )
