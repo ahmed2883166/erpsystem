@@ -135,7 +135,7 @@ def post_treasury_transaction(transaction_id, user=None):
             raise ValidationError("الحركة الأجنبية تتطلب لقطة مبلغ وسعر صرف وتاريخ معتمد مكتملة.")
         if doc.transaction_currency.code != source.currency_code:
             raise ValidationError("عملة الحركة لا تطابق عملة حساب الخزينة.")
-        if doc.amount != _money(doc.transaction_amount * doc.exchange_rate):
+        if doc.amount != round_currency_amount(doc.transaction_amount * doc.exchange_rate, doc.company.base_currency):
             raise ValidationError("القيمة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
         source_position = _foreign_position(source)
         if source_position.foreign_amount < 0:
