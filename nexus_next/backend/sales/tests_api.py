@@ -14,7 +14,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
-from sales.models import SalesInvoice, SalesQuotation, SalesDocumentTemplate
+from sales.models import CustomerReceipt, SalesInvoice, SalesQuotation, SalesDocumentTemplate
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -2364,9 +2364,7 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted_invoice.data["balance_due"], "228.0000")
 
         self._post_customer_receipt(invoice_id, "E2E-RC-001", "2026-11-27", "100")
-        receipt = self.client.get("/api/sales-documents/receipts/").data
-        receipt_row = next(row for row in receipt["results"] if row["receipt_number"] == "E2E-RC-001")
-        receipt_id = receipt_row["id"]
+        receipt_id = CustomerReceipt.objects.get(receipt_number="E2E-RC-001").pk
         invoice_after_receipt = self.client.get(
             f"/api/sales-documents/invoices/{invoice_id}/"
         ).data
@@ -2431,9 +2429,7 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertGreaterEqual(posted_sales_entries.count(), 4)
         for entry in posted_sales_entries:
-            totals = entry.lines.aggregate(
-                debit_total=__import__("django.db.models", fromlist=["Sum"]).Sum("debit"),
-                credit_total=__import__("django.db.models", fromlist=["Sum"]).Sum("credit"),
-            )
-            self.assertEqual(totals["debit_total"], totals["credit_total"], entry.entry_number)
+            debit_total = sum((line.debit for line in entry.lines.all()), Decimal("0"))
+            credit_total = sum((line.credit for line in entry.lines.all()), Decimal("0"))
+            self.assertEqual(debit_total, credit_total, entry.entry_number)
 
