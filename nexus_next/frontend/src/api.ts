@@ -274,7 +274,9 @@ export type FxSubledgerRevaluation = {
 export type TreasuryFxRevaluation = {
   id:number; account:number; currency:string; revaluation_date:string; rate_date:string; rate:string;
   foreign_amount:string; previous_carrying_amount:string; new_carrying_amount:string; difference:string;
-  journal_entry:number|null; journal_number:string;
+  journal_entry:number|null; journal_number:string; status:"posted"|"reversed"|"no_difference";
+  can_reverse:boolean; reversal_journal_entry:number|null; reversal_journal_number:string;
+  reversed_at:string|null; reversed_by_name:string;
 };
 export type TreasuryTransaction = {
   id: number; company: number; branch: number; fiscal_year: number; source_account: number; source_name: string;
@@ -297,7 +299,8 @@ export type DirectCashFlowReport = {
   closing_balance_difference: string; net_change_in_cash: string; effect_of_exchange_rate_changes: string;
   net_increase_decrease_in_cash: string; ledger_cash_change: string; reconciliation_difference: string;
   exchange_rate_effect_details: {account_id:number;account_code:string;account_name:string;currency:string;
-    revaluation_date:string;rate:string;foreign_amount:string;difference:string;journal_number:string}[];
+    event_type:"revaluation"|"reversal";event_date:string;original_revaluation_date:string;rate:string;
+    foreign_amount:string;difference:string;journal_number:string;original_journal_number:string}[];
   uncategorized_counterparty_transactions: {id:number;transaction_date:string;document_number:string;kind:string;amount:string}[];
   non_cash_investing_transactions: {document_type:string;invoice_number:string;asset_name:string;supplier_name:string;recognition_date:string;gross_amount:string;cash_paid_during_period:string;unpaid_at_period_end:string}[];
   note: string;
@@ -327,6 +330,8 @@ export const treasuryApi = {
   fxRevaluations: (id:number) => request<TreasuryFxRevaluation[]>(`/api/treasury/accounts/${id}/revaluations/`),
   // إعادة تقييم مركز عملة أجنبية وإنشاء قيد الفروق غير المحققة.
   revalueAccount: async (id:number, payload:{fiscal_year:number;revaluation_date:string;rate_date:string}) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryFxRevaluation>(`/api/treasury/accounts/${id}/revalue/`, {method:"POST", body:JSON.stringify(payload)}); },
+  // عكس إعادة تقييم الخزينة مع قيد عكسي واستعادة القيمة الدفترية.
+  reverseRevaluation: async (accountId:number,revaluationId:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<{id:number;status:"reversed";reversal_journal_number:string}>(`/api/treasury/accounts/${accountId}/reverse-revaluation/`,{method:"POST",body:JSON.stringify({revaluation_id:revaluationId,...(entryDate?{entry_date:entryDate}:{})})}); },
   // ترحيل حركة الخزينة المحددة.
   postTransaction: async (id: number) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/post/`, {method:"POST"}); },
   // جلب تقرير التدفقات النقدية بالطريقة غير المباشرة مع فلتر الفرع.
