@@ -155,7 +155,7 @@ export default function CustomerRefundsPanel({
         <input required type="date" value={refundDate} onChange={e => setRefundDate(e.target.value)} />
       </label>
       <label>المبلغ ({baseCurrencyCode || "عملة الشركة الأساسية"})
-        <input required type="number" min="0.0001" step="0.0001" value={amount} onChange={e => setAmount(e.target.value)} />
+        <input required type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} />
       </label>
       <label>مرجع / ملاحظات
         <input maxLength={120} value={reference} onChange={e => setReference(e.target.value)} />
