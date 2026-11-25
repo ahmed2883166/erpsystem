@@ -2014,3 +2014,78 @@ class SalesWorkflowTests(APITestCase):
             "lines": [{"product": self.product.pk, "quantity": "1", "order_line": order_line_id}],
         }, format="json")
         self.assertEqual(after_complete.status_code, 400, after_complete.data)
+
+    def test_sales_order_cannot_be_cancelled_while_draft_delivery_reserves_stock(self):
+        order = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-CANCEL-DRAFT",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "3", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        delivery = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-CANCEL-DRAFT-DEL", "delivery_date": "2026-03-11",
+            "lines": [{
+                "product": self.product.pk, "quantity": "2",
+                "order_line": order.data["order_lines"][0]["id"],
+            }],
+        }, format="json")
+        self.assertEqual(delivery.status_code, 201, delivery.data)
+
+        cancelled = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/cancel/", {}, format="json",
+        )
+        self.assertEqual(cancelled.status_code, 400, cancelled.data)
+        current = self.client.get(f"/api/sales-documents/orders/{order.data['id']}/")
+        self.assertEqual(current.data["status"], "confirmed")
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/deliveries/{delivery.data['id']}/").data["movement_status"],
+            "draft",
+        )
+
+    def test_sales_order_can_cancel_undelivered_remainder_without_reversing_posted_delivery(self):
+        order = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-CANCEL-PARTIAL",
+            "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "5", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        delivery = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order": order.data["id"],
+            "delivery_number": "SO-CANCEL-PARTIAL-DEL", "delivery_date": "2026-03-11",
+            "lines": [{
+                "product": self.product.pk, "quantity": "2",
+                "order_line": order.data["order_lines"][0]["id"],
+            }],
+        }, format="json")
+        self.assertEqual(delivery.status_code, 201, delivery.data)
+        posted = self.client.post(
+            f"/api/sales-documents/deliveries/{delivery.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        cancelled = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/cancel/", {}, format="json",
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.data)
+        self.assertEqual(cancelled.data["status"], "cancelled")
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/deliveries/{delivery.data['id']}/").data["movement_status"],
+            "posted",
+        )
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/orders/{order.data['id']}/").data["status"],
+            "cancelled",
+        )
+
