@@ -881,8 +881,9 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
         branches = accessible_branches(self.request.user)
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(
-            Q(invoice__receipt__warehouse__branch__in=branches)
-            | Q(invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+            Q(invoice__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
         )
 
     def create(self, request, *args, **kwargs):
@@ -1032,7 +1033,10 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         invoice = data["invoice"]
-        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+        if invoice.branch_id:
+            if not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
@@ -1046,7 +1050,10 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         payment = self.get_object()
         self._check_write(payment.company_id)
-        if not _purchase_warehouse_accessible(request.user, payment.invoice.receipt.warehouse):
+        if payment.invoice.branch_id:
+            if not can_access_branch(request.user, payment.invoice.branch_id, payment.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(request.user, payment.invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         payment = post_supplier_payment(payment.pk, request.user)
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
@@ -1056,12 +1063,14 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
     def reverse(self, request, pk=None):
         """عكس آخر سند صرف مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
         payment = SupplierPayment.objects.select_for_update(of=("self",)).select_related(
-            "invoice", "invoice__receipt__warehouse", "journal_entry"
+            "invoice", "invoice__branch", "invoice__receipt__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(payment.company_id)
-        invoice = PurchaseInvoice.objects.select_for_update().select_related("receipt__warehouse").get(pk=payment.invoice_id)
-        warehouse = invoice.receipt.warehouse
-        if not _purchase_warehouse_accessible(request.user, warehouse):
+        invoice = PurchaseInvoice.objects.select_for_update().select_related("branch", "receipt__warehouse").get(pk=payment.invoice_id)
+        if invoice.branch_id:
+            if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if payment.status != SupplierPayment.Status.POSTED or not payment.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند صرف غير مرحّل.")
