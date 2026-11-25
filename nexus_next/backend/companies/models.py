@@ -34,6 +34,8 @@ class Company(models.Model):
         MEDICAL = "medical", "طبي"
         RESTAURANTS = "restaurants", "مطاعم"
         INDUSTRIAL = "industrial", "صناعي"
+        TRANSPORT = "transport", "نقل وشحن"
+        CONTRACTING = "contracting", "مقاولات"
 
     code = models.CharField(max_length=30, unique=True)
     name_ar = models.CharField(max_length=180)
@@ -56,6 +58,28 @@ class Company(models.Model):
 
     def __str__(self):
         return f"{self.code} - {self.name_ar}"
+
+
+class CompanyActivity(models.Model):
+    """نشاط تشغيلي مفعّل للشركة؛ يحتفظ Company.activity بالنشاط الأساسي للتوافق."""
+
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name="activity_assignments"
+    )
+    activity = models.CharField(max_length=24, choices=Company.Activity.choices)
+
+    class Meta:
+        ordering = ("activity",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "activity"), name="uq_company_enabled_activity"
+            ),
+        ]
+        verbose_name = "نشاط شركة"
+        verbose_name_plural = "أنشطة الشركات"
+
+    def __str__(self):
+        return f"{self.company.code} - {self.get_activity_display()}"
 
 
 class ExchangeRate(models.Model):
