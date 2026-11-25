@@ -481,7 +481,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     def update(self, request, *args, **kwargs):
         """قفل الفاتورة وإذن الاستلام قبل فحص حجوزات المسودة عند تعديلها."""
         invoice = self.get_object()
-        locked_invoice = PurchaseInvoice.objects.select_for_update().select_related("branch").get(pk=invoice.pk)
+        locked_invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related("branch").get(pk=invoice.pk)
         if locked_invoice.receipt_id:
             receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
                 "warehouse", "warehouse__branch",
@@ -508,7 +508,7 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     @transaction.atomic
     def perform_destroy(self, instance):
         """حذف فاتورة مسودة فقط إذا لم تنشئ اعتمادًا أو دفعة أو مردودًا أو قيدًا."""
-        invoice = PurchaseInvoice.objects.select_for_update().select_related(
+        invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
             "company", "branch", "receipt__warehouse"
         ).get(pk=instance.pk)
         self._check_write(invoice.company_id)
@@ -1071,7 +1071,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
             "invoice", "invoice__branch", "invoice__receipt__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(payment.company_id)
-        invoice = PurchaseInvoice.objects.select_for_update().select_related("branch", "receipt__warehouse").get(pk=payment.invoice_id)
+        invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related("branch", "receipt__warehouse").get(pk=payment.invoice_id)
         if invoice.branch_id:
             if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
