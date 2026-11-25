@@ -169,6 +169,7 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
 
     def test_partial_advance_refund_reduces_unallocated_advance_and_can_be_reversed(self):
+        invoice = self._create_posted_invoice("REFUND-ADV-INV")
         batch = self._create_posted_advance("REFUND-ADV-001", "50")
         created = self._create_refund(
             "REFUND-ADV-CASH-001", amount="20", source_batch=batch["id"],
@@ -188,7 +189,7 @@ class CustomerRefundTests(APITestCase):
 
         over_allocation = self.client.post(
             f"/api/sales-documents/receipt-batches/{batch['id']}/allocate/",
-            {"invoice": self._create_posted_invoice("REFUND-ADV-INV")["id"], "amount": "31",
+            {"invoice": invoice["id"], "amount": "31",
              "allocation_date": "2026-03-14"},
             format="json",
         )
