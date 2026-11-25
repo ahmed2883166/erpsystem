@@ -311,6 +311,45 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(by_code["2200"].credit, Decimal("228.0000"))
         self.assertEqual(by_code["2100"].debit-by_code["2100"].credit, Decimal("200.0000"))
 
+        # Trace the same receipt/invoice cycle through the financial statements.
+        trial_balance = self.client.get("/api/accounting/journal-entries/trial-balance/", {
+            "company": self.company.pk, "date_from": "2026-03-01", "date_to": "2026-03-31",
+        })
+        self.assertEqual(trial_balance.status_code, 200, trial_balance.data)
+        self.assertEqual(trial_balance.data["debit_total"], Decimal("428.0000"))
+        self.assertEqual(trial_balance.data["credit_total"], Decimal("428.0000"))
+        self.assertEqual(trial_balance.data["difference"], Decimal("0.0000"))
+
+        balance_sheet = self.client.get("/api/accounting/journal-entries/balance-sheet/", {
+            "company": self.company.pk, "as_of": "2026-03-31",
+        })
+        self.assertEqual(balance_sheet.status_code, 200, balance_sheet.data)
+        self.assertEqual(balance_sheet.data["difference"], Decimal("0.0000"))
+        self.assertEqual(next(row["balance"] for row in balance_sheet.data["assets"] if row["code"] == "1000"), Decimal("200.0000"))
+        self.assertEqual(next(row["balance"] for row in balance_sheet.data["assets"] if row["code"] == "1300"), Decimal("28.0000"))
+        self.assertEqual(next(row["balance"] for row in balance_sheet.data["liabilities"] if row["code"] == "2200"), Decimal("228.0000"))
+
+        income_statement = self.client.get("/api/accounting/journal-entries/income-statement/", {
+            "company": self.company.pk, "date_from": "2026-03-01", "date_to": "2026-03-31",
+        })
+        self.assertEqual(income_statement.status_code, 200, income_statement.data)
+        self.assertEqual(income_statement.data["cost_of_sales_total"], Decimal("0.0000"))
+        self.assertEqual(income_statement.data["net_profit"], Decimal("0.0000"))
+
+        equity = self.client.get("/api/accounting/journal-entries/changes-in-equity/", {
+            "company": self.company.pk, "date_from": "2026-03-01", "date_to": "2026-03-31",
+        })
+        self.assertEqual(equity.status_code, 200, equity.data)
+        self.assertEqual(equity.data["period_net_profit"], Decimal("0.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("0.0000"))
+
+        indirect_cash_flow = self.client.get("/api/accounting/journal-entries/indirect-cash-flow/", {
+            "company": self.company.pk, "date_from": "2026-03-01", "date_to": "2026-03-31",
+        })
+        self.assertEqual(indirect_cash_flow.status_code, 200, indirect_cash_flow.data)
+        self.assertEqual(indirect_cash_flow.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(indirect_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+
     def test_purchase_invoice_tax_rounds_to_base_currency_minor_units(self):
         receipt = self.client.post("/api/purchasing/receipts/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
