@@ -15,7 +15,7 @@ class BaseTemplateJavaScriptTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for JavaScript syntax validation")
     def test_inline_scripts_parse_without_syntax_errors(self):
         html = BASE_TEMPLATE.read_text(encoding="utf-8")
-        scripts = re.findall(r"<script\b[^>]*>(.*?)</script\s*>", html, re.IGNORECASE | re.DOTALL)
+        scripts = re.findall(r"<script\b[^>]*>(.*?)</script(?:\s[^>]*)?>", html, re.IGNORECASE | re.DOTALL)
         self.assertTrue(scripts, "Expected at least one inline script in base.html")
 
         for index, script in enumerate(scripts, start=1):
@@ -40,6 +40,15 @@ class BaseTemplateJavaScriptTests(unittest.TestCase):
                 finally:
                     Path(script_path).unlink(missing_ok=True)
 
+
+    def test_script_extractor_handles_whitespace_in_end_tag(self):
+        html = "<script>window.ready = true;</script\t\n extra>"
+        scripts = re.findall(
+            r"<script\b[^>]*>(.*?)</script(?:\s[^>]*)?>",
+            html,
+            re.IGNORECASE | re.DOTALL,
+        )
+        self.assertEqual(scripts, ["window.ready = true;"])
 
     def test_rendered_iso_dates_are_formatted_without_changing_form_values(self):
         html = BASE_TEMPLATE.read_text(encoding="utf-8")
