@@ -46,7 +46,7 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         return created.data
 
-    def _post_invoice_receipt(self, invoice, number):
+    def _post_invoice_receipt(self, invoice, number, amount=None):
         created = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk,
             "customer": self.customer.pk,
@@ -55,7 +55,7 @@ class CustomerRefundTests(APITestCase):
             "receipt_date": "2026-03-11",
             "method": "cash",
             "payment_account": self.cash_account.pk,
-            "amount": invoice["grand_total"],
+            "amount": amount or invoice["grand_total"],
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
         posted = self.client.post(
@@ -63,8 +63,8 @@ class CustomerRefundTests(APITestCase):
         )
         self.assertEqual(posted.status_code, 200, posted.data)
 
-    def _create_posted_return(self, invoice, number):
-        self._post_invoice_receipt(invoice, f"{number}-RECEIPT")
+    def _create_posted_return(self, invoice, number, receipt_amount=None):
+        self._post_invoice_receipt(invoice, f"{number}-RECEIPT", receipt_amount)
         created = self.client.post("/api/sales-documents/returns/", {
             "company": self.company.pk,
             "invoice": invoice["id"],
@@ -265,6 +265,34 @@ class CustomerRefundTests(APITestCase):
             f"/api/sales-documents/refunds/{over_collected.data['id']}/post/", {}, format="json",
         )
         self.assertEqual(rejected.status_code, 400, rejected.data)
+
+    def test_return_refund_is_limited_to_the_customer_net_credit_balance(self):
+        invoice = self._create_posted_invoice("REFUND-INV-NET-CREDIT")
+        sales_return = self._create_posted_return(
+            invoice, "REFUND-RET-NET-CREDIT", receipt_amount="150",
+        )
+        self.assertEqual(sales_return["grand_total"], "100.0000")
+
+        over_credit = self._create_refund(
+            "REFUND-RET-OVER-NET-CREDIT", amount="50.01",
+            source_return=sales_return["id"],
+        )
+        self.assertEqual(over_credit.status_code, 201, over_credit.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/refunds/{over_credit.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+        exact_credit = self._create_refund(
+            "REFUND-RET-EXACT-NET-CREDIT", amount="50",
+            source_return=sales_return["id"],
+        )
+        self.assertEqual(exact_credit.status_code, 201, exact_credit.data)
+        posted = self.client.post(
+            f"/api/sales-documents/refunds/{exact_credit.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["amount"], "50.0000")
 
     def test_refund_cannot_exceed_return_credit_or_unallocated_advance(self):
         invoice = self._create_posted_invoice("REFUND-INV-LIMIT")
