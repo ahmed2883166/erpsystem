@@ -114,6 +114,14 @@ def post_customer_refund(refund_id, user):
         if latest_invoice_refund_date and refund.refund_date < latest_invoice_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق على نفس الفاتورة.")
         return_refunded = posted_refunds.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        # قفل مستندات العميل التي تكوّن رصيده حتى لا يتزامن الرد مع
+        # عكس تحصيل أو ترحيل دفعة/فاتورة تغير الرصيد أثناء الحساب.
+        list(CustomerReceiptBatch.objects.select_for_update(of=("self",)).filter(
+            company_id=refund.company_id, customer_id=refund.customer_id,
+        ).order_by("pk").values_list("pk", flat=True))
+        list(SalesInvoice.objects.select_for_update(of=("self",)).filter(
+            company_id=refund.company_id, customer_id=refund.customer_id,
+        ).order_by("pk").values_list("pk", flat=True))
         available_return_credit = max(source.grand_total - return_refunded, Decimal("0"))
         # لا يكفي أن يكون العميل قد دفع سابقًا؛ يجب أن يكون لديه رصيد دائن
         # فعلي بعد جميع فواتيره وتحصيلاته ومردوداته وردوده على مستوى العميل.
