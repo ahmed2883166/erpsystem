@@ -29,6 +29,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
     line_items = SalesReturnLineSerializer(source="lines", many=True, read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
     customer_name = serializers.CharField(source="invoice.customer.name_ar", read_only=True)
+    transaction_currency_code = serializers.CharField(source="invoice.transaction_currency.code", read_only=True, allow_null=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     cost_journal_number = serializers.CharField(source="cost_journal_entry.entry_number", read_only=True, allow_null=True)
@@ -38,7 +39,7 @@ class SalesReturnSerializer(serializers.ModelSerializer):
         model = SalesReturn
         fields = ("id", "company", "invoice", "invoice_number", "customer_name", "warehouse", "branch",
                   "return_number", "return_date", "status", "net_total", "tax_total", "grand_total",
-                  "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
+                  "transaction_currency_code", "transaction_net_total", "transaction_tax_total", "transaction_grand_total",
                   "movement_status", "journal_entry", "journal_number", "cost_journal_entry",
                   "cost_journal_number", "reversal_stock_movement", "reversal_journal_entry",
                   "reversal_journal_number", "reversal_date", "reversed_at", "reversed_by",

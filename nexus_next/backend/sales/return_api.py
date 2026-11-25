@@ -15,7 +15,7 @@ from .return_services import post_sales_return, reverse_sales_return
 class SalesReturnViewSet(SalesBaseViewSet):
     serializer_class = SalesReturnSerializer
     queryset = SalesReturn.objects.select_related(
-        "company", "invoice", "invoice__customer", "invoice__delivery", "invoice__branch",
+        "company", "invoice", "invoice__customer", "invoice__delivery", "invoice__branch", "invoice__transaction_currency",
         "warehouse", "branch", "stock_movement", "journal_entry", "cost_journal_entry",
         "reversal_stock_movement", "reversal_journal_entry", "reversed_by",
     ).prefetch_related("lines__invoice_line__delivery_line__product", "lines__invoice_line__product")
