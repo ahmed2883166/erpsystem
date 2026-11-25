@@ -7,7 +7,7 @@ import LoginPanel from "./LoginPanel";
 import OwnerPortalPanel from "./OwnerPortalPanel";
 import AboutPanel from "./AboutPanel";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
-import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode, type ThemePreference, type CostCenter } from "./api";
+import { api, authApi, salesApi, purchasingApi, treasuryApi, type Account, type Branch, type Company, type FiscalYear, type Journal, type TrialBalance, type CustomerAging, type SupplierAging, type CashFlowReport, type DirectCashFlowReport, type IndirectCashFlowReport, type BalanceSheetReport, type IncomeStatementReport, type GeneralLedgerReport, type EquityChangesReport, type TaxCode, type ThemePreference, type CostCenter } from "./api";
 const BackupPanel = lazy(() => import("./BackupPanel"));
 const CustomersPanel = lazy(() => import("./CustomersPanel"));
 const SuppliersPanel = lazy(() => import("./SuppliersPanel"));
@@ -282,6 +282,74 @@ function CashFlowReportPanel({ companyId }: { companyId: number | null }) {
   </div>;
 }
 
+
+// قائمة التدفقات النقدية بالطريقة المباشرة من المقبوضات والمدفوعات الفعلية.
+function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null }) {
+  const today = localISODate();
+  const [from, setFrom] = useState(new Date().getFullYear()+"-01-01");
+  const [to, setTo] = useState(today);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
+  const [report, setReport] = useState<DirectCashFlowReport|null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = async () => {
+    if (!companyId) return;
+    setBusy(true); setError("");
+    try { setReport(await treasuryApi.directCashFlow(companyId, from, to, branchId ? Number(branchId) : undefined)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل قائمة التدفقات المباشرة."); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => {
+    if (!companyId) { setBranches([]); setBranchId(""); return; }
+    api.branches(companyId).then(items => { setBranches(items); setBranchId(""); })
+      .catch(reason => setError(reason instanceof Error ? reason.message : "تعذر تحميل الفروع."));
+  }, [companyId]);
+  useEffect(() => { void load(); }, [companyId, branchId]);
+  const money = (value: string) => formatMoney(value);
+  const exportRows = report ? [
+    ...report.sections.map(x=>[x.label,x.cash_receipts,x.cash_payments,x.net_cash_flow]),
+    ...report.sections.flatMap(section=>section.details.map(x=>[`تفصيل — ${section.label} — ${x.counter_account_code||"بدون كود"} — ${x.counter_account_name}`,x.inflows,x.outflows,""])),
+    ...report.non_cash_investing_transactions.map(x=>[`إفصاح غير نقدي — ${x.invoice_number} — ${x.asset_name}`,x.cash_paid_during_period,x.unpaid_at_period_end,x.gross_amount]),
+  ] : [];
+  return <div className="asset-reports">
+    <div className="work-panel-head"><div><h2>قائمة التدفقات النقدية — الطريقة المباشرة</h2><p>المقبوضات والمدفوعات الفعلية حسب النشاط والحساب المقابل، مع مطابقة النقدية بالأستاذ</p></div><div className="report-actions"><button type="button" className="subtle-button" disabled={!report} onClick={()=>report&&downloadCsv(`direct-cash-flow-${report.date_from}-${report.date_to}.csv`,["البند","المقبوضات","المدفوعات","صافي التدفق / الإجمالي"],exportRows)}>تصدير CSV (Excel)</button><button type="button" className="subtle-button" onClick={(event)=>{const target=event.currentTarget.closest(".asset-reports");if(target){target.classList.add("print-active");window.print();target.classList.remove("print-active");}}}>طباعة / PDF</button><button className="primary-button" disabled={busy || !companyId} onClick={()=>void load()}>{busy?"جارٍ التحميل…":"تحديث القائمة"}</button></div></div>
+    <div className="asset-report-filters">
+      <label>من تاريخ<input type="date" value={from} onChange={e=>setFrom(e.target.value)}/></label>
+      <label>إلى تاريخ<input type="date" value={to} onChange={e=>setTo(e.target.value)}/></label>
+      <label>الفرع<select value={branchId} onChange={e=>setBranchId(e.target.value)}><option value="">كل الفروع المسموح بها</option>{branches.map(item=><option key={item.id} value={item.id}>{item.name_ar} ({item.code})</option>)}</select></label>
+    </div>
+    {error && <div className="error-banner">{error}</div>}
+    {report && <>
+      <div className="asset-cashflow-totals">
+        <span>التشغيل: {money(report.operating_cash_flow)}</span>
+        <span>الاستثمار: {money(report.investing_cash_flow)}</span>
+        <span>التمويل: {money(report.financing_cash_flow)}</span>
+        <b>صافي التغير النقدي: {money(report.net_change_in_cash)}</b>
+      </div>
+      <div className="asset-cashflow-totals">
+        <span>التغير النقدي بالأستاذ: {money(report.ledger_cash_change)}</span>
+        <b>فرق المطابقة: {money(report.reconciliation_difference)}</b>
+      </div>
+      {Number(report.reconciliation_difference)!==0 && <div className="error-banner">يوجد فرق بين التدفقات المباشرة وحركة حسابات النقدية والبنوك في الأستاذ؛ راجع الحركات غير المسجلة أو التصنيفات قبل اعتماد القائمة.</div>}
+      {!!report.uncategorized_counterparty_transactions.length && <div className="error-banner">توجد حركات نقدية بلا حساب مقابل؛ يلزم استكمال بياناتها قبل اعتماد القائمة.</div>}
+      {report.sections.map(section=><section key={section.category}>
+        <h3>{section.label}</h3>
+        <div className="asset-cashflow-totals"><span>المقبوضات: {money(section.cash_receipts)}</span><span>المدفوعات: {money(section.cash_payments)}</span><b>الصافي: {money(section.net_cash_flow)}</b></div>
+        <div className="data-table-wrap"><table><thead><tr><th>الحساب المقابل</th><th>مقبوضات</th><th>مدفوعات</th></tr></thead><tbody>
+          {section.details.map((row,index)=><tr key={`${row.counter_account_id||"none"}-${row.kind}-${index}`}><td>{row.counter_account_code||"—"} — {row.counter_account_name}</td><td>{money(row.inflows)}</td><td>{money(row.outflows)}</td></tr>)}
+          {!section.details.length&&<tr><td colSpan={3}>لا توجد حركات في هذا النشاط.</td></tr>}
+        </tbody></table></div>
+      </section>)}
+      <h3>الإفصاح عن الاستثمارات غير النقدية</h3>
+      <div className="data-table-wrap"><table><thead><tr><th>الفاتورة / الأصل</th><th>القيمة الإجمالية</th><th>مدفوع خلال الفترة</th><th>غير مسدد بنهاية الفترة</th></tr></thead><tbody>
+        {report.non_cash_investing_transactions.map(row=><tr key={row.invoice_number}><td>{row.invoice_number} — {row.asset_name} — {row.supplier_name}</td><td>{money(row.gross_amount)}</td><td>{money(row.cash_paid_during_period)}</td><td>{money(row.unpaid_at_period_end)}</td></tr>)}
+        {!report.non_cash_investing_transactions.length&&<tr><td colSpan={4}>لا توجد مشتريات أصول غير نقدية للإفصاح عنها في الفترة.</td></tr>}
+      </tbody></table></div>
+      <p className="asset-report-note">{report.note}</p>
+    </>}
+  </div>;
+}
 
 // تقرير التدفقات النقدية بالطريقة غير المباشرة مع تسوية صافي الربح إلى النقد.
 function IndirectCashFlowReportPanel({ companyId }: { companyId: number | null }) {
@@ -861,7 +929,7 @@ const postDraft = async (entry: Journal) => {
               <tbody>{trialBalance.accounts.filter(row => `${row.code} ${row.name_ar}`.toLocaleLowerCase().includes(trialBalanceSearch.trim().toLocaleLowerCase())).map((row) => <tr key={row.account_id}><td className="code-cell">{row.code}</td><td>{row.name_ar}</td><td>{formatMoney(row.opening_balance)}</td><td>{formatMoney(row.debit_total)}</td><td>{formatMoney(row.credit_total)}</td><td>{formatMoney(row.net_balance)}</td><td>{formatMoney(row.closing_balance)}</td></tr>)}{!trialBalance.accounts.some(row => `${row.code} ${row.name_ar}`.toLocaleLowerCase().includes(trialBalanceSearch.trim().toLocaleLowerCase())) && <tr><td colSpan={7} className="table-empty">لا توجد حسابات مطابقة للبحث.</td></tr>}</tbody></table></div></>}
             {!trialBalance && <div className="table-empty">{loading ? "جارٍ تحميل ميزان المراجعة…" : "لا توجد بيانات ميزان مراجعة."}</div>}
             <Suspense fallback={panelFallback}><ExpenseAnalysisPanel companyId={companyId} branches={branches} /></Suspense>
-            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /><Suspense fallback={panelFallback}><PartyStatementsPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} /></Suspense><Suspense fallback={panelFallback}><OperationalReconciliationPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} branches={branches} /></Suspense></section>}
+            <FinancialStatementsPanel companyId={companyId} /><LedgerAndEquityPanel companyId={companyId} /><CashFlowReportPanel companyId={companyId} /><DirectCashFlowStatementPanel companyId={companyId} /><IndirectCashFlowReportPanel companyId={companyId} /><Suspense fallback={panelFallback}><PartyStatementsPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} /></Suspense><Suspense fallback={panelFallback}><OperationalReconciliationPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} branches={branches} /></Suspense></section>}
           {active === "tax" && <><TaxCodeSettingsPanel companyId={companyId} country={selectedCompany?.country} /><section className="work-panel"><VATReturnPanel companyId={companyId} /></section></>}
           {active === "backup" && <Suspense fallback={panelFallback}><BackupPanel /></Suspense>}
           {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}

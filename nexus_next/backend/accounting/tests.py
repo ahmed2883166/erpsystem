@@ -263,6 +263,101 @@ class PostingEngineTests(TestCase):
 
 
 
+
+class DirectCashFlowApiTests(TestCase):
+    def test_direct_cash_flow_groups_receipts_and_payments_and_reconciles_to_cash_ledger(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="DIRECT-CF", name_ar="شركة التدفقات المباشرة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="DIRECT-HQ", name_ar="الرئيسي",
+            is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1001", name_ar="البنك", nature="asset",
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4001", name_ar="إيرادات العملاء", nature="revenue",
+        )
+        expense = ChartOfAccount.objects.create(
+            company=company, code="5001", name_ar="مصروفات تشغيلية", nature="expense",
+        )
+        fixed_asset = ChartOfAccount.objects.create(
+            company=company, code="1501", name_ar="أصول ثابتة", nature="asset",
+        )
+        loan = ChartOfAccount.objects.create(
+            company=company, code="2501", name_ar="قرض بنكي", nature="liability",
+        )
+        treasury = TreasuryAccount.objects.create(
+            company=company, branch=branch, account=cash,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-01",
+            name_ar="البنك الرئيسي", currency_code="EGP",
+        )
+
+        movements = (
+            ("DIRECT-RECEIPT", TreasuryTransaction.Kind.RECEIPT, revenue, "150.0000",
+             TreasuryTransaction.CashFlowCategory.OPERATING),
+            ("DIRECT-OPERATING-PAYMENT", TreasuryTransaction.Kind.PAYMENT, expense, "50.0000",
+             TreasuryTransaction.CashFlowCategory.OPERATING),
+            ("DIRECT-INVESTING-PAYMENT", TreasuryTransaction.Kind.PAYMENT, fixed_asset, "30.0000",
+             TreasuryTransaction.CashFlowCategory.INVESTING),
+            ("DIRECT-FINANCING-RECEIPT", TreasuryTransaction.Kind.RECEIPT, loan, "100.0000",
+             TreasuryTransaction.CashFlowCategory.FINANCING),
+        )
+        for number, kind, counter_account, amount, category in movements:
+            entry = JournalEntry.objects.create(
+                company=company, branch=branch, fiscal_year=year,
+                entry_number=number, entry_date=date(2026, 1, 15),
+                description=number,
+            )
+            if kind == TreasuryTransaction.Kind.RECEIPT:
+                JournalLine.objects.create(entry=entry, account=cash, debit=Decimal(amount))
+                JournalLine.objects.create(entry=entry, account=counter_account, credit=Decimal(amount))
+            else:
+                JournalLine.objects.create(entry=entry, account=counter_account, debit=Decimal(amount))
+                JournalLine.objects.create(entry=entry, account=cash, credit=Decimal(amount))
+            post_journal(entry.pk)
+            TreasuryTransaction.objects.create(
+                company=company, branch=branch, fiscal_year=year,
+                source_account=treasury, counter_account=counter_account,
+                kind=kind, status=TreasuryTransaction.Status.POSTED,
+                document_number=number, transaction_date=date(2026, 1, 15),
+                amount=Decimal(amount), description=number,
+                cash_flow_category=category, journal_entry=entry,
+            )
+
+        user = User.objects.create_user(username="direct_cashflow_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        result = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["method"], "direct")
+        sections = {row["category"]: row for row in result.data["sections"]}
+        self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.OPERATING]["cash_receipts"], Decimal("150.0000"))
+        self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.OPERATING]["cash_payments"], Decimal("50.0000"))
+        self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.OPERATING]["net_cash_flow"], Decimal("100.0000"))
+        self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.INVESTING]["net_cash_flow"], Decimal("-30.0000"))
+        self.assertEqual(sections[TreasuryTransaction.CashFlowCategory.FINANCING]["net_cash_flow"], Decimal("100.0000"))
+        self.assertEqual(result.data["net_change_in_cash"], Decimal("170.0000"))
+        self.assertEqual(result.data["ledger_cash_change"], Decimal("170.0000"))
+        self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(result.data["non_cash_investing_transactions"], [])
+        self.assertEqual(result.data["uncategorized_counterparty_transactions"], [])
+
 class AccountingApiTests(TestCase):
     def setUp(self):
         self.client = APIClient()
