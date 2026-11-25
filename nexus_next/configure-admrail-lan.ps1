@@ -65,6 +65,7 @@ foreach ($Entry in $Values.GetEnumerator()) {
   $Content = Set-EnvValue $Content $Entry.Key ([string]$Entry.Value)
 }
 
+& (Join-Path $Root "scripts\Protect-Admrail-SecretFile.ps1") -Path $EnvFile
 [IO.File]::WriteAllText($EnvFile, $Content, (New-Object System.Text.UTF8Encoding($false)))
 
 Write-Host ""

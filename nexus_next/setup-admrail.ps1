@@ -82,6 +82,8 @@ try {
         $Pattern = "(?m)^" + [regex]::Escape($Key) + "=.*$"
         $EnvText = [regex]::Replace($EnvText, $Pattern, "$Key=$($Replacements[$Key])")
     }
+    New-Item -ItemType File -Path $EnvFile -ErrorAction Stop | Out-Null
+    & (Join-Path $Root "scripts\Protect-Admrail-SecretFile.ps1") -Path $EnvFile
     [IO.File]::WriteAllText($EnvFile, $EnvText, (New-Object System.Text.UTF8Encoding($false)))
 
     $env:DJANGO_SETTINGS_MODULE = "config.settings"

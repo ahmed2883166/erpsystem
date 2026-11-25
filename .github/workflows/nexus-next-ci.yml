@@ -202,6 +202,25 @@ jobs:
               exit 1
             }
           }
+      - name: Verify Windows Admrail secret-file ACLs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $secretPath = Join-Path $env:RUNNER_TEMP "admrail-secret-acl-test.env"
+          try {
+            Set-Content -LiteralPath $secretPath -Value "POSTGRES_PASSWORD=ci-only-secret" -Encoding ASCII
+            & ./nexus_next/scripts/Protect-Admrail-SecretFile.ps1 -Path $secretPath
+            $acl = Get-Acl -LiteralPath $secretPath
+            if (-not $acl.AreAccessRulesProtected) { throw "Secret file still inherits parent permissions." }
+            $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, "S-1-5-18", "S-1-5-32-544")
+            foreach ($rule in $acl.Access) {
+              $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+              if ($sid -notin $allowed) { throw "Unexpected secret-file reader: $($rule.IdentityReference)" }
+            }
+            Write-Host "Windows secret-file ACL verification passed."
+          } finally {
+            Remove-Item -LiteralPath $secretPath -Force -ErrorAction SilentlyContinue
+          }
       - name: Guard temporary plaintext backup cleanup
         shell: pwsh
         run: |
