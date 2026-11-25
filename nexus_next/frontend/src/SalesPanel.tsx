@@ -32,6 +32,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
+  const [receiptBatches, setReceiptBatches] = useState<CustomerReceiptBatch[]>([]);
   const [returns, setReturns] = useState<SalesReturn[]>([]);
   const [quotations, setQuotations] = useState<SalesQuotation[]>([]);
   const [editingQuotationId,setEditingQuotationId]=useState<number|null>(null);
@@ -66,11 +67,11 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, so, companyRows] = await Promise.all([
+      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, so, companyRows, rb] = await Promise.all([
         api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId), api.branches(companyId),
-        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), salesApi.orders(companyId), api.companies(),
+        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), salesApi.orders(companyId), api.companies(), salesApi.receiptBatches(companyId),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setOrders(so); setInvoices(i); setReceipts(r); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
+      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setOrders(so); setInvoices(i); setReceipts(r); setReceiptBatches(rb); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
       setReceiptForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
@@ -493,7 +494,7 @@ const post = async (action: () => Promise<unknown>) => {
       invoice={printTarget.kind === "invoice" ? invoices.find(row => row.id === printTarget.id) || null : null}
       quotation={printTarget.kind === "quotation" ? quotations.find(row => row.id === printTarget.id) || null : null}
       receipt={printTarget.kind === "receipt" ? receipts.find(row => row.id === printTarget.id) || null : null}
-      receiptBatch={printTarget.kind === "receipt_batch" ? null : null}
+      receiptBatch={printTarget.kind === "receipt_batch" ? receiptBatches.find(row => row.id === printTarget.id) || null : null}
       salesReturn={printTarget.kind === "return" ? returns.find(row => row.id === printTarget.id) || null : null}
       onClose={() => setPrintTarget(null)}
     />}
