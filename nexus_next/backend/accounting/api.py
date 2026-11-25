@@ -1676,10 +1676,7 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__entry_date__lte=date_to,
         ).exclude(entry__source_type=JournalEntry.Source.CLOSING)
         cash_ledger_lines = cash_ledger_lines.filter(entry__branch__in=visible_branches)
-        opening_cash_lines = cash_ledger_lines.filter(
-            Q(entry__entry_date__lt=date_from)
-            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
-        )
+        opening_cash_lines = cash_ledger_lines.filter(opening_balance_filter)
         opening_totals = opening_cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         opening_cash_balance = (
             (opening_totals["debit"] or Decimal("0"))
@@ -1693,7 +1690,9 @@ class JournalEntryViewSet(AccountingViewSet):
             (cash_totals["debit"] or Decimal("0"))
             - (cash_totals["credit"] or Decimal("0"))
         )
-        closing_totals = cash_ledger_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        closing_totals = cash_ledger_lines.filter(closing_balance_filter).aggregate(
+            debit=Sum("debit"), credit=Sum("credit")
+        )
         ledger_closing_cash_balance = (
             (closing_totals["debit"] or Decimal("0"))
             - (closing_totals["credit"] or Decimal("0"))
@@ -1825,10 +1824,38 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__entry_date__lte=date_to,
             entry__branch__in=visible_branches,
         ).exclude(entry__source_type=JournalEntry.Source.CLOSING)
-        opening_cash_lines = cash_ledger_lines.filter(
-            Q(entry__entry_date__lt=date_from)
-            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        cash_flow_branch_ids = list(visible_branches.values_list("pk", flat=True))
+        opening_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_from, end_date__gte=date_from
+        ).order_by("-start_date").first()
+        opening_snapshot_branch_ids = set()
+        if opening_fiscal_year:
+            opening_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=opening_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_from, branch_id__in=cash_flow_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        opening_cash_filter = _branch_aware_opening_filter(
+            cash_flow_branch_ids, opening_snapshot_branch_ids, date_from,
+            opening_fiscal_year.start_date if opening_fiscal_year else date_from,
         )
+        closing_fiscal_year = FiscalYear.objects.filter(
+            company_id=company_id, start_date__lte=date_to, end_date__gte=date_to
+        ).order_by("-start_date").first()
+        closing_snapshot_branch_ids = set()
+        if closing_fiscal_year:
+            closing_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=closing_fiscal_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=date_to, branch_id__in=cash_flow_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        closing_cash_filter = _branch_aware_balance_filter(
+            cash_flow_branch_ids, closing_snapshot_branch_ids, date_to,
+            closing_fiscal_year.start_date if closing_fiscal_year else date_to,
+        )
+        opening_cash_lines = cash_ledger_lines.filter(opening_cash_filter)
         opening_totals = opening_cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         opening_cash_balance = (
             (opening_totals["debit"] or Decimal("0"))
@@ -1843,7 +1870,9 @@ class JournalEntryViewSet(AccountingViewSet):
             (cash_totals["debit"] or Decimal("0"))
             - (cash_totals["credit"] or Decimal("0"))
         )
-        closing_totals = cash_ledger_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        closing_totals = cash_ledger_lines.filter(closing_cash_filter).aggregate(
+            debit=Sum("debit"), credit=Sum("credit")
+        )
         ledger_closing_cash_balance = (
             (closing_totals["debit"] or Decimal("0"))
             - (closing_totals["credit"] or Decimal("0"))
