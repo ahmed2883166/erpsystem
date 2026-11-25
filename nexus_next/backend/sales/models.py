@@ -735,7 +735,7 @@ class CustomerReceiptBatch(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=("company", "receipt_number"),
-                name="uq_customer_receipt_batch_company_no",
+                name="uq_rcpt_batch_company_no",
             ),
         ]
         indexes = [
