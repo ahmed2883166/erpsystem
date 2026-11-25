@@ -866,7 +866,23 @@ export type CustomerAging = {
     invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; balance_due: string }[] }[];
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
-export const salesApi = {
+export type SalesPerformanceReport = {
+  company:number;date_from:string;date_to:string;branch:number|null;
+  totals:{
+    invoice_count:number;return_count:number;sales_net:string;discount_total:string;sales_tax:string;sales_total:string;
+    return_net:string;return_tax:string;return_total:string;net_sales:string;net_cost:string;gross_profit:string;
+  };
+  by_customer:Array<{
+    customer:number;customer_name:string;invoice_count:number;quantity_sold:string;quantity_returned:string;
+    sales_net:string;return_net:string;sales_tax:string;return_tax:string;net_sales:string;net_cost:string;gross_profit:string;
+  }>;
+  by_product:Array<{
+    product:number;product_code:string;product_name:string;invoice_count:number;quantity_sold:string;quantity_returned:string;
+    sales_net:string;return_net:string;sales_tax:string;return_tax:string;net_sales:string;net_cost:string;gross_profit:string;
+  }>;
+};
+
+export const salesApi = {\n  // تقرير المبيعات والمرتجعات وصافي الربح حسب العميل والصنف.\n  salesPerformance: (companyId:number,dateFrom:string,dateTo:string,branchId?:number) => request<SalesPerformanceReport>(`/api/sales-documents/invoices/sales-performance/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branchId?`&branch=${branchId}`:""}`),
   // جلب كشف حساب العميل مع رصيد أول وآخر المدة والحركات المرحلة.
   customerStatement: (companyId:number, customerId:number, dateFrom="", dateTo="") => request<CustomerStatement>(`/api/sales-documents/invoices/customer-statement/?company=${companyId}&customer=${customerId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
   documentTemplates: (companyId:number) => request<SalesDocumentTemplate[]>(`/api/sales-documents/document-templates/?company=${companyId}&ordering=document_type`),
