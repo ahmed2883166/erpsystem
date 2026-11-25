@@ -8,8 +8,11 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from audit.models import AuditEvent
-from treasury.models import TreasuryAccount, TreasuryTransaction
-from treasury.services import post_treasury_transaction, revalue_treasury_fx_account
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation
+from treasury.services import (
+    post_treasury_transaction, revalue_treasury_fx_account,
+    reverse_treasury_fx_revaluation,
+)
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 from .services import post_journal
 
@@ -472,6 +475,66 @@ class DirectCashFlowApiTests(TestCase):
         self.assertEqual(branch_report.data["net_increase_decrease_in_cash"], Decimal("3200.0000"))
         self.assertEqual(branch_report.data["ledger_closing_cash_balance"], Decimal("3200.0000"))
         self.assertEqual(branch_report.data["reconciliation_difference"], Decimal("0.0000"))
+        
+        first_revaluation = TreasuryFxRevaluation.objects.get(account__code="USD-ONE")
+        reverse_treasury_fx_revaluation(
+            revaluation_id=first_revaluation.pk,
+            entry_date=date(2026, 2, 2),
+        )
+
+        # Historical January reporting must retain the original revaluation event
+        # even though its journal is now marked REVERSED.
+        january_after_reversal = client.get(url)
+        self.assertEqual(january_after_reversal.status_code, 200, january_after_reversal.data)
+        self.assertEqual(
+            january_after_reversal.data["effect_of_exchange_rate_changes"],
+            Decimal("400.0000"),
+        )
+        self.assertEqual(
+            january_after_reversal.data["closing_cash_balance"],
+            Decimal("6400.0000"),
+        )
+
+        february_url = (
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+        february_report = client.get(february_url)
+        self.assertEqual(february_report.status_code, 200, february_report.data)
+        self.assertEqual(february_report.data["opening_cash_balance"], Decimal("6400.0000"))
+        self.assertEqual(february_report.data["net_change_in_cash"], Decimal("0.0000"))
+        self.assertEqual(
+            february_report.data["effect_of_exchange_rate_changes"],
+            Decimal("-200.0000"),
+        )
+        self.assertEqual(
+            february_report.data["net_increase_decrease_in_cash"],
+            Decimal("-200.0000"),
+        )
+        self.assertEqual(february_report.data["closing_cash_balance"], Decimal("6200.0000"))
+        self.assertEqual(
+            february_report.data["ledger_closing_cash_balance"],
+            Decimal("6200.0000"),
+        )
+        self.assertEqual(february_report.data["ledger_cash_change"], Decimal("-200.0000"))
+        self.assertEqual(february_report.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(
+            [row["event_type"] for row in february_report.data["exchange_rate_effect_details"]],
+            ["reversal"],
+        )
+
+        branch_february = client.get(f"{february_url}&branch={branch_one.pk}")
+        self.assertEqual(branch_february.status_code, 200, branch_february.data)
+        self.assertEqual(
+            branch_february.data["effect_of_exchange_rate_changes"],
+            Decimal("-200.0000"),
+        )
+        self.assertEqual(branch_february.data["closing_cash_balance"], Decimal("3000.0000"))
+        self.assertEqual(
+            branch_february.data["ledger_closing_cash_balance"],
+            Decimal("3000.0000"),
+        )
+        self.assertEqual(branch_february.data["reconciliation_difference"], Decimal("0.0000"))
 
 
 class AccountingApiTests(TestCase):
