@@ -685,8 +685,8 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
                 base_amount = validate_snapshot(base_currency_code=company.base_currency.code,
                     currency_code=currency.code, foreign_amount=amount, rate=rate,
                     rate_date=rate_date, document_date=attrs.get("receipt_date"), approved_rate=approved.rate)
-            except ValueError as exc:
-                raise serializers.ValidationError({"exchange_rate": str(exc)}) from exc
+            except ValueError:
+                raise serializers.ValidationError({"exchange_rate": "بيانات سعر الصرف غير صالحة أو لا تطابق السعر المعتمد."}) from None
             if base_amount != attrs.get("amount"):
                 raise serializers.ValidationError({"amount": "المبلغ الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         elif any(attrs.get(field) is not None for field in ("transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date")):
