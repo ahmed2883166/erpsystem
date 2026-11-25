@@ -2543,6 +2543,20 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(product_row["net_sales"], "100.0000")
         self.assertEqual(product_row["gross_profit"], "60.0000")
 
+        filtered_report = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            f"&date_from=2026-03-10&date_to=2026-03-12&customer={self.customer.pk}&product={self.product.pk}"
+        )
+        self.assertEqual(filtered_report.status_code, 200, filtered_report.data)
+        self.assertEqual(filtered_report.data["customer_filter"], self.customer.pk)
+        self.assertEqual(filtered_report.data["product_filter"], self.product.pk)
+        self.assertEqual(filtered_report.data["totals"]["invoice_count"], 1)
+        self.assertEqual(filtered_report.data["totals"]["return_count"], 1)
+        self.assertEqual(filtered_report.data["totals"]["sales_net"], "200.0000")
+        self.assertEqual(filtered_report.data["totals"]["return_net"], "100.0000")
+        self.assertEqual(filtered_report.data["by_customer"][0]["customer"], self.customer.pk)
+        self.assertEqual(filtered_report.data["by_product"][0]["product"], self.product.pk)
+
         invalid_period = self.client.get(
             f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
             "&date_from=2026-03-13&date_to=2026-03-12"
