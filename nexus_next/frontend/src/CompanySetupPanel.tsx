@@ -19,6 +19,8 @@ const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
   medical: "طبي",
   restaurants: "مطاعم",
   industrial: "صناعي",
+  transport: "نقل وشحن",
+  contracting: "مقاولات",
 };
 
 // شاشة تأسيس الشركة وإدارة الفروع والسنوات المالية والعملات والنشاط.
@@ -46,6 +48,16 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [companyNameEn, setCompanyNameEn] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
+  const [enabledActivities, setEnabledActivities] = useState<NonNullable<Company["activity"]>[]>(["commercial"]);
+  const toggleEnabledActivity = (value: NonNullable<Company["activity"]>, checked: boolean) => {
+    setEnabledActivities(current => {
+      if (checked) return current.includes(value) ? current : [...current, value];
+      const next = current.filter(item => item !== value);
+      if (!next.length) return current;
+      if (activity === value) setActivity(next[0]);
+      return next;
+    });
+  };
   const [currencyId, setCurrencyId] = useState("");
   const [taxNumber, setTaxNumber] = useState("");
   const [address, setAddress] = useState("");
@@ -134,6 +146,7 @@ const createCompany = async (event: FormEvent) => {
         name_en: companyNameEn.trim(),
         country,
         activity,
+        activities: enabledActivities.includes(activity) ? enabledActivities : [...enabledActivities, activity],
         base_currency: Number(currencyId),
         tax_registration_number: taxNumber.trim(),
         address: address.trim(),
@@ -298,7 +311,8 @@ const createYear = async (event: FormEvent) => {
       <label>اسم الشركة بالعربية<input required maxLength={180} value={companyName} onChange={e => setCompanyName(e.target.value)} /></label>
       <label>اسم الشركة بالإنجليزية<input maxLength={180} value={companyNameEn} onChange={e => setCompanyNameEn(e.target.value)} /></label>
       <label>الدولة<select value={country} onChange={e => setCountry(e.target.value as "EG" | "SA")}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
-      <label>النشاط<select value={activity} onChange={e => setActivity(e.target.value as NonNullable<Company["activity"]>)}>{Object.entries(activityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label>النشاط الأساسي<select value={activity} onChange={e => { const value = e.target.value as NonNullable<Company["activity"]>; setActivity(value); setEnabledActivities(current => current.includes(value) ? current : [...current, value]); }}>{Object.entries(activityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <fieldset className="form-wide activity-selection"><legend>الأنشطة المفعّلة للشركة</legend><p className="asset-report-note">يمكن للشركة ممارسة أكثر من نشاط في نفس الوقت. اختر كل الأنشطة المطلوبة، وحدد النشاط الأساسي من القائمة السابقة.</p><div className="activity-checkbox-grid">{Object.entries(activityLabels).map(([key, label]) => <label key={key}><input type="checkbox" checked={enabledActivities.includes(key as NonNullable<Company["activity"]>)} onChange={e => toggleEnabledActivity(key as NonNullable<Company["activity"]>, e.target.checked)} />{label}</label>)}</div></fieldset>
       <label>العملة الأساسية<select required value={currencyId} onChange={e => setCurrencyId(e.target.value)} disabled={currencyLoading || !currencies.length}><option value="">{currencyLoading ? "جارٍ تحميل العملات…" : "اختر العملة"}</option>{currencies.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name_ar}</option>)}</select></label>
       {currencyError && <div className="asset-report-note form-wide" role="alert">{currencyError} <button type="button" className="text-action-button" onClick={() => void loadCurrencies()} disabled={currencyLoading}>إعادة تحميل العملات</button></div>}
       <label>رقم التسجيل الضريبي<input maxLength={80} value={taxNumber} onChange={e => setTaxNumber(e.target.value)} /></label>
@@ -327,7 +341,8 @@ const createYear = async (event: FormEvent) => {
         <div><span>الشركة المحددة</span><strong>{selectedCompany.name_ar}</strong></div>
         <div><span>الكود</span><strong>{selectedCompany.code}</strong></div>
         <div><span>الدولة</span><strong>{selectedCompany.country === "EG" ? "مصر" : "السعودية"}</strong></div>
-        <div><span>النشاط</span><strong>{activityLabels[selectedCompany.activity || "commercial"]}</strong></div>
+        <div><span>النشاط الأساسي</span><strong>{activityLabels[selectedCompany.activity || "commercial"]}</strong></div>
+        <div><span>الأنشطة المفعّلة</span><strong>{(selectedCompany.activities?.length ? selectedCompany.activities : [selectedCompany.activity || "commercial"]).map(value => activityLabels[value]).join("، ")}</strong></div>
         <div><span>العملة الأساسية</span><strong>{selectedCompany.base_currency_code}</strong></div>
         <div><span>حالة الشركة</span><strong>{selectedCompany.is_active === false ? "موقوفة" : "نشطة"}</strong></div>
       </div>
