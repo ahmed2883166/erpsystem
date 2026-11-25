@@ -6,9 +6,10 @@ from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency, FiscalPeriod, FiscalYear
+from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from audit.models import AuditEvent
 from treasury.models import TreasuryAccount, TreasuryTransaction
+from treasury.services import post_treasury_transaction, revalue_treasury_fx_account
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
 from .services import post_journal
 
@@ -373,6 +374,105 @@ class DirectCashFlowApiTests(TestCase):
         self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
         self.assertEqual(result.data["non_cash_investing_transactions"], [])
         self.assertEqual(result.data["uncategorized_counterparty_transactions"], [])
+
+    def test_direct_cash_flow_reports_fx_effect_separately_and_scopes_it_to_branch(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        company = Company.objects.create(
+            code="DIRECT-FX-CF", name_ar="شركة اختبار أثر العملة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch_one = Branch.objects.create(
+            company=company, code="FX-HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        branch_two = Branch.objects.create(
+            company=company, code="FX-SEC", name_ar="الفرع الثاني",
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        counter = ChartOfAccount.objects.create(
+            company=company, code="4001", name_ar="إيرادات", nature="revenue",
+        )
+        fx_gain = ChartOfAccount.objects.create(
+            company=company, code="4901", name_ar="أرباح فروق عملة غير محققة",
+            nature="revenue",
+        )
+        AccountRole.objects.create(
+            company=company, role=AccountRole.Role.UNREALIZED_FX_GAIN, account=fx_gain,
+        )
+        ExchangeRate.objects.create(
+            company=company, currency=usd, rate_date=date(2026, 1, 15),
+            rate=Decimal("30"),
+        )
+        ExchangeRate.objects.create(
+            company=company, currency=usd, rate_date=date(2026, 1, 20),
+            rate=Decimal("32"),
+        )
+
+        for branch, suffix, ledger_code in (
+            (branch_one, "ONE", "1120"),
+            (branch_two, "TWO", "1121"),
+        ):
+            ledger = ChartOfAccount.objects.create(
+                company=company, code=ledger_code, name_ar=f"بنك دولار {suffix}",
+                nature="asset",
+            )
+            treasury = TreasuryAccount.objects.create(
+                company=company, branch=branch, account=ledger,
+                kind=TreasuryAccount.Kind.BANK, code=f"USD-{suffix}",
+                name_ar=f"حساب دولار {suffix}", currency_code="USD",
+            )
+            receipt = TreasuryTransaction.objects.create(
+                company=company, branch=branch, fiscal_year=year,
+                source_account=treasury, counter_account=counter,
+                kind=TreasuryTransaction.Kind.RECEIPT,
+                document_number=f"FX-RECEIPT-{suffix}",
+                transaction_date=date(2026, 1, 15), amount=Decimal("3000"),
+                transaction_currency=usd, transaction_amount=Decimal("100"),
+                exchange_rate=Decimal("30"), exchange_rate_date=date(2026, 1, 15),
+                cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
+                description=f"تحصيل أجنبي {suffix}",
+            )
+            post_treasury_transaction(receipt.pk)
+            revalue_treasury_fx_account(
+                account_id=treasury.pk, fiscal_year_id=year.pk,
+                revaluation_date=date(2026, 1, 20), rate_date=date(2026, 1, 20),
+                branch=branch,
+            )
+
+        user = User.objects.create_user(username="direct_fx_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        url = (
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        company_report = client.get(url)
+        self.assertEqual(company_report.status_code, 200, company_report.data)
+        self.assertEqual(company_report.data["net_change_in_cash"], Decimal("6000.0000"))
+        self.assertEqual(company_report.data["effect_of_exchange_rate_changes"], Decimal("400.0000"))
+        self.assertEqual(company_report.data["net_increase_decrease_in_cash"], Decimal("6400.0000"))
+        self.assertEqual(company_report.data["closing_cash_balance"], Decimal("6400.0000"))
+        self.assertEqual(company_report.data["ledger_closing_cash_balance"], Decimal("6400.0000"))
+        self.assertEqual(company_report.data["ledger_cash_change"], Decimal("6400.0000"))
+        self.assertEqual(company_report.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(company_report.data["closing_balance_difference"], Decimal("0.0000"))
+        self.assertEqual(len(company_report.data["exchange_rate_effect_details"]), 2)
+
+        branch_report = client.get(f"{url}&branch={branch_one.pk}")
+        self.assertEqual(branch_report.status_code, 200, branch_report.data)
+        self.assertEqual(branch_report.data["effect_of_exchange_rate_changes"], Decimal("200.0000"))
+        self.assertEqual(branch_report.data["net_increase_decrease_in_cash"], Decimal("3200.0000"))
+        self.assertEqual(branch_report.data["ledger_closing_cash_balance"], Decimal("3200.0000"))
+        self.assertEqual(branch_report.data["reconciliation_difference"], Decimal("0.0000"))
+
 
 class AccountingApiTests(TestCase):
     def setUp(self):

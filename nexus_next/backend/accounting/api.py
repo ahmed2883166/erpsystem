@@ -1752,7 +1752,35 @@ class JournalEntryViewSet(AccountingViewSet):
             (closing_totals["debit"] or Decimal("0"))
             - (closing_totals["credit"] or Decimal("0"))
         )
-        closing_cash_balance = opening_cash_balance + net_change_in_cash
+        # IAS 7: show exchange-rate effects on cash separately from the three activity classes.
+        # Scope by the journal branch because a company-wide treasury account may be
+        # revalued under a particular branch.
+        fx_revaluations = list(TreasuryFxRevaluation.objects.filter(
+            company_id=company_id,
+            revaluation_date__gte=date_from,
+            revaluation_date__lte=date_to,
+            journal_entry__isnull=False,
+            journal_entry__status=JournalEntry.Status.POSTED,
+            journal_entry__branch__in=visible_branches,
+        ).select_related("account__account", "journal_entry").order_by(
+            "revaluation_date", "account__code", "id"
+        ))
+        effect_of_exchange_rate_changes = sum(
+            (row.difference for row in fx_revaluations), Decimal("0")
+        )
+        exchange_rate_effect_details = [{
+            "account_id": row.account_id,
+            "account_code": row.account.account.code,
+            "account_name": row.account.name_ar,
+            "currency": row.account.currency_code,
+            "revaluation_date": row.revaluation_date,
+            "rate": row.rate,
+            "foreign_amount": row.foreign_amount,
+            "difference": row.difference,
+            "journal_number": row.journal_entry.entry_number,
+        } for row in fx_revaluations]
+        net_increase_decrease_in_cash = net_change_in_cash + effect_of_exchange_rate_changes
+        closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
         closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
 
         uncategorized_counterparties = list(treasury_rows.filter(
@@ -1819,11 +1847,14 @@ class JournalEntryViewSet(AccountingViewSet):
             "ledger_closing_cash_balance": ledger_closing_cash_balance,
             "closing_balance_difference": closing_balance_difference,
             "net_change_in_cash": net_change_in_cash,
+            "effect_of_exchange_rate_changes": effect_of_exchange_rate_changes,
+            "net_increase_decrease_in_cash": net_increase_decrease_in_cash,
+            "exchange_rate_effect_details": exchange_rate_effect_details,
             "ledger_cash_change": ledger_cash_change,
-            "reconciliation_difference": ledger_cash_change - net_change_in_cash,
+            "reconciliation_difference": ledger_cash_change - net_increase_decrease_in_cash,
             "uncategorized_counterparty_transactions": uncategorized_counterparties,
             "non_cash_investing_transactions": non_cash_investing_transactions,
-            "note": "تُعرض المقبوضات والمدفوعات النقدية الفعلية حسب تصنيف الحركة والحساب المقابل. يجب مراجعة تصنيف كل حركة (تشغيلي/استثماري/تمويلي) قبل اعتماد القائمة؛ التحويلات الداخلية والحركات غير النقدية مستبعدة، ويجب الإفصاح عن المعاملات الاستثمارية والتمويلية غير النقدية بصورة منفصلة.",
+            "note": "تُعرض المقبوضات والمدفوعات النقدية الفعلية حسب تصنيف الحركة والحساب المقابل. يجب مراجعة تصنيف كل حركة (تشغيلي/استثماري/تمويلي) قبل اعتماد القائمة؛ التحويلات الداخلية والحركات غير النقدية مستبعدة، ويُعرض أثر تغير أسعار صرف العملات الأجنبية على النقدية كبند مستقل بعد الأنشطة التشغيلية والاستثمارية والتمويلية، وتُفصح المعاملات الاستثمارية والتمويلية غير النقدية بصورة منفصلة.",
         })
 
     @decorators.action(detail=False, methods=("get",), url_path="vat-return")

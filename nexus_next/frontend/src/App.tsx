@@ -310,7 +310,10 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
   const exportRows = report ? [
     ["رصيد النقدية أول الفترة",report.opening_cash_balance,"",""],
     ...report.sections.map(x=>[x.label,x.cash_receipts,x.cash_payments,x.net_cash_flow]),
-    ["صافي التغير النقدي",report.net_change_in_cash,"",report.net_change_in_cash],
+    ["صافي التدفقات النقدية من الأنشطة",report.net_change_in_cash,"",report.net_change_in_cash],
+    ["أثر تغير أسعار صرف العملات الأجنبية",report.effect_of_exchange_rate_changes,"",report.effect_of_exchange_rate_changes],
+    ["صافي الزيادة/النقص في النقدية",report.net_increase_decrease_in_cash,"",report.net_increase_decrease_in_cash],
+    ...report.exchange_rate_effect_details.map(x=>[`أثر صرف — ${x.revaluation_date} — ${x.account_code} — ${x.currency}`,x.difference,"",x.journal_number]),
     ["رصيد النقدية آخر الفترة",report.closing_cash_balance,"",""],
     ["رصيد الأستاذ آخر الفترة",report.ledger_closing_cash_balance,"",""],
     ["فرق رصيد الإقفال",report.closing_balance_difference,"",""],
@@ -330,7 +333,9 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
         <span>التشغيل: {money(report.operating_cash_flow)}</span>
         <span>الاستثمار: {money(report.investing_cash_flow)}</span>
         <span>التمويل: {money(report.financing_cash_flow)}</span>
-        <b>صافي التغير النقدي: {money(report.net_change_in_cash)}</b>
+        <span>صافي التدفقات من الأنشطة: {money(report.net_change_in_cash)}</span>
+        <span>أثر تغير أسعار الصرف: {money(report.effect_of_exchange_rate_changes)}</span>
+        <b>صافي الزيادة/النقص في النقدية: {money(report.net_increase_decrease_in_cash)}</b>
       </div>
       <div className="asset-cashflow-totals">
         <span>رصيد النقدية أول الفترة: {money(report.opening_cash_balance)}</span>
@@ -352,6 +357,11 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
           {!section.details.length&&<tr><td colSpan={3}>لا توجد حركات في هذا النشاط.</td></tr>}
         </tbody></table></div>
       </section>)}
+      <h3>أثر تغير أسعار صرف العملات الأجنبية على النقدية</h3>
+      <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
+        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.revaluation_date}-${row.journal_number}`}><td>{row.revaluation_date}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}</td></tr>)}
+        {!report.exchange_rate_effect_details.length&&<tr><td colSpan={7}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
+      </tbody></table></div>
       <h3>الإفصاح عن الاستثمارات غير النقدية</h3>
       <div className="data-table-wrap"><table><thead><tr><th>الفاتورة / الأصل</th><th>القيمة الإجمالية</th><th>مدفوع خلال الفترة</th><th>غير مسدد بنهاية الفترة</th></tr></thead><tbody>
         {report.non_cash_investing_transactions.map(row=><tr key={row.invoice_number}><td>{row.invoice_number} — {row.asset_name} — {row.supplier_name}</td><td>{money(row.gross_amount)}</td><td>{money(row.cash_paid_during_period)}</td><td>{money(row.unpaid_at_period_end)}</td></tr>)}
