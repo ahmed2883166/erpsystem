@@ -435,6 +435,7 @@ class CustomerRefundTests(APITestCase):
         reversal = TreasuryTransaction.objects.get(pk=reversed_refund.data["reversal_treasury_transaction"])
         self.assertEqual(reversal.reversal_of_id, original_treasury.pk)
         self.assertEqual(reversal.carrying_amount, Decimal("4800.0000"))
+        self._assert_balanced(reversal.journal_entry_id)
         position.refresh_from_db()
         self.assertEqual(position.foreign_amount, Decimal("100.0000"))
         self.assertEqual(position.carrying_base_amount, Decimal("4800.0000"))
