@@ -299,7 +299,6 @@ def _post_direct_expense_purchase_invoice(invoice, user):
         (line.tax_amount for line in lines if not line.tax_code_id or line.tax_code.input_tax_recoverable),
         Decimal("0"),
     ).quantize(Decimal("0.0001"))
-    nonrecoverable_tax = (tax_amount - recoverable_tax).quantize(Decimal("0.0001"))
     if net_amount <= 0 or tax_amount < 0:
         raise ValidationError("يجب أن تكون قيمة الفاتورة موجبة والضريبة غير سالبة.")
 
