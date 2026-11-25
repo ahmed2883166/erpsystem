@@ -1591,10 +1591,15 @@ class JournalEntryViewSet(AccountingViewSet):
             - (fx_loss_row.get("credit") or Decimal("0"))
         )
         unrealized_fx_adjustment = unrealized_fx_loss - unrealized_fx_gain
-        # FX revaluation changes both profit and the AR/AP carrying balance.
-        # Reverse its non-cash effect in working capital as it is added back
-        # (or deducted) below, so the same revaluation is not counted twice.
-        fx_working_capital_offset = -unrealized_fx_adjustment
+        # Non-cash FX effects on receivables/payables are handled through working
+        # capital. FX effects on treasury cash are removed from operating profit here
+        # and presented separately below, as required by IAS 7.
+        effect_of_exchange_rate_changes, exchange_rate_effect_details = (
+            _treasury_fx_cash_flow_effect(company_id, date_from, date_to, visible_branches)
+        )
+        fx_working_capital_offset = (
+            -unrealized_fx_adjustment - effect_of_exchange_rate_changes
+        )
         operating_adjustments += fx_working_capital_offset
         working_capital.append({
             "role": "unrealized_fx_revaluation_offset",
@@ -1664,13 +1669,38 @@ class JournalEntryViewSet(AccountingViewSet):
         treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
         treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
-        cash_lines = JournalLine.objects.filter(
-            account_id__in=cash_account_ids, entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-            entry__company_id=company_id, entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
-        ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
-        cash_lines = cash_lines.filter(entry__branch__in=visible_branches)
+        cash_ledger_lines = JournalLine.objects.filter(
+            account_id__in=cash_account_ids,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            entry__company_id=company_id,
+            entry__entry_date__lte=date_to,
+        ).exclude(entry__source_type=JournalEntry.Source.CLOSING)
+        cash_ledger_lines = cash_ledger_lines.filter(entry__branch__in=visible_branches)
+        opening_cash_lines = cash_ledger_lines.filter(
+            Q(entry__entry_date__lt=date_from)
+            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        )
+        opening_totals = opening_cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        opening_cash_balance = (
+            (opening_totals["debit"] or Decimal("0"))
+            - (opening_totals["credit"] or Decimal("0"))
+        )
+        cash_lines = cash_ledger_lines.filter(entry__entry_date__gte=date_from).exclude(
+            entry__source_type=JournalEntry.Source.OPENING
+        )
         cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
-        ledger_cash_change = (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+        ledger_cash_change = (
+            (cash_totals["debit"] or Decimal("0"))
+            - (cash_totals["credit"] or Decimal("0"))
+        )
+        closing_totals = cash_ledger_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        ledger_closing_cash_balance = (
+            (closing_totals["debit"] or Decimal("0"))
+            - (closing_totals["credit"] or Decimal("0"))
+        )
+        net_increase_decrease_in_cash = net_change + effect_of_exchange_rate_changes
+        closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
+        closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
 
         return response.Response({
             "company": company_id, "branch": branch_id, "date_from": date_from, "date_to": date_to,
@@ -1690,8 +1720,15 @@ class JournalEntryViewSet(AccountingViewSet):
             "investing_cash_flow": investing_cash_flow,
             "financing_cash_flow": financing_cash_flow,
             "net_change_in_cash": net_change,
+            "effect_of_exchange_rate_changes": effect_of_exchange_rate_changes,
+            "net_increase_decrease_in_cash": net_increase_decrease_in_cash,
+            "exchange_rate_effect_details": exchange_rate_effect_details,
+            "opening_cash_balance": opening_cash_balance,
+            "closing_cash_balance": closing_cash_balance,
+            "ledger_closing_cash_balance": ledger_closing_cash_balance,
+            "closing_balance_difference": closing_balance_difference,
             "ledger_cash_change": ledger_cash_change,
-            "reconciliation_difference": ledger_cash_change - net_change,
+            "reconciliation_difference": ledger_cash_change - net_increase_decrease_in_cash,
             "investing_transactions": list(investing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
@@ -1699,7 +1736,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "financing_transactions": list(financing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
-            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة والمرتبات المستحقة وحصتي التأمينات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
+            "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. يُعرض أثر تغير أسعار صرف العملات الأجنبية على النقدية كبند مستقل بعد التدفقات التشغيلية والاستثمارية والتمويلية، ويُستخدم في حساب رصيد النقدية الختامي ومطابقته مع الأستاذ. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة والمرتبات المستحقة وحصتي التأمينات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
         })
 
 
