@@ -311,7 +311,7 @@ function Reset-AppPassword {
 function Get-LoginRoles {
     $config = Read-Config
     $appRole = $config.POSTGRES_USER.Replace("'","''")
-    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND rolname !~ '^pg_' AND rolname <> '$appRole' ORDER BY rolname;"
+    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND rolname !~ '^pg_' AND rolname <> '$appRole' ORDER BY rolname;"
     return @($raw -split "\r?\n" | Where-Object { $_ })
 }
 function Show-LoginRoles {
