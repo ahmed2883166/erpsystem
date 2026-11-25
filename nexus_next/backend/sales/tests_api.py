@@ -1787,3 +1787,63 @@ class SalesWorkflowTests(APITestCase):
         self.assertFalse(JournalEntry.objects.filter(
             entry_number=f"SALE-INV-{invoice_id}"
         ).exists())
+
+
+    def test_service_invoice_posts_revenue_and_receipt_without_stock_movement(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-001",
+            name_ar="خدمة صيانة", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        movements_before = StockMovement.objects.count()
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "invoice_number": "INV-SERVICE-001",
+            "invoice_date": "2026-03-12",
+            "lines": [{
+                "product": service.pk, "quantity": "2",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_id = created.data["id"]
+        self.assertIsNone(created.data["delivery"])
+        self.assertEqual(created.data["invoice_lines"][0]["product"], service.pk)
+        self.assertEqual(created.data["invoice_lines"][0]["quantity"], "2.0000")
+
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["status"], "posted")
+        self.assertEqual(posted.data["grand_total"], "228.0000")
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        revenue = ChartOfAccount.objects.get(company=self.company, code="4000")
+        receivable = ChartOfAccount.objects.get(company=self.company, code="1200")
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted.data["journal_entry"], account=revenue,
+            credit=Decimal("200.0000"),
+        ).exists())
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted.data["journal_entry"], account=receivable,
+            debit=Decimal("228.0000"),
+        ).exists())
+
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "invoice": invoice_id, "receipt_number": "RC-SERVICE-001",
+            "receipt_date": "2026-03-13", "method": "bank", "amount": "228",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        receipt_posted = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(receipt_posted.status_code, 200, receipt_posted.data)
+        self.assertEqual(receipt_posted.data["status"], "posted")
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data["balance_due"],
+            "0.0000",
+        )
