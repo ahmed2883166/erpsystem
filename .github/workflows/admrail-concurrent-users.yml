@@ -71,7 +71,6 @@ jobs:
       POSTGRES_PASSWORD: benchmark_only_password
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
-      ALLOW_BENCHMARK_DATABASE: "1"
       # Compare the production default with the isolated candidate profile.
       ADMRAIL_REPORT_WORK_MEM: "${{ matrix.work_mem }}"
       ADMRAIL_REPORT_PARALLEL_WORKERS: "${{ matrix.parallel_workers }}"
