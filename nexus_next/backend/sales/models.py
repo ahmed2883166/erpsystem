@@ -617,8 +617,20 @@ class SalesOrder(models.Model):
             raise ValidationError({"requested_delivery_date": "تاريخ التسليم المطلوب لا يسبق تاريخ أمر البيع."})
 
     def save(self, *args, **kwargs):
-        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
-            raise ValidationError("أمر البيع المعتمد لا يمكن تعديله.")
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values("status").first()
+            if previous and previous["status"] != self.Status.DRAFT:
+                update_fields = set(kwargs.get("update_fields") or ())
+                if not update_fields or not update_fields.issubset({"status", "updated_at"}):
+                    raise ValidationError("أمر البيع المعتمد لا يمكن تعديل بياناته.")
+                allowed = {
+                    self.Status.CONFIRMED: {self.Status.PARTIALLY_DELIVERED, self.Status.DELIVERED, self.Status.CANCELLED},
+                    self.Status.PARTIALLY_DELIVERED: {self.Status.DELIVERED, self.Status.CANCELLED},
+                    self.Status.DELIVERED: set(),
+                    self.Status.CANCELLED: set(),
+                }
+                if self.status != previous["status"] and self.status not in allowed.get(previous["status"], set()):
+                    raise ValidationError("انتقال حالة أمر البيع غير مسموح.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
