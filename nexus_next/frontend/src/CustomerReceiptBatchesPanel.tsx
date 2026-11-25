@@ -109,7 +109,7 @@ export default function CustomerReceiptBatchesPanel({
     {!companyId&&<div className="table-empty">اختر شركة لعرض التحصيلات.</div>}
     {companyId&&<form className="inventory-form" onSubmit={createBatch}>
       <label>العميل<select required value={form.customer} onChange={event=>{setForm(old=>({...old,customer:event.target.value}));setAllocations([]);}}><option value="">اختر العميل</option>{customers.filter(row=>row.is_active).map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
-      <label>الفرع<select required value={form.branch} onChange={event=>setForm(old=>({...old,branch:event.target.value}))}><option value="">اختر الفرع</option>{branches.map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
+      <label>الفرع<select required value={form.branch} onChange={event=>setForm(old=>({...old,branch:event.target.value}))}><option value="">اختر الفرع</option>{branches.filter(row=>row.is_active).map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
       <label>رقم سند القبض<input required maxLength={40} value={form.receipt_number} onChange={event=>setForm(old=>({...old,receipt_number:event.target.value}))}/></label>
       <label>تاريخ السند<input required type="date" value={form.receipt_date} onChange={event=>setForm(old=>({...old,receipt_date:event.target.value}))}/></label>
       <label>إجمالي المبلغ<input required type="number" min="0.0001" step="0.0001" value={form.amount} onChange={event=>setForm(old=>({...old,amount:event.target.value}))}/></label>
