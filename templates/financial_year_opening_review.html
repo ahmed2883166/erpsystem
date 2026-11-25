@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}مراجعة القيود الافتتاحية القديمة | NEXUS ERP{% endblock %}
+{% block content %}
+<header class="page-heading"><h2>مراجعة القيود الافتتاحية القديمة — {{ year.year_name }}</h2>
+<p class="muted">القيود المرحلة في أول يوم من السنة وتحمل وصف افتتاح ولم تصنف. لا يستبعد النظام أي رصيد تلقائيًا.</p></header>
+<section class="panel"><h3>قيود تحتاج إلى تصنيف</h3><div class="table-wrap"><table>
+<thead><tr><th>القيد</th><th>التاريخ</th><th>المرجع</th><th>الوصف</th><th>السطور</th><th>القرار</th></tr></thead><tbody>
+{% for item in candidates %}<tr><td><a href="{{ url_for('journal_detail',entry_id=item.id) }}">#{{ item.id }}</a></td><td>{{ item.entry_date }}</td><td>{{ item.reference }}</td><td>{{ item.description }}</td><td>{{ item.line_count }}</td><td>
+<form method="post" class="form-grid"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="entry_id" value="{{ item.id }}">
+<label>التصنيف<select name="classification" required><option value="">اختر</option><option value="copied_history">مكرر للأرصدة التاريخية — استبعاده</option><option value="new_opening">افتتاح صحيح — الاحتفاظ به</option></select></label>
+<label>سبب القرار<input name="reason" minlength="5" maxlength="500" required></label><button type="submit">حفظ التصنيف</button></form></td></tr>
+{% else %}<tr><td colspan="6">لا توجد قيود افتتاحية قديمة غير مصنفة لهذه السنة.</td></tr>{% endfor %}</tbody></table></div></section>
+<section class="panel"><h3>قرارات المراجعة المحفوظة</h3><table><thead><tr><th>القيد</th><th>التصنيف</th><th>السبب</th><th>تاريخ المراجعة</th></tr></thead><tbody>
+{% for item in reviewed %}<tr><td><a href="{{ url_for('journal_detail',entry_id=item.entry_id) }}">#{{ item.entry_id }}</a></td><td>{{ 'مكرر للأرصدة التاريخية' if item.classification == 'copied_history' else 'افتتاح صحيح' }}</td><td>{{ item.reason }}</td><td>{{ item.reviewed_at }}</td></tr>
+{% else %}<tr><td colspan="4">لا توجد قرارات محفوظة.</td></tr>{% endfor %}</tbody></table>
+<p class="muted">التصنيف لا يعدل القيد أو سطوره. «مكرر» يستبعده فقط من أرصدة الميزانية بعد تاريخ بداية السنة.</p><a href="{{ url_for('planning.financial_years') }}">العودة للسنوات المالية</a></section>
+{% endblock %}

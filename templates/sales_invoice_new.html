@@ -1,0 +1,90 @@
+{% extends "base.html" %}{% block title %}فاتورة بيع جديدة | NEXUS ERP{% endblock %}{% block scripts %}<script>
+document.addEventListener('change',event=>{
+ if(event.target.name!=='line_tax_category')return;
+ const option=event.target.selectedOptions[0];
+ const treatment=option?.dataset.treatment;
+ const row=event.target.closest('tr');
+ if(!row||!treatment)return;
+ const treatmentSelect=row.querySelector('[name="line_tax_treatment"]');
+ const rateInput=row.querySelector('[name="line_tax_rate"]');
+ if(treatmentSelect)treatmentSelect.value=treatment;
+ if(rateInput&&treatment!=='standard')rateInput.value='0';
+});
+const customerSelect=document.querySelector('[name="customer_id"]'),creditAlert=document.getElementById('creditAlert');
+function checkCredit(){const o=customerSelect.options[customerSelect.selectedIndex];if(!o||!o.value){creditAlert.hidden=true;creditAlert.classList.remove('is-over');return;}const limit=Number(o.dataset.limit||0),due=Number(o.dataset.outstanding||0);if(limit>0){creditAlert.hidden=false;creditAlert.classList.toggle('is-over',due>limit);creditAlert.replaceChildren();const heading=document.createElement('span');heading.className='credit-limit-heading';heading.textContent=due>limit?'تنبيه تجاوز الحد الائتماني':'الحد الائتماني للعميل';const value=document.createElement('strong');value.className='credit-limit-value';value.textContent=limit.toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2});const balance=document.createElement('span');balance.className='credit-limit-balance';balance.textContent='المديونية الحالية: '+due.toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2});const hint=document.createElement('small');hint.textContent=due>limit?'العميل تجاوز الحد المحدد. راجع المديونية قبل اعتماد الفاتورة.':'سيتم إعادة فحص الحد الائتماني عند ترحيل الفاتورة.';creditAlert.append(heading,value,balance,hint);}else{creditAlert.hidden=true;creditAlert.classList.remove('is-over');}}
+customerSelect.addEventListener('change',checkCredit);checkCredit();
+const discountAlert=document.getElementById('customerDiscountAlert');
+function showCustomerDiscount(){const o=customerSelect.options[customerSelect.selectedIndex];if(!o||!o.value||!o.dataset.discountType||o.dataset.discountType==='none'||Number(o.dataset.discountValue||0)<=0){discountAlert.hidden=true;return;}discountAlert.hidden=false;discountAlert.textContent='سيتم تطبيق خصم العميل تلقائيًا على إجمالي البنود قبل احتساب الضريبة: '+(o.dataset.discountType==='percent'?o.dataset.discountValue+'%':o.dataset.discountValue+' مبلغ مقطوع')+'.';}
+customerSelect.addEventListener('change',showCustomerDiscount);showCustomerDiscount();
+function setupInvoiceProductRow(row){
+ const sel=row.querySelector('select[name="product_id"]'),price=row.querySelector('.invoice-unit-price'),uom=row.querySelector('.invoice-unit-uom');
+ function refreshUnits(){let first=null;for(const o of uom.options){o.hidden=o.dataset.product!==sel.value;if(!o.hidden&&!first)first=o;}if(first&&(!uom.value||uom.selectedOptions[0].hidden))uom.value=first.value;updatePrice();}
+ function updatePrice(){const opt=sel.options[sel.selectedIndex],unit=uom.options[uom.selectedIndex];if(sel.value&&price&&opt){const factor=Number(unit&&unit.dataset.factor||1);price.value=(Number(opt.dataset.salePrice||0)*factor).toFixed(2);price.dataset.auto='1';}}
+ sel.addEventListener('change',refreshUnits);uom.addEventListener('change',updatePrice);if(sel.value)refreshUnits();
+}
+const invoiceTable=document.querySelector('.table-wrap table');
+const invoiceBody=invoiceTable.querySelector('tbody')||invoiceTable;
+invoiceBody.querySelectorAll('tr[data-invoice-line]').forEach((row,index)=>{setupInvoiceProductRow(row);if(index>=2)row.hidden=true;});
+invoiceBody.addEventListener('keydown',function(event){
+ if(event.key!=='Enter')return;
+ const row=event.target.closest('tr[data-invoice-line]');
+ if(!row)return;
+ event.preventDefault();
+ let rows=[...invoiceBody.querySelectorAll('tr[data-invoice-line]')];
+ let next=rows[rows.indexOf(row)+1];
+ if(next){next.hidden=false;}
+ else{
+  next=row.cloneNode(true);
+  next.hidden=false;
+  // cloneNode does not copy search listeners; unwrap the cloned widget so
+  // the searchable-select observer can initialize a fresh control after insertion.
+  next.querySelectorAll('.nexus-search-select').forEach(wrapper=>{
+    const select=wrapper.querySelector('select');
+    if(select)wrapper.replaceWith(select);
+  });
+  next.querySelectorAll('select').forEach(select=>{
+    select.removeAttribute('data-nexus-search-ready');
+    select.removeAttribute('aria-hidden');
+    select.removeAttribute('aria-controls');
+    select.removeAttribute('aria-expanded');
+    select.classList.remove('select2-hidden-accessible');
+  });
+  // Cloned controls must not retain duplicate DOM IDs or stale search widgets.
+  next.querySelectorAll('[id]').forEach(element=>element.removeAttribute('id'));
+  next.querySelectorAll('input').forEach(input=>{
+    if(input.type==='checkbox'||input.type==='radio')input.checked=false;
+    else input.value='';
+    input.removeAttribute('aria-controls');
+    input.removeAttribute('aria-expanded');
+  });
+  const product=next.querySelector('[name="product_id"]');
+  product.value='';
+  next.querySelector('[name="description"]').value='';
+  next.querySelector('[name="quantity"]').value='1';
+  const uom=next.querySelector('[name="uom_id"]');uom.selectedIndex=0;
+  next.querySelector('[name="unit_price"]').value='0';
+  next.querySelector('[name="line_tax_treatment"]').value='standard';
+  next.querySelector('[name="line_tax_category"]').value='';
+  next.querySelector('[name="line_tax_rate"]').value='{{ settings.get("default_vat_rate","14") }}';
+  next.querySelectorAll('select option').forEach(option=>option.hidden=false);
+  next.querySelectorAll('select').forEach(select=>{
+    select.removeAttribute('aria-hidden');
+    select.classList.remove('select2-hidden-accessible');
+  });
+  invoiceBody.appendChild(next);
+  setupInvoiceProductRow(next);
+ }
+ const first=next.querySelector('[name="product_id"]');
+ first.focus();
+});
+</script>{% endblock %}{% block content %}
+<header class="page-heading"><div><h2>فاتورة بيع جديدة</h2><p>يمكن حفظ الفاتورة كمسودة أو إرسالها للاعتماد ثم ترحيلها لاحقًا. الترحيل فقط هو الذي ينشئ القيد ويخصم المخزون.</p></div></header>
+<section class="panel erp-entry-page"><form method="post"><div class="form-grid">{% if activity_options %}<label>نشاط الفاتورة<select name="activity_code" required>{% for activity in activity_options %}<option value="{{ activity.activity_code }}" {% if activity.activity_code==selected_activity %}selected{% endif %}>{{ activity.activity_code }}</option>{% endfor %}</select></label>{% endif %}<label>العميل<select name="customer_id" required><option value="">اختر العميل</option>{% for x in customers %}<option value="{{ x.id }}" data-limit="{{ x.credit_limit }}" data-outstanding="{{ x.outstanding }}" data-discount-type="{{ x.discount_type or 'none' }}" data-discount-value="{{ x.discount_value or '0' }}">{{ x.code }} - {{ x.name }}</option>{% endfor %}</select></label><label>مندوب المبيعات<select name="salesperson_id"><option value="">بدون مندوب</option>{% for x in dimension_options.salespersons %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label><label>تاريخ الفاتورة<input type="date" name="invoice_date" value="{{ today }}" required></label><label>تاريخ الاستحقاق<input type="date" name="due_date" value="{{ today }}" required></label><label>مخزن الصرف<select name="warehouse_id"><option value="">اختر المخزن</option>{% for x in warehouses %}<option value="{{ x.id }}">{{ x.code }} - {{ x.name_ar }}</option>{% endfor %}</select></label>{% if selected_activity=='restaurant' %}<label>قناة البيع<select name="sales_channel" required><option value="dine_in">صالة - 4100</option><option value="takeaway">تيك أواي - 4200</option><option value="direct_delivery">توصيل مباشر - 4300</option><option value="delivery_apps">تطبيقات التوصيل - 4400</option></select></label>{% endif %}<label>نسبة الضريبة %<input type="number" name="tax_rate" min="0" max="100" step="0.01" value="{{ settings.get('default_vat_rate','0') }}" required></label>
+<label>الفرع التحليلي<select name="branch_id"><option value="">بدون تحديد</option>{% for x in dimension_options.branches %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label>
+<label>مركز التكلفة<select name="cost_center_id"><option value="">بدون تحديد</option>{% for x in dimension_options.cost_centers %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label>
+<label>المشروع<select name="project_id"><option value="">بدون تحديد</option>{% for x in dimension_options.projects %}<option value="{{x.id}}">{{x.code}} - {{x.name_ar}}</option>{% endfor %}</select></label></div>
+<div id="creditAlert" class="credit-limit-panel" hidden></div><div id="customerDiscountAlert" class="notice" hidden></div>{% if session.get('role')=='admin' %}<label><input type="checkbox" name="credit_override" value="1"> اعتماد استثنائي لتجاوز الحد الائتماني (للمدير فقط)</label>{% endif %}<h3>بنود الفاتورة</h3><p class="muted">ابدأ بسطرين فقط؛ اضغط Enter داخل أي خانة في السطر لإظهار السطر التالي والانتقال إليه. يمكنك إضافة بنود بلا حد.</p><div class="table-wrap"><table><tr><th>الصنف</th><th>الوصف</th><th>الكمية</th><th>وحدة البيع</th><th>سعر الوحدة</th><th>المعاملة الضريبية</th><th>التصنيف التفصيلي</th><th>النسبة %</th></tr>{% for n in range(5) %}<tr data-invoice-line><td><select name="product_id"><option value="">خدمة / بدون مخزون</option>{% for p in products %}<option value="{{ p.id }}" data-sale-price="{{ p.sale_price or '0' }}">{{ p.sku }} - {{ p.name_ar }}</option>{% endfor %}</select></td><td><input name="description" placeholder="وصف البند"></td><td><input name="quantity" type="number" min="0.0001" step="0.0001" value="1"></td><td><select name="uom_id" class="invoice-unit-uom">{% for p in products %}{% if product_uoms[p.id] %}{% for u in product_uoms[p.id] %}{% if u.sales_enabled %}<option value="{{ u.id }}" data-product="{{ p.id }}" data-factor="{{ u.factor_to_base }}" {% if u.is_base %}selected{% endif %}>{{ p.name_ar }} — {{ u.name_ar }}</option>{% endif %}{% endfor %}{% else %}<option value="" data-product="{{ p.id }}" data-factor="1">{{ p.name_ar }} — {{ p.uom }} (وحدة قديمة)</option>{% endif %}{% endfor %}</select></td><td><input name="unit_price" class="invoice-unit-price" type="number" min="0" step="0.01" value="0"></td><td><select name="line_tax_treatment"><option value="standard">خاضع للضريبة</option><option value="zero_rated">صفرية</option><option value="exempt">معفاة</option><option value="out_of_scope">خارج النطاق</option></select></td><td><select name="line_tax_category"><option value="">بدون تصنيف تفصيلي</option>{% for category in sales_tax_categories %}<option value="{{ category.code }}" data-treatment="{{ category.treatment }}">{{ category.label_ar }}</option>{% endfor %}</select></td><td><input name="line_tax_rate" type="number" min="0" max="100" step="0.01" value="{{ settings.get('default_vat_rate','14') }}"></td></tr>{% endfor %}</table></div><div class="actions erp-form-actions">
+<button type="submit" name="workflow_action" value="draft" class="secondary">حفظ كمسودة</button>
+<button type="submit" name="workflow_action" value="submit">إرسال للاعتماد</button>
+<button type="submit">حفظ وترحيل مباشرة</button>
+<a class="btn secondary" href="{{ url_for('sales.index') }}">إلغاء</a></div></form></section>{% endblock %}

@@ -1,0 +1,1420 @@
+"""Exercise the complete Flask schema initializer against a generated PostgreSQL baseline.
+
+This is a disposable CI smoke test, not the production runtime enablement switch.
+It installs the reviewed baseline into a unique schema, runs every application
+initializer through the PostgreSQL connection factory, verifies bootstrap data,
+and removes only its own schema.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import date
+import os
+import re
+import sys
+import tempfile
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+import psycopg
+
+# Direct script execution places scripts/ (not the repository root) on sys.path.
+# Add the project root explicitly so root-level application modules resolve.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline", required=True, type=Path)
+    args = parser.parse_args()
+
+    dsn = os.environ.get("NEXUS_TEST_POSTGRES_DSN", "").strip()
+    if not dsn:
+        raise SystemExit("NEXUS_TEST_POSTGRES_DSN is required.")
+    if not args.baseline.is_file():
+        raise SystemExit(f"PostgreSQL baseline not found: {args.baseline}")
+
+    schema = "admrail_runtime_smoke_" + uuid.uuid4().hex[:16]
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
+        raise RuntimeError("Generated unsafe schema name.")
+
+    with tempfile.TemporaryDirectory(prefix="admrail-pg-runtime-") as data_dir:
+        backup_dir = Path(data_dir) / "backups"
+        os.environ["NEXUS_SECRET_KEY"] = "postgres-runtime-smoke-secret-key-123456"
+        os.environ["NEXUS_DEMO_MODE"] = "1"
+
+        # Exercise the same guarded fresh-install entry point documented for
+        # customer deployments, rather than duplicating its bootstrap logic.
+        from scripts.initialize_postgres_fresh_install import main as fresh_install_main
+        install_result = fresh_install_main([
+            "--ddl", str(args.baseline),
+            "--dsn", dsn,
+            "--schema", schema,
+            "--data-dir", str(Path(data_dir) / "data"),
+            "--backup-dir", str(backup_dir),
+        ])
+        if install_result != 0:
+            raise AssertionError(
+                f"PostgreSQL fresh-install initializer returned {install_result}."
+            )
+
+        import app as nexus_app
+        from database_backend import configured_database_backend
+
+        # Verify that the ordinary application and connection factory accept
+        # PostgreSQL only through the explicit runtime environment flag.
+        from database_backend import require_supported_runtime_backend
+        selected_backend = configured_database_backend()
+        if selected_backend != "postgresql":
+            raise AssertionError(
+                f"Runtime selector chose {selected_backend!r}, not PostgreSQL."
+            )
+        if require_supported_runtime_backend() != "postgresql":
+            raise AssertionError("The explicit PostgreSQL runtime gate did not select PostgreSQL.")
+        try:
+            with nexus_app.app.app_context():
+                connection = nexus_app.db()
+                try:
+                    user_count = connection.execute(
+                        "SELECT COUNT(*) FROM users"
+                    ).fetchone()[0]
+                    account_count = connection.execute(
+                        "SELECT COUNT(*) FROM accounts"
+                    ).fetchone()[0]
+                    settings_count = connection.execute(
+                        "SELECT COUNT(*) FROM company_settings"
+                    ).fetchone()[0]
+                    if user_count < 1 or account_count < 1 or settings_count < 1:
+                        raise AssertionError(
+                            "PostgreSQL bootstrap did not seed the admin, chart of "
+                            f"accounts, and company settings: users={user_count}, "
+                            f"accounts={account_count}, settings={settings_count}"
+                        )
+                    expected_numeric_columns = {
+                        ("currencies", "rate_to_base"): (24, 10),
+                        ("fx_exchange_rates", "rate_to_base"): (24, 10),
+                        ("tax_rates", "rate"): (9, 6),
+                        ("journal_lines", "debit"): (24, 6),
+                        ("journal_lines", "credit"): (24, 6),
+                    }
+                    for (table_name, column_name), (precision, scale) in expected_numeric_columns.items():
+                        column_type = connection.execute(
+                            """SELECT data_type,numeric_precision,numeric_scale
+                               FROM information_schema.columns
+                               WHERE table_schema=current_schema()
+                                 AND table_name=%s AND column_name=%s""",
+                            (table_name, column_name),
+                        ).fetchone()
+                        if (
+                            not column_type
+                            or column_type["data_type"] != "numeric"
+                            or int(column_type["numeric_precision"]) != precision
+                            or int(column_type["numeric_scale"]) != scale
+                        ):
+                            raise AssertionError(
+                                f"PostgreSQL decimal schema mismatch for {table_name}.{column_name}: "
+                                f"{column_type!r}"
+                            )
+                    history_columns = connection.execute(
+                        """SELECT 1 FROM information_schema.columns
+                           WHERE table_schema=current_schema()
+                             AND table_name='financial_year_journal_history'
+                             AND column_name='ledger_history_copied'"""
+                    ).fetchone()
+                    if not history_columns:
+                        raise AssertionError(
+                            "PostgreSQL planning schema did not persist opening-entry classification."
+                        )
+
+                    # The three bootstrap verification SELECTs above open a
+                    # psycopg transaction (unlike SQLite's default SELECT
+                    # behavior). End that caller-owned read transaction before
+                    # testing that the dashboard helper closes a transaction
+                    # it starts itself.
+                    connection.commit()
+                    # Exercise a real dashboard read on the initialized PostgreSQL
+                    # schema. This covers transaction-state handling and the query
+                    # layer, not only DDL/bootstrap and the login route.
+                    from datetime import date
+                    from management_dashboard import cached_management_snapshot
+                    from db_compat import transaction_is_active
+
+                    today = date.today()
+                    period_start = today.replace(day=1)
+                    dashboard_snapshot = cached_management_snapshot(
+                        connection, period_start, today
+                    )
+                    if not isinstance(dashboard_snapshot, dict) or not dashboard_snapshot:
+                        raise AssertionError(
+                            "PostgreSQL management dashboard returned an empty snapshot."
+                        )
+                    if transaction_is_active(connection):
+                        raise AssertionError(
+                            "PostgreSQL dashboard snapshot left an open transaction."
+                        )
+                    # Exercise one real inventory-backed sales posting against the
+                    # fully initialized PostgreSQL application schema. This verifies
+                    # operational SQL, generated IDs, stock valuation locks, and both
+                    # revenue/COGS journals rather than only schema bootstrap.
+                    from decimal import Decimal
+                    from db_compat import insert_and_get_id
+                    from db_sql import execute_compat
+                    import sales
+
+                    customer_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO customers(code,name,credit_limit) VALUES(?,?,?)",
+                        ("PG-SMOKE-CUSTOMER", "عميل اختبار PostgreSQL", "1000000"),
+                    )
+                    warehouse_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO stock_warehouses(code,name_ar) VALUES(?,?)",
+                        ("PG-SMOKE-WH", "مخزن اختبار PostgreSQL"),
+                    )
+                    product_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO stock_products(sku,name_ar) VALUES(?,?)",
+                        ("PG-SMOKE-SKU", "صنف اختبار PostgreSQL"),
+                    )
+                    receipt_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO stock_movements(
+                               movement_no,movement_type,product_id,target_warehouse_id,
+                               quantity,unit_cost,total_cost,movement_date
+                           ) VALUES(?, 'receipt', ?, ?, ?, ?, ?, ?)""",
+                        ("PG-SMOKE-RECEIPT", product_id, warehouse_id,
+                         "10", "5", "50", today.isoformat()),
+                    )
+                    insert_and_get_id(
+                        connection,
+                        """INSERT INTO stock_valuation_layers(
+                               product_id,warehouse_id,source_movement_id,
+                               qty_in,qty_remaining,unit_cost,value_remaining
+                           ) VALUES(?,?,?,?,?,?,?)""",
+                        (product_id, warehouse_id, receipt_id, "10", "10", "5", "50"),
+                    )
+                    admin_id = connection.execute(
+                        "SELECT id FROM users WHERE username='admin'"
+                    ).fetchone()["id"]
+                    # The installer intentionally marks its first admin for a forced
+                    # password change. This smoke test injects an authenticated session
+                    # directly (it does not test the login/password-change flow), so mark
+                    # that disposable CI admin as already onboarded before exercising
+                    # protected workforce routes. This update is confined to the
+                    # temporary PostgreSQL schema created above.
+                    execute_compat(
+                        connection,
+                        "UPDATE users SET must_change_password=0 WHERE id=?",
+                        (admin_id,),
+                    )
+                    connection.commit()
+                    invoice = sales.post_invoice(
+                        connection,
+                        customer_id,
+                        today.isoformat(),
+                        warehouse_id,
+                        [{"product_id": product_id, "quantity": "2", "unit_price": "20"}],
+                        Decimal("0"),
+                        created_by=admin_id,
+                    )
+                    connection.commit()
+
+                    posted_invoice = execute_compat(
+                        connection,
+                        """SELECT total_amount,journal_entry_id,cogs_journal_entry_id
+                             FROM sales_invoices WHERE id=?""",
+                        (invoice["invoice_id"],),
+                    ).fetchone()
+                    remaining_layer = execute_compat(
+                        connection,
+                        """SELECT qty_remaining,value_remaining
+                             FROM stock_valuation_layers WHERE product_id=? AND warehouse_id=?""",
+                        (product_id, warehouse_id),
+                    ).fetchone()
+                    sales_observed = {
+                        "invoice": dict(posted_invoice) if posted_invoice else None,
+                        "returned_total_cost": str(invoice.get("total_cost")),
+                        "remaining_layer": dict(remaining_layer) if remaining_layer else None,
+                    }
+                    if (
+                        not posted_invoice
+                        or not posted_invoice["journal_entry_id"]
+                        or not posted_invoice["cogs_journal_entry_id"]
+                        or Decimal(str(posted_invoice["total_amount"])) != Decimal("40.00")
+                        or Decimal(str(invoice["total_cost"])) != Decimal("10.00")
+                        or not remaining_layer
+                        or Decimal(str(remaining_layer["qty_remaining"])) != Decimal("8")
+                        or Decimal(str(remaining_layer["value_remaining"])) != Decimal("40")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL sales workflow did not reconcile invoice, COGS, "
+                            f"and remaining inventory valuation. Observed={sales_observed!r}"
+                        )
+                    sales_flow = {
+                        "invoice_id": invoice["invoice_id"],
+                        "journal_entry_id": posted_invoice["journal_entry_id"],
+                        "cogs_journal_entry_id": posted_invoice["cogs_journal_entry_id"],
+                        "total": str(posted_invoice["total_amount"]),
+                        "cost": str(invoice["total_cost"]),
+                    }
+                    # Exercise a supplier expense bill through the real
+                    # purchasing posting engine and verify its AP journal.
+                    import purchases
+
+                    supplier_id = insert_and_get_id(
+                        connection,
+                        "INSERT INTO suppliers(code,name) VALUES(?,?)",
+                        ("PG-SMOKE-SUPPLIER", "مورد اختبار PostgreSQL"),
+                    )
+                    expense_account = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='expense' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 1""",
+                    ).fetchone()
+                    if not expense_account:
+                        raise AssertionError("PostgreSQL chart has no active detail expense account.")
+                    bill_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO supplier_bills(
+                               bill_no,supplier_id,bill_date,supplier_invoice_no,
+                               subtotal,total_amount,status,bill_kind,expense_account_id
+                           ) VALUES(?,?,?,?,?,?,'approved','expense',?)""",
+                        ("PG-SMOKE-BILL", supplier_id, today.isoformat(),
+                         "PG-SMOKE-SUPPLIER-INVOICE", "25.50", "25.50",
+                         expense_account["id"]),
+                    )
+                    purchase_journal_id = purchases.post_supplier_bill(
+                        connection, bill_id, admin_id
+                    )
+                    connection.commit()
+                    posted_bill = execute_compat(
+                        connection,
+                        "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?",
+                        (bill_id,),
+                    ).fetchone()
+                    purchase_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (purchase_journal_id,),
+                    ).fetchone()
+                    if (
+                        not posted_bill
+                        or posted_bill["status"] != "posted"
+                        or posted_bill["journal_entry_id"] != purchase_journal_id
+                        or Decimal(str(purchase_totals["debit"])) != Decimal("25.50")
+                        or Decimal(str(purchase_totals["credit"])) != Decimal("25.50")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL supplier bill did not post a balanced AP journal."
+                        )
+                    purchase_flow = {
+                        "bill_id": bill_id,
+                        "journal_entry_id": purchase_journal_id,
+                        "total": "25.50",
+                    }
+
+                    # Regression coverage for the two PostgreSQL report failures:
+                    # entry_date is stored as text in the generated baseline and
+                    # accounts.is_group is an integer flag, not a PostgreSQL boolean.
+                    from expense_analysis import build_expense_analysis
+                    from financial_planning import build_budget_monthly_comparison
+
+                    month_start = today.replace(day=1).isoformat()
+                    expense_report = build_expense_analysis(
+                        connection, month_start, today.isoformat()
+                    )
+                    if (
+                        not expense_report["detail_rows"]
+                        or expense_report["total"] < Decimal("25.50")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL expense analysis did not include the posted supplier bill."
+                        )
+
+                    budget_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO budget_plans(name,date_from,date_to,status)
+                           VALUES(?,?,?,'approved')""",
+                        ("PG-SMOKE-BUDGET", month_start, today.isoformat()),
+                    )
+                    period_key = today.strftime("%Y-%m")
+                    execute_compat(
+                        connection,
+                        """INSERT INTO budget_monthly_lines
+                           (budget_id,account_id,period,amount)
+                           VALUES(?,?,?,?)""",
+                        (budget_id, expense_account["id"], period_key, "100.00"),
+                    )
+                    connection.commit()
+                    _, monthly_budget_rows = build_budget_monthly_comparison(
+                        connection, budget_id
+                    )
+                    matching_budget = [
+                        row for row in monthly_budget_rows
+                        if row["account_id"] == expense_account["id"]
+                        and row["period"] == period_key
+                    ]
+                    if (
+                        not matching_budget
+                        or matching_budget[0]["actual"] < Decimal("25.50")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL monthly budget comparison did not read posted expense activity."
+                        )
+                    report_flow = {
+                        "expense_total": str(expense_report["total"]),
+                        "budget_actual": str(matching_budget[0]["actual"]),
+                    }
+
+                    # Exercise the real fixed-asset depreciation posting helper
+                    # on the same initialized PostgreSQL application schema.
+                    import fixed_assets
+
+                    asset_accounts = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='asset' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 2""",
+                    ).fetchall()
+                    if len(asset_accounts) < 2:
+                        raise AssertionError(
+                            "PostgreSQL chart has fewer than two active detail asset accounts."
+                        )
+                    asset_expense_account = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='expense' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 1""",
+                    ).fetchone()
+                    if not asset_expense_account:
+                        raise AssertionError(
+                            "PostgreSQL chart has no active detail expense account for depreciation."
+                        )
+                    asset_ready_date = today.replace(day=1).isoformat()
+                    asset_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO fixed_assets(
+                               asset_code,asset_name,category,purchase_date,ready_date,
+                               cost,residual_value,useful_life_months,depreciation_method,
+                               annual_rate,asset_account_id,accum_account_id,
+                               expense_account_id,status,created_by
+                           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?)""",
+                        (
+                            "PG-SMOKE-AST", "أصل اختبار PostgreSQL", "اختبار",
+                            asset_ready_date, asset_ready_date, "1200", "0", 12,
+                            "straight_line", "0", asset_accounts[0]["id"],
+                            asset_accounts[1]["id"], asset_expense_account["id"], admin_id,
+                        ),
+                    )
+                    asset = execute_compat(
+                        connection, "SELECT * FROM fixed_assets WHERE id=?", (asset_id,)
+                    ).fetchone()
+                    depreciation_amount, depreciation_journal_id = (
+                        fixed_assets._post_asset_depreciation(
+                            connection, asset, today.strftime("%Y-%m"), admin_id
+                        )
+                    )
+                    connection.commit()
+                    depreciation_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (depreciation_journal_id,),
+                    ).fetchone()
+                    depreciation_record = execute_compat(
+                        connection,
+                        "SELECT amount,journal_entry_id FROM asset_depreciations WHERE asset_id=? AND period=?",
+                        (asset_id, today.strftime("%Y-%m")),
+                    ).fetchone()
+                    if (
+                        Decimal(str(depreciation_amount)) != Decimal("100.00")
+                        or not depreciation_record
+                        or depreciation_record["journal_entry_id"] != depreciation_journal_id
+                        or Decimal(str(depreciation_totals["debit"])) != Decimal("100.00")
+                        or Decimal(str(depreciation_totals["credit"])) != Decimal("100.00")
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL fixed-asset depreciation did not create the expected "
+                            "asset schedule and balanced journal."
+                        )
+                    asset_flow = {
+                        "asset_id": asset_id,
+                        "journal_entry_id": depreciation_journal_id,
+                        "amount": str(depreciation_amount),
+                    }
+
+                    # Exercise the real bank statement matching helpers against the
+                    # full PostgreSQL application schema. The fixture uses a dedicated
+                    # asset account and a disposable journal entry.
+                    import banking
+                    from accounting_core import post_journal
+
+                    bank_account = execute_compat(
+                        connection,
+                        """SELECT a.id FROM accounts a
+                             WHERE a.account_type='asset' AND a.is_group=0 AND a.active=1
+                               AND NOT EXISTS (
+                                   SELECT 1 FROM cash_accounts ca WHERE ca.account_id=a.id
+                               )
+                             ORDER BY a.code LIMIT 1""",
+                    ).fetchone()
+                    if not bank_account:
+                        raise AssertionError("PostgreSQL chart has no unused asset account for bank reconciliation smoke.")
+                    base_currency_row = execute_compat(
+                        connection,
+                        "SELECT setting_value FROM company_settings WHERE setting_key='base_currency'",
+                    ).fetchone()
+                    base_currency = base_currency_row["setting_value"] if base_currency_row else "EGP"
+                    bank_account_id = int(bank_account["id"])
+                    insert_and_get_id(
+                        connection,
+                        """INSERT INTO cash_accounts(
+                               kind,name_ar,account_id,currency_code,bank_name,opening_date,created_by
+                           ) VALUES('bank',?,?,?,?,?,?)""",
+                        ("بنك اختبار PostgreSQL", bank_account_id, base_currency,
+                         "PG Smoke Bank", today.isoformat(), admin_id),
+                    )
+                    bank_journal_id = post_journal(
+                        connection, today.isoformat(), "PG-SMOKE-BANK-RECON",
+                        "اختبار مطابقة كشف بنك PostgreSQL",
+                        [
+                            (bank_account_id, Decimal("75.00"), Decimal("0"), "إيداع اختبار"),
+                            (int(expense_account["id"]), Decimal("0"), Decimal("75.00"), "مقابل إيداع اختبار"),
+                        ],
+                        admin_id,
+                    )
+                    bank_transaction_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO bank_transactions(
+                               transaction_no,transaction_date,bank_account_id,transaction_type,
+                               amount,counter_account_id,description,bank_reference,journal_entry_id,
+                               reconciled,created_by
+                           ) VALUES(?,?,?,'deposit',?,?,?,?,?,0,?)""",
+                        ("PG-SMOKE-BANK-TX", today.isoformat(), bank_account_id, "75.00",
+                         int(expense_account["id"]), "إيداع اختبار", "PG-SMOKE-REF",
+                         bank_journal_id, admin_id),
+                    )
+                    bank_journal_line = execute_compat(
+                        connection,
+                        """SELECT id FROM journal_lines
+                             WHERE entry_id=? AND account_id=? AND debit='75.00'
+                             ORDER BY id LIMIT 1""",
+                        (bank_journal_id, bank_account_id),
+                    ).fetchone()
+                    if not bank_journal_line:
+                        # PostgreSQL numeric columns may be returned in a normalized
+                        # representation; compare numerically instead of relying on text.
+                        bank_journal_line = execute_compat(
+                            connection,
+                            """SELECT id FROM journal_lines
+                                 WHERE entry_id=? AND account_id=? AND CAST(debit AS NUMERIC)=75
+                                 ORDER BY id LIMIT 1""",
+                            (bank_journal_id, bank_account_id),
+                        ).fetchone()
+                    if not bank_journal_line:
+                        raise AssertionError("Bank reconciliation smoke journal has no bank-side journal line.")
+                    bank_statement_line_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO bank_statement_lines(
+                               bank_account_id,statement_date,signed_amount,description,
+                               bank_reference,created_by
+                           ) VALUES(?,?,?,?,?,?)""",
+                        (bank_account_id, today.isoformat(), "75.00",
+                         "إيداع اختبار", "PG-SMOKE-REF", admin_id),
+                    )
+                    banking.save_statement_line_match(
+                        connection, bank_statement_line_id, bank_journal_line["id"],
+                        today.isoformat(), admin_id,
+                    )
+                    if not banking.refresh_bank_transaction_reconciled(connection, bank_journal_id):
+                        raise AssertionError("PostgreSQL bank reconciliation did not refresh the transaction.")
+                    reconciled_bank = execute_compat(
+                        connection, "SELECT reconciled FROM bank_transactions WHERE id=?",
+                        (bank_transaction_id,),
+                    ).fetchone()
+                    if not reconciled_bank or int(reconciled_bank["reconciled"]) != 1:
+                        raise AssertionError("A fully matched PostgreSQL bank transaction was not marked reconciled.")
+                    duplicate_match_rejected = False
+                    try:
+                        banking.save_statement_line_match(
+                            connection, bank_statement_line_id, bank_journal_line["id"],
+                            today.isoformat(), admin_id,
+                        )
+                    except ValueError:
+                        duplicate_match_rejected = True
+                    if not duplicate_match_rejected:
+                        raise AssertionError("PostgreSQL bank reconciliation allowed a duplicate statement match.")
+                    bank_flow = {
+                        "transaction_id": bank_transaction_id,
+                        "journal_entry_id": bank_journal_id,
+                        "statement_line_id": bank_statement_line_id,
+                    }
+
+                    # Exercise Egypt and Saudi VAT preparation against the same
+                    # full-app PostgreSQL schema. These tax values belong only to
+                    # this disposable smoke database; no production document is touched.
+                    import tax_center
+                    previous_tax_country = execute_compat(
+                        connection,
+                        "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'",
+                    ).fetchone()
+                    previous_tax_number = execute_compat(
+                        connection,
+                        "SELECT setting_value FROM company_settings WHERE setting_key='tax_number'",
+                    ).fetchone()
+                    execute_compat(
+                        connection,
+                        """INSERT INTO company_settings(setting_key,setting_value)
+                             VALUES('tax_country','EG')
+                             ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+                    )
+                    execute_compat(
+                        connection,
+                        """INSERT INTO company_settings(setting_key,setting_value)
+                             VALUES('tax_number','123456789')
+                             ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+                    )
+                    execute_compat(
+                        connection,
+                        """UPDATE sales_invoices
+                              SET subtotal='40.00',tax_rate='14',tax_amount='5.60',
+                                  total_amount='45.60',tax_reference='PG-SMOKE-SALE'
+                            WHERE id=?""",
+                        (invoice["invoice_id"],),
+                    )
+                    execute_compat(
+                        connection,
+                        """UPDATE supplier_bills
+                              SET subtotal='25.50',tax_rate='14',tax_amount='3.57',
+                                  total_amount='29.07',tax_reference='PG-SMOKE-PURCHASE',
+                                  input_vat_deductible_percent='50'
+                            WHERE id=?""",
+                        (bill_id,),
+                    )
+                    egypt_tax_snapshot = tax_center.build_tax_report_snapshot(
+                        connection, today.strftime("%Y-%m")
+                    )
+                    egypt_tax = egypt_tax_snapshot["summary"]
+                    if (
+                        egypt_tax_snapshot["tax_profile"]["country_code"] != "EG"
+                        or Decimal(str(egypt_tax_snapshot["tax_profile"]["standard_rate"])) != Decimal("14")
+                        or Decimal(str(egypt_tax["output_vat"])) != Decimal("5.60")
+                        or Decimal(str(egypt_tax["input_vat"])) != Decimal("1.79")
+                        or Decimal(str(egypt_tax["net_vat"])) != Decimal("3.81")
+                    ):
+                        raise AssertionError(
+                            "Egypt PostgreSQL VAT snapshot did not reconcile output/input VAT and deductible percentage."
+                        )
+                    execute_compat(
+                        connection,
+                        """UPDATE company_settings SET setting_value='SA'
+                             WHERE setting_key='tax_country'""",
+                    )
+                    saudi_tax_snapshot = tax_center.build_tax_report_snapshot(
+                        connection, today.strftime("%Y-%m")
+                    )
+                    saudi_preparation = saudi_tax_snapshot.get("saudi_preparation")
+                    if (
+                        saudi_tax_snapshot["tax_profile"]["country_code"] != "SA"
+                        or Decimal(str(saudi_tax_snapshot["tax_profile"]["standard_rate"])) != Decimal("15")
+                        or saudi_preparation is None
+                        or saudi_preparation.get("zakat_or_income_tax") is not None
+                    ):
+                        raise AssertionError(
+                            "Saudi PostgreSQL tax workpaper did not expose the 15% VAT profile and accounting-only preparation."
+                        )
+                    if previous_tax_country:
+                        execute_compat(
+                            connection,
+                            "UPDATE company_settings SET setting_value=? WHERE setting_key='tax_country'",
+                            (previous_tax_country["setting_value"],),
+                        )
+                    if previous_tax_number:
+                        execute_compat(
+                            connection,
+                            "UPDATE company_settings SET setting_value=? WHERE setting_key='tax_number'",
+                            (previous_tax_number["setting_value"],),
+                        )
+                    tax_flow = {
+                        "egypt_output_vat": str(egypt_tax["output_vat"]),
+                        "egypt_deductible_input_vat": str(egypt_tax["input_vat"]),
+                        "saudi_standard_rate": str(saudi_tax_snapshot["tax_profile"]["standard_rate"]),
+                    }
+
+                    # Run a complete maker-checker payroll lifecycle through the real
+                    # Flask routes. All records remain inside this disposable PostgreSQL
+                    # schema and use manual statutory inputs (zero deductions).
+                    liability_account = execute_compat(
+                        connection,
+                        """SELECT id FROM accounts
+                             WHERE account_type='liability' AND is_group=0 AND active=1
+                             ORDER BY code LIMIT 1""",
+                    ).fetchone()
+                    if not liability_account:
+                        raise AssertionError("PostgreSQL chart has no active detail liability account for payroll.")
+                    liability_account_id = int(liability_account["id"])
+                    approver_row = execute_compat(
+                        connection,
+                        """INSERT INTO users(
+                               username,full_name,password_hash,role,created_at,must_change_password
+                           )
+                           SELECT 'pg-smoke-approver','مستخدم اعتماد اختبار',password_hash,
+                                  'admin',CURRENT_TIMESTAMP,0
+                             FROM users WHERE id=?
+                           RETURNING id""",
+                        (admin_id,),
+                    ).fetchone()
+                    if not approver_row:
+                        raise AssertionError("Could not create the isolated PostgreSQL payroll approver.")
+                    approver_id = int(approver_row["id"])
+                    employee_id = insert_and_get_id(
+                        connection,
+                        """INSERT INTO employees(
+                               employee_code,full_name,hire_date,basic_salary,insured_wage,
+                               active,work_status
+                           ) VALUES(?,?,?,?,?,1,'permanent')""",
+                        ("PG-SMOKE-EMP", "موظف اختبار المرتبات PostgreSQL",
+                         today.isoformat(), "1200.00", "1200.00"),
+                    )
+                    connection.commit()
+
+                    client = nexus_app.app.test_client()
+                    def set_session_user(user_id):
+                        with client.session_transaction() as session_data:
+                            # Change only the authenticated identity. Flask-WTF's
+                            # session-bound CSRF secret must survive role switches,
+                            # exactly as it does when a browser logs in/out without
+                            # discarding the whole cookie session.
+                            csrf_secret = session_data.get("csrf_token")
+                            session_data.clear()
+                            if csrf_secret:
+                                session_data["csrf_token"] = csrf_secret
+                            session_data["user_id"] = int(user_id)
+                            session_data["role"] = "admin"
+                            # The app's restore-revocation guard rejects
+                            # sessions without the current epoch outside TESTING.
+                            session_data["session_epoch"] = nexus_app.current_session_epoch(
+                                nexus_app.SESSION_EPOCH_PATH
+                            )
+
+                    def post_with_csrf(path, *, data, follow_redirects=False):
+                        # Exercise the same session-bound CSRF flow as a real browser:
+                        # fetch a rendered form, then submit its injected token.
+                        csrf_page = client.get("/hr/payroll")
+                        if csrf_page.status_code != 200:
+                            raise AssertionError(
+                                "Could not load payroll form before PostgreSQL smoke POST: "
+                                f"HTTP {csrf_page.status_code}."
+                            )
+                        csrf_match = re.search(
+                            r'<input type="hidden" name="csrf_token" value="([^"]+)"',
+                            csrf_page.get_data(as_text=True),
+                        )
+                        if not csrf_match:
+                            raise AssertionError(
+                                "Payroll page did not render the CSRF token required for POST."
+                            )
+                        # Rendering the form creates Flask-WTF's session secret and
+                        # signed token. Submit that exact token; do not call
+                        # generate_csrf() outside a request context, which would bind
+                        # it to a different context/session than the test client's cookie.
+                        with client.session_transaction() as session_data:
+                            if not session_data.get("csrf_token"):
+                                raise AssertionError(
+                                    "Rendered payroll CSRF token has no persisted session secret."
+                                )
+                        payload = dict(data)
+                        payload["csrf_token"] = csrf_match.group(1)
+                        return client.post(
+                            path, data=payload, follow_redirects=follow_redirects
+                        )
+
+                    payroll_period = today.strftime("%Y-%m")
+                    set_session_user(admin_id)
+                    create_response = post_with_csrf(
+                        "/hr/payroll",
+                        data={"period": payroll_period},
+                        follow_redirects=False,
+                    )
+                    payroll_run = execute_compat(
+                        connection,
+                        "SELECT id,status,created_by,approval_status FROM payroll_runs WHERE period=?",
+                        (payroll_period,),
+                    ).fetchone()
+                    with client.session_transaction() as session_data:
+                        payroll_flashes = list(session_data.get("_flashes", []))
+                    payroll_observed = {
+                        "http_status": create_response.status_code,
+                        "location": create_response.headers.get("Location"),
+                        "run": dict(payroll_run) if payroll_run else None,
+                        "flashes": payroll_flashes,
+                    }
+                    if (
+                        create_response.status_code not in (302, 303)
+                        or not payroll_run
+                        or payroll_run["status"] != "draft"
+                        or int(payroll_run["created_by"]) != int(admin_id)
+                        or payroll_run["approval_status"] != "pending"
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL payroll draft creation did not preserve "
+                            f"maker/pending approval state. Observed={payroll_observed!r}"
+                        )
+                    payroll_run_id = int(payroll_run["id"])
+                    payroll_line = execute_compat(
+                        connection,
+                        "SELECT id,net_pay,gross_pay FROM payroll_lines WHERE run_id=? AND employee_id=?",
+                        (payroll_run_id, employee_id),
+                    ).fetchone()
+                    if (
+                        not payroll_line
+                        or Decimal(str(payroll_line["gross_pay"])) != Decimal("1200.00")
+                        or Decimal(str(payroll_line["net_pay"])) != Decimal("1200.00")
+                    ):
+                        raise AssertionError("PostgreSQL payroll draft did not calculate the expected manual-input net pay.")
+
+                    payroll_accounts = {
+                        "salary_expense_account": int(expense_account["id"]),
+                        "employer_ins_expense_account": int(expense_account["id"]),
+                        "salaries_payable_account": liability_account_id,
+                        "tax_payable_account": liability_account_id,
+                        "insurance_payable_account": liability_account_id,
+                        "other_deductions_account": liability_account_id,
+                        "advances_account": liability_account_id,
+                    }
+                    set_session_user(admin_id)
+                    creator_post_response = post_with_csrf(
+                        f"/hr/payroll/{payroll_run_id}/post",
+                        data=payroll_accounts,
+                        follow_redirects=False,
+                    )
+                    with client.session_transaction() as session_data:
+                        creator_post_flashes = list(session_data.get("_flashes", []))
+                    creator_post_state = execute_compat(
+                        connection, "SELECT status,journal_entry_id FROM payroll_runs WHERE id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        creator_post_response.status_code not in (302, 303)
+                        or not creator_post_state
+                        or creator_post_state["status"] != "draft"
+                        or creator_post_state["journal_entry_id"] is not None
+                        or not any("لا يجوز" in str(message) for _, message in creator_post_flashes)
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL payroll did not reject creator self-approval. "
+                            f"Observed={{'http_status': creator_post_response.status_code, "
+                            f"'run': dict(creator_post_state) if creator_post_state else None, "
+                            f"'flashes': creator_post_flashes!r}}"
+                        )
+
+                    set_session_user(approver_id)
+                    approve_response = post_with_csrf(
+                        f"/hr/payroll/{payroll_run_id}/post",
+                        data=payroll_accounts,
+                        follow_redirects=False,
+                    )
+                    with client.session_transaction() as session_data:
+                        approval_flashes = list(session_data.get("_flashes", []))
+                    posted_payroll = execute_compat(
+                        connection,
+                        "SELECT status,journal_entry_id,approved_by,approval_status FROM payroll_runs WHERE id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    payroll_approval_observed = {
+                        "http_status": approve_response.status_code,
+                        "location": approve_response.headers.get("Location"),
+                        "response_body": approve_response.get_data(as_text=True)[:3000],
+                        "run": dict(posted_payroll) if posted_payroll else None,
+                        "flashes": approval_flashes,
+                    }
+                    if (
+                        approve_response.status_code not in (302, 303)
+                        or not posted_payroll
+                        or posted_payroll["status"] != "posted"
+                        or int(posted_payroll["approved_by"]) != approver_id
+                        or not posted_payroll["journal_entry_id"]
+                    ):
+                        raise AssertionError(
+                            "PostgreSQL payroll maker-checker approval did not post under "
+                            f"the separate approver. Observed={payroll_approval_observed!r}"
+                        )
+                    payroll_journal_id = int(posted_payroll["journal_entry_id"])
+                    payroll_journal_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (payroll_journal_id,),
+                    ).fetchone()
+                    if (
+                        Decimal(str(payroll_journal_totals["debit"])) != Decimal("1200.00")
+                        or Decimal(str(payroll_journal_totals["credit"])) != Decimal("1200.00")
+                    ):
+                        raise AssertionError("PostgreSQL payroll journal is not balanced at the expected 1200.00.")
+
+                    # Duplicate posting must leave the original journal untouched.
+                    duplicate_post_response = post_with_csrf(
+                        f"/hr/payroll/{payroll_run_id}/post",
+                        data=payroll_accounts,
+                        follow_redirects=False,
+                    )
+                    duplicate_post_state = execute_compat(
+                        connection, "SELECT status,journal_entry_id FROM payroll_runs WHERE id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        duplicate_post_response.status_code not in (302, 303)
+                        or duplicate_post_state["status"] != "posted"
+                        or int(duplicate_post_state["journal_entry_id"]) != payroll_journal_id
+                        or execute_compat(
+                            connection, "SELECT COUNT(*) AS n FROM journal_entries WHERE reference LIKE ?",
+                            ("PAYROLL-" + payroll_period + "-RUN-" + str(payroll_run_id),),
+                        ).fetchone()["n"] != 1
+                    ):
+                        raise AssertionError("PostgreSQL payroll duplicate posting created or changed a journal.")
+
+                    net_payable = Decimal(str(payroll_line["net_pay"]))
+                    set_session_user(approver_id)
+                    post_with_csrf(
+                        f"/hr/payroll/{payroll_run_id}/payment",
+                        data={"amount": str(net_payable), "payment_date": today.isoformat(),
+                              "cash_account_id": str(bank_account_id)},
+                        follow_redirects=False,
+                    )
+                    if execute_compat(
+                        connection, "SELECT COUNT(*) AS n FROM payroll_payments WHERE run_id=?",
+                        (payroll_run_id,),
+                    ).fetchone()["n"] != 0:
+                        raise AssertionError("PostgreSQL payroll allowed the approver to pay the same payroll run.")
+
+                    set_session_user(admin_id)
+                    payment_response = post_with_csrf(
+                        f"/hr/payroll/{payroll_run_id}/payment",
+                        data={"amount": str(net_payable), "payment_date": today.isoformat(),
+                              "cash_account_id": str(bank_account_id)},
+                        follow_redirects=False,
+                    )
+                    payment_row = execute_compat(
+                        connection,
+                        "SELECT amount,journal_entry_id FROM payroll_payments WHERE run_id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        payment_response.status_code not in (302, 303)
+                        or not payment_row
+                        or Decimal(str(payment_row["amount"])) != net_payable
+                    ):
+                        raise AssertionError("PostgreSQL payroll payment by the original creator did not complete.")
+                    payment_journal_totals = execute_compat(
+                        connection,
+                        """SELECT SUM(CAST(debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                             FROM journal_lines WHERE entry_id=?""",
+                        (payment_row["journal_entry_id"],),
+                    ).fetchone()
+                    if (
+                        Decimal(str(payment_journal_totals["debit"])) != net_payable
+                        or Decimal(str(payment_journal_totals["credit"])) != net_payable
+                    ):
+                        raise AssertionError("PostgreSQL payroll payment journal is not balanced.")
+                    post_with_csrf(
+                        f"/hr/payroll/{payroll_run_id}/payment",
+                        data={"amount": "0.01", "payment_date": today.isoformat(),
+                              "cash_account_id": str(bank_account_id)},
+                        follow_redirects=False,
+                    )
+                    final_payment_state = execute_compat(
+                        connection,
+                        "SELECT COUNT(*) AS n,COALESCE(SUM(CAST(amount AS NUMERIC)),0) AS total FROM payroll_payments WHERE run_id=?",
+                        (payroll_run_id,),
+                    ).fetchone()
+                    if (
+                        final_payment_state["n"] != 1
+                        or Decimal(str(final_payment_state["total"])) != net_payable
+                    ):
+                        raise AssertionError("PostgreSQL payroll accepted an overpayment or duplicated a payment.")
+                    connection.commit()
+                    payroll_flow = {
+                        "run_id": payroll_run_id,
+                        "journal_entry_id": payroll_journal_id,
+                        "payment_journal_id": int(payment_row["journal_entry_id"]),
+                        "net_payable": str(net_payable),
+                    }
+
+                    # Exercise 30 real PostgreSQL connections at once: 15 independent
+                    # journal writers and 15 report readers. This is a database-client
+                    # concurrency acceptance test, not an HTTP-session simulation.
+                    from db_compat import begin_write_transaction
+                    start_barrier = threading.Barrier(30)
+                    write_latencies = []
+                    read_latencies = []
+
+                    def pg_writer(writer_number):
+                        with nexus_app.app.app_context():
+                            # Synchronize logical clients before borrowing from the
+                            # bounded pool. Waiting at the barrier while holding a
+                            # lease can deadlock whenever workers exceed pool max_size.
+                            start_barrier.wait(timeout=30)
+                            worker_connection = nexus_app.db()
+                            try:
+                                durations = []
+                                for sequence in range(10):
+                                    started = time.perf_counter()
+                                    begin_write_transaction(worker_connection)
+                                    try:
+                                        post_journal(
+                                            worker_connection,
+                                            today.isoformat(),
+                                            f"PG-CONC-{writer_number:02d}-{sequence:03d}",
+                                            "اختبار تزامن PostgreSQL",
+                                            [
+                                                (int(expense_account["id"]), Decimal("1.00"), Decimal("0"), "مدين اختبار التزامن"),
+                                                (liability_account_id, Decimal("0"), Decimal("1.00"), "دائن اختبار التزامن"),
+                                            ],
+                                            admin_id,
+                                        )
+                                        worker_connection.commit()
+                                    except Exception:
+                                        worker_connection.rollback()
+                                        raise
+                                    durations.append(time.perf_counter() - started)
+                                write_latencies.extend(durations)
+                                return len(durations)
+                            finally:
+                                worker_connection.close()
+
+                    def pg_reader(reader_number):
+                        with nexus_app.app.app_context():
+                            start_barrier.wait(timeout=30)
+                            worker_connection = nexus_app.db()
+                            try:
+                                durations = []
+                                for _ in range(30):
+                                    started = time.perf_counter()
+                                    totals = execute_compat(
+                                        worker_connection,
+                                        """SELECT COUNT(*) AS entries,
+                                                  COALESCE(SUM((SELECT COUNT(*) FROM journal_lines jl
+                                                      WHERE jl.entry_id=je.id)),0) AS lines
+                                             FROM journal_entries je""",
+                                    ).fetchone()
+                                    account_totals = execute_compat(
+                                        worker_connection,
+                                        """SELECT account_id,
+                                                  SUM(CAST(debit AS NUMERIC)) AS debit,
+                                                  SUM(CAST(credit AS NUMERIC)) AS credit
+                                             FROM journal_lines
+                                            WHERE account_id IN (?,?)
+                                            GROUP BY account_id""",
+                                        (int(expense_account["id"]), liability_account_id),
+                                    ).fetchall()
+                                    if totals["entries"] < 1 or totals["lines"] < 2 or not account_totals:
+                                        raise AssertionError(f"PostgreSQL report reader {reader_number} observed incomplete ledger data.")
+                                    worker_connection.commit()
+                                    durations.append(time.perf_counter() - started)
+                                read_latencies.extend(durations)
+                                return len(durations)
+                            finally:
+                                worker_connection.close()
+
+                    started = time.perf_counter()
+                    with ThreadPoolExecutor(max_workers=30) as pool:
+                        futures = [
+                            pool.submit(pg_writer, number) for number in range(1, 16)
+                        ] + [
+                            pool.submit(pg_reader, number) for number in range(1, 16)
+                        ]
+                        completed_counts = [future.result(timeout=180) for future in futures]
+                    concurrency_elapsed = time.perf_counter() - started
+                    expected_concurrency_entries = 150
+                    concurrency_state = execute_compat(
+                        connection,
+                        """SELECT COUNT(DISTINCT je.id) AS entries,
+                                  COUNT(jl.id) AS lines,
+                                  SUM(CAST(jl.debit AS NUMERIC)) AS debit,
+                                  SUM(CAST(jl.credit AS NUMERIC)) AS credit
+                             FROM journal_entries je
+                             JOIN journal_lines jl ON jl.entry_id=je.id
+                            WHERE LEFT(je.reference, 8) = 'PG-CONC-'""",
+                    ).fetchone()
+                    if (
+                        sum(completed_counts) != 600
+                        or len(write_latencies) != 150
+                        or len(read_latencies) != 450
+                        or int(concurrency_state["entries"]) != expected_concurrency_entries
+                        or int(concurrency_state["lines"]) != expected_concurrency_entries * 2
+                        or Decimal(str(concurrency_state["debit"])) != Decimal("150.00")
+                        or Decimal(str(concurrency_state["credit"])) != Decimal("150.00")
+                    ):
+                        raise AssertionError("PostgreSQL 30-client concurrency workload lost, duplicated, or unbalanced ledger activity.")
+                    write_p95 = sorted(write_latencies)[int(len(write_latencies) * 0.95) - 1]
+                    read_p95 = sorted(read_latencies)[int(len(read_latencies) * 0.95) - 1]
+                    concurrency_flow = {
+                        "entries": expected_concurrency_entries,
+                        "read_queries": len(read_latencies),
+                        "elapsed_seconds": round(concurrency_elapsed, 3),
+                        "write_p95_seconds": round(write_p95, 4),
+                        "read_p95_seconds": round(read_p95, 4),
+                    }
+
+                    # Two simultaneous payments against one commitment must
+                    # serialize on the commitment row. Only one 60.00 payment
+                    # may succeed against a 100.00 obligation.
+                    payable_row = connection.execute(
+                        """SELECT id FROM accounts
+                           WHERE account_type='liability' AND is_group=0 AND active=1
+                           ORDER BY code LIMIT 1"""
+                    ).fetchone()
+                    cash_row = connection.execute(
+                        """SELECT id FROM accounts
+                           WHERE account_type='asset' AND is_group=0 AND active=1
+                             AND code LIKE '11%'
+                           ORDER BY code LIMIT 1"""
+                    ).fetchone()
+                    if not payable_row or not cash_row:
+                        raise AssertionError("PostgreSQL concurrency smoke could not find payable and cash accounts.")
+                    commitment_id = nexus_app.create_cash_commitment(
+                        connection, "tax", "PG concurrent payment probe", "100.00",
+                        today.isoformat(), payable_account_id=payable_row["id"],
+                    )
+                    payment_journals = []
+                    for suffix in ("A", "B"):
+                        journal_id = nexus_app.post_journal(
+                            connection, today.isoformat(), f"PG-COMMIT-{suffix}",
+                            "PostgreSQL concurrent commitment payment probe",
+                            [
+                                (payable_row["id"], "60.00", "0", "سداد التزام"),
+                                (cash_row["id"], "0", "60.00", "نقدية"),
+                            ],
+                            created_by=1,
+                        )
+                        connection.commit()
+                        payment_journals.append(journal_id)
+                    connection.commit()
+                    payment_barrier = threading.Barrier(2)
+
+                    def attempt_commitment_payment(journal_id):
+                        with nexus_app.app.app_context():
+                            payment_connection = nexus_app.db()
+                            try:
+                                payment_barrier.wait(timeout=20)
+                                payment_id = nexus_app.record_cash_commitment_payment(
+                                    payment_connection, commitment_id, today.isoformat(),
+                                    "60.00", journal_id, reference="PG-RACE-" + str(journal_id),
+                                )
+                                return ("posted", payment_id)
+                            except ValueError as exc:
+                                return ("rejected", str(exc))
+                            finally:
+                                payment_connection.close()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        payment_outcomes = list(executor.map(
+                            attempt_commitment_payment, payment_journals
+                        ))
+                    payment_summary = nexus_app.cash_commitment_payment_summary(
+                        connection, commitment_id
+                    )
+                    posted_count = sum(1 for outcome in payment_outcomes if outcome[0] == "posted")
+                    rejected_count = sum(1 for outcome in payment_outcomes if outcome[0] == "rejected")
+                    if (
+                        posted_count != 1 or rejected_count != 1
+                        or payment_summary["paid_total"] != Decimal("60.00")
+                        or len(payment_summary["payments"]) != 1
+                    ):
+                        raise AssertionError(
+                            "Concurrent PostgreSQL commitment payments were not serialized safely: "
+                            f"{payment_outcomes!r}"
+                        )
+                    commitment_concurrency_flow = {
+                        "posted": posted_count,
+                        "rejected": rejected_count,
+                        "paid_total": str(payment_summary["paid_total"]),
+                    }
+
+                    # Race two refunds against one customer-advance receipt.
+                    # Both connections must serialize on the receipt row; only
+                    # one 60.00 refund may consume a 100.00 available balance.
+                    from activity_profiles import active_account_role_ids
+                    cash_role_ids = sorted(active_account_role_ids(connection).get("cash", set()))
+                    if not cash_role_ids:
+                        raise AssertionError("PostgreSQL smoke has no mapped cash account for customer advances.")
+                    advance_cash_account_id = int(cash_role_ids[0])
+                    refund_race_receipt = sales.post_customer_advance_receipt(
+                        connection, customer_id, today.isoformat(), "100.00",
+                        advance_cash_account_id, admin_id, "PG-ADV-REFUND-RACE",
+                    )
+                    connection.commit()
+                    refund_barrier = threading.Barrier(2)
+
+                    def attempt_customer_advance_refund(suffix):
+                        with nexus_app.app.app_context():
+                            refund_connection = nexus_app.db()
+                            try:
+                                refund_barrier.wait(timeout=20)
+                                refund = sales.post_customer_advance_refund(
+                                    refund_connection,
+                                    refund_race_receipt["advance_receipt_id"],
+                                    today.isoformat(), "60.00", advance_cash_account_id,
+                                    admin_id, "PG-ADV-REFUND-RACE-" + suffix,
+                                )
+                                refund_connection.commit()
+                                return ("posted", refund["refund_no"])
+                            except ValueError as exc:
+                                refund_connection.rollback()
+                                return ("rejected", str(exc))
+                            finally:
+                                refund_connection.close()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        refund_outcomes = list(executor.map(
+                            attempt_customer_advance_refund, ("A", "B")
+                        ))
+                    connection.commit()
+                    refund_posted = sum(1 for outcome in refund_outcomes if outcome[0] == "posted")
+                    refund_rejected = sum(1 for outcome in refund_outcomes if outcome[0] == "rejected")
+                    refund_count = execute_compat(
+                        connection,
+                        "SELECT COUNT(*) AS n FROM customer_advance_refunds WHERE advance_receipt_id=?",
+                        (refund_race_receipt["advance_receipt_id"],),
+                    ).fetchone()["n"]
+                    refund_remaining = sales._customer_advance_available(
+                        connection, refund_race_receipt["advance_receipt_id"]
+                    )
+                    connection.commit()
+                    if (
+                        refund_posted != 1 or refund_rejected != 1
+                        or int(refund_count) != 1 or refund_remaining != Decimal("40.00")
+                    ):
+                        raise AssertionError(
+                            "Concurrent PostgreSQL customer-advance refunds were not serialized safely: "
+                            f"{refund_outcomes!r}, remaining={refund_remaining}, rows={refund_count}"
+                        )
+
+                    # Allocate a separate advance to the posted invoice, then race
+                    # two reversals of that same allocation. Exactly one reversal
+                    # may be recorded and the invoice paid balance must return to zero.
+                    allocation_race_receipt = sales.post_customer_advance_receipt(
+                        connection, customer_id, today.isoformat(), "40.00",
+                        advance_cash_account_id, admin_id, "PG-ADV-ALLOC-RACE",
+                    )
+                    connection.commit()
+                    allocation_race = sales.allocate_customer_advance(
+                        connection, allocation_race_receipt["advance_receipt_id"],
+                        [(invoice["invoice_id"], "40.00")], today.isoformat(), admin_id,
+                    )
+                    connection.commit()
+                    reversal_barrier = threading.Barrier(2)
+
+                    def attempt_customer_advance_reversal(_suffix):
+                        with nexus_app.app.app_context():
+                            reversal_connection = nexus_app.db()
+                            try:
+                                reversal_barrier.wait(timeout=20)
+                                reversal = sales.reverse_customer_advance_transaction(
+                                    reversal_connection, "allocation",
+                                    allocation_race["journal_entry_id"], today.isoformat(),
+                                    "اختبار تزامن عكس تخصيص مقدم العميل", admin_id,
+                                )
+                                reversal_connection.commit()
+                                return ("reversed", reversal["reversal_id"])
+                            except ValueError as exc:
+                                reversal_connection.rollback()
+                                return ("rejected", str(exc))
+                            finally:
+                                reversal_connection.close()
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        reversal_outcomes = list(executor.map(
+                            attempt_customer_advance_reversal, ("A", "B")
+                        ))
+                    connection.commit()
+                    reversal_successes = sum(1 for outcome in reversal_outcomes if outcome[0] == "reversed")
+                    reversal_rejections = sum(1 for outcome in reversal_outcomes if outcome[0] == "rejected")
+                    reversal_count = execute_compat(
+                        connection,
+                        """SELECT COUNT(*) AS n FROM customer_advance_reversals
+                           WHERE source_type='allocation' AND source_id=?""",
+                        (allocation_race["journal_entry_id"],),
+                    ).fetchone()["n"]
+                    invoice_paid_after_race = Decimal(str(execute_compat(
+                        connection, "SELECT paid_amount FROM sales_invoices WHERE id=?",
+                        (invoice["invoice_id"],),
+                    ).fetchone()["paid_amount"] or "0"))
+                    connection.commit()
+                    if (
+                        reversal_successes != 1 or reversal_rejections != 1
+                        or int(reversal_count) != 1
+                        or invoice_paid_after_race != Decimal("0.00")
+                    ):
+                        raise AssertionError(
+                            "Concurrent PostgreSQL customer-advance allocation reversals were not serialized safely: "
+                            f"{reversal_outcomes!r}, invoice_paid={invoice_paid_after_race}, rows={reversal_count}"
+                        )
+                    advance_concurrency_flow = {
+                        "refund_posted": refund_posted,
+                        "refund_rejected": refund_rejected,
+                        "allocation_reversal_posted": reversal_successes,
+                        "allocation_reversal_rejected": reversal_rejections,
+                    }
+                finally:
+                    connection.close()
+
+            # Re-running the documented installer against the same baseline
+            # must be idempotent and must preserve transactions already entered.
+            repeat_install_result = fresh_install_main([
+                "--ddl", str(args.baseline),
+                "--dsn", dsn,
+                "--schema", schema,
+                "--data-dir", str(Path(data_dir) / "data"),
+                "--backup-dir", str(backup_dir),
+            ])
+            if repeat_install_result != 0:
+                raise AssertionError(
+                    f"Repeated PostgreSQL bootstrap returned {repeat_install_result}."
+                )
+            with nexus_app.app.app_context():
+                verification_connection = nexus_app.db()
+                try:
+                    invoice_after_repeat = execute_compat(
+                        verification_connection,
+                        "SELECT journal_entry_id,cogs_journal_entry_id FROM sales_invoices WHERE id=?",
+                        (sales_flow["invoice_id"],),
+                    ).fetchone()
+                    bill_after_repeat = execute_compat(
+                        verification_connection,
+                        "SELECT status,journal_entry_id FROM supplier_bills WHERE id=?",
+                        (purchase_flow["bill_id"],),
+                    ).fetchone()
+                    asset_after_repeat = execute_compat(
+                        verification_connection,
+                        """SELECT d.amount,d.journal_entry_id,a.status
+                             FROM asset_depreciations d
+                             JOIN fixed_assets a ON a.id=d.asset_id
+                            WHERE d.asset_id=? AND d.period=?""",
+                        (asset_flow["asset_id"], today.strftime("%Y-%m")),
+                    ).fetchone()
+                    if (
+                        not invoice_after_repeat
+                        or not invoice_after_repeat["journal_entry_id"]
+                        or not invoice_after_repeat["cogs_journal_entry_id"]
+                        or not bill_after_repeat
+                        or bill_after_repeat["status"] != "posted"
+                        or bill_after_repeat["journal_entry_id"] != purchase_flow["journal_entry_id"]
+                        or not asset_after_repeat
+                        or asset_after_repeat["status"] != "active"
+                        or asset_after_repeat["journal_entry_id"] != asset_flow["journal_entry_id"]
+                        or Decimal(str(asset_after_repeat["amount"])) != Decimal("100.00")
+                    ):
+                        raise AssertionError(
+                            "Repeated PostgreSQL bootstrap changed or lost posted "
+                            "sales, purchase, or fixed-asset records."
+                        )
+                    verification_connection.commit()
+                finally:
+                    verification_connection.close()
+
+            response = nexus_app.app.test_client().get("/login")
+            if response.status_code != 200:
+                raise AssertionError(
+                    f"Flask login page failed after PostgreSQL initialization: "
+                    f"HTTP {response.status_code}"
+                )
+
+            # Run the data-reset function in a separate disposable schema.
+            # A PostgreSQL connection would fail immediately if the SQLite
+            # PRAGMA branch leaked into this code path.
+            from psycopg.rows import dict_row
+            from data_reset import clear_company_data
+            reset_schema = schema + "_reset_probe"
+            with psycopg.connect(dsn, autocommit=True) as reset_admin:
+                reset_admin.execute(f'CREATE SCHEMA "{reset_schema}"')
+            with psycopg.connect(dsn, row_factory=dict_row) as reset_connection:
+                reset_connection.execute(f'SET search_path TO "{reset_schema}"')
+                reset_connection.execute("""
+                    CREATE TABLE users(
+                        id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        username TEXT NOT NULL
+                    );
+                    CREATE TABLE customers(
+                        id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        name TEXT NOT NULL
+                    );
+                    CREATE TABLE nexus_schema_installation(
+                        id INTEGER PRIMARY KEY, baseline_sha256 TEXT NOT NULL
+                    );
+                    CREATE TABLE schema_migrations(
+                        version BIGINT PRIMARY KEY, name TEXT NOT NULL,
+                        checksum CHAR(64) NOT NULL
+                    );
+                    INSERT INTO users(username) VALUES('preserved-admin');
+                    INSERT INTO customers(name) VALUES('reset-customer');
+                    INSERT INTO nexus_schema_installation VALUES(1, repeat('a',64));
+                    INSERT INTO schema_migrations VALUES(1,'0001_probe.sql',repeat('b',64));
+                """)
+                reset_connection.commit()
+                reset_result = clear_company_data(reset_connection)
+                preserved_users = reset_connection.execute(
+                    "SELECT COUNT(*) AS n FROM users"
+                ).fetchone()["n"]
+                remaining_customers = reset_connection.execute(
+                    "SELECT COUNT(*) AS n FROM customers"
+                ).fetchone()["n"]
+                install_marker = reset_connection.execute(
+                    "SELECT COUNT(*) AS n FROM nexus_schema_installation"
+                ).fetchone()["n"]
+                migration_rows = reset_connection.execute(
+                    "SELECT COUNT(*) AS n FROM schema_migrations"
+                ).fetchone()["n"]
+                if (
+                    reset_result["deleted_tables"] != 1
+                    or reset_result["deleted_rows"] != 1
+                    or preserved_users != 1
+                    or remaining_customers != 0
+                    or install_marker != 1
+                    or migration_rows != 1
+                ):
+                    raise AssertionError(
+                        "PostgreSQL data reset did not preserve system users and clear operational data."
+                    )
+
+            print(
+                "POSTGRES_FULL_APP_INITIALIZATION=PASS "
+                f"schema={schema} users={user_count} accounts={account_count} "
+                f"company_settings={settings_count} login_http={response.status_code} "
+                f"sales_invoice={sales_flow['invoice_id']} sales_total={sales_flow['total']} "
+                f"sales_cost={sales_flow['cost']} "
+                f"supplier_bill={purchase_flow['bill_id']} "
+                f"supplier_bill_total={purchase_flow['total']} "
+                f"expense_report_total={report_flow['expense_total']} "
+                f"budget_actual={report_flow['budget_actual']} "
+                f"asset_depreciation={asset_flow['amount']} "
+                f"asset_journal={asset_flow['journal_entry_id']} "
+                f"commitment_payment_race={commitment_concurrency_flow['posted']}/"
+                f"{commitment_concurrency_flow['rejected']} "
+                f"advance_refund_race={advance_concurrency_flow['refund_posted']}/"
+                f"{advance_concurrency_flow['refund_rejected']} "
+                f"advance_allocation_reversal_race={advance_concurrency_flow['allocation_reversal_posted']}/"
+                f"{advance_concurrency_flow['allocation_reversal_rejected']}"
+            )
+            return 0
+        finally:
+            # All application connections are request/app-context scoped and
+            # must be closed before removing this isolated test schema.
+            with psycopg.connect(dsn, autocommit=True) as connection:
+                connection.execute(f'DROP SCHEMA IF EXISTS "{schema}_reset_probe" CASCADE')
+                connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

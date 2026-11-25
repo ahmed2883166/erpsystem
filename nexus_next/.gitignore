@@ -1,0 +1,20 @@
+.env
+.env.*
+*.bak
+release/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+coverage/
+backups/
+
+.secrets/
+*.nexusenc
+
+# Local vendor-only Owner Toolkit authentication and diagnostics
+Admrail-Owner-Toolkit/.owner-auth.json
+Admrail-Owner-Toolkit/logs/

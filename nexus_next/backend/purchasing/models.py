@@ -1,0 +1,857 @@
+"""نماذج دورة المشتريات من أوامر الشراء والاستلام إلى فواتير الموردين والمدفوعات."""
+
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db import models
+
+from accounting.models import ChartOfAccount, JournalEntry, TaxCode
+from core.money import round_currency_amount
+from companies.models import Branch, Company, Currency, ExchangeRate
+from inventory.models import StockMovement, StockMovementLine, Warehouse
+from suppliers.models import Supplier
+
+
+class PurchaseReceipt(models.Model):
+    """يمثل مستند استلام مشتريات المرتبط بحركة المخزون."""
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_receipts")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_receipts")
+    purchase_order = models.ForeignKey("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="receipts")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="purchase_receipts")
+    stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="purchase_receipt")
+    journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_receipt")
+    receipt_number = models.CharField(max_length=40)
+    receipt_date = models.DateField()
+    supplier_delivery_ref = models.CharField(max_length=100, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_receipts")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-receipt_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "receipt_number"), name="uq_purchase_receipt_company_no"),
+        ]
+        indexes = [models.Index(fields=("company", "receipt_date"), name="pur_receipt_co_date_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    @property
+    def status(self):
+        return self.stock_movement.status
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.warehouse_id and self.warehouse.company_id != self.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+        if self.stock_movement_id and (
+            self.stock_movement.company_id != self.company_id
+            or self.stock_movement.destination_warehouse_id != self.warehouse_id
+            or self.stock_movement.movement_type != StockMovement.MovementType.RECEIPT
+        ):
+            raise ValidationError({"stock_movement": "حركة المخزون لا تطابق إذن الاستلام."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.select_related("stock_movement").filter(pk=self.pk).first()
+            if previous and previous.stock_movement.status != StockMovement.Status.DRAFT:
+                raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.receipt_number
+
+
+class PurchaseInvoice(models.Model):
+    """يمثل فاتورة المورد وإجمالياتها وحالة ترحيلها."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّلة"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_invoices")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_invoices")
+    receipt = models.ForeignKey(PurchaseReceipt, on_delete=models.PROTECT, related_name="invoices")
+    invoice_number = models.CharField(max_length=80)
+    invoice_date = models.DateField()
+    transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
+    transaction_net_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_grand_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice")
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_invoices")
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-invoice_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "invoice_number"), name="uq_purchase_invoice_company_no"),
+        ]
+        indexes = [models.Index(fields=("company", "status", "invoice_date"), name="pur_invoice_co_status_date_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        fx_values = (self.transaction_currency_id, self.exchange_rate, self.exchange_rate_date)
+        if any(value is not None for value in fx_values):
+            if any(value is None for value in fx_values):
+                raise ValidationError("بيانات العملة الأجنبية وسعر الصرف يجب إدخالها كاملة.")
+            if not self.transaction_currency.is_active or self.transaction_currency.code == self.company.base_currency.code:
+                raise ValidationError({"transaction_currency": "اختر عملة أجنبية نشطة ومختلفة عن العملة الأساسية."})
+            if self.exchange_rate <= 0 or self.exchange_rate_date > self.invoice_date:
+                raise ValidationError("سعر الصرف يجب أن يكون موجبًا وتاريخه لا يتجاوز تاريخ الفاتورة.")
+            if not ExchangeRate.objects.filter(company=self.company, currency=self.transaction_currency, rate_date=self.exchange_rate_date, rate=self.exchange_rate).exists():
+                raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا للشركة والتاريخ.")
+        elif any(value is not None for value in (self.transaction_net_total, self.transaction_tax_total, self.transaction_grand_total)):
+            raise ValidationError("إجماليات العملة الأجنبية لا تقبل دون لقطة سعر صرف.")
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.receipt_id and (
+            self.receipt.company_id != self.company_id or self.receipt.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"receipt": "إذن الاستلام لا يتبع المورد والشركة المحددين."})
+        if self.status == self.Status.POSTED and self.pk:
+            old = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if old == self.Status.POSTED:
+                raise ValidationError("فاتورة المورد المرحلة غير قابلة للتعديل.")
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.POSTED).exists():
+            raise ValidationError("فاتورة المورد المرحلة غير قابلة للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status == self.Status.POSTED:
+            raise ValidationError("لا يمكن حذف فاتورة مورد مرحلة.")
+        return super().delete(*args, **kwargs)
+
+    def __str__(self):
+        return self.invoice_number
+
+
+class PurchaseInvoiceLine(models.Model):
+    """يمثل بندًا ماليًا وضريبيًا داخل فاتورة المشتريات."""
+    invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="lines")
+    receipt_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    billed_quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
+    transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
+    transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_total_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(fields=("invoice", "receipt_line"), name="uq_purchase_invoice_receipt_line"),
+            models.CheckConstraint(condition=models.Q(billed_quantity__gt=0), name="ck_purchase_invoice_line_qty_positive"),
+        ]
+
+    def calculate(self):
+        if self.tax_code_id:
+            code = self.tax_code
+            if (not code.is_active or code.company_id != self.invoice.company_id
+                    or code.country != self.invoice.company.country
+                    or code.category == TaxCode.Category.REVERSE_CHARGE
+                    or code.effective_from > self.invoice.invoice_date
+                    or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
+                raise ValidationError({"tax_code": "كود الضريبة غير صالح أو غير قابل للخصم لهذه الشركة أو تاريخ الفاتورة."})
+            self.tax_rate = code.rate
+        quantity = self.billed_quantity
+        if self.invoice.transaction_currency_id:
+            if self.transaction_unit_price is None:
+                raise ValidationError({"transaction_unit_price": "سعر الوحدة بالعملة الأجنبية مطلوب."})
+            self.transaction_net_amount = (quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
+            self.transaction_tax_amount = round_currency_amount(self.transaction_net_amount * self.tax_rate / Decimal("100"), self.invoice.transaction_currency)
+            self.transaction_total_amount = self.transaction_net_amount + self.transaction_tax_amount
+            self.unit_price = (self.transaction_unit_price * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
+            self.net_amount = (self.transaction_net_amount * self.invoice.exchange_rate).quantize(Decimal("0.0001"))
+            self.tax_amount = round_currency_amount(self.transaction_tax_amount * self.invoice.exchange_rate, self.invoice.company.base_currency)
+            self.total_amount = self.net_amount + self.tax_amount
+        else:
+            if self.transaction_unit_price is not None:
+                raise ValidationError({"transaction_unit_price": "لا تستخدم سعر وحدة أجنبيًا مع فاتورة بالعملة الأساسية."})
+            self.transaction_net_amount = self.transaction_tax_amount = self.transaction_total_amount = None
+            self.net_amount = (quantity * self.unit_price).quantize(Decimal("0.0001"))
+            self.tax_amount = round_currency_amount(self.net_amount * self.tax_rate / Decimal("100"), self.invoice.company.base_currency)
+            self.total_amount = self.net_amount + self.tax_amount
+
+    def clean(self):
+        super().clean()
+        if self.invoice_id and self.receipt_line_id:
+            receipt = self.invoice.receipt
+            if self.receipt_line.movement_id != receipt.stock_movement_id:
+                raise ValidationError({"receipt_line": "سطر الصنف لا يتبع إذن الاستلام المحدد."})
+            if self.receipt_line.product.product_type != "goods":
+                raise ValidationError({"receipt_line": "لا يمكن فوترة خدمة من خلال استلام مخزني."})
+
+    def save(self, *args, **kwargs):
+        if self.invoice_id and PurchaseInvoice.objects.filter(
+            pk=self.invoice_id, status=PurchaseInvoice.Status.POSTED
+        ).exists():
+            raise ValidationError("لا يمكن تعديل سطور فاتورة مورد مرحلة.")
+        if self.billed_quantity is None:
+            self.billed_quantity = self.receipt_line.quantity
+        self.calculate()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.invoice.status == PurchaseInvoice.Status.POSTED:
+            raise ValidationError("لا يمكن حذف سطور فاتورة مورد مرحلة.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseInvoiceTaxAllocation(models.Model):
+    """يحفظ توزيع ضريبة المدخلات غير القابلة للخصم بين المخزون والتكلفة المستهلكة حسب الفرع."""
+    invoice = models.ForeignKey(
+        PurchaseInvoice, on_delete=models.PROTECT, related_name="tax_allocations",
+    )
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="purchase_tax_allocations")
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", on_delete=models.PROTECT,
+        related_name="purchase_invoice_tax_allocation",
+    )
+    inventory_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    cogs_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    adjustment_loss_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("branch_id", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("invoice", "branch"), name="uq_purchase_tax_allocation_branch"),
+        ]
+
+
+class SupplierPayment(models.Model):
+    """يمثل دفعة مسددة للمورد وارتباطها بالحسابات."""
+    class Method(models.TextChoices):
+        CASH = "cash", "نقدي"
+        BANK = "bank", "تحويل بنكي"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_payments")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="payments")
+    invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="payments")
+    payment_number = models.CharField(max_length=40)
+    payment_date = models.DateField()
+    method = models.CharField(max_length=8, choices=Method.choices, default=Method.BANK)
+    payment_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payments")
+    amount = models.DecimalField(max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payments")
+    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
+    carrying_base_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    historical_carrying_base_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    realized_fx_gain = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    realized_fx_loss = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    reference = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.OneToOneField("accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT, related_name="supplier_payment")
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_supplier_payments")
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-payment_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "payment_number"), name="uq_supplier_payment_company_no"),
+        ]
+        indexes = [models.Index(fields=("company", "status", "payment_date"), name="pur_payment_co_status_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.invoice_id and (
+            self.invoice.company_id != self.company_id or self.invoice.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"invoice": "الفاتورة لا تتبع المورد والشركة المحددين."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)).exists():
+            raise ValidationError("سند صرف المورد المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف سند صرف مورد مرحّل.")
+        return super().delete(*args, **kwargs)
+
+
+class SupplierRefund(models.Model):
+    """استرداد نقدي من المورد مقابل رصيد دائن نشأ عن مرتجع مرحّل."""
+
+    class Method(models.TextChoices):
+        CASH = "cash", "نقدي"
+        BANK = "bank", "تحويل بنكي"
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_refunds")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="refunds")
+    return_document = models.ForeignKey(
+        "SupplierReturn", on_delete=models.PROTECT, related_name="refunds",
+    )
+    refund_number = models.CharField(max_length=40)
+    refund_date = models.DateField()
+    method = models.CharField(max_length=8, choices=Method.choices, default=Method.BANK)
+    payment_account = models.ForeignKey(
+        ChartOfAccount, on_delete=models.PROTECT, related_name="supplier_refunds",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    reference = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_refund",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_refund_reversal",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_supplier_refunds",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_supplier_refunds",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-refund_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "refund_number"), name="uq_supplier_refund_company_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "refund_date"), name="pur_refund_co_status_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.return_document_id and (
+            self.return_document.company_id != self.company_id
+            or self.return_document.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"return_document": "مرتجع المورد لا يطابق الشركة أو المورد."})
+        if self.return_document_id and self.return_document.status != SupplierReturn.Status.POSTED:
+            raise ValidationError({"return_document": "لا يمكن استرداد مبلغ عن مرتجع غير مرحّل أو معكوس."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            current_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if current_status == self.Status.REVERSED:
+                raise ValidationError("استرداد المورد المعكوس غير قابل للتعديل.")
+            if current_status == self.Status.POSTED:
+                reversal_fields = {"reversal_journal_entry", "reversal_date", "reversed_at", "reversed_by", "status"}
+                update_fields = set(kwargs.get("update_fields") or ())
+                if self.status != self.Status.REVERSED or not update_fields or not update_fields.issubset(reversal_fields):
+                    raise ValidationError("استرداد المورد المرحّل غير قابل للتعديل إلا من خلال إجراء العكس.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف استرداد مورد مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseRFQ(models.Model):
+    """طلب عروض أسعار من موردين مدعوين، مرتبط باحتياج داخلي اختياري."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        OPEN = "open", "مفتوح لاستقبال العروض"
+        CLOSED = "closed", "مغلق"
+        AWARDED = "awarded", "تمت الترسية"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_rfqs")
+    source_requisition = models.ForeignKey("PurchaseRequisition", null=True, blank=True, on_delete=models.PROTECT, related_name="rfqs")
+    rfq_number = models.CharField(max_length=40)
+    issue_date = models.DateField()
+    closing_date = models.DateField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    terms = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_rfqs")
+    awarded_quotation = models.OneToOneField("SupplierQuotation", null=True, blank=True, on_delete=models.PROTECT, related_name="awarded_rfq")
+    converted_order = models.OneToOneField("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="source_rfq")
+    award_reason = models.TextField(blank=True)
+    awarded_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="awarded_purchase_rfqs")
+    awarded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-issue_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "rfq_number"), name="uq_purchase_rfq_company_no")]
+        indexes = [models.Index(fields=("company", "status", "closing_date"), name="pur_rfq_co_status_close_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.closing_date < self.issue_date:
+            raise ValidationError({"closing_date": "تاريخ إغلاق طلب العروض لا يمكن أن يسبق تاريخ الإصدار."})
+        if self.source_requisition_id and self.source_requisition.company_id != self.company_id:
+            raise ValidationError({"source_requisition": "طلب الاحتياج لا يتبع الشركة المحددة."})
+
+
+class PurchaseRFQLine(models.Model):
+    rfq = models.ForeignKey(PurchaseRFQ, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_rfq_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    notes = models.CharField(max_length=250, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [models.UniqueConstraint(fields=("rfq", "product"), name="uq_purchase_rfq_product")]
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type != "goods"):
+            raise ValidationError({"product": "الصنف يجب أن يكون مخزنيًا ويتبع شركة طلب العروض."})
+
+
+class PurchaseRFQInvitation(models.Model):
+    class Status(models.TextChoices):
+        INVITED = "invited", "مدعو"
+        DECLINED = "declined", "اعتذر"
+        QUOTED = "quoted", "قدم عرضًا"
+
+    rfq = models.ForeignKey(PurchaseRFQ, on_delete=models.PROTECT, related_name="invitations")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_rfq_invitations")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.INVITED)
+    invited_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("rfq", "supplier"), name="uq_purchase_rfq_supplier")]
+
+
+class SupplierQuotation(models.Model):
+    class Status(models.TextChoices):
+        SUBMITTED = "submitted", "مقدم"
+        WITHDRAWN = "withdrawn", "مسحوب"
+
+    rfq = models.ForeignKey(PurchaseRFQ, on_delete=models.PROTECT, related_name="quotations")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_quotations")
+    quotation_number = models.CharField(max_length=60)
+    quotation_date = models.DateField()
+    valid_until = models.DateField()
+    delivery_days = models.PositiveSmallIntegerField(default=0)
+    payment_terms = models.CharField(max_length=160, blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SUBMITTED)
+    submitted_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="submitted_supplier_quotations")
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("quotation_date", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("rfq", "supplier"), name="uq_supplier_quote_rfq_supplier"),
+            models.UniqueConstraint(fields=("supplier", "quotation_number"), name="uq_supplier_quote_supplier_no"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.rfq.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.rfq.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع شركة طلب العروض."})
+        if self.valid_until < self.quotation_date:
+            raise ValidationError({"valid_until": "صلاحية العرض لا يمكن أن تنتهي قبل تاريخ العرض."})
+        if self.rfq_id and not self.rfq.invitations.filter(supplier_id=self.supplier_id).exists():
+            raise ValidationError({"supplier": "لا يمكن تسجيل عرض من مورد غير مدعو."})
+
+
+class SupplierQuotationLine(models.Model):
+    quotation = models.ForeignKey(SupplierQuotation, on_delete=models.PROTECT, related_name="lines")
+    rfq_line = models.ForeignKey(PurchaseRFQLine, on_delete=models.PROTECT, related_name="quotation_lines")
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(Decimal("0")), MaxValueValidator(100)])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(Decimal("0")), MaxValueValidator(100)])
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [models.UniqueConstraint(fields=("quotation", "rfq_line"), name="uq_supplier_quote_line")]
+
+    def clean(self):
+        super().clean()
+        if self.rfq_line_id and self.quotation_id and self.rfq_line.rfq_id != self.quotation.rfq_id:
+            raise ValidationError({"rfq_line": "بند العرض لا يتبع طلب العروض المحدد."})
+
+    @property
+    def net_amount(self):
+        return (self.rfq_line.quantity * self.unit_price * (Decimal("1") - self.discount_percent / Decimal("100"))).quantize(Decimal("0.0001"))
+
+    @property
+    def tax_amount(self):
+        return (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+
+    @property
+    def total_amount(self):
+        return self.net_amount + self.tax_amount
+
+
+class PurchaseOrder(models.Model):
+    """يمثل أمر شراء ومراحله قبل الاستلام والفوترة."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        CONFIRMED = "confirmed", "معتمد"
+        PARTIALLY_RECEIVED = "partially_received", "استلام جزئي"
+        RECEIVED = "received", "مستلم بالكامل"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_orders")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_orders")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="purchase_orders")
+    order_number = models.CharField(max_length=40)
+    order_date = models.DateField()
+    expected_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_purchase_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-order_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "order_number"), name="uq_purchase_order_company_no")]
+        indexes = [models.Index(fields=("company", "status", "order_date"), name="pur_order_co_status_date_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+
+    @property
+    def grand_total(self):
+        return sum(
+            (line.quantity * line.unit_price * (Decimal("1") + line.tax_rate / Decimal("100")) for line in self.lines.all()),
+            Decimal("0"),
+        ).quantize(Decimal("0.0001"))
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.warehouse_id and self.warehouse.company_id != self.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("أمر الشراء المعتمد غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر شراء معتمد أو مرتبط بحركات.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseOrderLine(models.Model):
+    """يمثل صنفًا وكمية وسعرًا داخل أمر الشراء."""
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_order_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0"))])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    received_quantity = models.DecimalField(max_digits=18, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+
+    @property
+    def remaining_quantity(self):
+        return self.quantity - self.received_quantity
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.order.company_id or self.product.product_type != "goods"):
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا تابعًا لشركة أمر الشراء."})
+        if self.received_quantity > self.quantity:
+            raise ValidationError({"received_quantity": "الكمية المستلمة تتجاوز كمية أمر الشراء."})
+
+    def save(self, *args, **kwargs):
+        if self.order_id and self.order.status != PurchaseOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود أمر شراء معتمد.")
+        return super().save(*args, **kwargs)
+
+
+class PurchaseOrderReceiptLine(models.Model):
+    """يربط كميات الاستلام ببنود أمر الشراء لتتبع التنفيذ."""
+    receipt_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_order_link")
+    order_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, related_name="receipt_links")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+
+    class Meta:
+        ordering = ("id",)
+
+
+class SupplierReturn(models.Model):
+    """إشعار مرتجع مورد مرتبط بفاتورة الشراء وحركة مخزون مصدرية."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="supplier_returns")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="returns")
+    invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="returns")
+    stock_movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT, related_name="supplier_return"
+    )
+    return_number = models.CharField(max_length=40)
+    return_date = models.DateField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    transaction_grand_total = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return",
+    )
+    reversal_stock_movement = models.OneToOneField(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return_reversal",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return_reversal",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_supplier_returns",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-return_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "return_number"), name="uq_supplier_return_company_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "return_date"), name="pur_return_co_status_date_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.supplier.company_id != self.company_id:
+            raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
+        if self.invoice_id and (
+            self.invoice.company_id != self.company_id or self.invoice.supplier_id != self.supplier_id
+        ):
+            raise ValidationError({"invoice": "فاتورة المورد لا تطابق الشركة أو المورد."})
+        if self.stock_movement_id and (
+            self.stock_movement.company_id != self.company_id
+            or self.stock_movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN
+        ):
+            raise ValidationError({"stock_movement": "حركة المخزون ليست مرتجع مورد تابعًا للشركة."})
+        if self.reversal_stock_movement_id and (
+            self.reversal_stock_movement.company_id != self.company_id
+            or self.reversal_stock_movement.movement_type != StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL
+        ):
+            raise ValidationError({"reversal_stock_movement": "حركة عكس المخزون غير صالحة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if old_status == self.Status.POSTED and self.status != self.Status.REVERSED:
+                raise ValidationError("مرتجع المورد المرحّل غير قابل للتعديل إلا من خلال إجراء العكس.")
+            if old_status == self.Status.REVERSED:
+                raise ValidationError("مرتجع المورد المعكوس غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف مرتجع مورد مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
+
+
+class SupplierReturnLine(models.Model):
+    """يربط كمية المرتجع ببند فاتورة المورد وسطر حركة المخزون."""
+
+    return_document = models.ForeignKey(
+        SupplierReturn, on_delete=models.PROTECT, related_name="lines"
+    )
+    invoice_line = models.ForeignKey(
+        PurchaseInvoiceLine, on_delete=models.PROTECT, related_name="supplier_return_lines"
+    )
+    movement_line = models.OneToOneField(
+        StockMovementLine, on_delete=models.PROTECT, related_name="supplier_return_line"
+    )
+    reversal_movement_line = models.OneToOneField(
+        StockMovementLine, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_return_reversal_line",
+    )
+    quantity = models.DecimalField(
+        max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))]
+    )
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    recoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    nonrecoverable_tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("return_document", "invoice_line"),
+                name="uq_supplier_return_invoice_line",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.return_document_id and self.invoice_line_id:
+            if self.invoice_line.invoice_id != self.return_document.invoice_id:
+                raise ValidationError({"invoice_line": "بند الفاتورة لا يتبع فاتورة المرتجع."})
+        if self.return_document_id and self.movement_line_id:
+            if self.movement_line.movement_id != self.return_document.stock_movement_id:
+                raise ValidationError({"movement_line": "سطر المخزون لا يتبع حركة المرتجع."})
+
+    def save(self, *args, **kwargs):
+        if self.return_document_id and self.return_document.status in (SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED):
+            raise ValidationError("لا يمكن تعديل بند مرتجع مورد مرحّل أو معكوس.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.return_document.status in (SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف بند مرتجع مورد مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseRequisition(models.Model):
+    """طلب احتياج داخلي يسبق اختيار المورد وإصدار أمر الشراء."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        SUBMITTED = "submitted", "مرسل للاعتماد"
+        APPROVED = "approved", "معتمد"
+        REJECTED = "rejected", "مرفوض"
+        CONVERTED = "converted", "تحول إلى أمر شراء"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_requisitions")
+    request_number = models.CharField(max_length=40)
+    request_date = models.DateField()
+    required_date = models.DateField(null=True, blank=True)
+    department = models.CharField(max_length=120, blank=True)
+    purpose = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="purchase_requisitions")
+    reviewed_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="reviewed_purchase_requisitions")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True)
+    converted_order = models.OneToOneField("PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="source_requisition")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-request_date", "-id")
+        constraints = [models.UniqueConstraint(fields=("company", "request_number"), name="uq_purchase_req_company_no")]
+        indexes = [models.Index(fields=("company", "status", "request_date"), name="pur_req_co_status_date_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.required_date and self.required_date < self.request_date:
+            raise ValidationError({"required_date": "تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if old not in (None, self.Status.DRAFT):
+                raise ValidationError("طلب الشراء بعد إرساله غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف طلب شراء تم إرساله أو اعتماده.")
+        return super().delete(*args, **kwargs)
+
+
+class PurchaseRequisitionLine(models.Model):
+    requisition = models.ForeignKey(PurchaseRequisition, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="purchase_requisition_lines")
+    requested_quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    estimated_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(Decimal("0"))])
+    notes = models.CharField(max_length=250, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+
+    def clean(self):
+        super().clean()
+        if self.product_id and (self.product.company_id != self.requisition.company_id or self.product.product_type != "goods" or not self.product.is_active):
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا نشطًا تابعًا لشركة الطلب."})
+
+    def save(self, *args, **kwargs):
+        if self.requisition_id and self.requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود طلب شراء تم إرساله.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.requisition.status != PurchaseRequisition.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف بنود طلب شراء تم إرساله.")
+        return super().delete(*args, **kwargs)

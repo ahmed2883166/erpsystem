@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}سند صرف {{ payment.payment_no }} | NEXUS ERP{% endblock %}
+{% block content %}
+<section class="panel print-document">
+<div class="no-print actions"><button type="button" onclick="window.print()">طباعة سند الصرف / PDF</button></div>
+{% set document_title = 'سند صرف مورد' %}{% set document_number = payment.payment_no %}{% set document_date = payment.payment_date %}
+{% include "partials/print_brand_header.html" %}
+<div class="form-row"><div><b>المورد:</b> {{ payment.supplier_name }} ({{ payment.supplier_code }})</div><div><b>الصرف من:</b> {{ payment.cash_name }} — {{ payment.cash_code }}</div><div><b>المرجع:</b> {{ payment.reference or '—' }}</div></div>
+<h3>توزيع المبلغ على فواتير المورد</h3><div class="table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>تاريخ الفاتورة</th><th>المبلغ المسدد</th></tr></thead><tbody>{% for x in allocations %}<tr><td>{{ x.bill_no }}</td><td>{{ x.bill_date }}</td><td>{{ x.amount|money }}</td></tr>{% else %}<tr><td colspan="3">لا توجد تخصيصات مرتبطة.</td></tr>{% endfor %}</tbody></table></div>
+<h2>إجمالي المنصرف: {{ payment.amount|money }} {{ settings.get('base_currency','') }}</h2>
+<p class="muted">رقم القيد: {{ payment.journal_entry_id }}</p>
+</section>
+{% endblock %}

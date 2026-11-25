@@ -1,95 +1,903 @@
+import base64
 import csv
 import hashlib
+import hmac
 import io
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
-import shutil
-import sqlite3
+import re
+import secrets
+import subprocess
+import tempfile
+import time
 import zipfile
-from datetime import datetime
-from functools import wraps
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal_settings import parse_decimal_setting
+from functools import wraps
+import uuid
 
-from flask import Flask, Response, flash, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, abort, Response, flash, redirect, render_template, request, send_file, session, url_for, has_request_context, g
+from flask.sessions import SecureCookieSessionInterface
+from werkzeug.middleware.proxy_fix import ProxyFix
+from chart_templates import (CHARTS, ACTIVITY_LABELS, OPERATIONAL_ACCOUNT_CODES, seed_activity_chart, ensure_activity_chart_accounts, migrate_vat_accounts, ensure_account_metadata, migrate_legacy_duplicate_account_labels)
+from stock import stock_bp, initialize_stock_schema
+from purchases import purchase_bp, init_purchase_schema
+from sales import sales_bp, init_sales_schema
+from accounting_core import (post_journal, reconciliation_snapshot, safe_error_message,
+                              decimal_sum_expression, decimal_net_expression, lock_journal_reference)
+from banking import bank_bp, init_bank_schema
+from fixed_assets import assets_bp, initialize_assets_schema, register_assets_from_journal_lines
+from receivables import aging_bp, initialize_aging_schema
+from quotations import quotes_bp, initialize_quotes_schema
+from tax_center import tax_bp, initialize_tax_schema
+from workforce import workforce_bp, initialize_workforce_schema
+import workforce_extras
+from payroll_compliance import payroll_compliance_bp, initialize_payroll_compliance_schema
+from currency_center import currency_bp, initialize_currency_schema
+from party_reports import party_bp
+from management_dashboard import cached_management_snapshot, initialize_management_dashboard_schema
+from analytic_dimensions import initialize_analytic_dimensions_schema, active_dimension_options, validate_journal_dimensions
+from financial_planning import planning_bp, initialize_planning_schema
+from period_adjustments import adjustments_bp, initialize_adjustments_schema
+from activity_profiles import (initialize_activity_profiles_schema, list_activity_profiles, create_activity_profile, create_specialized_activity_profile, SPECIALIZED_ACTIVITY_PRESETS, set_activity_profile_active, validate_activity_profile, update_custom_activity_profile, get_active_activity_profile)
+from company_activities import initialize_company_activity_schema
+from report_exports import register_report_exports
+from licensing import get_license_status, activate_license
+from database import connect_database, enable_wal, fetch_page, register_sqlite_connection_teardown
+from database_backend import require_supported_runtime_backend, configured_database_backend
+from core_schema import initialize_core_schema, ensure_legacy_core_columns
+from company_defaults import seed_company_defaults
+from sqlite_accounting_migrations import (migrate_journal_line_amounts_to_text,
+                                         migrate_currency_rates_to_text)
+from sqlite_audit_schema import initialize_sqlite_audit_schema
+from postgres_audit_schema import initialize_postgres_audit_schema
+from db_sql import execute_compat, executemany_compat
+from db_compat import (begin_write_transaction, insert_and_get_id, table_exists, table_columns, table_names, table_column_info, database_dialect, DB_ERROR, DB_INTEGRITY_ERROR, transactional_migration)
+from report_request_control import (ReportRequestGate, bounded_env_int,
+                                    is_expensive_report_request,
+                                    set_current_report_deadline,
+                                    reset_current_report_deadline)
+from app_paths import DATA_DIR, DB_PATH, BACKUP_DIR, ensure_data_directory
+from backup_scheduler import (create_backup_archive, ensure_initial_backup,
+                              next_backup_datetime, start_backup_scheduler)
+from system_health import health_bp
+from backup_restore import (extract_validated_backup, restore_database_with_rollback,
+                             create_extraction_target)
+from session_revocation import current_session_epoch, rotate_session_epoch
+from postgres_backup import (
+    create_postgres_backup_archive, restore_postgres_backup_to_new_database,
+)
+from postgres_backup_scheduler import (
+    ensure_initial_postgres_backup, start_postgres_backup_scheduler,
+)
+from data_reset import clear_company_data
+from income_statement import (build_income_statement, normalize_income_statement_period,
+                               comparison_period, add_income_statement_comparison,
+                               closing_entries_exclusion_sql)
+from profitability_reports import build_profitability_report
+from management_reports import build_period_comparison, build_inventory_ageing, build_cash_forecast
+from decision_simulator import simulate_decision
+from cash_commitments import (initialize_cash_commitments_schema, create_cash_commitment,
+                              record_cash_commitment_payment, void_cash_commitment, create_recurring_schedule,
+                              generate_recurring_schedule_occurrences, deactivate_recurring_schedule,
+                              sync_friday_allowance_commitments, reverse_cash_commitment_payment,
+                              cash_commitment_payment_summary,
+                              list_cash_commitment_duplicate_origins,
+                              resolve_cash_commitment_duplicate_origin)
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "nexus.db"
-BACKUP_DIR = DATA_DIR / "backups"
+# Fail closed by default: demo bypass must be explicitly enabled for isolated development.
+# Customer deployments must leave NEXUS_DEMO_MODE unset (or set it to 0).
+NEXUS_DEMO_MODE = os.environ.get("NEXUS_DEMO_MODE", "0").strip().lower() not in {"0", "false", "no", "off"}
+
+def current_license_status():
+    if NEXUS_DEMO_MODE:
+        return {"status": "demo", "license_type": "demo", "message": "نسخة تجريبية محلية — لا تحتاج إلى خادم تراخيص."}
+    return get_license_status()
+from security_controls import login_attempts_exceeded, linked_operational_source
+
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("NEXUS_SECRET_KEY", "change-this-secret-before-production")
+register_sqlite_connection_teardown(app)
+SESSION_EPOCH_PATH = DATA_DIR / ".nexus_session_epoch"
+
+
+def _configure_http_500_file_logging():
+    """Write full server-side HTTP 500 tracebacks to a dedicated rotating log."""
+    log_dir = DATA_DIR / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        if any(getattr(handler, "_nexus_http_500_handler", False)
+               for handler in app.logger.handlers):
+            return
+        handler = RotatingFileHandler(
+            log_dir / "http_500.log", maxBytes=2 * 1024 * 1024,
+            backupCount=5, encoding="utf-8", delay=True,
+        )
+        handler._nexus_http_500_handler = True
+        handler.setLevel(logging.ERROR)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s"
+        ))
+        app.logger.addHandler(handler)
+    except OSError:
+        # Logging must not prevent the ERP from starting if the log volume is unavailable.
+        app.logger.exception("Could not initialize the dedicated HTTP 500 log file.")
+
+
+_configure_http_500_file_logging()
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(error):
+    """Log the original traceback privately and return a non-sensitive response."""
+    request_id = uuid.uuid4().hex
+    original = getattr(error, "original_exception", None)
+    log_message = "HTTP 500 request_id=%s method=%s path=%s"
+    log_args = (request_id, request.method, request.path)
+    if original is not None:
+        app.logger.error(
+            log_message, *log_args,
+            exc_info=(type(original), original, original.__traceback__),
+        )
+    else:
+        app.logger.error(log_message, *log_args, exc_info=True)
+
+    safe_message = "حدث خطأ داخلي. تم تسجيل رقم البلاغ، يرجى المحاولة لاحقًا."
+    if request.path.startswith("/api/") or request.accept_mimetypes.best == "application/json":
+        return {"error": safe_message, "request_id": request_id}, 500
+    return safe_message, 500
+
+def _session_cookie_secure_for_request():
+    """Honor an explicit deployment override; otherwise secure cookies on HTTPS only."""
+    configured = os.environ.get("NEXUS_COOKIE_SECURE")
+    if configured is not None and configured.strip():
+        return configured.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(has_request_context() and request.is_secure)
+
+
+class RequestAwareSecureCookieSessionInterface(SecureCookieSessionInterface):
+    def get_cookie_secure(self, app):
+        return _session_cookie_secure_for_request()
+
+
+app.session_interface = RequestAwareSecureCookieSessionInterface()
+
+
+@app.after_request
+def add_security_headers(response):
+    """Apply browser security headers and HSTS only for HTTPS requests."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if _session_cookie_secure_for_request() and request.is_secure:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
+@app.template_filter("money")
+def format_money(value):
+    try:
+        amount = Decimal(str(value or "0"))
+        return f"{amount:,.2f}"
+    except (InvalidOperation, ValueError, TypeError):
+        return "0.00"
+
+def _load_secret_key():
+    configured = os.environ.get("NEXUS_SECRET_KEY", "").strip()
+    if configured:
+        if len(configured) < 32:
+            raise RuntimeError("NEXUS_SECRET_KEY must contain at least 32 characters.")
+        return configured
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    key_file = DATA_DIR / ".nexus_secret_key"
+    try:
+        with key_file.open("x", encoding="ascii") as handle:
+            import secrets
+            handle.write(secrets.token_urlsafe(48))
+    except FileExistsError:
+        pass
+    try:
+        os.chmod(key_file, 0o600)
+    except OSError:
+        pass
+    return key_file.read_text(encoding="ascii").strip()
+
+app.config.update(
+    SECRET_KEY=_load_secret_key(),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("NEXUS_COOKIE_SECURE", "").strip().lower() in {"1", "true", "yes", "on"},
+    PERMANENT_SESSION_LIFETIME=1800,
+)
+
+# Trust forwarded headers only when the operator explicitly declares the exact
+# number of reverse-proxy hops. Never enable ProxyFix with a guessed default.
+try:
+    _trusted_proxy_hops = int(os.environ.get("NEXUS_TRUSTED_PROXY_HOPS", "0"))
+except ValueError as exc:
+    raise RuntimeError("NEXUS_TRUSTED_PROXY_HOPS must be an integer from 0 to 5.") from exc
+if not 0 <= _trusted_proxy_hops <= 5:
+    raise RuntimeError("NEXUS_TRUSTED_PROXY_HOPS must be an integer from 0 to 5.")
+if _trusted_proxy_hops:
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=_trusted_proxy_hops,
+        x_proto=_trusted_proxy_hops,
+        x_host=_trusted_proxy_hops,
+        x_port=_trusted_proxy_hops,
+    )
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+csrf = CSRFProtect(app)
+
+
+@app.after_request
+def add_server_side_csrf_fields(response):
+    """Add CSRF inputs to rendered POST forms without relying on browser JavaScript."""
+    if response.mimetype != "text/html" or not response.get_data():
+        return response
+    token = generate_csrf()
+    if not token:
+        return response
+    token_field = '<input type="hidden" name="csrf_token" value="' + token + '">'
+    form_pattern = re.compile(r"(<form\b[^>]*>)(.*?)(</form\s*>)", re.IGNORECASE | re.DOTALL)
+
+    def inject_token(match):
+        opening, body, closing = match.groups()
+        is_post = re.search(r"""\bmethod\s*=\s*(?:"post"|'post'|post\b)""", opening, re.IGNORECASE)
+        already_has_token = re.search(r"""\bname\s*=\s*(?:"csrf_token"|'csrf_token')""", body, re.IGNORECASE)
+        if is_post and not already_has_token:
+            body = token_field + body
+        return opening + body + closing
+
+    response.set_data(form_pattern.sub(inject_token, response.get_data(as_text=True)))
+    return response
+
+
+app.register_blueprint(stock_bp)
+app.register_blueprint(purchase_bp)
+app.register_blueprint(sales_bp)
+app.register_blueprint(bank_bp)
+app.register_blueprint(assets_bp)
+app.register_blueprint(aging_bp)
+app.register_blueprint(quotes_bp)
+app.register_blueprint(tax_bp)
+app.register_blueprint(workforce_bp)
+app.register_blueprint(payroll_compliance_bp)
+app.register_blueprint(currency_bp)
+app.register_blueprint(party_bp)
+app.register_blueprint(planning_bp)
+app.register_blueprint(adjustments_bp)
+app.register_blueprint(health_bp)
+# SECRET_KEY and session/CSRF settings are initialized above.
 
 PERMISSIONS = {
-    "admin": {"accounts.manage", "journal.manage", "reports.view", "users.manage", "backup.manage", "import_export.manage"},
-    "accountant": {"accounts.manage", "journal.manage", "reports.view", "import_export.manage"},
-    "viewer": {"reports.view"},
+    "admin": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "users.manage", "backup.manage", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "purchases.approve", "sales.manage", "sales.view", "sales.approve", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.approve", "workforce.salary_approve", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "budget.approve", "cashflow.view", "audit.view", "cash_commitments.view", "cash_commitments.manage"},
+    "accountant": {"accounts.view", "accounts.manage", "journal.manage", "reports.view", "expenses.view", "import_export.manage", "stock.manage", "stock.view", "purchases.manage", "purchases.view", "sales.manage", "sales.view", "assets.manage", "assets.view", "quotes.manage", "quotes.view", "bank.manage", "bank.view", "tax.manage", "tax.view", "workforce.manage", "workforce.approve", "workforce.view", "currency.view", "currency.manage", "party.view", "budget.view", "budget.manage", "cashflow.view", "cash_commitments.view", "cash_commitments.manage"},
+    "viewer": {"accounts.view", "currency.view", "reports.view", "expenses.view", "stock.view", "purchases.view", "sales.view", "assets.view", "quotes.view", "bank.view", "tax.view", "workforce.view", "party.view", "budget.view", "cashflow.view", "cash_commitments.view"},
 }
+PERMISSION_LABELS = {
+    "accounts.view": "عرض شجرة الحسابات",
+    "accounts.manage": "إضافة وتعديل الحسابات",
+    "journal.manage": "إنشاء وترحيل القيود اليومية",
+    "reports.view": "عرض التقارير ولوحة الإدارة",
+    "expenses.view": "عرض تقرير المصروفات التحليلي",
+    "users.manage": "إدارة المستخدمين والصلاحيات",
+    "backup.manage": "النسخ الاحتياطي والاستعادة",
+    "import_export.manage": "استيراد وتصدير البيانات",
+    "stock.view": "عرض المخزون والتقارير",
+    "stock.manage": "إضافة وتعديل حركات المخزون",
+    "purchases.view": "عرض المشتريات والموردين",
+    "purchases.approve": "مراجعة واعتماد أوامر الشراء وفواتير الموردين (مع منع اعتماد المستند الذاتي)",
+    "purchases.manage": "إدارة المشتريات وإشعارات المورد",
+    "sales.view": "عرض المبيعات والعملاء",
+    "sales.manage": "إدارة المبيعات",
+    "sales.approve": "اعتماد الخصومات التي تتجاوز حد الشركة وأوامر البيع (منع الاعتماد الذاتي مع استثناء مدير النظام والمدير المفوض)",
+    "assets.view": "عرض الأصول الثابتة",
+    "assets.manage": "إدارة الأصول الثابتة",
+    "quotes.view": "عرض عروض الأسعار",
+    "quotes.manage": "إدارة عروض الأسعار",
+    "bank.view": "عرض البنوك والمطابقات",
+    "bank.manage": "إدارة البنوك والمطابقات",
+    "tax.view": "عرض مركز الضرائب",
+    "tax.manage": "إدارة مركز الضرائب",
+    "workforce.view": "عرض الموظفين والرواتب",
+    "workforce.manage": "إدارة الموظفين والرواتب",
+    "workforce.approve": "اعتماد أو رفض مستندات المرتبات والموارد البشرية (منفصل عن الإدخال والترحيل)",
+    "workforce.salary_approve": "اعتماد التغييرات الجوهرية في الرواتب الأساسية (مدير النظام فقط)",
+    "currency.view": "عرض أسعار العملات وفروق الصرف",
+    "currency.manage": "إدارة العملات وفروق الصرف",
+    "budget.view": "عرض الموازنات ومقارنة الفعلي",
+    "budget.manage": "إنشاء وإعداد الموازنات وإرسالها للاعتماد",
+    "budget.approve": "اعتماد أو رفض الموازنات (مع منع الاعتماد الذاتي)",
+    "cashflow.view": "عرض قائمة التدفقات النقدية",
+    "cash_commitments.view": "عرض سجل الالتزامات النقدية",
+    "cash_commitments.manage": "إدارة الالتزامات النقدية وتسجيل السداد المرتبط بقيود مرحلة",
+    "audit.view": "عرض سجل المراجعة والتدقيق",
+    "party.view": "عرض كشوف العملاء والموردين",
+}
+ALL_PERMISSIONS = tuple(PERMISSION_LABELS)
+_PERMISSION_IMPLICATIONS = {
+    "accounts.manage": "accounts.view", "stock.manage": "stock.view",
+    "purchases.manage": "purchases.view", "sales.manage": "sales.view",
+    "assets.manage": "assets.view", "quotes.manage": "quotes.view",
+    "bank.manage": "bank.view", "tax.manage": "tax.view",
+    "workforce.manage": "workforce.view", "workforce.approve": "workforce.view", "workforce.salary_approve": "workforce.view", "currency.manage": "currency.view", "budget.manage": "budget.view", "budget.approve": "budget.view", "cash_commitments.manage": "cash_commitments.view",
+}
+
+def normalize_user_permissions(values):
+    selected = set(values or ()) & set(ALL_PERMISSIONS)
+    for manage, view in _PERMISSION_IMPLICATIONS.items():
+        if manage in selected:
+            selected.add(view)
+    return sorted(selected)
+
+def stored_user_permissions(raw, role):
+    if raw:
+        try:
+            values = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = role_default_permissions(role)
+    else:
+        values = role_default_permissions(role)
+    if not isinstance(values, (list, tuple, set)):
+        values = role_default_permissions(role)
+    return normalize_user_permissions(values)
+
+
+ROLE_SYSTEM_NAMES = {"admin": "مدير النظام", "accountant": "محاسب", "viewer": "مشاهد"}
+
+
+@transactional_migration
+def initialize_roles_schema(connection):
+    execute_compat(connection, """
+        CREATE TABLE IF NOT EXISTS roles (
+            role_key TEXT PRIMARY KEY,
+            role_name TEXT NOT NULL UNIQUE,
+            permissions_json TEXT NOT NULL,
+            is_system INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER,
+            updated_by INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+    execute_compat(connection, "CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_lower_name ON roles(lower(role_name))")
+    timestamp = datetime.now().isoformat(timespec="seconds")
+    for role_key, permissions in PERMISSIONS.items():
+        execute_compat(connection, 
+            """INSERT INTO roles(
+                 role_key,role_name,permissions_json,is_system,active,created_at,updated_at
+               ) VALUES(?,?,?,?,1,?,?) ON CONFLICT DO NOTHING""",
+            (role_key, ROLE_SYSTEM_NAMES[role_key],
+             json.dumps(sorted(permissions), ensure_ascii=False), 1, timestamp, timestamp),
+        )
+
+
+def role_permissions_catalog(connection, include_role=None):
+    role_permissions = {key: sorted(values) for key, values in PERMISSIONS.items()}
+    role_names = dict(ROLE_SYSTEM_NAMES)
+    custom_roles = []
+    rows = execute_compat(connection, 
+        """SELECT role_key,role_name,permissions_json,active FROM roles
+           WHERE is_system=0 AND (active=1 OR role_key=?) ORDER BY lower(role_name),role_name""",
+        (include_role or "",),
+    ).fetchall()
+    for row in rows:
+        try:
+            values = json.loads(row["permissions_json"] or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = []
+        permissions = normalize_user_permissions(values if isinstance(values, (list, tuple, set)) else [])
+        role_permissions[row["role_key"]] = permissions
+        role_names[row["role_key"]] = row["role_name"]
+        if row["active"]:
+            custom_roles.append({
+                "role_key": row["role_key"], "role_name": row["role_name"],
+                "permissions": permissions,
+            })
+    return role_permissions, role_names, custom_roles
+
+
+def role_default_permissions(role):
+    if role in PERMISSIONS:
+        return normalize_user_permissions(PERMISSIONS[role])
+    connection = db()
+    try:
+        row = execute_compat(connection, 
+            "SELECT permissions_json FROM roles WHERE role_key=? AND active=1", (role,)
+        ).fetchone()
+        if not row:
+            return []
+        values = json.loads(row["permissions_json"] or "[]")
+        return normalize_user_permissions(values if isinstance(values, (list, tuple, set)) else [])
+    except (*DB_ERROR, TypeError, ValueError, json.JSONDecodeError):
+        return []
+    finally:
+        connection.close()
+
+
+def user_permissions_storage(selected, role, role_permissions):
+    normalized = normalize_user_permissions(selected)
+    defaults = normalize_user_permissions(role_permissions.get(role, []))
+    return None if normalized == defaults else json.dumps(normalized, ensure_ascii=False)
+
+def assert_user_management_scope(target=None, requested_role=None, requested_permissions=None):
+    """Prevent non-admin user managers from granting or editing beyond their own authority."""
+    if session.get("role") == "admin":
+        return
+    actor_permissions = set(normalize_user_permissions(
+        session.get("permissions", role_default_permissions(session.get("role")))
+    ))
+    if target is not None:
+        target_role = target["role"]
+        target_permissions = set(stored_user_permissions(target["permissions_json"], target_role))
+        if target_role == "admin" or not target_permissions.issubset(actor_permissions):
+            raise ValueError("لا تملك صلاحية إدارة هذا المستخدم لأنه يملك صلاحيات أعلى من صلاحياتك.")
+    if requested_role == "admin":
+        raise ValueError("إنشاء أو إسناد دور مدير النظام متاح لمدير النظام فقط.")
+    if requested_permissions is not None:
+        requested = set(normalize_user_permissions(requested_permissions))
+        if not requested.issubset(actor_permissions):
+            raise ValueError("لا يمكنك منح مستخدم صلاحيات لا تملكها بنفسك.")
+
+
+register_report_exports(app, DB_PATH, PERMISSIONS)
+
+
+REPORT_REQUEST_TIMEOUT_SECONDS = bounded_env_int(
+    os.environ.get("NEXUS_REPORT_TIMEOUT_SECONDS", "90"), 90, 5, 180
+)
+REPORT_REQUEST_GATE = ReportRequestGate(
+    bounded_env_int(os.environ.get("NEXUS_REPORT_CONCURRENCY", "2"), 2, 1, 16),
+    max_waiters=bounded_env_int(os.environ.get("NEXUS_REPORT_QUEUE_CAPACITY", "4"), 4, 0, 32),
+    wait_seconds=bounded_env_int(os.environ.get("NEXUS_REPORT_QUEUE_WAIT_SECONDS", "10"), 10, 1, 30),
+)
 
 
 def db():
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    require_supported_runtime_backend()
+    return connect_database(DB_PATH, isolation_level="")
 
 
-def password_hash(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+@app.before_request
+def guard_expensive_report_request():
+    if not is_expensive_report_request(request.method, request.endpoint, request.path):
+        return None
+    if not REPORT_REQUEST_GATE.acquire():
+        app.logger.warning(
+            "Rejected report request because the active slots and bounded wait queue are full or timed out: %s",
+            request.path,
+        )
+        return (
+            "التقارير مشغولة حاليًا. انتظر قليلًا ثم أعد المحاولة.",
+            503,
+            {"Retry-After": "5", "Content-Type": "text/plain; charset=utf-8"},
+        )
+    g._nexus_report_slot_acquired = True
+    g._nexus_report_deadline = time.monotonic() + REPORT_REQUEST_TIMEOUT_SECONDS
+    g._nexus_report_deadline_token = set_current_report_deadline(g._nexus_report_deadline)
+    return None
+
+
+@app.teardown_request
+def release_expensive_report_slot(error=None):
+    token = getattr(g, "_nexus_report_deadline_token", None)
+    if token is not None:
+        reset_current_report_deadline(token)
+        g._nexus_report_deadline_token = None
+    if getattr(g, "_nexus_report_slot_acquired", False):
+        g._nexus_report_slot_acquired = False
+        REPORT_REQUEST_GATE.release()
+
+
+@app.after_request
+def report_deadline_response(response):
+    deadline = getattr(g, "_nexus_report_deadline", None)
+    if deadline is not None and time.monotonic() >= deadline:
+        return app.make_response((
+            "استغرق التقرير وقتًا أطول من المهلة المحددة. جرّب فترة أقصر أو أعد المحاولة لاحقًا.",
+            503,
+            {"Retry-After": "5", "Content-Type": "text/plain; charset=utf-8"},
+        ))
+    return response
+
+
+def _save_initial_admin_password(password):
+    """Persist a one-time bootstrap credential with owner-only file permissions."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    credential_path = DATA_DIR / ".nexus_initial_admin_password"
+    descriptor = os.open(credential_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(password + "\n")
+    try:
+        os.chmod(credential_path, 0o600)
+    except OSError:
+        pass
+    app.logger.warning(
+        "A one-time administrator password was generated. Retrieve it from %s and change it at first login.",
+        credential_path,
+    )
+
+
+def password_hash(password, salt=None, iterations=310000):
+    """Create a salted PBKDF2-SHA256 password hash for new and changed passwords."""
+    salt = salt or os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256$" + str(iterations) + "$" + salt.hex() + "$" + digest.hex()
+
+
+def verify_password(password, stored_hash):
+    """Verify current PBKDF2 hashes and legacy SHA-256 hashes during migration."""
+    if not stored_hash:
+        return False
+    if stored_hash.startswith("pbkdf2_sha256$"):
+        try:
+            algorithm, rounds, salt_hex, expected_hex = stored_hash.split("$", 3)
+            if algorithm != "pbkdf2_sha256":
+                return False
+            rounds = int(rounds)
+            if rounds < 100000 or rounds > 2000000:
+                return False
+            salt = bytes.fromhex(salt_hex)
+            expected = bytes.fromhex(expected_hex)
+            actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+            return hmac.compare_digest(actual, expected)
+        except (ValueError, TypeError):
+            return False
+    # Compatibility only: successful legacy logins are upgraded immediately.
+    legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(legacy, stored_hash)
+
+
+def password_hash_needs_upgrade(stored_hash):
+    return not (stored_hash or "").startswith("pbkdf2_sha256$")
 
 
 def initialize_database():
-    DATA_DIR.mkdir(exist_ok=True)
-    BACKUP_DIR.mkdir(exist_ok=True)
+    # Do not silently initialize SQLite when an operator explicitly requested PostgreSQL.
+    require_supported_runtime_backend()
+    ensure_data_directory()
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     connection = db()
-    connection.executescript("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, full_name TEXT NOT NULL,
-            password_hash TEXT NOT NULL, role TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY, code TEXT UNIQUE NOT NULL, name_ar TEXT NOT NULL,
-            account_type TEXT NOT NULL, parent_id INTEGER REFERENCES accounts(id), active INTEGER NOT NULL DEFAULT 1
-        );
-        CREATE TABLE IF NOT EXISTS journal_entries (
-            id INTEGER PRIMARY KEY, entry_date TEXT NOT NULL, reference TEXT, description TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'posted', created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS journal_lines (
-            id INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
-            account_id INTEGER NOT NULL REFERENCES accounts(id), debit REAL NOT NULL DEFAULT 0,
-            credit REAL NOT NULL DEFAULT 0, memo TEXT
-        );
-        CREATE TABLE IF NOT EXISTS audit_log (
-            id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL,
-            details TEXT, created_at TEXT NOT NULL
-        );
-    """)
-    if not connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone():
-        connection.execute("INSERT INTO users(username, full_name, password_hash, role, created_at) VALUES(?,?,?,?,?)",
-                           ("admin", "مدير النظام", password_hash("admin123"), "admin", now()))
-    if not connection.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
-        connection.executemany("INSERT INTO accounts(code, name_ar, account_type) VALUES(?,?,?)", [
-            ("1000", "الصندوق والبنوك", "asset"), ("1100", "العملاء", "asset"),
-            ("1200", "المخزون", "asset"), ("2000", "الموردون", "liability"),
-            ("3000", "رأس المال", "equity"), ("4000", "إيرادات المبيعات والخدمات", "revenue"),
-            ("5000", "تكلفة المبيعات", "expense"), ("6000", "المصروفات التشغيلية", "expense"),
-        ])
+    backend = database_dialect(connection)
+    if backend == "sqlite":
+        enable_wal(DB_PATH)
+    initialize_core_schema(connection)
+    if backend == "postgresql":
+        initialize_postgres_audit_schema(connection)
+    else:
+        initialize_sqlite_audit_schema(connection)
+    ensure_legacy_core_columns(connection)
+    if backend == "sqlite":
+        # The legacy decimal rebuild toggles SQLite foreign_keys outside a
+        # transaction. Run it before seeding/migration writes begin.
+        migrate_journal_line_amounts_to_text(connection)
+        migrate_currency_rates_to_text(connection)
+    initialize_roles_schema(connection)
+    seed_company_defaults(connection)
+    admin = execute_compat(connection, 
+        "SELECT id,password_hash,must_change_password FROM users WHERE username='admin'"
+    ).fetchone()
+    credential_path = DATA_DIR / ".nexus_initial_admin_password"
+    if not admin or (admin["must_change_password"] and not credential_path.exists()):
+        initial_password = secrets.token_urlsafe(24)
+        if not admin:
+            execute_compat(connection, 
+                "INSERT INTO users(username, full_name, password_hash, role, created_at, must_change_password) VALUES(?,?,?,?,?,1)",
+                ("admin", "مدير النظام", password_hash(initial_password), "admin", now())
+            )
+        else:
+            execute_compat(connection, 
+                "UPDATE users SET password_hash=?,must_change_password=1 WHERE id=?",
+                (password_hash(initial_password), admin["id"])
+            )
+        _save_initial_admin_password(initial_password)
+    if not execute_compat(connection, "SELECT 1 FROM accounts LIMIT 1").fetchone():
+        activity_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        seed_activity_chart(connection, activity_row["setting_value"] if activity_row else "commercial")
+    activity_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    selected_activity = activity_row["setting_value"] if activity_row else "commercial"
+    # Move legacy non-VAT uses of 2130 without changing account IDs or posted journal links.
+    migrate_vat_accounts(connection, selected_activity)
+    ensure_activity_chart_accounts(connection, selected_activity)
+    migrate_legacy_duplicate_account_labels(connection, selected_activity)
+    ensure_account_metadata(connection)
+    execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
+    execute_compat(connection, "CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
     connection.commit()
     connection.close()
+    initialize_stock_schema()
+    init_purchase_schema()
+    init_sales_schema()
+    init_bank_schema()
+    initialize_assets_schema()
+    initialize_aging_schema()
+    initialize_quotes_schema()
+    initialize_tax_schema()
+    workforce_extras.create_workforce_safety_backup()
+    initialize_workforce_schema()
+    workforce_extras.initialize_workforce_extras_schema()
+    initialize_payroll_compliance_schema()
+    initialize_currency_schema()
+    dashboard_connection = db()
+    activity_row = execute_compat(dashboard_connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+    initialize_management_dashboard_schema(dashboard_connection, activity_row["setting_value"] if activity_row else "commercial")
+    initialize_cash_commitments_schema(dashboard_connection)
+    initialize_analytic_dimensions_schema(dashboard_connection)
+    initialize_planning_schema(dashboard_connection)
+    initialize_adjustments_schema(dashboard_connection)
+    # Initialize the complete activity-pack schema during clean startup;
+    # the initializer also ensures the shared activity_profiles registry.
+    initialize_company_activity_schema(dashboard_connection)
+    dashboard_connection.close()
 
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def log(action, details=""):
+def _audit_safe_value(value, key=""):
+    sensitive = ("password", "secret", "token", "csrf", "api_key", "license_key", "private_key")
+    if any(term in str(key).lower() for term in sensitive):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(item_key): _audit_safe_value(item_value, str(item_key)) for item_key, item_value in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_audit_safe_value(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)[:500]
+
+
+def _audit_json(value):
+    if value is None:
+        return None
+    encoded = json.dumps(_audit_safe_value(value), ensure_ascii=False, sort_keys=True, default=str)
+    if len(encoded) <= 12000:
+        return encoded
+    return json.dumps(
+        {"_truncated": True, "preview": encoded[:11000]},
+        ensure_ascii=False, sort_keys=True,
+    )
+
+
+def _audit_request_payload():
+    if not has_request_context():
+        return None
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = request.form.to_dict(flat=False)
+    return _audit_safe_value(payload)
+
+
+def log(action, details="", entity_type=None, entity_id=None, outcome="success",
+        before_values=None, after_values=None, submitted_values=None, reason=None, request_id=None):
     connection = db()
-    connection.execute("INSERT INTO audit_log(user_id, action, details, created_at) VALUES(?,?,?,?)",
-                       (session.get("user_id"), action, details, now()))
-    connection.commit()
-    connection.close()
+    user_id = session.get("user_id") if has_request_context() else None
+    remote_addr = request.remote_addr if has_request_context() else None
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    if has_request_context():
+        request_id = request_id or getattr(g, "audit_request_id", None)
+        if not request_id:
+            request_id = uuid.uuid4().hex
+            g.audit_request_id = request_id
+        if reason is None:
+            reason = request.form.get("change_reason") or request.form.get("reason") or None
+    actor_name = None
+    try:
+        if user_id is not None:
+            try:
+                actor = execute_compat(connection, "SELECT username,full_name FROM users WHERE id=?", (user_id,)).fetchone()
+            except DB_ERROR:
+                actor = None
+            if actor:
+                actor_name = actor["full_name"] or actor["username"]
+            else:
+                user_id = None
+        execute_compat(connection, 
+            """INSERT INTO audit_log
+               (user_id, action, details, created_at, entity_type, entity_id, remote_addr,
+                outcome, actor_name, before_values, after_values, submitted_values, reason, request_id)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, action, str(details or "")[:1000], timestamp,
+             str(entity_type)[:100] if entity_type else None,
+             str(entity_id)[:100] if entity_id is not None else None,
+             remote_addr, outcome if outcome in {"success", "failure"} else "success",
+             str(actor_name)[:200] if actor_name else None,
+             _audit_json(before_values), _audit_json(after_values), _audit_json(submitted_values),
+             str(reason)[:1000] if reason else None,
+             str(request_id)[:64] if request_id else None),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def log_change(action, entity_type, entity_id, before_values, after_values, details="", reason=None):
+    log(
+        action, details, entity_type=entity_type, entity_id=entity_id,
+        outcome="success", before_values=before_values, after_values=after_values,
+        reason=reason,
+    )
+
+
+
+
+_OPERATIONAL_AUDIT_RECORDS = {
+    "sales.discount_approval": ("sales_discount_approval_requests", "request_id", "id", None, None),
+    "sales.submit_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.decide_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.post_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.cancel_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "sales.edit_invoice_workflow": ("sales_invoice_workflows", "workflow_id", "id", None, None),
+    "quotes.approve_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
+    "quotes.reject_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
+    "quotes.invoice_order_route": ("sales_orders", "order_id", "id", "sales_order_lines", "sales_order_id"),
+    "quotes.post_delivery_note_route": ("delivery_notes", "note_id", "id", "delivery_note_lines", "delivery_note_id"),
+    "sales.refund_credit_note": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
+    "sales.cancel_credit_note_route": ("sales_credit_notes", "credit_note_id", "id", "sales_credit_note_lines", "credit_note_id"),
+    "purchase.edit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.delete_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.submit_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.approve_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.reject_order": ("purchase_orders", "order_id", "id", "purchase_order_lines", "po_id"),
+    "purchase.edit_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
+    "purchase.submit_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
+    "purchase.approve_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
+    "purchase.reject_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
+    "purchase.post_bill": ("supplier_bills", "bill_id", "id", "supplier_bill_receipts", "bill_id"),
+    "stock.count_detail": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
+    "stock.approve_count": ("stocktakes", "stocktake_id", "id", "stocktake_lines", "stocktake_id"),
+    "bank.reconcile": ("bank_transactions", "transaction_id", "id", None, None),
+    "assets.depreciate": ("fixed_assets", "asset_id", "id", "asset_depreciations", "asset_id"),
+    "workforce.edit_employee": ("employees", "employee_id", "id", "employee_pay_items", "employee_id"),
+    "workforce.post_payroll": ("payroll_runs", "run_id", "id", "payroll_lines", "run_id"),
+}
+
+
+def _operational_audit_snapshot(endpoint, view_args, created_record=None):
+    """Read a safe before/after snapshot for known operational records; never writes business data."""
+    if created_record:
+        table, record_id, child_table, child_key = created_record
+        primary_key = "id"
+    else:
+        spec = next((value for prefix, value in _OPERATIONAL_AUDIT_RECORDS.items()
+                     if endpoint.startswith(prefix)), None)
+        if not spec:
+            return None
+        table, argument, primary_key, child_table, child_key = spec
+        record_id = (view_args or {}).get(argument)
+    if record_id is None:
+        return None
+    connection = db()
+    try:
+        exists = table_exists(connection, table,)
+        if not exists:
+            return None
+        row = execute_compat(connection, 
+            f"SELECT * FROM {table} WHERE {primary_key}=?", (record_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        record_values = dict(row)
+        if table in {"sales_discount_approval_requests", "sales_invoice_workflows"}:
+            # Keep the audit snapshot focused on workflow headers; submitted form
+            # values are captured separately by the centralized request audit.
+            record_values.pop("payload_json", None)
+        snapshot = {"record": record_values}
+        if child_table:
+            child_exists = table_exists(connection, child_table,)
+            if child_exists:
+                child_info = list(table_column_info(connection, child_table).values())
+                # Some operational detail tables use a composite primary key
+                # and intentionally have no id column. Order by declared PK.
+                primary_columns = sorted(
+                    (column for column in child_info if int(column["pk"] or 0) > 0),
+                    key=lambda column: int(column["pk"]),
+                )
+                order_columns = [column["name"] for column in primary_columns]
+                if not order_columns and child_info:
+                    order_columns = [child_info[0]["name"]]
+                order_sql = (
+                    " ORDER BY " + ",".join('"' + name.replace('"', '""') + '"' for name in order_columns)
+                    if order_columns else ""
+                )
+                snapshot["details"] = [
+                    dict(item) for item in execute_compat(connection, 
+                        f'SELECT * FROM "{child_table}" WHERE "{child_key}"=?{order_sql}',
+                        (record_id,),
+                    ).fetchall()
+                ]
+        return _audit_safe_value(snapshot)
+    finally:
+        connection.close()
+
+
+@app.before_request
+def invalidate_sessions_after_restore():
+    """Reject every cookie issued before the latest in-place database restore."""
+    if not session.get("user_id"):
+        return None
+    expected_epoch = current_session_epoch(SESSION_EPOCH_PATH)
+    supplied_epoch = str(session.get("session_epoch", ""))
+    # Route fixtures predating session epochs remain usable in isolated tests only.
+    if app.config.get("TESTING") and not supplied_epoch:
+        return None
+    if not supplied_epoch or not secrets.compare_digest(supplied_epoch, expected_epoch):
+        session.clear()
+        flash("تم إنهاء الجلسة بعد استعادة نسخة احتياطية. سجّل الدخول مرة أخرى.", "warning")
+        return redirect(url_for("login"))
+    return None
+
+
+@app.before_request
+def capture_operational_audit_before():
+    endpoint = request.endpoint or ""
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and session.get("user_id"):
+        try:
+            g.audit_before_values = _operational_audit_snapshot(endpoint, request.view_args or {})
+        except Exception:
+            g.audit_before_values = None
+            app.logger.exception("Could not capture operational audit before snapshot.")
+
+
+@app.after_request
+def audit_operational_mutations(response):
+    endpoint = request.endpoint or ""
+    audited_prefixes = (
+        "stock.", "purchase.", "purchases.", "sales.", "bank.", "assets.", "aging.",
+        "quotes.", "tax.", "workforce.", "payroll_compliance.",
+        "currency_center.", "party_reports.", "planning.",
+    )
+    is_mutation = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    error_flashes = any(
+        category in {"error", "danger"}
+        for category, _message in session.get("_flashes", [])
+    )
+    should_audit = endpoint.startswith(audited_prefixes) or (
+        is_mutation and session.get("user_id")
+        and (response.status_code >= 400 or error_flashes)
+    )
+    if is_mutation and session.get("user_id") and should_audit:
+        try:
+            module = endpoint.split(".", 1)[0] if "." in endpoint else "core"
+            view_args = request.view_args or {}
+            record_id = next(
+                (view_args[key] for key in (
+                    "id", "entry_id", "invoice_id", "workflow_id", "bill_id", "document_id",
+                    "year_id", "run_id", "product_id", "warehouse_id", "asset_id",
+                    "order_id", "receipt_id", "payment_id", "movement_id",
+                    "count_id", "stocktake_id", "party_id", "employee_id",
+                    "customer_id", "supplier_id", "period_id", "account_id",
+                    "transaction_id", "custody_id", "credit_note_id", "refund_id",
+                    "category_id", "location_id", "rule_id", "pay_item_id", "request_id",
+                ) if view_args.get(key) is not None),
+                None,
+            )
+            created_record = getattr(g, "audit_created_record", None)
+            after_values = _operational_audit_snapshot(endpoint, view_args, created_record)
+            if created_record:
+                record_id = created_record[1]
+            before_values = getattr(g, "audit_before_values", None)
+            log(
+                "module_operation",
+                f"{request.method} {endpoint} ({response.status_code})",
+                entity_type=module,
+                entity_id=record_id,
+                outcome="failure" if response.status_code >= 400 or error_flashes else "success",
+                before_values=before_values,
+                after_values=after_values,
+                submitted_values=_audit_request_payload(),
+            )
+        except Exception:
+            app.logger.exception("Could not write operational audit event.")
+    return response
 
 
 def requires(permission):
@@ -98,7 +906,11 @@ def requires(permission):
         def wrapped(*args, **kwargs):
             if "user_id" not in session:
                 return redirect(url_for("login"))
-            if permission not in PERMISSIONS.get(session.get("role"), set()):
+            effective = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+            is_root_admin_backup_access = (
+                session.get("role") == "admin" and permission == "backup.manage"
+            )
+            if permission not in effective and not is_root_admin_backup_access:
                 flash("لا تملك الصلاحية المطلوبة.", "error")
                 return redirect(url_for("dashboard"))
             return view(*args, **kwargs)
@@ -106,155 +918,3622 @@ def requires(permission):
     return decorator
 
 
+@app.before_request
+def refresh_session_authorization():
+    """Refresh role and permissions from the database so changes take effect immediately."""
+    user_id = session.get("user_id")
+    if not user_id or request.endpoint == "static":
+        return None
+    connection = db()
+    try:
+        user_table = table_exists(connection, "users")
+        user_columns = table_columns(connection, "users") if user_table else set()
+        required_columns = {"id", "role", "active", "permissions_json", "must_change_password", "full_name"}
+        # Lightweight route tests often use isolated legacy schemas. Do not turn a
+        # missing fixture table/column into HTTP 500; production remains fail-closed.
+        if not user_table or not required_columns.issubset(user_columns):
+            if app.config.get("TESTING"):
+                return None
+            session.clear()
+            return redirect(url_for("login"))
+        user = execute_compat(connection, 
+            "SELECT id, role, active, permissions_json, must_change_password, full_name "
+            "FROM users WHERE id=?", (user_id,)
+        ).fetchone()
+    finally:
+        connection.close()
+    if not user:
+        if app.config.get("TESTING"):
+            return None
+        session.clear()
+        return redirect(url_for("login"))
+    if not user["active"]:
+        session.clear()
+        return redirect(url_for("login"))
+    session["role"] = user["role"]
+    session["permissions"] = stored_user_permissions(user["permissions_json"], user["role"])
+    session["must_change_password"] = bool(user["must_change_password"])
+    session["full_name"] = user["full_name"]
+    return None
+
+
+@app.before_request
+def enforce_forced_password_change():
+    if session.get("must_change_password"):
+        allowed_endpoints = {"change_password", "logout", "static"}
+        if (request.endpoint or "") not in allowed_endpoints:
+            return redirect(url_for("change_password"))
+
+
+@app.before_request
+def enforce_license():
+    if NEXUS_DEMO_MODE:
+        return None
+    endpoint = request.endpoint or ""
+    allowed = {"static", "login", "logout", "license_page", "about", "create_backup", "export_data", "change_password"}
+    if endpoint in allowed:
+        return None
+    status = current_license_status()
+    if status["status"] not in {"trial", "licensed"}:
+        if request.path.startswith("/api/") or request.is_json:
+            return {"error":"license_required","message":status.get("message","انتهت صلاحية الترخيص.")}, 402
+        return redirect(url_for("license_page"))
+    return None
+
+
 @app.context_processor
 def shared_context():
-    return {"permissions": PERMISSIONS.get(session.get("role"), set()), "year": datetime.now().year}
+    return {"permissions":set(session.get("permissions", PERMISSIONS.get(session.get("role"),set()))),"year":datetime.now().year,"license_info":current_license_status()}
+
+
+@app.route("/license", methods=["GET", "POST"])
+def license_page():
+    if request.method == "POST":
+        try:
+            activate_license(request.form.get("activation_code",""))
+            flash("تم تفعيل ADMRAIL ERP بنجاح.","success")
+            return redirect(url_for("about"))
+        except RuntimeError as exc:
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."),"error")
+    return render_template("license.html",license_info=current_license_status())
+
+
+@app.route("/about")
+def about():
+    return render_template("about.html",license_info=current_license_status())
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        username = request.form.get("username", "").strip()[:150]
+        if not username:
+            flash("اسم المستخدم مطلوب.", "error")
+            return render_template("login.html"), 400
+        remote_addr = request.remote_addr or "unknown"
         connection = db()
-        user = connection.execute("SELECT * FROM users WHERE username=? AND active=1", (request.form["username"],)).fetchone()
+        cutoff = datetime.now().timestamp() - 900
+        cutoff_text = datetime.fromtimestamp(cutoff).isoformat(timespec="seconds")
+        execute_compat(connection, "DELETE FROM login_attempts WHERE attempted_at < ?", (cutoff_text,))
+        if login_attempts_exceeded(connection, username, remote_addr, cutoff_text):
+            connection.close()
+            log("login_blocked", f"username={username}", entity_type="auth", outcome="failure")
+            flash("تم إيقاف محاولات الدخول مؤقتًا بسبب تكرار المحاولات الفاشلة. حاول بعد 15 دقيقة.", "error")
+            return render_template("login.html"), 429
+        user = execute_compat(connection, "SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+        valid = bool(user and verify_password(request.form.get("password", ""), user["password_hash"]))
+        if valid and password_hash_needs_upgrade(user["password_hash"]):
+            execute_compat(connection, "UPDATE users SET password_hash=? WHERE id=?",
+                               (password_hash(request.form["password"]), user["id"]))
+            connection.commit()
+        if valid:
+            execute_compat(connection, "DELETE FROM login_attempts WHERE username=? AND remote_addr=?", (username, remote_addr))
+        else:
+            execute_compat(connection, "INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
+                               (username, remote_addr, now()))
+        connection.commit()
         connection.close()
-        if user and user["password_hash"] == password_hash(request.form["password"]):
+        if valid:
             session.clear()
-            session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"], role=user["role"])
-            log("login", "تسجيل دخول")
+            session.permanent = True
+            session.update(user_id=user["id"], username=user["username"], full_name=user["full_name"],
+                           role=user["role"], must_change_password=bool(user["must_change_password"]),
+                           permissions=stored_user_permissions(user["permissions_json"], user["role"]),
+                           session_epoch=current_session_epoch(SESSION_EPOCH_PATH))
+            log("login", "تسجيل دخول", entity_type="auth", outcome="success")
+            if user["must_change_password"]:
+                flash("يجب تغيير كلمة مرور المدير الافتراضية قبل استخدام النظام.", "warning")
+                return redirect(url_for("change_password"))
             return redirect(url_for("dashboard"))
+        log("login_failed", f"username={username}", entity_type="auth", outcome="failure")
         flash("بيانات الدخول غير صحيحة.", "error")
     return render_template("login.html")
 
 
+@app.route("/profile/password", methods=["GET", "POST"])
+def change_password():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        current = request.form.get("current_password", "")
+        new = request.form.get("new_password", "")
+        confirm = request.form.get("confirm_password", "")
+        if len(new) < 12:
+            flash("كلمة المرور الجديدة يجب ألا تقل عن 12 حرفًا.", "error")
+        elif new != confirm:
+            flash("تأكيد كلمة المرور غير مطابق.", "error")
+        else:
+            connection = db()
+            user = execute_compat(connection, "SELECT username,password_hash FROM users WHERE id=? AND active=1",
+                                      (session["user_id"],)).fetchone()
+            if not user or not verify_password(current, user["password_hash"]):
+                flash("كلمة المرور الحالية غير صحيحة.", "error")
+            else:
+                execute_compat(connection, "UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+                                   (password_hash(new), session["user_id"]))
+                connection.commit()
+                connection.close()
+                session["must_change_password"] = False
+                if user["username"] == "admin":
+                    (DATA_DIR / ".nexus_initial_admin_password").unlink(missing_ok=True)
+                log("password_changed", "تغيير كلمة مرور المستخدم الحالي", entity_type="security", outcome="success")
+                flash("تم تغيير كلمة المرور بنجاح.", "success")
+                return redirect(url_for("dashboard"))
+            connection.close()
+    return render_template("change_password.html")
+
+
 @app.route("/logout")
 def logout():
+    if session.get("user_id"):
+        log("logout", "تسجيل خروج", entity_type="auth", outcome="success")
     session.clear()
     return redirect(url_for("login"))
 
 
-@app.route("/")
-@requires("reports.view")
-def dashboard():
+@app.route("/company/setup", methods=["GET", "POST"])
+@requires("users.manage")
+def company_setup():
     connection = db()
-    totals = connection.execute("SELECT COUNT(*) accounts, (SELECT COUNT(*) FROM journal_entries) entries, (SELECT COUNT(*) FROM users WHERE active=1) users FROM accounts").fetchone()
-    balance = connection.execute("SELECT COALESCE(SUM(debit),0) debit, COALESCE(SUM(credit),0) credit FROM journal_lines").fetchone()
-    revenue = connection.execute("SELECT COALESCE(SUM(jl.credit-jl.debit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='revenue'").fetchone()["total"]
-    expenses = connection.execute("SELECT COALESCE(SUM(jl.debit-jl.credit),0) total FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id WHERE a.account_type='expense'").fetchone()["total"]
-    recent = connection.execute("SELECT * FROM journal_entries ORDER BY id DESC LIMIT 5").fetchall()
+    if request.method == "POST":
+        activity = request.form.get("activity", "commercial")
+        tax_country = request.form.get("tax_country", "")
+        # Country localization is deterministic: Egypt and Saudi Arabia get their standard VAT defaults.
+        if tax_country == "EG":
+            tax_regime, base_currency, automatic_vat = "EG_VAT", "EGP", "14"
+        elif tax_country == "SA":
+            tax_regime, base_currency, automatic_vat = "SA_VAT_ZAKAT", "SAR", "15"
+        else:
+            tax_regime, automatic_vat = "CUSTOM", request.form.get("default_vat_rate", "0").strip()
+            base_currency = request.form.get("base_currency", "").upper()
+        if activity not in CHARTS or tax_country not in {"EG", "SA"} or tax_regime not in {"EG_VAT", "SA_VAT_ZAKAT", "CUSTOM"}:
+            flash("اختيارات الإعدادات غير صحيحة.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        if not execute_compat(connection, "SELECT 1 FROM currencies WHERE code=?", (base_currency,)).fetchone():
+            flash("العملة الأساسية غير مدعومة في قائمة العملات الحالية.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        inventory_cost_method = request.form.get("inventory_cost_method", "average")
+        if inventory_cost_method not in {"average", "fifo"}:
+            flash("طريقة تقييم المخزون غير صحيحة.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        current_discount_limit = execute_compat(connection, 
+            "SELECT setting_value FROM company_settings WHERE setting_key='sales_discount_limit_percent'"
+        ).fetchone()
+        discount_limit_value = request.form.get(
+            "sales_discount_limit_percent",
+            current_discount_limit["setting_value"] if current_discount_limit else "10",
+        ).strip()
+        try:
+            discount_limit_number = parse_decimal_setting(discount_limit_value, minimum=0, maximum=100)
+        except ValueError:
+            flash("حد خصم المبيعات يجب أن يكون رقمًا من 0 إلى 100.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        settings_values = {
+            "sales_discount_limit_percent": str(discount_limit_number),
+            "inventory_cost_method": inventory_cost_method,
+            "company_name": request.form.get("company_name", "").strip(),
+            "company_address": request.form.get("company_address", "").strip()[:300],
+            "company_phone": request.form.get("company_phone", "").strip()[:60],
+            "company_email": request.form.get("company_email", "").strip()[:120],
+            "company_website": request.form.get("company_website", "").strip()[:160],
+            "tax_country": tax_country, "tax_regime": tax_regime,
+            "tax_number": request.form.get("tax_number", "").strip(),
+            "activity": activity, "base_currency": base_currency,
+            "default_vat_rate": automatic_vat
+        }
+        try:
+            vat_rate = parse_decimal_setting(settings_values["default_vat_rate"], minimum=0, maximum=100)
+            if not settings_values["company_name"]:
+                raise ValueError()
+        except ValueError:
+            flash("أدخل اسم شركة ومعدل ضريبة صحيحًا من 0 إلى 100.", "error")
+            connection.close()
+            return redirect(url_for("company_setup"))
+        previous_settings = {
+            row["setting_key"]: row["setting_value"]
+            for row in execute_compat(connection, 
+                "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN "
+                "('company_name','tax_country','tax_regime','activity','base_currency','default_vat_rate','inventory_cost_method','company_address','company_phone','company_email','company_website','sales_discount_limit_percent')"
+            ).fetchall()
+        }
+        uploaded_logo = request.files.get("company_logo")
+        if uploaded_logo and uploaded_logo.filename:
+            logo_bytes = uploaded_logo.read(1024 * 1024 + 1)
+            if len(logo_bytes) > 1024 * 1024:
+                flash("حجم الشعار يجب ألا يتجاوز 1 ميجابايت.", "error")
+                connection.close()
+                return redirect(url_for("company_setup"))
+            logo_types = (
+                (b"\x89PNG\r\n\x1a\n", "image/png"),
+                (b"\xff\xd8\xff", "image/jpeg"),
+                (b"RIFF", "image/webp"),
+            )
+            mime = next((kind for signature, kind in logo_types
+                         if logo_bytes.startswith(signature) and
+                         (kind != "image/webp" or logo_bytes[8:12] == b"WEBP")), None)
+            if not mime:
+                flash("صيغة الشعار غير مدعومة. استخدم PNG أو JPG أو WEBP.", "error")
+                connection.close()
+                return redirect(url_for("company_setup"))
+            settings_values["company_logo_data"] = "data:" + mime + ";base64," + base64.b64encode(logo_bytes).decode("ascii")
+        elif request.form.get("remove_company_logo") == "yes":
+            settings_values["company_logo_data"] = ""
+        previous_activity_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='activity'").fetchone()
+        previous_activity = previous_activity_row["setting_value"] if previous_activity_row else None
+        has_entries = execute_compat(connection, "SELECT 1 FROM journal_entries LIMIT 1").fetchone()
+        for key, value in settings_values.items():
+            execute_compat(connection, "INSERT INTO company_settings(setting_key,setting_value) VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value", (key, value))
+        selected = set(request.form.getlist("active_currencies"))
+        selected.add(base_currency)
+        for row in execute_compat(connection, "SELECT code FROM currencies").fetchall():
+            code = row["code"]
+            if code not in selected:
+                execute_compat(connection, "UPDATE currencies SET active=0,is_base=0 WHERE code=?", (code,))
+                continue
+            try:
+                rate = Decimal("1") if code == base_currency else parse_decimal_setting(
+                    request.form.get("rate_" + code, "0") or 0, minimum=0
+                )
+            except ValueError:
+                rate = 0
+            if rate <= 0:
+                flash(f"أدخل سعر صرف صحيح للعملة {code}. لم يتم حفظ إعدادات العملات.", "error")
+                connection.rollback()
+                connection.close()
+                return redirect(url_for("company_setup"))
+            execute_compat(connection, "UPDATE currencies SET active=1,is_base=?,rate_to_base=?,updated_at=? WHERE code=?", (1 if code == base_currency else 0, str(rate), now(), code))
+        if has_entries and previous_activity and previous_activity != activity:
+            flash("لا يمكن تغيير النشاط بعد ترحيل قيود؛ لأن ذلك قد يغيّر دلالات وربط الحسابات. أنشئ شركة جديدة أو نفّذ تحويلًا محاسبيًا معتمدًا.", "error")
+            connection.rollback()
+            connection.close()
+            return redirect(url_for("company_setup"))
+        should_load_chart = not has_entries and (request.form.get("replace_chart") == "yes" or previous_activity != activity)
+        if should_load_chart:
+            # Activity changes are append-only: never delete or rewrite existing accounts.
+            ensure_activity_chart_accounts(connection, activity)
+        execute_compat(connection, "INSERT INTO tax_rates(code,name_ar,rate,active) VALUES('VAT',?,?,1) ON CONFLICT(code) DO UPDATE SET name_ar=excluded.name_ar,rate=excluded.rate,active=1",
+                           ("ضريبة القيمة المضافة", str(vat_rate)))
+        connection.commit()
+        connection.close()
+        log_change(
+            "company_setup_updated", "company_settings", "company",
+            previous_settings,
+            {key: value for key, value in settings_values.items() if key != "tax_number"},
+            details=f"{activity}/{tax_country}/{base_currency}",
+            reason=request.form.get("change_reason", "").strip(),
+        )
+        flash("تم حفظ إعدادات الشركة والعملات والنظام الضريبي.", "success")
+        return redirect(url_for("company_setup"))
+    settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(connection, "SELECT * FROM company_settings")}
+    settings.setdefault("sales_discount_limit_percent", "10")
+    currencies = execute_compat(connection, "SELECT * FROM currencies ORDER BY code").fetchall()
+    has_entries = execute_compat(connection, "SELECT 1 FROM journal_entries LIMIT 1").fetchone() is not None
     connection.close()
-    return render_template("dashboard.html", totals=totals, balance=balance, revenue=revenue, expenses=expenses, recent=recent)
+    return render_template("company_setup.html", settings=settings, currencies=currencies, activities=ACTIVITY_LABELS, has_entries=has_entries)
+
+
+@app.route("/settings/company-activities", methods=["GET", "POST"])
+@requires("users.manage")
+def company_activities_settings():
+    from chart_templates import ACTIVITY_LABELS
+    from company_activities import (
+        ACTIVITY_ROLE_TYPES,
+        disable_company_activity,
+        enable_company_activity,
+        list_company_activities,
+        prepare_company_activity,
+        set_activity_posting_account,
+    )
+
+    connection = db()
+    if request.method == "POST":
+        activity_code = request.form.get("activity_code", "").strip().lower()
+        action = request.form.get("action", "").strip()
+        try:
+            if action == "prepare":
+                prepare_company_activity(
+                    connection, activity_code, request.form.get("profile_code") or activity_code
+                )
+                connection.commit()
+                flash("تم تجهيز حزمة النشاط كغير مفعّلة. اربط أدوار الحسابات قبل تفعيلها.", "success")
+            elif action == "map":
+                set_activity_posting_account(
+                    connection, activity_code, request.form.get("role", ""),
+                    request.form.get("account_code", ""),
+                )
+                connection.commit()
+                flash("تم حفظ ربط حساب النشاط بعد التحقق من نوع الحساب.", "success")
+            elif action == "enable":
+                packs = list_company_activities(connection)
+                make_primary = request.form.get("is_primary") == "1" or not any(
+                    row["enabled"] and row["is_primary"] for row in packs
+                )
+                enable_company_activity(
+                    connection, activity_code, request.form.get("profile_code") or activity_code,
+                    primary=make_primary,
+                )
+                connection.commit()
+                flash("تم تفعيل النشاط. ستظهر اختياراته في مستندات المبيعات والمشتريات.", "success")
+            elif action == "disable":
+                disable_company_activity(connection, activity_code)
+                connection.commit()
+                flash("تم تعطيل النشاط دون حذف خرائط الحسابات أو المستندات السابقة.", "success")
+            else:
+                raise ValueError("العملية المطلوبة غير معروفة.")
+        except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر حفظ إعداد النشاط؛ لم يتم اعتماد التغيير."), "error")
+        finally:
+            connection.close()
+        return redirect(url_for("company_activities_settings"))
+
+    activity_packs = list_company_activities(connection)
+    accounts = execute_compat(connection, 
+        "SELECT code,name_ar,account_type FROM accounts "
+        "WHERE is_group=0 AND active=1 ORDER BY code"
+    ).fetchall()
+    mappings = execute_compat(connection, 
+        "SELECT m.activity_code,m.role,m.account_code,a.name_ar,a.account_type "
+        "FROM company_activity_account_map m LEFT JOIN accounts a ON a.code=m.account_code "
+        "ORDER BY m.activity_code,m.role"
+    ).fetchall()
+    activity_options = [
+        {"activity_code": code, "label": label}
+        for code, label in ACTIVITY_LABELS.items()
+    ]
+    connection.close()
+    return render_template(
+        "company_activities_settings.html",
+        activity_packs=activity_packs,
+        activity_options=activity_options,
+        accounts=accounts,
+        mappings=mappings,
+        role_types=ACTIVITY_ROLE_TYPES,
+    )
+
+
+@app.route("/settings/activity-profiles", methods=["GET", "POST"])
+@requires("users.manage")
+def activity_profiles():
+    connection = db()
+    initialize_activity_profiles_schema(connection)
+    if request.method == "POST":
+        action = request.form.get("action", "create")
+        try:
+            if action == "create":
+                profile_id = create_activity_profile(
+                    connection, request.form.get("code"), request.form.get("name"),
+                    request.form.get("base_activity"), request.form.get("description", ""),
+                )
+                connection.commit()
+                log("activity_profile_created", request.form.get("code", ""), "activity_profile", profile_id)
+                flash("تم إنشاء ملف النشاط. راجع توافق الحسابات قبل استخدامه.", "success")
+            elif action == "create_specialized":
+                preset_code = request.form.get("preset_code", "").strip()
+                profile_id = create_specialized_activity_profile(connection, preset_code)
+                connection.commit()
+                log("specialized_activity_profile_created", preset_code, "activity_profile", profile_id)
+                flash("تم تجهيز ملف النشاط المتخصص. راجع توافق الحسابات وخصص الحسابات قبل التفعيل.", "success")
+            elif action == "update_mappings":
+                profile_id = int(request.form.get("profile_id", "0"))
+                update_custom_activity_profile(
+                    connection, profile_id,
+                    request.form.get("account_roles_json", ""),
+                    request.form.get("posting_accounts_json", ""),
+                    request.form.get("tax_roles_json", ""),
+                )
+                connection.commit()
+                log("activity_profile_mappings_updated", str(profile_id), "activity_profile", profile_id)
+                flash("تم حفظ خرائط الحسابات والضرائب بعد التحقق من نوع كل حساب.", "success")
+            elif action in {"activate", "deactivate"}:
+                profile_id = int(request.form.get("profile_id", "0"))
+                profile = next((p for p in list_activity_profiles(connection, True) if p["id"] == profile_id), None)
+                if not profile:
+                    raise ValueError("ملف النشاط غير موجود.")
+                if action == "activate":
+                    current_activity = execute_compat(connection, 
+                        "SELECT setting_value FROM company_settings WHERE setting_key='activity'"
+                    ).fetchone()
+                    has_posted_entries = execute_compat(connection, 
+                        "SELECT 1 FROM journal_entries WHERE status='posted' LIMIT 1"
+                    ).fetchone()
+                    if has_posted_entries and current_activity and current_activity["setting_value"] != profile["base_activity"]:
+                        raise ValueError("لا يمكن تغيير النشاط الأساسي بعد ترحيل قيود؛ يلزم إجراء تحويل محاسبي معتمد.")
+                    errors = validate_activity_profile(connection, profile)
+                    if errors:
+                        raise ValueError("لا يمكن تفعيل الملف قبل معالجة الحسابات: " + "؛ ".join(errors[:5]))
+                    execute_compat(connection, 
+                        "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity_profile_code',?) "
+                        "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
+                        (profile["code"],),
+                    )
+                    execute_compat(connection, 
+                        "INSERT INTO company_settings(setting_key,setting_value) VALUES('activity',?) "
+                        "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value",
+                        (profile["base_activity"],),
+                    )
+                    connection.commit()
+                    log("activity_profile_activated", profile["code"], "activity_profile", profile_id)
+                    flash("تم تفعيل ملف النشاط. لم يتم حذف أو تعديل أي حساب قائم.", "success")
+                else:
+                    active_code = execute_compat(connection, 
+                        "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
+                    ).fetchone()
+                    if active_code and active_code["setting_value"] == profile["code"]:
+                        raise ValueError("لا يمكن تعطيل ملف النشاط المستخدم حاليًا.")
+                    set_activity_profile_active(connection, profile_id, False)
+                    connection.commit()
+                    log("activity_profile_deactivated", profile["code"], "activity_profile", profile_id)
+                    flash("تم تعطيل ملف النشاط.", "success")
+            else:
+                raise ValueError("العملية المطلوبة غير معروفة.")
+        except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+        connection.close()
+        return redirect(url_for("activity_profiles"))
+    profiles = list_activity_profiles(connection, True)
+    active_row = execute_compat(connection, 
+        "SELECT setting_value FROM company_settings WHERE setting_key='activity_profile_code'"
+    ).fetchone()
+    active_code = active_row["setting_value"] if active_row else "commercial"
+    for profile in profiles:
+        profile["validation_errors"] = validate_activity_profile(connection, profile)
+        profile["selected"] = profile["code"] == active_code
+    connection.close()
+    return render_template("activity_profiles.html", profiles=profiles, activities=ACTIVITY_LABELS, specialized_presets=SPECIALIZED_ACTIVITY_PRESETS)
+
+
+@app.route("/")
+def dashboard():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    if "reports.view" not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
+        return render_template("limited_home.html")
+    return redirect(url_for("management_dashboard"))
 
 
 @app.route("/accounts", methods=["GET", "POST"])
-@requires("accounts.manage")
 def accounts():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    effective_permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+    required_permission = "accounts.manage" if request.method == "POST" else "accounts.view"
+    if required_permission not in effective_permissions and not (request.method == "GET" and "accounts.manage" in effective_permissions):
+        flash("لا تملك صلاحية عرض أو إدارة شجرة الحسابات.","error")
+        return redirect(url_for("dashboard"))
     connection = db()
     if request.method == "POST":
         try:
-            connection.execute("INSERT INTO accounts(code,name_ar,account_type,parent_id) VALUES(?,?,?,?)",
-                               (request.form["code"].strip(), request.form["name_ar"].strip(), request.form["account_type"], request.form.get("parent_id") or None))
+            code = request.form["code"].strip()
+            name = request.form["name_ar"].strip()
+            account_type = request.form["account_type"]
+            parent_id = request.form.get("parent_id") or None
+            is_group = 1 if request.form.get("is_group") == "yes" else 0
+            if account_type not in {"asset","liability","equity","revenue","expense"} or not code or not name:
+                raise ValueError("بيانات الحساب غير صحيحة.")
+            if parent_id:
+                parent = execute_compat(connection, "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (parent_id,)).fetchone()
+                if not parent or not parent["active"] or not parent["is_group"] or parent["account_type"] != account_type:
+                    raise ValueError("الحساب الأب يجب أن يكون مجموعة نشطة ومن نفس نوع الحساب.")
+            elif not is_group:
+                raise ValueError("الحساب الفرعي يجب أن يرتبط بحساب رئيسي. لإنشاء مستوى أول اختر حسابًا رئيسيًا تجميعيًا.")
+            execute_compat(connection, "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                               (code, name, account_type, parent_id, is_group))
+            account_id = execute_compat(connection, "SELECT id FROM accounts WHERE code=?", (code,)).fetchone()["id"]
+            ensure_account_metadata(connection)
             connection.commit()
-            log("account_created", request.form["code"])
+            log_change(
+                "account_created", "account", account_id, None,
+                {"code": code, "name_ar": name, "account_type": account_type,
+                 "parent_id": int(parent_id) if parent_id else None, "is_group": is_group, "active": 1},
+                details=code, reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تمت إضافة الحساب.", "success")
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERROR:
+            connection.rollback()
             flash("رمز الحساب مستخدم بالفعل.", "error")
-    rows = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
+        except ValueError as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+    raw_rows = execute_compat(connection, "SELECT * FROM accounts ORDER BY code").fetchall()
+    by_id = {row["id"]: dict(row) for row in raw_rows}
+    def account_depth(row, seen=None):
+        seen = seen or set()
+        parent_id = row.get("parent_id")
+        if not parent_id or parent_id not in by_id or parent_id in seen:
+            return 0
+        return 1 + account_depth(by_id[parent_id], seen | {parent_id})
+    children_by_parent = {}
+    for row in raw_rows:
+        children_by_parent.setdefault(row["parent_id"], []).append(dict(row))
+    rows = []
+    def append_branch(parent_id, depth=0, ancestors=None):
+        ancestors = ancestors or set()
+        for item in sorted(children_by_parent.get(parent_id, []), key=lambda x: x["code"]):
+            if item["id"] in ancestors:
+                continue
+            item["depth"] = depth
+            item["has_children"] = bool(children_by_parent.get(item["id"]))
+            item["parent_code"] = by_id.get(item["parent_id"], {}).get("code", "")
+            rows.append(item)
+            append_branch(item["id"], depth + 1, ancestors | {item["id"]})
+    append_branch(None)
+    # Keep any orphaned/cyclic records visible rather than silently hiding them.
+    visible_ids = {item["id"] for item in rows}
+    for raw in raw_rows:
+        if raw["id"] not in visible_ids:
+            item = dict(raw)
+            item["depth"] = account_depth(item, {item["id"]})
+            item["has_children"] = bool(children_by_parent.get(item["id"]))
+            item["parent_code"] = by_id.get(item["parent_id"], {}).get("code", "")
+            rows.append(item)
+    groups = [row for row in raw_rows if row["is_group"] and row["active"]]
     connection.close()
-    return render_template("accounts.html", accounts=rows)
+    return render_template("accounts.html", accounts=rows, groups=groups)
 
+
+@app.route("/accounts/<int:account_id>/delete", methods=["POST"])
+@requires("accounts.manage")
+def delete_account(account_id):
+    connection = db()
+    account = execute_compat(connection, "SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not account:
+        flash("الحساب غير موجود.", "error")
+    else:
+        child = execute_compat(connection, "SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1", (account_id,)).fetchone()
+        used = execute_compat(connection, "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone()
+        if child:
+            flash("لا يمكن حذف الحساب: يوجد حساب فرعي مرتبط به. احذف/انقل الحسابات الفرعية أولًا.", "error")
+        elif used:
+            flash("لا يمكن حذف الحساب: سبق استخدامه في قيد يومية. احتفظ به أو عطّله بدل الحذف.", "error")
+        else:
+            try:
+                before_values = {key: account[key] for key in ("code", "name_ar", "account_type", "parent_id", "is_group", "active")}
+                execute_compat(connection, "DELETE FROM accounts WHERE id=?", (account_id,))
+                connection.commit()
+                log_change(
+                    "account_deleted", "account", account_id, before_values, None,
+                    details=account["code"], reason=request.form.get("change_reason", "").strip(),
+                )
+                flash("تم حذف الحساب لعدم وجود حسابات فرعية أو حركات مرتبطة.", "success")
+            except DB_INTEGRITY_ERROR:
+                connection.rollback()
+                flash("لا يمكن حذف الحساب لأنه مرتبط بمستند أو سجل آخر.", "error")
+    connection.close()
+    return redirect(url_for("accounts"))
+
+
+@app.route("/accounts/<int:account_id>/edit", methods=["GET", "POST"])
+@requires("accounts.manage")
+def edit_account(account_id):
+    connection = db()
+    account = execute_compat(connection, "SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not account:
+        connection.close()
+        flash("الحساب غير موجود.", "error")
+        return redirect(url_for("accounts"))
+    used = execute_compat(connection, "SELECT 1 FROM journal_lines WHERE account_id=? LIMIT 1", (account_id,)).fetchone() is not None
+    if request.method == "POST":
+        code, name = request.form.get("code", "").strip(), request.form.get("name_ar", "").strip()
+        if not code or not name:
+            flash("كود واسم الحساب مطلوبان.", "error")
+        elif (used or account["code"] in OPERATIONAL_ACCOUNT_CODES) and (
+            code != account["code"]
+            or request.form.get("account_type") != account["account_type"]
+            or (int(request.form["parent_id"]) if request.form.get("parent_id") else None) != account["parent_id"]
+            or (1 if request.form.get("is_group") == "yes" else 0) != account["is_group"]
+        ):
+            flash("الحساب مستخدم في القيود أو مرتبط بخرائط الترحيل والتشغيل؛ يسمح بتعديل الاسم فقط حفاظًا على سلامة الحسابات والتقارير.", "error")
+        else:
+            parent_id = request.form.get("parent_id") or None
+            new_type = request.form.get("account_type")
+            new_group = 1 if request.form.get("is_group")=="yes" else 0
+            parent = execute_compat(connection, "SELECT * FROM accounts WHERE id=?", (parent_id,)).fetchone() if parent_id else None
+            descendants = execute_compat(connection, """WITH RECURSIVE tree(id) AS (
+                SELECT id FROM accounts WHERE parent_id=?
+                UNION ALL SELECT a.id FROM accounts a JOIN tree t ON a.parent_id=t.id
+            ) SELECT id FROM tree""", (account_id,)).fetchall()
+            descendant_ids = {row["id"] for row in descendants}
+            if new_type not in {"asset","liability","equity","revenue","expense"}:
+                flash("نوع الحساب غير صحيح.", "error")
+            elif new_group == 0 and execute_compat(connection, "SELECT 1 FROM accounts WHERE parent_id=? LIMIT 1",(account_id,)).fetchone():
+                flash("لا يمكن تحويل حساب أب له حسابات فرعية إلى حساب تفصيلي.", "error")
+            elif parent_id and (not parent or not parent["is_group"] or not parent["active"] or parent["account_type"] != new_type or int(parent_id)==account_id or int(parent_id) in descendant_ids):
+                flash("الحساب الأب غير صالح أو يؤدي إلى تكوين دورة في الشجرة.", "error")
+            else:
+                try:
+                    before_values = {
+                        "code": account["code"], "name_ar": account["name_ar"],
+                        "account_type": account["account_type"], "parent_id": account["parent_id"],
+                        "is_group": account["is_group"], "active": account["active"],
+                    }
+                    after_values = {
+                        "code": code, "name_ar": name, "account_type": new_type,
+                        "parent_id": int(parent_id) if parent_id else None,
+                        "is_group": new_group, "active": account["active"],
+                    }
+                    execute_compat(connection, "UPDATE accounts SET code=?,name_ar=?,account_type=?,parent_id=?,is_group=? WHERE id=?",
+                        (code,name,new_type,parent_id,new_group,account_id))
+                    connection.commit()
+                    log_change(
+                        "account_updated", "account", account_id, before_values, after_values,
+                        details=code, reason=request.form.get("change_reason", "").strip(),
+                    )
+                    connection.close()
+                    flash("تم تعديل الحساب.", "success")
+                    return redirect(url_for("accounts"))
+                except DB_INTEGRITY_ERROR:
+                    connection.rollback()
+                    flash("كود الحساب مستخدم بالفعل.", "error")
+    groups = execute_compat(connection, "SELECT * FROM accounts WHERE is_group=1 AND active=1 AND id<>? ORDER BY code", (account_id,)).fetchall()
+    connection.close()
+    return render_template("account_edit.html", account=account, groups=groups, used=used, code_protected=(used or account["code"] in OPERATIONAL_ACCOUNT_CODES))
+
+
+
+@app.route("/search")
+def global_search():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    effective_permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+    q = request.args.get("q", "").strip()[:120]
+    results = []
+    if q:
+        conn = db()
+
+        def exists(table):
+            return table_exists(conn, table,)
+
+        def columns(table):
+            if not exists(table):
+                return set()
+            return table_columns(conn, table)
+
+        like = f"%{q}%"
+
+        # Search journal entries, including their linked sales/purchase documents.
+        if "reports.view" in effective_permissions and exists("journal_entries"):
+            journal_columns = columns("journal_entries")
+            predicates = []
+            args = []
+            for column in ("reference", "description", "entry_date"):
+                if column in journal_columns:
+                    predicates.append(f"CAST(j.{column} AS TEXT) LIKE ?")
+                    args.append(like)
+
+            if exists("journal_lines"):
+                predicates.append(
+                    "EXISTS(SELECT 1 FROM journal_lines jl "
+                    "WHERE jl.entry_id=j.id AND jl.memo LIKE ?)"
+                )
+                args.append(like)
+
+            if "sales.view" in effective_permissions and exists("sales_invoices") and exists("customers"):
+                sales_invoice_columns = columns("sales_invoices")
+                if "journal_entry_id" in sales_invoice_columns:
+                    predicates.append(
+                        "EXISTS(SELECT 1 FROM sales_invoices si "
+                        "JOIN customers sc ON sc.id=si.customer_id "
+                        "WHERE si.journal_entry_id=j.id "
+                        "AND (si.invoice_no LIKE ? OR sc.name LIKE ? OR sc.code LIKE ?))"
+                    )
+                    args.extend([like, like, like])
+
+            if "purchases.view" in effective_permissions and exists("supplier_bills") and exists("suppliers"):
+                supplier_bill_columns = columns("supplier_bills")
+                if "journal_entry_id" in supplier_bill_columns:
+                    predicates.append(
+                        "EXISTS(SELECT 1 FROM supplier_bills sb "
+                        "JOIN suppliers ss ON ss.id=sb.supplier_id "
+                        "WHERE sb.journal_entry_id=j.id "
+                        "AND (sb.bill_no LIKE ? OR sb.supplier_invoice_no LIKE ? "
+                        "OR ss.name LIKE ? OR ss.code LIKE ?))"
+                    )
+                    args.extend([like, like, like, like])
+
+            if q.isdigit():
+                predicates.append("j.id=?")
+                args.append(int(q))
+
+            if predicates:
+                for row in execute_compat(conn, 
+                    "SELECT j.id,j.entry_date,j.reference,j.description "
+                    "FROM journal_entries j WHERE "
+                    + " OR ".join(predicates)
+                    + " ORDER BY j.id DESC LIMIT 30",
+                    args,
+                ):
+                    results.append({
+                        "kind": "قيد يومية",
+                        "title": f"قيد رقم {row['id']} — {row['reference'] or ''}",
+                        "detail": f"{row['entry_date']} | {row['description']}",
+                        "url": url_for("journal_detail", entry_id=row["id"]),
+                    })
+
+        # Search customers and suppliers independently from journal search.
+        if "sales.view" in effective_permissions and exists("customers"):
+            customer_columns = columns("customers")
+            searchable = [column for column in ("name", "code", "phone") if column in customer_columns]
+            if searchable:
+                where = " OR ".join(f"{column} LIKE ?" for column in searchable)
+                for row in execute_compat(conn, 
+                    f"SELECT * FROM customers WHERE {where} ORDER BY name LIMIT 20",
+                    [like] * len(searchable),
+                ):
+                    results.append({
+                        "kind": "عميل",
+                        "title": f"{row['code']} — {row['name']}",
+                        "detail": f"هاتف: {row['phone'] or '—'}",
+                        "url": url_for("sales.edit_customer", customer_id=row["id"]),
+                    })
+
+        if "purchases.view" in effective_permissions and exists("suppliers"):
+            supplier_columns = columns("suppliers")
+            searchable = [column for column in ("name", "code", "phone") if column in supplier_columns]
+            if searchable:
+                where = " OR ".join(f"{column} LIKE ?" for column in searchable)
+                for row in execute_compat(conn, 
+                    f"SELECT * FROM suppliers WHERE {where} ORDER BY name LIMIT 20",
+                    [like] * len(searchable),
+                ):
+                    results.append({
+                        "kind": "مورد",
+                        "title": f"{row['code']} — {row['name']}",
+                        "detail": f"هاتف: {row['phone'] or '—'}",
+                        "url": url_for("purchase.edit_supplier", supplier_id=row["id"]),
+                    })
+
+        if "sales.view" in effective_permissions and exists("sales_invoices") and exists("customers"):
+            for row in execute_compat(conn, 
+                """SELECT i.id,i.invoice_no,i.invoice_date,i.total_amount,c.name party
+                   FROM sales_invoices i JOIN customers c ON c.id=i.customer_id
+                   WHERE i.invoice_no LIKE ? OR c.name LIKE ? OR c.code LIKE ?
+                   ORDER BY i.id DESC LIMIT 30""",
+                (like, like, like),
+            ):
+                results.append({
+                    "kind": "فاتورة بيع",
+                    "title": row["invoice_no"],
+                    "detail": f"{row['party']} | {row['invoice_date']} | {row['total_amount']}",
+                    "url": url_for("sales.invoice_print", invoice_id=row["id"]),
+                })
+
+        if "purchases.view" in effective_permissions and exists("supplier_bills") and exists("suppliers"):
+            for row in execute_compat(conn, 
+                """SELECT b.id,b.bill_no,b.supplier_invoice_no,b.bill_date,b.total_amount,s.name party
+                   FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                   WHERE b.bill_no LIKE ? OR b.supplier_invoice_no LIKE ?
+                      OR s.name LIKE ? OR s.code LIKE ?
+                   ORDER BY b.id DESC LIMIT 30""",
+                (like, like, like, like),
+            ):
+                results.append({
+                    "kind": "فاتورة مورد",
+                    "title": row["bill_no"],
+                    "detail": (
+                        f"{row['party']} | فاتورة المورد {row['supplier_invoice_no']} "
+                        f"| {row['bill_date']} | {row['total_amount']}"
+                    ),
+                    "url": url_for("purchase.bill_print", bill_id=row["id"]),
+                })
+
+        if "stock.view" in effective_permissions and exists("stock_products"):
+            for row in execute_compat(conn, 
+                """SELECT id,sku,name_ar,barcode,purchase_price,sale_price
+                   FROM stock_products
+                   WHERE sku LIKE ? OR name_ar LIKE ? OR barcode LIKE ?
+                   ORDER BY name_ar LIMIT 30""",
+                (like, like, like),
+            ):
+                results.append({
+                    "kind": "منتج / مخزون",
+                    "title": f"{row['sku']} — {row['name_ar']}",
+                    "detail": (
+                        f"شراء: {row['purchase_price']} | بيع: {row['sale_price']} "
+                        f"| باركود: {row['barcode'] or '—'}"
+                    ),
+                    "url": url_for("stock.edit_product", product_id=row["id"]),
+                })
+
+        if ({"accounts.view", "accounts.manage"} & effective_permissions) and exists("accounts"):
+            for row in execute_compat(conn, 
+                "SELECT id,code,name_ar FROM accounts "
+                "WHERE code LIKE ? OR name_ar LIKE ? ORDER BY code LIMIT 20",
+                (like, like),
+            ):
+                results.append({
+                    "kind": "حساب",
+                    "title": f"{row['code']} — {row['name_ar']}",
+                    "detail": "دليل الحسابات",
+                    "url": url_for("accounts"),
+                })
+
+        if "users.manage" in effective_permissions and exists("company_settings"):
+            for row in execute_compat(conn, 
+                "SELECT setting_key,setting_value FROM company_settings "
+                "WHERE setting_value LIKE ? LIMIT 20",
+                (like,),
+            ):
+                if "company" in row["setting_key"].lower() or "name" in row["setting_key"].lower():
+                    results.append({
+                        "kind": "إعداد شركة",
+                        "title": row["setting_key"],
+                        "detail": row["setting_value"],
+                        "url": url_for("company_setup"),
+                    })
+
+        conn.close()
+
+    return render_template("global_search.html", q=q, results=results)
 
 @app.route("/journal", methods=["GET", "POST"])
 @requires("journal.manage")
 def journal():
     connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
+    accounts_list = execute_compat(connection, "SELECT * FROM accounts WHERE active=1 AND is_group=0 ORDER BY code").fetchall()
+    dimension_options = active_dimension_options(connection)
     if request.method == "POST":
         account_ids = request.form.getlist("account_id")
         debits = request.form.getlist("debit")
         credits = request.form.getlist("credit")
         memos = request.form.getlist("memo")
-        lines = []
-        for account_id, debit, credit, memo in zip(account_ids, debits, credits, memos):
-            debit, credit = float(debit or 0), float(credit or 0)
-            if debit or credit:
-                lines.append((int(account_id), debit, credit, memo.strip()))
-        total_debit, total_credit = sum(x[1] for x in lines), sum(x[2] for x in lines)
-        if len(lines) < 2 or abs(total_debit - total_credit) > 0.005 or total_debit <= 0:
-            flash("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.", "error")
-        else:
-            cursor = connection.execute("INSERT INTO journal_entries(entry_date,reference,description,created_by,created_at) VALUES(?,?,?,?,?)",
-                                        (request.form["entry_date"], request.form.get("reference", ""), request.form["description"].strip(), session["user_id"], now()))
-            connection.executemany("INSERT INTO journal_lines(entry_id,account_id,debit,credit,memo) VALUES(?,?,?,?,?)",
-                                   [(cursor.lastrowid, *line) for line in lines])
+        line_types = request.form.getlist("line_type")
+        asset_names = request.form.getlist("asset_name")
+        asset_categories = request.form.getlist("asset_category")
+        asset_ready_dates = request.form.getlist("asset_ready_date")
+        try:
+            entry_date = datetime.fromisoformat(request.form.get("entry_date", "").strip()).date().isoformat()
+            description = request.form.get("description", "").strip()
+            if not description or len(description) > 500:
+                raise ValueError("أدخل بيانًا صحيحًا للقيد (حتى 500 حرف).")
+            if not (len(account_ids) == len(debits) == len(credits) == len(memos) == len(line_types) == len(asset_names) == len(asset_categories) == len(asset_ready_dates)):
+                raise ValueError("بيانات سطور القيد غير مكتملة.")
+            lines = []
+            line_asset_details = []
+            for account_id, debit_text, credit_text, memo, line_type, asset_name, asset_category, asset_ready_date in zip(
+                account_ids, debits, credits, memos, line_types, asset_names, asset_categories, asset_ready_dates
+            ):
+                if not account_id:
+                    raise ValueError("اختر حسابًا لكل سطر.")
+                try:
+                    aid = int(account_id)
+                    debit = Decimal((debit_text or "0").strip())
+                    credit = Decimal((credit_text or "0").strip())
+                except (ValueError, InvalidOperation):
+                    raise ValueError("أدخل مبالغ رقمية صحيحة واختر حسابًا صالحًا.")
+                if not debit.is_finite() or not credit.is_finite() or debit < 0 or credit < 0:
+                    raise ValueError("المبالغ يجب أن تكون أرقامًا موجبة أو صفرًا.")
+                if debit > 0 and credit > 0:
+                    raise ValueError("لا يجوز أن يجمع السطر الواحد بين المدين والدائن.")
+                if line_type not in {"normal", "fixed_asset"}:
+                    raise ValueError("نوع سطر القيد غير صحيح.")
+                if debit or credit:
+                    lines.append((aid, debit, credit, (memo or "").strip()))
+                    if line_type == "fixed_asset":
+                        if not asset_name.strip():
+                            raise ValueError("اكتب اسم الأصل في سطر الشراء المحدد كأصل ثابت.")
+                        if debit <= 0 or credit != 0:
+                            raise ValueError("سطر الأصل الثابت يجب أن يكون مدينًا فقط.")
+                        line_asset_details.append({
+                            "asset_name": asset_name.strip(),
+                            "category": asset_category.strip(),
+                            "ready_date": asset_ready_date.strip() or entry_date,
+                        })
+                    else:
+                        line_asset_details.append(None)
+            total_debit = sum((x[1] for x in lines), Decimal("0"))
+            total_credit = sum((x[2] for x in lines), Decimal("0"))
+            if len(lines) < 2 or total_debit <= 0 or total_debit != total_credit:
+                raise ValueError("يجب إدخال سطرين على الأقل وأن يتساوى إجمالي المدين والدائن.")
+            submission_token = request.form.get("submission_token", "").strip().lower()
+            if not re.fullmatch(r"[a-f0-9]{32}", submission_token):
+                raise ValueError("انتهت صلاحية نموذج القيد؛ حدّث الصفحة وحاول مرة أخرى.")
+            reference = request.form.get("reference", "").strip() or "MAN-" + submission_token
+            if len(reference) > 100:
+                raise ValueError("المرجع لا يجب أن يتجاوز 100 حرف.")
+            dimensions = validate_journal_dimensions(connection, {key: request.form.get(key) for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id", "supplier_id")})
+            begin_write_transaction(connection)
+            # Serialize the duplicate check with post_journal and linked asset
+            # registration; otherwise two retries can both observe no entry,
+            # then the second can attempt to register the same asset lines.
+            lock_journal_reference(connection, reference)
+            existing_reference = execute_compat(connection,
+                "SELECT id FROM journal_entries WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+                (reference,),
+            ).fetchone()
+            entry_id = post_journal(connection, entry_date, reference, description, lines, session["user_id"], dimensions)
+            if any(line_asset_details) and not existing_reference:
+                register_assets_from_journal_lines(connection, entry_id, line_asset_details, session["user_id"])
             connection.commit()
-            log("journal_posted", f"قيد #{cursor.lastrowid}")
+            if existing_reference:
+                flash("تم استلام نفس القيد من قبل؛ لم يتم إنشاء قيد أو أصول مكررة.", "info")
+                return redirect(url_for("journal"))
+            posted_entry = execute_compat(connection, 
+                "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
+                (entry_id,),
+            ).fetchone()
+            posted_lines = [dict(row) for row in execute_compat(connection, 
+                """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
+                   FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+                   WHERE jl.entry_id=? ORDER BY jl.id""",
+                (entry_id,),
+            ).fetchall()]
+            log_change(
+                "journal_posted", "journal_entry", entry_id, None,
+                {
+                    "entry_date": posted_entry["entry_date"],
+                    "reference": posted_entry["reference"],
+                    "description": posted_entry["description"],
+                    "status": posted_entry["status"],
+                    "debit_total": str(total_debit), "credit_total": str(total_credit),
+                    "dimensions": dimensions, "lines": posted_lines,
+                },
+                details=f"قيد #{entry_id}",
+                reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تم ترحيل القيد بنجاح.", "success")
             return redirect(url_for("journal"))
-    entries = connection.execute("SELECT * FROM journal_entries ORDER BY entry_date DESC, id DESC LIMIT 20").fetchall()
+        except (ValueError, TypeError, OverflowError) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "بيانات القيد غير صحيحة."), "error")
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    status_filter = request.args.get("status", "").strip()
+    entry_type_filter = request.args.get("entry_type", "").strip()
+    source_filter = request.args.get("source", "").strip()
+    account_filter = request.args.get("account_id", type=int)
+    search_query = request.args.get("q", "").strip()[:100]
+    sort_order = request.args.get("sort_order", "asc").strip().lower()
+    if sort_order not in {"asc", "desc"}:
+        sort_order = "asc"
+    sort_sql = "DESC" if sort_order == "desc" else "ASC"
+    for value in (date_from, date_to):
+        if value:
+            try:
+                if datetime.fromisoformat(value).date().isoformat() != value:
+                    raise ValueError()
+            except ValueError:
+                flash("تاريخ البحث غير صحيح.", "error")
+                date_from = date_to = ""
+                break
+    if date_from and date_to and date_from > date_to:
+        flash("تاريخ البداية يجب ألا يسبق تاريخ النهاية.", "error")
+        date_from = date_to = ""
+    if status_filter not in ("draft", "posted"):
+        status_filter = ""
+    if entry_type_filter not in ("general", "year_end_closing", "year_end_closing_reversal"):
+        entry_type_filter = ""
+    # Resolve journal origins from their owning operational documents. This is
+    # schema-aware so older databases without a module table remain supported.
+    source_tables = {
+        "sales": ("sales_invoices", "customer_receipts", "customer_receipt_batches",
+                  "sales_credit_notes", "customer_refunds", "customer_advance_receipts",
+                  "customer_advance_refunds", "customer_advance_reversals"),
+        "purchases": ("supplier_bills", "goods_receipts", "supplier_payments", "supplier_credit_notes"),
+        "payroll": ("payroll_runs", "payroll_payments", "payroll_reversals"),
+        "incentives": ("employee_grants", "employee_grant_payments"),
+        "friday": ("friday_allowance_batches",),
+        "inventory": ("stock_movements", "stocktakes", "stocktake_batches"),
+        "banking": ("bank_transactions",),
+        "assets": ("asset_depreciations", "asset_disposals"),
+    }
+    source_labels = {
+        "sales": "مبيعات وتحصيلات", "purchases": "مشتريات وموردين",
+        "payroll": "المرتبات", "incentives": "حوافز ومنح",
+        "friday": "بدل عمل الجمعة", "inventory": "المخزون",
+        "banking": "البنوك", "assets": "الأصول الثابتة",
+    }
+    # Direct, read-only destinations for source documents that have a dedicated
+    # display/print route. Tables without a detail screen remain labelled but
+    # do not receive a misleading generic action.
+    source_link_specs = {
+        "sales_invoices": ("sales.invoice_print", "invoice_id", "id", "فتح فاتورة البيع"),
+        "customer_receipts": ("sales.single_receipt_print", "receipt_id", "id", "فتح سند القبض"),
+        "customer_receipt_batches": ("sales.receipt_print", "receipt_id", "id", "فتح سند القبض المجمع"),
+        "supplier_bills": ("purchase.bill_print", "bill_id", "id", "فتح فاتورة المورد"),
+        "supplier_payments": ("purchase.payment_print", "payment_id", "id", "فتح سند سداد المورد"),
+        "payroll_runs": ("workforce.payroll_run", "run_id", "id", "فتح كشف المرتبات"),
+        "payroll_payments": ("workforce.payroll_run", "run_id", "run_id", "فتح كشف المرتبات"),
+        "payroll_reversals": ("workforce.payroll_run", "run_id", "run_id", "فتح كشف المرتبات وعكسها"),
+        "employee_grants": ("workforce.print_employee_grant", "grant_id", "id", "فتح مستند المنحة"),
+        "employee_grant_payments": ("workforce.print_employee_grant", "grant_id", "grant_id", "فتح مستند المنحة"),
+        "asset_depreciations": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
+        "asset_disposals": ("assets.schedule", "asset_id", "asset_id", "فتح سجل الأصل"),
+        "stocktakes": ("stock.count_detail", "stocktake_id", "id", "فتح مستند الجرد"),
+        "friday_allowance_batches": ("workforce.friday_allowance", "period", "period", "فتح كشف بدل الجمعة"),
+    }
+    existing_tables = table_names(connection)
+    source_table_columns = {}
+    source_journal_columns = {}
+    for category, names in source_tables.items():
+        for table_name in names:
+            if table_name in existing_tables:
+                cols = table_columns(connection, table_name)
+                journal_col = ("journal_entry_id" if "journal_entry_id" in cols
+                               else "reversal_journal_entry_id" if "reversal_journal_entry_id" in cols
+                               else None)
+                if journal_col:
+                    source_table_columns[table_name] = category
+                    source_journal_columns[table_name] = journal_col
+    if source_filter not in (*source_tables.keys(), "general"):
+        source_filter = ""
+    filters, filter_params = [], []
+    if source_filter == "general":
+        if source_table_columns:
+            exclusions = [
+                f'EXISTS(SELECT 1 FROM "{table_name}" src WHERE src."{source_journal_columns[table_name]}"=journal_entries.id)'
+                for table_name in source_table_columns
+            ]
+            filters = ["NOT (" + " OR ".join(exclusions) + ")"]
+        else:
+            filters = []
+    elif source_filter:
+        linked_tables = [name for name, category in source_table_columns.items()
+                         if category == source_filter]
+        if linked_tables:
+            filters.append("(" + " OR ".join(
+                f'EXISTS(SELECT 1 FROM "{name}" src WHERE src."{source_journal_columns[name]}"=journal_entries.id)'
+                for name in linked_tables
+            ) + ")")
+        else:
+            # A missing module schema must never return misleading results.
+            filters.append("1=0")
+    filter_params = []
+    if date_from:
+        filters.append("entry_date>=?"); filter_params.append(date_from)
+    if date_to:
+        filters.append("entry_date<=?"); filter_params.append(date_to)
+    if status_filter:
+        filters.append("status=?"); filter_params.append(status_filter)
+    entry_columns = table_columns(connection, "journal_entries")
+    if entry_type_filter and "entry_type" in entry_columns:
+        filters.append("entry_type=?"); filter_params.append(entry_type_filter)
+    if account_filter:
+        valid_account = execute_compat(connection, 
+            "SELECT 1 FROM accounts WHERE id=? AND is_group=0 AND active=1", (account_filter,)
+        ).fetchone()
+        if valid_account:
+            filters.append("""EXISTS(SELECT 1 FROM journal_lines account_lines
+                WHERE account_lines.entry_id=journal_entries.id AND account_lines.account_id=?)""")
+            filter_params.append(account_filter)
+        else:
+            account_filter = None
+    if search_query:
+        search_like = "%" + search_query + "%"
+        search_parts = [
+            "reference LIKE ?", "description LIKE ?",
+            """EXISTS(SELECT 1 FROM journal_lines search_lines
+                JOIN accounts search_accounts ON search_accounts.id=search_lines.account_id
+                WHERE search_lines.entry_id=journal_entries.id
+                  AND (search_lines.memo LIKE ? OR search_accounts.code LIKE ? OR search_accounts.name_ar LIKE ?))"""
+        ]
+        filter_params.extend([search_like, search_like, search_like, search_like, search_like])
+        if search_query.isdigit():
+            search_parts.append("CAST(id AS TEXT)=?")
+            filter_params.append(search_query)
+        filters.append("(" + " OR ".join(search_parts) + ")")
+    where_sql = " AND ".join(filters) if filters else "1=1"
+    sort_order = request.args.get("sort_order", "asc").strip().lower()
+    if sort_order not in ("asc", "desc"):
+        sort_order = "asc"
+    sort_sql = "ASC" if sort_order == "asc" else "DESC"
+    journal_page = max(1, request.args.get("journal_page", 1, type=int) or 1)
+    journal_per_page = request.args.get("journal_per_page", 50, type=int) or 50
+    if journal_per_page not in (50, 100):
+        journal_per_page = 50
+    journal_total = execute_compat(connection, 
+        "SELECT COUNT(*) FROM journal_entries WHERE " + where_sql, filter_params
+    ).fetchone()[0]
+    journal_pages = max(1, (journal_total + journal_per_page - 1) // journal_per_page)
+    journal_page = min(journal_page, journal_pages)
+    raw_entries = execute_compat(connection, 
+        "SELECT * FROM journal_entries WHERE " + where_sql +
+        f" ORDER BY id {sort_sql} LIMIT ? OFFSET ?",
+        (*filter_params, journal_per_page, (journal_page - 1) * journal_per_page),
+    ).fetchall()
+    # Attach a readable origin and document reference to each visible journal.
+    entry_ids = [row["id"] for row in raw_entries]
+    origin_by_entry = {}
+    if entry_ids:
+        marks = ",".join("?" for _ in entry_ids)
+        doc_columns = ("invoice_no", "bill_no", "receipt_no", "payment_no",
+                       "batch_no", "grant_no", "reference", "period", "document_no")
+        for table_name, category in source_table_columns.items():
+            cols = table_columns(connection, table_name)
+            doc_col = next((name for name in doc_columns if name in cols), "id")
+            link_spec = source_link_specs.get(table_name)
+            route_id_col = link_spec[2] if link_spec and link_spec[2] in cols else None
+            journal_col = source_journal_columns[table_name]
+            select_parts = [f'"{doc_col}" AS document_ref']
+            if route_id_col:
+                select_parts.append(f'"{route_id_col}" AS route_id')
+            else:
+                select_parts.append("NULL AS route_id")
+            try:
+                linked = execute_compat(connection, 
+                    f'SELECT "{journal_col}" AS journal_entry_id, {", ".join(select_parts)} FROM "{table_name}" '
+                    f'WHERE journal_entry_id IN ({marks}) ORDER BY id',
+                    entry_ids,
+                ).fetchall()
+            except DB_ERROR:
+                continue
+            for link in linked:
+                if link["journal_entry_id"] not in origin_by_entry:
+                    origin = {
+                        "source": source_labels[category],
+                        "source_key": category,
+                        "source_ref": str(link["document_ref"] or "—"),
+                        "origin_url": None,
+                        "origin_action": None,
+                    }
+                    if link_spec and link["route_id"] is not None:
+                        endpoint, route_arg, _route_col, action_label = link_spec
+                        try:
+                            origin["origin_url"] = url_for(endpoint, **{route_arg: int(link["route_id"])})
+                            origin["origin_action"] = action_label
+                        except (TypeError, ValueError):
+                            pass
+                    origin_by_entry[link["journal_entry_id"]] = origin
+    entries = []
+    for row in raw_entries:
+        item = dict(row)
+        origin = origin_by_entry.get(row["id"])
+        if origin:
+            item.update(origin)
+        else:
+            ref = str(row["reference"] or "")
+            if ref.startswith("MAN-") or ref.startswith("REV-") or row["entry_type"] if "entry_type" in row.keys() else False:
+                item.update(source="قيود يومية / تسويات", source_key="general", source_ref=ref or "—",
+                            origin_url=None, origin_action=None)
+            else:
+                item.update(source="قيد غير مرتبط بمستند معروف", source_key="general", source_ref=ref or "—",
+                            origin_url=None, origin_action=None)
+        entries.append(item)
     connection.close()
-    return render_template("journal.html", accounts=accounts_list, entries=entries, today=datetime.now().date().isoformat())
+    return render_template("journal.html", accounts=accounts_list, entries=entries,
+        today=datetime.now().date().isoformat(), submission_token=uuid.uuid4().hex,
+        dimension_options=dimension_options,
+        journal_page=journal_page, journal_pages=journal_pages,
+        journal_per_page=journal_per_page, journal_total=journal_total,
+        date_from=date_from, date_to=date_to, status_filter=status_filter,
+        entry_type_filter=entry_type_filter, source_filter=source_filter,
+        source_labels=source_labels, account_filter=account_filter, search_query=search_query,
+        sort_order=sort_order)
+
+
+
+@app.route("/dashboard/management")
+@requires("reports.view")
+def management_dashboard():
+    today = date.today()
+    default_start, default_end = today.replace(day=1), today
+    raw_from = request.args.get("date_from", "").strip()
+    raw_to = request.args.get("date_to", "").strip()
+    try:
+        start = date.fromisoformat(raw_from) if raw_from else default_start
+        end = date.fromisoformat(raw_to) if raw_to else default_end
+        if end < start:
+            raise ValueError("تاريخ النهاية يجب ألا يسبق تاريخ البداية.")
+    except ValueError:
+        flash("الفترة غير صحيحة، تم عرض الشهر الحالي.", "error")
+        start, end = default_start, default_end
+
+    dimensions = {}
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
+        raw = request.args.get(key, "").strip()
+        if raw:
+            try:
+                dimensions[key] = int(raw)
+            except ValueError:
+                flash("أحد فلاتر الأبعاد التحليلية غير صحيح.", "error")
+                dimensions = {}
+                break
+    connection = db()
+    try:
+        snapshot = cached_management_snapshot(connection, start, end, dimensions)
+        dimension_options = active_dimension_options(connection)
+        # Keep a large anomaly review from producing thousands of HTML table rows.
+        # The full result remains cached; only the current response is paginated.
+        anomaly_rows = snapshot.get("unusual_entries", [])
+        anomaly_total = len(anomaly_rows)
+        anomaly_per_page = 100
+        anomaly_pages = max(1, (anomaly_total + anomaly_per_page - 1) // anomaly_per_page)
+        anomaly_page = min(max(1, request.args.get("unusual_page", 1, type=int) or 1), anomaly_pages)
+        snapshot["unusual_total"] = anomaly_total
+        snapshot["unusual_page"] = anomaly_page
+        snapshot["unusual_pages"] = anomaly_pages
+        snapshot["unusual_entries"] = anomaly_rows[
+            (anomaly_page - 1) * anomaly_per_page:anomaly_page * anomaly_per_page
+        ]
+        anomaly_query = {"date_from": start.isoformat(), "date_to": end.isoformat(), **dimensions}
+        if anomaly_page > 1:
+            snapshot["unusual_prev_url"] = url_for("management_dashboard", **anomaly_query, unusual_page=anomaly_page - 1)
+        if anomaly_page < anomaly_pages:
+            snapshot["unusual_next_url"] = url_for("management_dashboard", **anomaly_query, unusual_page=anomaly_page + 1)
+    finally:
+        connection.close()
+    return render_template(
+        "management_dashboard.html", s=snapshot,
+        date_from=start.isoformat(), date_to=end.isoformat(),
+        dimension_options=dimension_options, selected_dimensions=dimensions,
+    )
+
+
+
+@app.route("/dashboard/management/minimum-cash", methods=["POST"])
+@requires("accounts.manage")
+def management_minimum_cash():
+    raw = request.form.get("minimum_cash_balance", "").strip()
+    try:
+        value = Decimal(raw or "0")
+        if not value.is_finite() or value < 0:
+            raise ValueError()
+        connection = db()
+        previous_row = execute_compat(connection, 
+            "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
+        ).fetchone()
+        previous_value = previous_row["setting_value"] if previous_row else None
+        normalized_value = str(value.quantize(Decimal("0.01")))
+        execute_compat(connection, """INSERT INTO company_settings(setting_key,setting_value)
+            VALUES('minimum_cash_balance',?) ON CONFLICT(setting_key)
+            DO UPDATE SET setting_value=excluded.setting_value""",
+            (normalized_value,))
+        connection.commit()
+        connection.close()
+        log_change(
+            "minimum_cash_balance_updated", "company_settings", "minimum_cash_balance",
+            {"minimum_cash_balance": previous_value},
+            {"minimum_cash_balance": normalized_value},
+            details=normalized_value, reason=request.form.get("change_reason", "").strip(),
+        )
+        flash("تم حفظ الحد الأدنى للنقدية.", "success")
+    except (InvalidOperation, ValueError, *DB_ERROR):
+        flash("أدخل حدًا أدنى صحيحًا لا يقل عن صفر.", "error")
+    return redirect(url_for("management_dashboard"))
+
+
+@app.route("/settings/analytic-dimensions", methods=["GET", "POST"])
+@requires("accounts.manage")
+def analytic_dimensions_settings():
+    connection = db()
+    # Ensure legacy databases have additive branch contact fields before any write.
+    initialize_analytic_dimensions_schema(connection)
+    if request.method == "POST":
+        try:
+            if request.form.get("action") == "update_branch":
+                branch_id = request.form.get("branch_id", type=int)
+                values = {
+                    "address": request.form.get("address", "").strip()[:300],
+                    "phone": request.form.get("phone", "").strip()[:60],
+                    "email": request.form.get("email", "").strip()[:120],
+                    "tax_number": request.form.get("tax_number", "").strip()[:60],
+                }
+                if not branch_id or not execute_compat(connection, "SELECT 1 FROM branches WHERE id=?", (branch_id,)).fetchone():
+                    raise ValueError("الفرع المحدد غير موجود.")
+                execute_compat(connection, 
+                    "UPDATE branches SET address=?,phone=?,email=?,tax_number=? WHERE id=?",
+                    (values["address"], values["phone"], values["email"], values["tax_number"], branch_id),
+                )
+                connection.commit()
+                log("branch_print_details_updated", f"branch_id={branch_id}", entity_type="branch", entity_id=branch_id)
+                connection.close()
+                flash("تم حفظ بيانات الفرع المستخدمة في الطباعة.", "success")
+                return redirect(url_for("analytic_dimensions_settings"))
+            kind = request.form.get("dimension_type", "").strip()
+            config = {
+                "branch": ("branches", "الفرع"),
+                "cost_center": ("cost_centers", "مركز التكلفة"),
+                "project": ("projects", "المشروع"),
+            }
+            if kind not in config:
+                raise ValueError("نوع البُعد التحليلي غير صحيح.")
+            table, label = config[kind]
+            code = request.form.get("code", "").strip().upper()
+            name = request.form.get("name_ar", "").strip()
+            if not code or len(code) > 30 or not name or len(name) > 120:
+                raise ValueError("أدخل كودًا واسمًا صحيحين للبُعد.")
+            if kind == "branch":
+                execute_compat(connection, 
+                    """INSERT INTO branches(code,name_ar,address,phone,email,tax_number)
+                       VALUES(?,?,?,?,?,?)""",
+                    (code, name, request.form.get("address", "").strip()[:300],
+                     request.form.get("phone", "").strip()[:60],
+                     request.form.get("email", "").strip()[:120],
+                     request.form.get("tax_number", "").strip()[:60]),
+                )
+            else:
+                execute_compat(connection, f"INSERT INTO {table}(code,name_ar) VALUES(?,?)", (code, name))
+            connection.commit()
+            log("analytic_dimension_created", f"{kind}:{code}:{name}", entity_type=kind, entity_id=code)
+            connection.close()
+            flash("تمت إضافة " + label + " بنجاح.", "success")
+            return redirect(url_for("analytic_dimensions_settings"))
+        except (ValueError, *DB_INTEGRITY_ERROR) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر إضافة البُعد. تأكد من عدم تكرار الكود."), "error")
+    options = active_dimension_options(connection)
+    connection.close()
+    return render_template("analytic_dimensions.html", options=options)
+
+
+@app.route("/management-dashboard/account-mapping", methods=["GET", "POST"])
+@requires("accounts.manage")
+def management_account_mapping():
+    connection = db()
+    from management_dashboard import MANAGEMENT_ROLES, load_management_account_roles
+    load_management_account_roles(connection)
+    if request.method == "POST":
+        try:
+            selections = {}
+            for role, (_, allowed_types) in MANAGEMENT_ROLES.items():
+                ids = []
+                for raw_id in request.form.getlist("role_" + role):
+                    account_id = int(raw_id)
+                    account = execute_compat(connection, 
+                        "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (account_id,)
+                    ).fetchone()
+                    if not account or account["is_group"] or not account["active"] or account["account_type"] not in allowed_types:
+                        raise ValueError("يوجد حساب غير تفصيلي أو غير نشط أو من نوع غير مناسب في الربط.")
+                    ids.append(account_id)
+                selections[role] = set(ids)
+            begin_write_transaction(connection)
+            execute_compat(connection, "DELETE FROM management_account_roles")
+            execute_compat(connection, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_customized','1') ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
+            for role, ids in selections.items():
+                executemany_compat(
+                    connection,
+                    "INSERT INTO management_account_roles(account_id,role) VALUES(?,?)",
+                    [(account_id, role) for account_id in sorted(ids)]
+                )
+            connection.commit()
+            mapping_count = sum(len(ids) for ids in selections.values())
+            log(
+                "management_account_mapping_updated",
+                f"roles={len(selections)}; mappings={mapping_count}",
+                entity_type="settings", entity_id="management_account_roles",
+            )
+            flash("تم حفظ ربط حسابات لوحة الإدارة بشجرة الحسابات الحالية.", "success")
+            return redirect(url_for("management_account_mapping"))
+        except (ValueError, *DB_ERROR) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر حفظ ربط الحسابات."), "error")
+    roles = load_management_account_roles(connection)
+    accounts = execute_compat(connection, 
+        "SELECT id,code,name_ar,account_type FROM accounts WHERE is_group=0 AND active=1 ORDER BY code"
+    ).fetchall()
+    connection.close()
+    return render_template("management_account_mapping.html", roles=MANAGEMENT_ROLES,
+                           selected=roles, accounts=accounts)
+
+
+@app.route("/approvals")
+def approval_inbox():
+    """Read-only unified inbox; decisions remain in each module's existing guarded route."""
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    permissions = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+    approval_permissions = {"purchases.approve", "sales.approve", "budget.approve", "workforce.approve"}
+    if not (permissions & approval_permissions):
+        flash("لا تملك صلاحية مراجعة المستندات المعلقة.", "error")
+        return redirect(url_for("dashboard"))
+
+    connection = db()
+    actor_id = session.get("user_id")
+    items = []
+    try:
+        if "purchases.approve" in permissions:
+            for row in execute_compat(connection, """
+                SELECT p.id,p.po_no AS document_no,p.order_date AS document_date,
+                       s.name AS counterparty,p.created_by,p.submitted_by
+                FROM purchase_orders p JOIN suppliers s ON s.id=p.supplier_id
+                WHERE p.status='pending_approval'
+                ORDER BY p.order_date DESC,p.id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id or row["submitted_by"] == actor_id
+                items.append({
+                    "kind": "أمر شراء", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": row["counterparty"],
+                    "href": url_for("purchase.index"), "can_act": not own,
+                    "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                })
+            for row in execute_compat(connection, """
+                SELECT b.id,b.bill_no AS document_no,b.bill_date AS document_date,
+                       s.name AS counterparty,b.total_amount,b.created_by,b.submitted_by
+                FROM supplier_bills b JOIN suppliers s ON s.id=b.supplier_id
+                WHERE b.status='pending_approval'
+                ORDER BY b.bill_date DESC,b.id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id or row["submitted_by"] == actor_id
+                items.append({
+                    "kind": "فاتورة مورد", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": row["counterparty"],
+                    "amount": row["total_amount"], "href": url_for("purchase.index"),
+                    "can_act": not own,
+                    "blocked_reason": "لا يجوز اعتماد أو رفض المستند الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                })
+            request_table = table_exists(connection, "purchase_requests")
+            if request_table:
+                for row in execute_compat(connection, """
+                    SELECT request_no,request_date,department,purpose,created_by,submitted_by
+                    FROM purchase_requests WHERE status='pending_approval'
+                    ORDER BY request_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] == actor_id or row["submitted_by"] == actor_id
+                    items.append({
+                        "kind": "طلب شراء داخلي", "number": row["request_no"],
+                        "date": row["request_date"],
+                        "counterparty": row["department"] or row["purpose"],
+                        "href": url_for("purchase.purchase_requests"), "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد أو رفض الطلب الذي أنشأته أو أرسلته للمراجعة." if own else "",
+                    })
+
+        if "workforce.approve" in permissions:
+            def approval_table_exists(table_name):
+                return table_exists(connection, table_name)
+
+            if approval_table_exists("payroll_runs") and approval_table_exists("payroll_lines"):
+                for row in execute_compat(connection, """
+                    SELECT r.id,r.period,r.created_by,COUNT(l.id) AS employee_count,
+                           COALESCE(SUM(CAST(l.net_pay AS NUMERIC)),0) AS net_total
+                    FROM payroll_runs r JOIN payroll_lines l ON l.run_id=r.id
+                    WHERE r.status='draft'
+                    GROUP BY r.id,r.period,r.created_by
+                    ORDER BY r.period DESC,r.id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "كشف المرتبات", "number": row["period"],
+                        "date": row["period"], "counterparty": "عدد الموظفين: " + str(row["employee_count"]),
+                        "amount": row["net_total"],
+                        "href": url_for("workforce.payroll_run", run_id=row["id"]),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد وترحيل كشف المرتبات بواسطة منشئه." if own else "",
+                    })
+
+            if approval_table_exists("employee_final_payrolls"):
+                for row in execute_compat(connection, """
+                    SELECT id,final_payroll_no,period,termination_date,net_pay,created_by
+                    FROM employee_final_payrolls
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY termination_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "مرتب نهائي", "number": row["final_payroll_no"],
+                        "date": row["termination_date"], "counterparty": "فترة المرتبات " + row["period"],
+                        "amount": row["net_pay"], "href": url_for("workforce.final_payroll", period=row["period"]),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد المرتب النهائي بواسطة منشئه." if own else "",
+                    })
+
+            if approval_table_exists("employee_loans") and approval_table_exists("employees"):
+                for row in execute_compat(connection, """
+                    SELECT l.id,l.loan_no,l.request_date,l.requested_amount,l.created_by,e.full_name
+                    FROM employee_loans l JOIN employees e ON e.id=l.employee_id
+                    WHERE l.status='requested'
+                    ORDER BY l.request_date DESC,l.id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "طلب سلفة موظف", "number": row["loan_no"],
+                        "date": row["request_date"], "counterparty": row["full_name"],
+                        "amount": row["requested_amount"], "href": url_for("workforce.employee_loans"),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد طلب السلفة بواسطة منشئه." if own else "",
+                    })
+
+            if approval_table_exists("employee_grants"):
+                for row in execute_compat(connection, """
+                    SELECT id,grant_name_snapshot,grant_date,total_amount,created_by
+                    FROM employee_grants
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY grant_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "منحة موظفين", "number": row["grant_name_snapshot"],
+                        "date": row["grant_date"], "counterparty": "كشف منحة",
+                        "amount": row["total_amount"], "href": url_for("workforce.employee_grants"),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد المنحة بواسطة منشئها." if own else "",
+                    })
+
+            if approval_table_exists("employee_end_of_service_settlements"):
+                for row in execute_compat(connection, """
+                    SELECT id,settlement_no,termination_date,net_payable,created_by
+                    FROM employee_end_of_service_settlements
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY termination_date DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    items.append({
+                        "kind": "تسوية نهاية خدمة", "number": row["settlement_no"],
+                        "date": row["termination_date"], "counterparty": "تسوية مستحقات موظف",
+                        "amount": row["net_payable"], "href": url_for("workforce.end_of_service"),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد تسوية نهاية الخدمة بواسطة منشئها." if own else "",
+                    })
+
+            if approval_table_exists("friday_allowance_batches"):
+                for row in execute_compat(connection, """
+                    SELECT id,period,total_amount,created_by,approved_by,status
+                    FROM friday_allowance_batches
+                    WHERE status='draft' AND journal_entry_id IS NULL
+                    ORDER BY period DESC,id DESC
+                """).fetchall():
+                    own = row["created_by"] is None or row["created_by"] == actor_id
+                    if row["approved_by"] is None:
+                        kind = "بدل الجمعة — بانتظار الاعتماد"
+                        blocked = "لا يجوز اعتماد كشف بدل الجمعة بواسطة منشئه." if own else ""
+                    else:
+                        kind = "بدل الجمعة — معتمد بانتظار الترحيل"
+                        blocked = "لا يجوز ترحيل كشف بدل الجمعة بواسطة منشئه." if own else ""
+                    items.append({
+                        "kind": kind, "number": row["period"], "date": row["period"],
+                        "counterparty": "كشف بدل عمل أيام الجمعة", "amount": row["total_amount"],
+                        "href": url_for("workforce.friday_allowance", period=row["period"]),
+                        "can_act": not own, "blocked_reason": blocked,
+                    })
+
+        if "sales.approve" in permissions:
+            approval_table = table_exists(connection, "sales_discount_approval_requests")
+            if approval_table:
+                for row in execute_compat(connection, """
+                    SELECT r.id,r.request_no,r.invoice_date,r.discount_amount,r.created_by,
+                           COALESCE(r.request_type,'invoice') AS request_type,
+                           c.name AS counterparty
+                    FROM sales_discount_approval_requests r
+                    JOIN customers c ON c.id=r.customer_id
+                    WHERE r.status='pending'
+                    ORDER BY r.created_at DESC,r.id DESC
+                """).fetchall():
+                    own = row["created_by"] == actor_id
+                    items.append({
+                        "kind": "طلب اعتماد خصم أمر بيع" if row["request_type"] == "sales_order" else "طلب اعتماد خصم فاتورة",
+                        "number": row["request_no"],
+                        "date": row["invoice_date"], "counterparty": row["counterparty"],
+                        "amount": row["discount_amount"],
+                        "href": url_for("sales.discount_approval", request_id=row["id"]),
+                        "can_act": not own,
+                        "blocked_reason": "لا يجوز اعتماد طلب الخصم الذي أنشأته بنفسك." if own else "",
+                    })
+            sales_order_columns = table_columns(connection, "sales_orders")
+            discount_status_expr = (
+                "COALESCE(so.discount_approval_status,'approved')"
+                if "discount_approval_status" in sales_order_columns else "'approved'"
+            )
+            for row in execute_compat(connection, f"""
+                SELECT so.id,so.order_no AS document_no,so.order_date AS document_date,
+                       c.name AS counterparty,so.created_by,
+                       {discount_status_expr} AS discount_approval_status
+                FROM sales_orders so JOIN customers c ON c.id=so.customer_id
+                WHERE so.status='pending_approval'
+                ORDER BY so.order_date DESC,so.id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id
+                items.append({
+                    "kind": "أمر بيع", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": row["counterparty"],
+                    "href": url_for("quotes.sales_order_view", order_id=row["id"]),
+                    "can_act": not own and row["discount_approval_status"] == "approved",
+                    "blocked_reason": (
+                        "لا يجوز اعتماد أمر البيع بواسطة منشئه." if own else
+                        "يجب اعتماد خصم أمر البيع أولًا." if row["discount_approval_status"] != "approved" else ""
+                    ),
+                })
+
+        if "budget.approve" in permissions:
+            for row in execute_compat(connection, """
+                SELECT id,name AS document_no,date_from AS document_date,
+                       date_to,created_by
+                FROM budget_plans WHERE status='pending'
+                ORDER BY date_from DESC,id DESC
+            """).fetchall():
+                own = row["created_by"] == actor_id
+                items.append({
+                    "kind": "موازنة", "number": row["document_no"],
+                    "date": row["document_date"], "counterparty": "حتى " + row["date_to"],
+                    "href": url_for("planning.budget_detail", budget_id=row["id"]),
+                    "can_act": not own,
+                    "blocked_reason": "لا يجوز لمنشئ الموازنة اعتمادها بنفسه." if own else "",
+                })
+    finally:
+        connection.close()
+
+    items.sort(key=lambda item: (item.get("date") or "", item.get("number") or ""), reverse=True)
+    return render_template("approval_inbox.html", items=items, pending_count=len(items))
+
+
+@app.route("/security/audit-log")
+@requires("audit.view")
+def audit_log():
+    action = request.args.get("action", "").strip()[:100]
+    user_query = request.args.get("user", "").strip()[:100]
+    entity_type = request.args.get("entity_type", "").strip()[:80]
+    outcome = request.args.get("outcome", "").strip()
+    if outcome not in {"success", "failure"}:
+        outcome = ""
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    conditions, params = ["1=1"], []
+    if action:
+        conditions.append("al.action LIKE ?"); params.append(f"%{action}%")
+    if user_query:
+        conditions.append("(u.username LIKE ? OR u.full_name LIKE ?)"); params.extend([f"%{user_query}%", f"%{user_query}%"])
+    if entity_type:
+        conditions.append("al.entity_type = ?"); params.append(entity_type)
+    if outcome:
+        conditions.append("al.outcome = ?"); params.append(outcome)
+    if date_from:
+        conditions.append("substr(al.created_at,1,10) >= ?"); params.append(date_from)
+    if date_to:
+        conditions.append("substr(al.created_at,1,10) <= ?"); params.append(date_to)
+    where = " AND ".join(conditions)
+    connection = db()
+    page = fetch_page(
+        connection,
+        f"""SELECT al.id,al.action,al.details,al.created_at,al.entity_type,al.entity_id,
+                   al.remote_addr,al.outcome,al.actor_name,al.before_values,al.after_values,
+                   al.submitted_values,al.reason,al.request_id,u.username,u.full_name
+            FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+            WHERE {where} ORDER BY al.created_at DESC,al.id DESC""",
+        f"""SELECT COUNT(*) FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+            WHERE {where}""",
+        params, page=request.args.get("page", 1, type=int), per_page=50,
+    )
+    connection.close()
+    return render_template(
+        "audit_log.html", audit_page=page, action=action, user_query=user_query,
+        entity_type=entity_type, outcome=outcome, date_from=date_from, date_to=date_to,
+    )
+
+
+@app.route("/security/activity-monitor")
+@requires("audit.view")
+def activity_monitor():
+    category = request.args.get("category", "all").strip()
+    if category not in {"all", "login", "changes"}:
+        category = "all"
+    user_query = request.args.get("user", "").strip()[:100]
+    outcome = request.args.get("outcome", "").strip()
+    if outcome not in {"success", "failure"}:
+        outcome = ""
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+
+    auth_filter = "(al.entity_type='auth' OR al.action IN ('login','login_failed','login_blocked','logout'))"
+    change_filter = "(al.before_values IS NOT NULL OR al.after_values IS NOT NULL OR al.action IN ('user_created','user_updated','role_created','role_updated','role_deactivated','password_changed'))"
+    conditions = [f"({auth_filter} OR {change_filter})"]
+    params = []
+    if category == "login":
+        conditions = [auth_filter]
+    elif category == "changes":
+        conditions = [change_filter]
+    if user_query:
+        conditions.append("(COALESCE(u.username,'') LIKE ? OR COALESCE(u.full_name,'') LIKE ? OR COALESCE(al.details,'') LIKE ?)")
+        params.extend([f"%{user_query}%", f"%{user_query}%", f"%{user_query}%"])
+    if outcome:
+        conditions.append("al.outcome=?")
+        params.append(outcome)
+    if date_from:
+        conditions.append("substr(al.created_at,1,10)>=?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("substr(al.created_at,1,10)<=?")
+        params.append(date_to)
+    where = " AND ".join(conditions)
+    connection = db()
+    try:
+        activity_page = fetch_page(
+            connection,
+            f"""SELECT al.id,al.action,al.details,al.created_at,al.entity_type,al.entity_id,
+                       al.remote_addr,al.outcome,al.actor_name,al.before_values,al.after_values,
+                       al.reason,al.request_id,u.username,u.full_name
+                FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+                WHERE {where} ORDER BY al.created_at DESC,al.id DESC""",
+            f"""SELECT COUNT(*) FROM audit_log al LEFT JOIN users u ON u.id=al.user_id
+                WHERE {where}""",
+            params, page=request.args.get("page", 1, type=int), per_page=50,
+        )
+        since = (datetime.now().astimezone().date() - timedelta(days=6)).isoformat()
+        metrics = execute_compat(connection,
+            """SELECT
+                 SUM(CASE WHEN action='login' AND outcome='success' THEN 1 ELSE 0 END) successful_logins,
+                 SUM(CASE WHEN action IN ('login_failed','login_blocked') OR (entity_type='auth' AND outcome='failure') THEN 1 ELSE 0 END) failed_logins,
+                 SUM(CASE WHEN before_values IS NOT NULL OR after_values IS NOT NULL THEN 1 ELSE 0 END) sensitive_changes
+               FROM audit_log WHERE substr(created_at,1,10)>=?""",
+            (since,),
+        ).fetchone()
+    finally:
+        connection.close()
+    summary = {
+        "successful_logins": int(metrics["successful_logins"] or 0),
+        "failed_logins": int(metrics["failed_logins"] or 0),
+        "sensitive_changes": int(metrics["sensitive_changes"] or 0),
+    }
+    return render_template(
+        "activity_monitor.html", activity_page=activity_page, summary=summary,
+        category=category, user_query=user_query, outcome=outcome,
+        date_from=date_from, date_to=date_to,
+    )
+
+
+@app.route("/reports/activities")
+@requires("reports.view")
+def activity_performance_report():
+    from activity_reporting import build_activity_performance_report
+    from company_activities import list_company_activities
+
+    connection = db()
+    selected_activity = request.args.get("activity_code", "").strip() or None
+    try:
+        report = build_activity_performance_report(connection, selected_activity)
+        activity_options = [
+            row for row in list_company_activities(connection) if row["enabled"]
+        ]
+        if not activity_options:
+            activity_options = [{
+                "activity_code": report["legacy_activity"],
+                "enabled": 1,
+                "is_primary": 1,
+            }]
+        valid_codes = {row["activity_code"] for row in activity_options}
+        if selected_activity and selected_activity not in valid_codes:
+            selected_activity = None
+            report = build_activity_performance_report(connection)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        report = {"legacy_activity": "commercial", "activities": [],
+                  "activity_count": 0, "journal_entry_count": 0,
+                  "unbalanced_journal_count": 0}
+        activity_options = []
+    finally:
+        connection.close()
+    return render_template(
+        "activity_performance_report.html",
+        report=report,
+        activity_options=activity_options,
+        selected_activity=selected_activity,
+    )
 
 
 @app.route("/reports/trial-balance")
 @requires("reports.view")
 def trial_balance():
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    account_type = request.args.get("account_type", "").strip()
+    q = request.args.get("q", "").strip()
+    include_closing_values = request.args.getlist("include_closing")
+    include_closing = not include_closing_values or include_closing_values[-1].strip() != "0"
+    allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+    if account_type not in allowed_types:
+        account_type = ""
+    conditions, params = ["1=1"], []
+    if account_type:
+        conditions.append("a.account_type = ?"); params.append(account_type)
+    if q:
+        conditions.append("(a.code LIKE ? OR a.name_ar LIKE ?)"); params.extend([f"%{q}%", f"%{q}%"])
     connection = db()
-    rows = connection.execute("""SELECT a.code, a.name_ar, a.account_type,
-        COALESCE(SUM(jl.debit),0) debit, COALESCE(SUM(jl.credit),0) credit
-        FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
-        GROUP BY a.id ORDER BY a.code""").fetchall()
+    years = execute_compat(connection, 
+        "SELECT id,year_name,start_date,end_date,status FROM financial_years ORDER BY start_date DESC,id DESC"
+    ).fetchall()
+    period_ranges = []
+    today = date.today().isoformat()
+    for year in years:
+        period_from = max(year["start_date"], date_from) if date_from else year["start_date"]
+        natural_end = min(year["end_date"], today) if year["status"] == "open" else year["end_date"]
+        period_to = min(natural_end, date_to) if date_to else natural_end
+        if period_from <= period_to:
+            period_ranges.append({
+                "id": year["id"], "name": year["year_name"], "status": year["status"],
+                "date_from": period_from, "date_to": period_to,
+                "label": "الفترة الحالية / مفتوحة" if year["status"] == "open" else "فترة مالية مقفولة",
+            })
+    # Legacy installations without financial-year records retain the original
+    # date-filter behavior rather than hiding their historical trial balance.
+    if not years:
+        period_ranges.append({
+            "id": None, "name": "الفترة المحددة", "status": "open",
+            "date_from": date_from, "date_to": date_to,
+            "label": "الفترة الحالية",
+        })
+    sections = []
+    for period in period_ranges:
+        join_conditions = ["je.id=jl.entry_id", "je.status='posted'"]
+        join_params = []
+        # Keep the trial balance aligned with the official balance sheet:
+        # opening journals explicitly classified as copied history, together
+        # with their reversals, must not be counted a second time.
+        from management_dashboard import _copied_opening_entry_ids
+        copied_opening_ids = sorted(
+            _copied_opening_entry_ids(connection, period["date_to"])
+        ) if period["date_to"] else []
+        if copied_opening_ids:
+            copied_marks = ",".join("?" for _ in copied_opening_ids)
+            join_conditions.append(f"je.id NOT IN ({copied_marks})")
+            join_params.extend(copied_opening_ids)
+        if not include_closing:
+            join_conditions.append(closing_entries_exclusion_sql(connection))
+        if period["date_from"]:
+            join_conditions.append("je.entry_date >= ?"); join_params.append(period["date_from"])
+        if period["date_to"]:
+            join_conditions.append("je.entry_date <= ?"); join_params.append(period["date_to"])
+        account_columns = table_columns(connection, "accounts")
+        section_expr = "a.statement_section" if "statement_section" in account_columns else "NULL"
+        subtype_expr = "a.account_subtype" if "account_subtype" in account_columns else "NULL"
+        normal_expr = "a.normal_balance" if "normal_balance" in account_columns else "NULL"
+        debit_sum = decimal_sum_expression(connection, "CASE WHEN je.id IS NOT NULL THEN jl.debit ELSE '0' END")
+        credit_sum = decimal_sum_expression(connection, "CASE WHEN je.id IS NOT NULL THEN jl.credit ELSE '0' END")
+        rows = execute_compat(connection, f"""SELECT a.id, a.code, a.name_ar, a.account_type,
+            {section_expr} statement_section,{subtype_expr} account_subtype,
+            {normal_expr} normal_balance,
+            {debit_sum} debit,
+            {credit_sum} credit
+            FROM accounts a LEFT JOIN journal_lines jl ON jl.account_id=a.id
+            LEFT JOIN journal_entries je ON {' AND '.join(join_conditions)}
+            WHERE {' AND '.join(conditions)}
+            GROUP BY a.id ORDER BY a.code""", [*join_params, *params]).fetchall()
+        period_rows = [dict(row, debit=Decimal(str(row["debit"] or "0")),
+                            credit=Decimal(str(row["credit"] or "0"))) for row in rows]
+        sections.append({**period, "rows": period_rows})
+    settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency')")}
     connection.close()
-    return render_template("trial_balance.html", rows=rows)
+    types = {"asset":"أصول","liability":"التزامات","equity":"حقوق ملكية","revenue":"إيرادات","expense":"مصروفات"}
+    return render_template("trial_balance.html", sections=sections, date_from=date_from, date_to=date_to,
+        account_type=account_type, q=q, include_closing=include_closing,
+        types=types, base_currency=settings.get("base_currency",""))
+
+
+@app.route("/reports/income-statement")
+@requires("reports.view")
+def income_statement():
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    compare_mode = request.args.get("compare", "previous_year").strip()
+    if compare_mode not in {"none", "previous_period", "previous_year"}:
+        compare_mode = "previous_year"
+    compare_dates = comparison_period(date_from, date_to, compare_mode) if compare_mode != "none" else None
+    connection = db()
+    try:
+        # A test fixture or an upgraded customer database may still have the
+        # legacy branches schema. Run the additive migration on this connection
+        # before loading branch options; it only adds missing columns/indexes.
+        initialize_analytic_dimensions_schema(connection)
+        raw_dimensions = {key: request.args.get(key, "").strip() for key in
+            ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id")}
+        try:
+            selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
+        except ValueError as exc:
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+            return redirect(url_for("income_statement", date_from=date_from, date_to=date_to, compare=compare_mode))
+        dimension_options = active_dimension_options(connection)
+        statement = build_income_statement(connection, date_from, date_to, selected_dimensions)
+        if compare_dates:
+            previous = build_income_statement(connection, *compare_dates, dimensions=selected_dimensions)
+            statement = add_income_statement_comparison(statement, previous)
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
+        )}
+    finally:
+        connection.close()
+    return render_template(
+        "income_statement.html", **statement,
+        date_from=date_from, date_to=date_to, compare_mode=compare_mode,
+        dimension_options=dimension_options, selected_dimensions=selected_dimensions,
+        compare_date_from=compare_dates[0] if compare_dates else "",
+        compare_date_to=compare_dates[1] if compare_dates else "",
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "ADMRAIL ERP"),
+    )
+
+
+@app.route("/reports/profitability")
+@requires("reports.view")
+def profitability_report():
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    connection = db()
+    try:
+        # Additive only: ensures branch and cost-center dimensions exist on
+        # upgraded databases before the read-only profitability queries run.
+        initialize_analytic_dimensions_schema(connection)
+        report = build_profitability_report(connection, date_from, date_to)
+        settings = {
+            row["setting_key"]: row["setting_value"]
+            for row in execute_compat(connection, 
+                "SELECT setting_key,setting_value FROM company_settings "
+                "WHERE setting_key IN ('base_currency','company_name')"
+            )
+        } if table_exists(connection, "company_settings") else {}
+    finally:
+        connection.close()
+    branch_rows = report["branches"]
+    summary = {
+        key: sum((row[key] for row in branch_rows), Decimal("0"))
+        for key in ("revenue", "cogs", "gross_profit", "operating_expenses", "net_profit")
+    }
+    return render_template(
+        "profitability_report.html", **report, summary=summary,
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "ADMRAIL ERP"),
+    )
+
+
+
+@app.route("/reports/period-comparison")
+@requires("reports.view")
+def period_comparison_report():
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    mode = request.args.get("mode", "previous_period")
+    connection = db()
+    try:
+        report = build_period_comparison(connection, date_from, date_to, mode)
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
+        )} if table_exists(connection, "company_settings") else {}
+    finally:
+        connection.close()
+    return render_template("period_comparison.html", **report,
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "ADMRAIL ERP"))
+
+
+@app.route("/reports/inventory-ageing")
+@requires("stock.view")
+def inventory_ageing_report():
+    try:
+        as_of = date.fromisoformat(request.args.get("as_of", "")).isoformat()
+    except ValueError:
+        as_of = date.today().isoformat()
+    connection = db()
+    try:
+        report = build_inventory_ageing(connection, as_of)
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key='base_currency'"
+        )} if table_exists(connection, "company_settings") else {}
+    finally:
+        connection.close()
+    return render_template("inventory_ageing.html", report=report,
+        base_currency=settings.get("base_currency", ""))
+
+
+
+@app.route("/cash-commitments", methods=["GET", "POST"])
+@requires("cash_commitments.view")
+def cash_commitments_register():
+    connection = db()
+    try:
+        if request.method == "POST":
+            if "cash_commitments.manage" not in session.get("permissions", []):
+                abort(403)
+            action = request.form.get("action", "create")
+            try:
+                if action == "create":
+                    create_cash_commitment(
+                        connection,
+                        request.form.get("commitment_type", ""),
+                        request.form.get("title", ""),
+                        request.form.get("amount", ""),
+                        request.form.get("due_date", ""),
+                        period_label=request.form.get("period_label", ""),
+                        currency_code=request.form.get("currency_code", ""),
+                        payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
+                        notes=request.form.get("notes", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    flash("تم تسجيل الالتزام بنجاح.", "success")
+                elif action == "sync_friday":
+                    result = sync_friday_allowance_commitments(
+                        connection, created_by=session.get("user_id")
+                    )
+                    reasons = {}
+                    for item in result["skipped"]:
+                        reasons[item["reason"]] = reasons.get(item["reason"], 0) + 1
+                    detail = "، ".join(f"{reason}: {count}" for reason, count in reasons.items())
+                    message = f"تم استيراد {result['imported']} كشف بدل جمعة."
+                    if result["skipped"]:
+                        message += f" تم تجاهل {len(result['skipped'])} كشف ({detail})."
+                    flash(message, "success" if result["imported"] else "warning")
+                elif action == "resolve_duplicates":
+                    resolved=resolve_cash_commitment_duplicate_origin(
+                        connection,int(request.form.get("kept_id","0")),
+                        request.form.getlist("voided_id"),request.form.get("review_reason",""),
+                        session.get("user_id"))
+                    log_change("cash_commitment_duplicates_resolved","cash_commitment",
+                        int(request.form.get("kept_id","0")),None,{"voided_count":resolved},
+                        details="تسوية التزامات مكررة دون حذف السجلات",
+                        reason=request.form.get("review_reason","").strip())
+                    flash(f"تمت تسوية {resolved} التزامات مكررة مع الاحتفاظ بسجلاتها.","success")
+                elif action == "payment":
+                    record_cash_commitment_payment(
+                        connection,
+                        int(request.form.get("commitment_id", "0")),
+                        request.form.get("payment_date", ""),
+                        request.form.get("amount", ""),
+                        int(request.form.get("journal_entry_id", "0")),
+                        reference=request.form.get("reference", ""),
+                        notes=request.form.get("notes", ""),
+                        created_by=session.get("user_id"),
+                        payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
+                    )
+                    flash("تم ربط الدفعة بقيد السداد الذي خفّض حساب الالتزام.", "success")
+                elif action == "reverse_payment":
+                    reversal_id = reverse_cash_commitment_payment(
+                        connection,
+                        int(request.form.get("payment_id", "0")),
+                        request.form.get("reversal_date", ""),
+                        request.form.get("reversal_reason", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    log_change(
+                        "cash_commitment_payment_reversed", "cash_commitment_payment",
+                        int(request.form.get("payment_id", "0")),
+                        {"reversal_journal_entry_id": None},
+                        {"reversal_journal_entry_id": reversal_id},
+                        details=f"عكس قيد سداد الالتزام #{reversal_id}",
+                        reason=request.form.get("reversal_reason", "").strip(),
+                    )
+                    flash(f"تم عكس قيد السداد رقم {reversal_id} وتحديث رصيد الالتزام.", "success")
+                elif action == "void":
+                    void_cash_commitment(connection, int(request.form.get("commitment_id", "0")))
+                    flash("تم إلغاء الالتزام المفتوح.", "success")
+                elif action == "create_schedule":
+                    create_recurring_schedule(
+                        connection, request.form.get("title", ""),
+                        request.form.get("amount", ""), request.form.get("first_due_date", ""),
+                        request.form.get("frequency", ""),
+                        currency_code=request.form.get("currency_code", ""),
+                        end_date=request.form.get("end_date") or None,
+                        payable_account_id=int(request.form.get("payable_account_id", "0")) or None,
+                        notes=request.form.get("notes", ""),
+                        created_by=session.get("user_id"),
+                    )
+                    flash("تم حفظ جدول المصروف الدوري. لم تُنشأ الاستحقاقات بعد.", "success")
+                elif action == "generate_schedule":
+                    generated = generate_recurring_schedule_occurrences(
+                        connection, int(request.form.get("schedule_id", "0")),
+                        request.form.get("through_date", ""),
+                    )
+                    flash(f"تم إنشاء {generated} استحقاق جديد. إعادة التوليد لن تكرر الاستحقاقات السابقة.", "success")
+                elif action == "deactivate_schedule":
+                    deactivate_recurring_schedule(connection, int(request.form.get("schedule_id", "0")))
+                    flash("تم إيقاف الجدول. الاستحقاقات التي أُنشئت سابقًا لم تتغير.", "success")
+                else:
+                    raise ValueError("الإجراء المطلوب غير معروف.")
+            except (ValueError, TypeError, *DB_INTEGRITY_ERROR) as exc:
+                flash(safe_error_message(exc, "تعذر حفظ العملية. لم يتم إجراء أي تغيير."), "error")
+            return redirect(url_for("cash_commitments_register"))
+        rows = execute_compat(connection, 
+            """SELECT c.* FROM cash_commitments c
+               ORDER BY CASE c.status WHEN 'open' THEN 0 WHEN 'partially_paid' THEN 1
+                    WHEN 'paid' THEN 2 ELSE 3 END, c.due_date DESC, c.id DESC"""
+        ).fetchall()
+        rows = [dict(row) for row in rows]
+        for item in rows:
+            payment_summary = cash_commitment_payment_summary(connection, item["id"])
+            item["paid_total"] = payment_summary["paid_total"]
+            item["status"] = payment_summary["status"]
+            item["payments"] = payment_summary["payments"]
+        duplicate_groups=list_cash_commitment_duplicate_origins(connection)
+        schedules = execute_compat(connection, 
+            """SELECT s.*,
+                      (SELECT COUNT(*) FROM cash_commitment_schedule_occurrences o
+                       WHERE o.schedule_id=s.id) occurrence_count
+               FROM cash_commitment_schedules s ORDER BY s.active DESC,s.next_due_date,s.id"""
+        ).fetchall()
+        payable_accounts = execute_compat(connection, 
+            """SELECT id,code,name_ar FROM accounts
+               WHERE active=1 AND is_group=0 AND account_type='liability' ORDER BY code"""
+        ).fetchall()
+        return render_template("cash_commitments.html", commitments=rows, schedules=schedules,
+                               payable_accounts=payable_accounts, duplicate_groups=duplicate_groups,
+                               can_manage="cash_commitments.manage" in session.get("permissions", []))
+    finally:
+        connection.close()
+
+
+@app.route("/reports/decision-simulator", methods=["GET", "POST"])
+@requires("reports.view")
+def decision_simulator_report():
+    today = date.today()
+    default_start, default_end = today.replace(day=1), today
+    raw_start = request.values.get("date_from", "").strip()
+    raw_end = request.values.get("date_to", "").strip()
+    try:
+        start = date.fromisoformat(raw_start) if raw_start else default_start
+        end = date.fromisoformat(raw_end) if raw_end else default_end
+        if end < start:
+            raise ValueError("الفترة غير صحيحة.")
+    except ValueError:
+        flash("فترة المحاكاة غير صحيحة؛ تم استخدام الشهر الحالي.", "error")
+        start, end = default_start, default_end
+
+    field_names = (
+        "sales_volume_change_pct", "selling_price_change_pct",
+        "unit_cost_change_pct", "operating_expense_change_pct",
+        "additional_operating_expense",
+    )
+    defaults = {name: "0" for name in field_names}
+    values = {name: request.values.get(name, defaults[name]).strip() for name in field_names}
+    connection = db()
+    try:
+        statement = build_income_statement(connection, start.isoformat(), end.isoformat())
+        scenario = None
+        if request.method == "POST":
+            try:
+                scenario = simulate_decision(statement, **values)
+            except ValueError as exc:
+                flash(str(exc), "error")
+    finally:
+        connection.close()
+    return render_template(
+        "decision_simulator.html", statement=statement, scenario=scenario,
+        values=values, date_from=start.isoformat(), date_to=end.isoformat(),
+    )
+
+
+@app.route("/reports/cash-forecast")
+@requires("reports.view")
+def cash_forecast_report():
+    try:
+        as_of = date.fromisoformat(request.args.get("as_of", "")).isoformat()
+    except ValueError:
+        as_of = date.today().isoformat()
+    try:
+        horizon_days = int(request.args.get("days", "90"))
+    except (TypeError, ValueError):
+        horizon_days = 90
+    connection = db()
+    try:
+        report = build_cash_forecast(connection, as_of, horizon_days)
+    finally:
+        connection.close()
+    return render_template("cash_forecast.html", report=report)
+
+
+@app.route("/reports/expense-analysis")
+@requires("expenses.view")
+def expense_analysis():
+    from expense_analysis import build_expense_analysis
+    date_from, date_to = normalize_income_statement_period(
+        request.args.get("date_from"), request.args.get("date_to")
+    )
+    connection = db()
+    try:
+        raw_dimensions = {key: request.args.get(key, "").strip()
+                          for key in ("branch_id", "cost_center_id", "project_id")}
+        try:
+            selected_dimensions = validate_journal_dimensions(connection, raw_dimensions) if any(raw_dimensions.values()) else {}
+        except ValueError as exc:
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+            return redirect(url_for("expense_analysis", date_from=date_from, date_to=date_to))
+        dimension_options = active_dimension_options(connection)
+        report = build_expense_analysis(connection, date_from, date_to, selected_dimensions)
+        settings = {r["setting_key"]: r["setting_value"] for r in execute_compat(connection, 
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('base_currency','company_name')"
+        )}
+    finally:
+        connection.close()
+    return render_template(
+        "expense_analysis.html", **report, date_from=date_from, date_to=date_to,
+        dimension_options=dimension_options, selected_dimensions=selected_dimensions,
+        base_currency=settings.get("base_currency", ""),
+        company_name=settings.get("company_name", "ADMRAIL ERP"),
+    )
 
 
 @app.route("/reports/ledger")
 @requires("reports.view")
 def ledger():
     account_id = request.args.get("account_id", type=int)
-    connection = db()
-    accounts_list = connection.execute("SELECT * FROM accounts ORDER BY code").fetchall()
-    rows, selected = [], None
-    if account_id:
-        selected = connection.execute("SELECT * FROM accounts WHERE id=?", (account_id,)).fetchone()
-        rows = connection.execute("""SELECT je.entry_date, je.reference, je.description, jl.debit, jl.credit, jl.memo
-            FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id WHERE jl.account_id=? ORDER BY je.entry_date, jl.id""", (account_id,)).fetchall()
-    connection.close()
-    return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows)
+    date_from = request.args.get("date_from", "").strip()
+    date_to = request.args.get("date_to", "").strip()
+    search_query = request.args.get("q", "").strip()[:100]
+    sort_order = request.args.get("sort_order", "asc").strip().lower()
+    if sort_order not in {"asc", "desc"}:
+        sort_order = "asc"
+    sort_sql = "DESC" if sort_order == "desc" else "ASC"
+    for value in (date_from, date_to):
+        if value:
+            try:
+                if datetime.fromisoformat(value).date().isoformat() != value:
+                    raise ValueError()
+            except ValueError:
+                flash("تاريخ البحث غير صحيح.", "error")
+                date_from = date_to = ""
+                break
+    if date_from and date_to and date_from > date_to:
+        flash("تاريخ البداية يجب ألا يسبق تاريخ النهاية.", "error")
+        date_from = date_to = ""
 
+    connection = db()
+    accounts_list = execute_compat(connection, "SELECT * FROM accounts WHERE active=1 ORDER BY code").fetchall()
+    rows, selected = [], None
+    opening_balance = Decimal("0")
+    closing_balance = Decimal("0")
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    ledger_page = {"rows": [], "total": 0, "page": 1, "pages": 1, "per_page": 50}
+    if account_id:
+        selected = execute_compat(connection, 
+            "SELECT * FROM accounts WHERE id=? AND is_group=0", (account_id,)
+        ).fetchone()
+        if selected:
+            date_conditions = ["jl.account_id=?", "je.status='posted'"]
+            date_params = [account_id]
+            if date_from:
+                date_conditions.append("je.entry_date>=?"); date_params.append(date_from)
+            if date_to:
+                date_conditions.append("je.entry_date<=?"); date_params.append(date_to)
+
+            display_conditions = list(date_conditions)
+            display_params = list(date_params)
+            search_conditions = []
+            search_params = []
+            if search_query:
+                like = "%" + search_query + "%"
+                search_conditions = [
+                    "ledger_rows.reference LIKE ?",
+                    "ledger_rows.description LIKE ?",
+                    "ledger_rows.memo LIKE ?",
+                ]
+                search_params.extend([like, like, like])
+                display_conditions.append("(je.reference LIKE ? OR je.description LIKE ? OR jl.memo LIKE ?)")
+                display_params.extend([like, like, like])
+                if search_query.isdigit():
+                    search_conditions.append("ledger_rows.entry_id=?")
+                    display_conditions.append("CAST(je.id AS TEXT)=?")
+                    search_params.append(int(search_query))
+                    display_params.append(search_query)
+
+            base_opening = Decimal("0")
+            if date_from:
+                opening_net = decimal_net_expression(connection, "jl.debit", "jl.credit")
+                opening_row = execute_compat(connection, f"""SELECT {opening_net} balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE jl.account_id=? AND je.status='posted' AND je.entry_date<?""",
+                    (account_id, date_from)).fetchone()
+                base_opening = Decimal(str(opening_row["balance"] or "0"))
+
+            # Keep filtered ledger searches on the correlated path so the displayed
+            # rows and the filtered count share the exact same WHERE predicates.
+            if hasattr(connection, "create_window_function") and not search_query:
+                # Compute chronological balances once using exact Decimal math,
+                # then filter the rendered rows outside the CTE.
+                outer_where = " AND ".join(search_conditions) if search_conditions else "1=1"
+                query = f"""WITH ledger_rows AS (
+                    SELECT je.id entry_id,je.entry_date,je.reference,je.description,
+                        jl.id line_id,jl.account_id,jl.debit,jl.credit,jl.memo,
+                        (? + DECIMAL_RUNNING_NET(jl.debit,jl.credit) OVER (
+                            ORDER BY je.entry_date,jl.id
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                        )) running_balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(date_conditions)}
+                )
+                SELECT ledger_rows.*,
+                    (SELECT GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')
+                     FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
+                     WHERE jl2.entry_id=ledger_rows.entry_id
+                       AND jl2.account_id<>ledger_rows.account_id) counterpart_accounts
+                FROM ledger_rows WHERE {outer_where}
+                ORDER BY entry_date {sort_sql},line_id {sort_sql}"""
+                query_params = [str(base_opening), *date_params, *search_params]
+            else:
+                history_net = decimal_net_expression(connection, "hist.debit", "hist.credit")
+                counterpart_aggregate = (
+                    "GROUP_CONCAT(a2.code || ' - ' || a2.name_ar, '، ')"
+                    if database_dialect(connection) == "sqlite"
+                    else "STRING_AGG(a2.code || ' - ' || a2.name_ar, '، ')"
+                )
+                history_conditions = ["hist.account_id=jl.account_id", "he.status='posted'",
+                    "(he.entry_date<je.entry_date OR (he.entry_date=je.entry_date AND hist.id<=jl.id))"]
+                history_params = []
+                if date_from:
+                    history_conditions.append("he.entry_date>=?"); history_params.append(date_from)
+                query = f"""SELECT je.id entry_id,je.entry_date,je.reference,je.description,
+                    jl.id line_id,jl.account_id,jl.debit,jl.credit,jl.memo,
+                    (SELECT {counterpart_aggregate}
+                       FROM journal_lines jl2 JOIN accounts a2 ON a2.id=jl2.account_id
+                      WHERE jl2.entry_id=je.id AND jl2.account_id<>jl.account_id) counterpart_accounts,
+                    (? + COALESCE((SELECT {history_net}
+                        FROM journal_lines hist JOIN journal_entries he ON he.id=hist.entry_id
+                        WHERE {' AND '.join(history_conditions)}),'0')) running_balance
+                    FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(display_conditions)}
+                    ORDER BY je.entry_date {sort_sql},jl.id {sort_sql}"""
+                query_params = [str(base_opening), *history_params, *display_params]
+            ledger_page = fetch_page(
+                connection, query,
+                f"""SELECT COUNT(*) FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                    WHERE {' AND '.join(display_conditions)}""",
+                query_params,
+                count_params=display_params,
+                page=request.args.get("ledger_page",1,type=int),
+                per_page=request.args.get("ledger_per_page",50,type=int),
+            )
+            raw_rows = ledger_page["rows"]
+            if raw_rows:
+                boundary = raw_rows[-1] if sort_order == "desc" else raw_rows[0]
+                boundary_running = Decimal(str(boundary["running_balance"] or "0"))
+                opening_balance = boundary_running - Decimal(str(boundary["debit"] or "0")) + Decimal(str(boundary["credit"] or "0"))
+            else:
+                opening_balance = base_opening
+
+            debit_total_expr = decimal_sum_expression(connection, "jl.debit")
+            credit_total_expr = decimal_sum_expression(connection, "jl.credit")
+            filtered_totals = execute_compat(connection, f"""SELECT
+                {debit_total_expr} debit,
+                {credit_total_expr} credit
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE {' AND '.join(display_conditions)}""", display_params).fetchone()
+            total_debit = Decimal(str(filtered_totals["debit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            total_credit = Decimal(str(filtered_totals["credit"] or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+            period_net_expr = decimal_net_expression(connection, "jl.debit", "jl.credit")
+            period_net = execute_compat(connection, f"""SELECT {period_net_expr} net
+                FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+                WHERE {' AND '.join(date_conditions)}""", date_params).fetchone()
+            closing_balance = (base_opening + Decimal(str(period_net["net"] or "0"))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            for row in raw_rows:
+                item = dict(row)
+                item["debit"] = Decimal(str(item["debit"] or "0"))
+                item["credit"] = Decimal(str(item["credit"] or "0"))
+                item["running_balance"] = Decimal(str(item["running_balance"] or "0")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+                rows.append(item)
+    connection.close()
+    return render_template("ledger.html", accounts=accounts_list, selected=selected, rows=rows,
+        date_from=date_from, date_to=date_to, search_query=search_query,
+        sort_order=sort_order, opening_balance=opening_balance, closing_balance=closing_balance,
+        total_debit=total_debit, total_credit=total_credit, ledger_page=ledger_page)
+
+
+@app.route("/journal/<int:entry_id>")
+@requires("reports.view")
+def journal_detail(entry_id):
+    connection = db()
+    entry = execute_compat(connection, "SELECT * FROM journal_entries WHERE id=?", (entry_id,)).fetchone()
+    if not entry:
+        connection.close()
+        flash("القيد المحاسبي غير موجود.", "error")
+        return redirect(url_for("trial_balance"))
+    # Reversal chains are linked by immutable REV-{source_entry_id} references.
+    reversal_entry = execute_compat(connection, 
+        "SELECT id,entry_date,reference,description FROM journal_entries "
+        "WHERE reference=? AND status='posted' ORDER BY id LIMIT 1",
+        (f"REV-{entry_id}",),
+    ).fetchone()
+    original_entry = None
+    ref_text = str(entry["reference"] or "")
+    if ref_text.startswith("REV-") and ref_text[4:].isdigit():
+        original_entry = execute_compat(connection, 
+            "SELECT id,entry_date,reference,description FROM journal_entries WHERE id=?",
+            (int(ref_text[4:]),),
+        ).fetchone()
+    lines = execute_compat(connection, """SELECT jl.*,a.code account_code,a.name_ar account_name
+        FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+        WHERE jl.entry_id=? ORDER BY jl.id""", (entry_id,)).fetchall()
+    lines = [dict(row, debit=Decimal(str(row["debit"] or "0")),
+                  credit=Decimal(str(row["credit"] or "0"))) for row in lines]
+    debit_total_expr = decimal_sum_expression(connection, "debit")
+    credit_total_expr = decimal_sum_expression(connection, "credit")
+    totals_row = execute_compat(connection, f"""SELECT {debit_total_expr} debit,{credit_total_expr} credit
+        FROM journal_lines WHERE entry_id=?""", (entry_id,)).fetchone()
+    totals = {"debit":Decimal(str(totals_row["debit"] or "0")),
+              "credit":Decimal(str(totals_row["credit"] or "0"))}
+    connection.close()
+    return render_template("journal_detail.html", entry=entry, lines=lines, totals=totals,
+        reversal_entry=reversal_entry, original_entry=original_entry,
+        today=datetime.now().date().isoformat())
+
+
+@app.route("/accounting/periods", methods=["GET", "POST"])
+@requires("users.manage")
+def accounting_periods():
+    connection = db()
+    if request.method == "POST":
+        name = request.form.get("period_name", "").strip()
+        start_text = request.form.get("start_date", "").strip()
+        end_text = request.form.get("end_date", "").strip()
+        try:
+            start_date = date.fromisoformat(start_text).isoformat()
+            end_date = date.fromisoformat(end_text).isoformat()
+            if start_date != start_text or end_date != end_text:
+                raise ValueError()
+            if not name or len(name) > 100 or start_date > end_date:
+                raise ValueError()
+            overlap = execute_compat(connection, """SELECT 1 FROM accounting_periods
+                WHERE NOT(end_date < ? OR start_date > ?) LIMIT 1""",
+                (start_date, end_date)).fetchone()
+            if overlap:
+                raise ValueError("توجد فترة محاسبية أخرى تتداخل مع هذا النطاق.")
+            has_years = table_exists(connection, "financial_years")
+            if has_years and execute_compat(connection, "SELECT 1 FROM financial_years LIMIT 1").fetchone():
+                containing_year = execute_compat(connection, """SELECT 1 FROM financial_years
+                    WHERE start_date<=? AND end_date>=? LIMIT 1""",
+                    (start_date, end_date)).fetchone()
+                if not containing_year:
+                    raise ValueError("يجب أن تقع الفترة المحاسبية بالكامل داخل سنة مالية مسجلة.")
+            period_id = insert_and_get_id(connection, """INSERT INTO accounting_periods(period_name,start_date,end_date,locked,created_at)
+                VALUES(?,?,?,0,?)""", (name, start_date, end_date, now()))
+            connection.commit()
+            log_change(
+                "accounting_period_created", "accounting_period", period_id, None,
+                {"period_name": name, "start_date": start_date, "end_date": end_date, "locked": 0},
+                details=f"{name}: {start_date} - {end_date}",
+                reason=request.form.get("change_reason", "").strip(),
+            )
+            flash("تم إنشاء الفترة المحاسبية بحالة مفتوحة.", "success")
+        except (ValueError, TypeError):
+            connection.rollback()
+            flash("أدخل اسمًا وتاريخي بداية ونهاية صحيحين، وتأكد من عدم تداخل الفترات.", "error")
+        finally:
+            connection.close()
+        return redirect(url_for("accounting_periods"))
+    rows = execute_compat(connection, "SELECT * FROM accounting_periods ORDER BY start_date DESC").fetchall()
+    connection.close()
+    return render_template("periods.html", periods=rows)
+
+
+@app.route("/accounting/periods/<int:period_id>/state", methods=["POST"])
+@requires("users.manage")
+def accounting_period_state(period_id):
+    state = request.form.get("locked", "")
+    if state not in {"0", "1"}:
+        flash("حالة الفترة غير صحيحة.", "error")
+        return redirect(url_for("accounting_periods"))
+    connection = db()
+    row = execute_compat(connection, "SELECT period_name,start_date,end_date,locked FROM accounting_periods WHERE id=?", (period_id,)).fetchone()
+    if not row:
+        connection.close()
+        flash("الفترة المحاسبية غير موجودة.", "error")
+        return redirect(url_for("accounting_periods"))
+    closed_year_overlap = False
+    has_financial_years = table_exists(connection, "financial_years")
+    if state == "0" and has_financial_years:
+        closed_year_overlap = execute_compat(connection, """SELECT 1 FROM financial_years
+            WHERE status='closed' AND NOT(end_date<? OR start_date>?) LIMIT 1""",
+            (row["start_date"], row["end_date"])).fetchone()
+    if closed_year_overlap:
+        connection.close()
+        flash("لا يمكن فتح فترة تتقاطع مع سنة مالية مقفولة. استخدم إجراء عكس الإقفال المعتمد أولًا.", "error")
+        return redirect(url_for("accounting_periods"))
+    execute_compat(connection, "UPDATE accounting_periods SET locked=? WHERE id=?", (int(state), period_id))
+    connection.commit()
+    connection.close()
+    log_change(
+        "accounting_period_locked" if state == "1" else "accounting_period_unlocked",
+        "accounting_period", period_id,
+        {"period_name": row["period_name"], "start_date": row["start_date"], "end_date": row["end_date"], "locked": row["locked"]},
+        {"period_name": row["period_name"], "start_date": row["start_date"], "end_date": row["end_date"], "locked": int(state)},
+        details=row["period_name"], reason=request.form.get("change_reason", "").strip(),
+    )
+    flash("تم إقفال الفترة؛ لن تقبل قيودًا جديدة." if state == "1" else "تم فتح الفترة المحاسبية.", "success")
+    return redirect(url_for("accounting_periods"))
+
+
+@app.route("/journal/<int:entry_id>/reverse", methods=["POST"])
+@requires("journal.manage")
+def reverse_journal(entry_id):
+    connection = db()
+    # Serialize reversal checks and posting so two simultaneous requests cannot
+    # create duplicate reversals for the same journal.
+    begin_write_transaction(connection)
+    original = execute_compat(connection, "SELECT * FROM journal_entries WHERE id=? AND status='posted'", (entry_id,)).fetchone()
+    if not original:
+        connection.close()
+        flash("لا يمكن عكس قيد غير موجود أو غير مرحّل.", "error")
+        return redirect(url_for("trial_balance"))
+    # Reversals may themselves be reversed once. Each document is linked by
+    # REV-{entry_id}; this creates an auditable chain instead of editing history.
+    original_reference = str(original["reference"] or "")
+    reversal_parent_id = None
+    if original_reference.startswith("REV-") and original_reference[4:].isdigit():
+        reversal_parent_id = int(original_reference[4:])
+    elif str(original["description"] or "").startswith("قيد عكسي للقيد رقم "):
+        import re
+        legacy_match = re.match(r"قيد عكسي للقيد رقم (\d+)", str(original["description"] or ""))
+        if legacy_match:
+            reversal_parent_id = int(legacy_match.group(1))
+    # Permit one reversal of a reversal to restore the original accounting
+    # effect, but keep that restoration terminal. A third-level reversal can
+    # desynchronize linked subledgers (for example, fixed-asset status).
+    if reversal_parent_id is not None:
+        reversal_parent = execute_compat(connection, 
+            "SELECT reference,description FROM journal_entries WHERE id=?",
+            (reversal_parent_id,),
+        ).fetchone()
+        if reversal_parent and (
+            str(reversal_parent["reference"] or "").startswith("REV-")
+            or str(reversal_parent["description"] or "").startswith("قيد عكسي للقيد رقم ")
+        ):
+            connection.close()
+            flash(
+                "هذا القيد هو عكسٌ لقيد عكسي بالفعل. تم إيقاف سلسلة العكس هنا؛ "
+                "إذا احتجت تصحيحًا إضافيًا أنشئ قيد تسوية مستقلًا مع توضيح السبب.",
+                "error",
+            )
+            return redirect(url_for("journal_detail", entry_id=entry_id))
+    # Refuse a second reversal even if an old record was created without the expected reference.
+    existing_reversal = execute_compat(connection, 
+        "SELECT id FROM journal_entries WHERE reference=? AND status='posted' LIMIT 1",
+        (f"REV-{entry_id}",),
+    ).fetchone()
+    if existing_reversal:
+        connection.close()
+        flash(f"هذا القيد تم عكسه بالفعل بالقيد رقم {existing_reversal['id']}. لا يمكن عكسه مرة أخرى.", "warning")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    # Financial-year opening/closing journals must use their dedicated
+    # reversal workflow so the year pointers and status remain consistent.
+    has_financial_year_schema = table_exists(connection, "financial_years")
+    financial_year_link = None
+    if has_financial_year_schema:
+        financial_year_link = execute_compat(connection, """SELECT id,year_name FROM financial_years
+            WHERE opening_entry_id=? OR closing_entry_id=? LIMIT 1""",
+            (entry_id, entry_id)).fetchone()
+        if not financial_year_link and table_exists(connection, "financial_year_journal_history"):
+            financial_year_link = execute_compat(connection, """SELECT financial_year_id AS id
+                FROM financial_year_journal_history WHERE entry_id=? LIMIT 1""",
+                (entry_id,)).fetchone()
+    if financial_year_link:
+        connection.close()
+        flash("هذا قيد افتتاح أو إقفال مرتبط بسنة مالية؛ استخدم إجراء العكس من شاشة إدارة السنوات المالية حتى تُحدّث حالة السنة والارتباطات بأمان.", "error")
+        return redirect(url_for("planning.financial_years"))
+    # If this is the reversal of a fixed-asset acquisition reversal, reinstate
+    # the original asset only after checking that no depreciation/disposal exists.
+    reinstated_asset_rows = []
+    if reversal_parent_id is not None and table_exists(connection, "fixed_asset_journal_lines"):
+        reinstated_asset_rows = execute_compat(connection, """
+            SELECT p.journal_line_id,p.status,p.fixed_asset_id
+            FROM fixed_asset_journal_lines p WHERE p.entry_id=?
+        """, (reversal_parent_id,)).fetchall()
+        for asset_link in reinstated_asset_rows:
+            if asset_link["status"] == "reversed" and asset_link["fixed_asset_id"]:
+                asset_id = asset_link["fixed_asset_id"]
+                has_depreciation = execute_compat(connection, 
+                    "SELECT 1 FROM asset_depreciations WHERE asset_id=? LIMIT 1", (asset_id,)
+                ).fetchone()
+                has_disposal = execute_compat(connection, 
+                    "SELECT 1 FROM asset_disposals WHERE asset_id=? LIMIT 1", (asset_id,)
+                ).fetchone()
+                if has_depreciation or has_disposal:
+                    connection.close()
+                    flash("لا يمكن إعادة تفعيل الأصل بعكس القيد العكسي لوجود إهلاك أو استبعاد. استخدم تسوية الأصل المعتمدة.", "error")
+                    return redirect(url_for("journal_detail", entry_id=entry_id))
+    # A journal line tagged as a fixed-asset acquisition must also update
+    # its asset-register link when reversed. Once depreciation/disposal exists,
+    # the acquisition cannot be reversed as a plain journal entry.
+    asset_link_exists = table_exists(connection, "fixed_asset_journal_lines")
+    linked_asset_rows = []
+    if asset_link_exists:
+        linked_asset_rows = execute_compat(connection, """
+            SELECT p.journal_line_id,p.status,p.fixed_asset_id,f.status asset_status
+            FROM fixed_asset_journal_lines p
+            LEFT JOIN fixed_assets f ON f.id=p.fixed_asset_id
+            WHERE p.entry_id=?
+        """, (entry_id,)).fetchall()
+    for asset_link in linked_asset_rows:
+        if asset_link["fixed_asset_id"]:
+            asset_id = asset_link["fixed_asset_id"]
+            has_depreciation = execute_compat(connection, 
+                "SELECT 1 FROM asset_depreciations WHERE asset_id=? LIMIT 1", (asset_id,)
+            ).fetchone()
+            has_disposal = execute_compat(connection, 
+                "SELECT 1 FROM asset_disposals WHERE asset_id=? LIMIT 1", (asset_id,)
+            ).fetchone()
+            if has_depreciation or has_disposal or asset_link["asset_status"] != "active":
+                connection.close()
+                flash("لا يمكن عكس قيد شراء أصل تم بدء إهلاكه أو استبعاده. استخدم إجراء استبعاد/تسوية الأصل المعتمد أولًا.", "error")
+                return redirect(url_for("journal_detail", entry_id=entry_id))
+    # A journal linked from an operational document must be reversed through
+    # that document's own workflow (credit note, stock return, payment reversal, etc.).
+    linked_source = linked_operational_source(connection, entry_id)
+    if linked_source:
+        connection.close()
+        source_labels = {
+            "sales_invoices": "المبيعات",
+            "sales_credit_notes": "إشعارات المبيعات",
+            "supplier_bills": "فواتير الموردين",
+            "supplier_credit_notes": "إشعارات الموردين",
+            "supplier_payments": "مدفوعات الموردين",
+            "stock_movements": "المخزون",
+            "payroll_runs": "المرتبات",
+            "payroll_reversals": "قيود عكس المرتبات",
+            "asset_depreciations": "إهلاك الأصول",
+            "asset_disposals": "استبعاد الأصول",
+            "bank_transactions": "حركات البنوك",
+            "cash_commitment_payments": "سجل الالتزامات النقدية",
+        }
+        source_label = source_labels.get(linked_source, linked_source)
+        flash(
+            f"تم منع عكس القيد المرتبط بمستند في موديول {source_label} من شاشة اليومية العامة "
+            "حتى لا تتغير الأرصدة دون تحديث حالة المستند والحركات المرتبطة به. "
+            "استخدم إجراء الإلغاء أو العكس من نفس الموديول. إذا لم يتوفر الإجراء المطلوب، "
+            "لا تنشئ قيدًا عكسيًا يدويًا؛ يلزم استكمال مسار التصحيح داخل الموديول أولًا.",
+            "error",
+        )
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    reference = f"REV-{entry_id}"
+    existing = execute_compat(connection, "SELECT id FROM journal_entries WHERE reference=? AND status='posted'", (reference,)).fetchone()
+    if existing:
+        connection.close()
+        flash(f"تم إنشاء القيد العكسي مسبقًا: رقم {existing['id']}.", "warning")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    dimension_keys = (
+        "branch_id", "cost_center_id", "project_id", "customer_id",
+        "salesperson_id", "supplier_id", "stock_product_id", "stock_warehouse_id",
+    )
+    available_dimensions = table_columns(connection, "journal_lines")
+    selected_dimensions = [key for key in dimension_keys if key in available_dimensions]
+    selected_columns = ["account_id", "debit", "credit", "memo", *selected_dimensions]
+    original_lines = execute_compat(
+        connection,
+        "SELECT " + ",".join(selected_columns) +
+        " FROM journal_lines WHERE entry_id=? ORDER BY id",
+        (entry_id,),
+    ).fetchall()
+    if len(original_lines) < 2:
+        connection.close()
+        flash("القيد الأصلي لا يحتوي على سطور كافية للعكس.", "error")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    reverse_lines = [
+        (r["account_id"], r["credit"], r["debit"], f"عكس: {r['memo'] or ''}",
+         {key: r[key] for key in selected_dimensions})
+        for r in original_lines
+    ]
+    reversal_date_text = request.form.get("reversal_date", "").strip()
+    reversal_reason = request.form.get("reversal_reason", "").strip()
+    try:
+        reversal_date = datetime.strptime(reversal_date_text, "%Y-%m-%d").date().isoformat()
+        if reversal_date != reversal_date_text:
+            raise ValueError("تاريخ القيد العكسي غير صحيح.")
+        if reversal_date < str(original["entry_date"]):
+            raise ValueError("لا يمكن عكس القيد بتاريخ يسبق تاريخ القيد الأصلي.")
+        if not reversal_reason or len(reversal_reason) > 500:
+            raise ValueError("اكتب سببًا للقيد العكسي (بحد أقصى 500 حرف).")
+        reversal_id = post_journal(connection, reversal_date, reference,
+            f"قيد عكسي للقيد رقم {entry_id}: {original['description']} — السبب: {reversal_reason}",
+            reverse_lines, session["user_id"])
+        if linked_asset_rows:
+            for asset_link in linked_asset_rows:
+                execute_compat(connection, 
+                    "UPDATE fixed_asset_journal_lines SET status='reversed' WHERE journal_line_id=?",
+                    (asset_link["journal_line_id"],),
+                )
+                if asset_link["fixed_asset_id"]:
+                    execute_compat(connection, 
+                        "UPDATE fixed_assets SET status='reversed' WHERE id=?",
+                        (asset_link["fixed_asset_id"],),
+                    )
+        if reinstated_asset_rows:
+            for asset_link in reinstated_asset_rows:
+                if asset_link["status"] == "reversed":
+                    execute_compat(connection, 
+                        "UPDATE fixed_asset_journal_lines SET status=? WHERE journal_line_id=?",
+                        ("configured" if asset_link["fixed_asset_id"] else "pending",
+                         asset_link["journal_line_id"]),
+                    )
+                    if asset_link["fixed_asset_id"]:
+                        execute_compat(connection, 
+                            "UPDATE fixed_assets SET status='active' WHERE id=? AND status='reversed'",
+                            (asset_link["fixed_asset_id"],),
+                        )
+        connection.commit()
+        reversal_entry = execute_compat(connection, 
+            "SELECT id,entry_date,reference,description,status FROM journal_entries WHERE id=?",
+            (reversal_id,),
+        ).fetchone()
+        reversal_snapshot_lines = [dict(row) for row in execute_compat(connection, 
+            """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? ORDER BY jl.id""",
+            (reversal_id,),
+        ).fetchall()]
+        original_snapshot_lines = [dict(row) for row in execute_compat(connection, 
+            """SELECT a.code account_code,a.name_ar account_name,jl.debit,jl.credit,jl.memo
+               FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id
+               WHERE jl.entry_id=? ORDER BY jl.id""",
+            (entry_id,),
+        ).fetchall()]
+        log_change(
+            "journal_reversed", "journal_entry", reversal_id,
+            {
+                "original_entry_id": entry_id, "reference": original["reference"],
+                "entry_date": original["entry_date"], "description": original["description"],
+                "status": original["status"], "lines": original_snapshot_lines,
+            },
+            {
+                "reversal_entry_id": reversal_id, "original_entry_id": entry_id,
+                "entry_date": reversal_entry["entry_date"], "reference": reversal_entry["reference"],
+                "description": reversal_entry["description"], "status": reversal_entry["status"],
+                "reason": reversal_reason, "lines": reversal_snapshot_lines,
+            },
+            details=f"الأصلي #{entry_id}؛ العكسي #{reversal_id}",
+            reason=reversal_reason,
+        )
+        flash(f"تم إنشاء القيد العكسي رقم {reversal_id}. القيد الأصلي محفوظ دون تعديل.", "success")
+        return redirect(url_for("journal_detail", entry_id=reversal_id))
+    except (ValueError, TypeError) as exc:
+        connection.rollback()
+        flash(f"تعذر عكس القيد: {exc}", "error")
+        return redirect(url_for("journal_detail", entry_id=entry_id))
+    finally:
+        connection.close()
+
+
+@app.route("/reports/reconciliation")
+@requires("reports.view")
+def reconciliation():
+    connection = db()
+    try:
+        snapshot = reconciliation_snapshot(connection)
+    finally:
+        connection.close()
+    settings = snapshot.get("settings", {})
+    return render_template("reconciliation.html", snapshot=snapshot, settings=settings)
 
 @app.route("/users", methods=["GET", "POST"])
 @requires("users.manage")
 def users():
     connection = db()
+    initialize_roles_schema(connection)
+    role_permissions, role_names, custom_roles = role_permissions_catalog(connection)
     if request.method == "POST":
         try:
-            connection.execute("INSERT INTO users(username,full_name,password_hash,role,created_at) VALUES(?,?,?,?,?)",
-                               (request.form["username"].strip(), request.form["full_name"].strip(), password_hash(request.form["password"]), request.form["role"], now()))
+            new_password = request.form.get("password", "")
+            if len(new_password) < 12:
+                raise ValueError("كلمة مرور المستخدم الجديد يجب ألا تقل عن 12 حرفًا.")
+            role = request.form["role"]
+            if role not in role_permissions:
+                raise ValueError("الدور المحدد غير صحيح أو غير نشط.")
+            selected = normalize_user_permissions(request.form.getlist("permissions"))
+            assert_user_management_scope(requested_role=role, requested_permissions=selected)
+            stored_permissions = user_permissions_storage(selected, role, role_permissions)
+            username = request.form.get("username", "").strip()
+            if not username:
+                raise ValueError("اسم المستخدم مطلوب ولا يمكن تركه فارغًا.")
+            execute_compat(connection, 
+                "INSERT INTO users(username,full_name,password_hash,role,created_at,permissions_json,must_change_password) VALUES(?,?,?,?,?,?,1)",
+                (username, request.form["full_name"].strip(), password_hash(new_password),
+                 role, now(), stored_permissions),
+            )
+            created_user_id = execute_compat(connection, 
+                "SELECT id FROM users WHERE username=?", (username,)
+            ).fetchone()["id"]
             connection.commit()
-            log("user_created", request.form["username"])
+            log_change(
+                "user_created", "user", created_user_id, None,
+                {"username": username, "full_name": request.form["full_name"].strip(),
+                 "role": role, "role_name": role_names.get(role, role), "active": 1,
+                 "permissions": selected, "permissions_inherited_from_role": stored_permissions is None},
+                details=username, reason=request.form.get("change_reason", "").strip(),
+            )
             flash("تم إنشاء المستخدم.", "success")
-        except sqlite3.IntegrityError:
+        except DB_INTEGRITY_ERROR:
+            connection.rollback()
             flash("اسم المستخدم مستخدم بالفعل.", "error")
-    rows = connection.execute("SELECT id,username,full_name,role,active,created_at FROM users ORDER BY id").fetchall()
+        except ValueError as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+    is_role_admin = session.get("role") == "admin"
+    actor_permissions = set(normalize_user_permissions(
+        session.get("permissions", role_default_permissions(session.get("role")))
+    ))
+    available_role_permissions = role_permissions if is_role_admin else {
+        key: sorted(set(values) & actor_permissions)
+        for key, values in role_permissions.items() if key != "admin"
+    }
+    available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
+        permission for permission in ALL_PERMISSIONS if permission in actor_permissions
+    ]
+    rows = [dict(row) for row in execute_compat(connection, 
+        "SELECT id,username,full_name,role,active,created_at,permissions_json FROM users ORDER BY id"
+    ).fetchall()]
+    for row in rows:
+        row["role_name"] = role_names.get(row["role"], row["role"])
+        row["effective_permissions"] = stored_user_permissions(row["permissions_json"], row["role"])
     connection.close()
-    return render_template("users.html", users=rows, role_permissions=PERMISSIONS)
+    return render_template(
+        "users.html", users=rows, role_permissions=available_role_permissions, role_names=role_names,
+        custom_roles=custom_roles, is_role_admin=is_role_admin,
+        default_permissions=sorted(PERMISSIONS.get("admin", set())) if is_role_admin else sorted(actor_permissions),
+        all_permissions=available_permissions, permission_labels=PERMISSION_LABELS,
+    )
+
+
+@app.route("/users/roles", methods=["POST"])
+@requires("users.manage")
+def manage_user_roles():
+    connection = db()
+    initialize_roles_schema(connection)
+    if session.get("role") != "admin":
+        connection.close()
+        flash("إدارة قوالب الأدوار المخصصة متاحة لمدير النظام فقط.", "error")
+        return redirect(url_for("users"))
+    action = request.form.get("action", "")
+    role_key = request.form.get("role_key", "").strip()
+    try:
+        if action == "create":
+            role_name = request.form.get("role_name", "").strip()
+            selected = normalize_user_permissions(request.form.getlist("role_permissions"))
+            if len(role_name) < 2 or len(role_name) > 80:
+                raise ValueError("اسم الدور مطلوب من حرفين إلى 80 حرفًا.")
+            role_key = "custom_" + uuid.uuid4().hex[:10]
+            timestamp = now()
+            execute_compat(connection, 
+                """INSERT INTO roles(role_key,role_name,permissions_json,is_system,active,
+                   created_by,updated_by,created_at,updated_at)
+                   VALUES(?,?,?,0,1,?,?,?,?)""",
+                (role_key, role_name, json.dumps(selected, ensure_ascii=False),
+                 session["user_id"], session["user_id"], timestamp, timestamp),
+            )
+            connection.commit()
+            log_change("role_created", "role", role_key, None,
+                {"role_name": role_name, "permissions": selected, "active": 1},
+                details=role_key, reason=request.form.get("change_reason", "").strip())
+            flash("تم إنشاء الدور المخصص.", "success")
+        elif action == "update":
+            current = execute_compat(connection, 
+                "SELECT * FROM roles WHERE role_key=? AND is_system=0 AND active=1", (role_key,)
+            ).fetchone()
+            if not current:
+                raise ValueError("الدور المخصص غير موجود أو غير نشط.")
+            role_name = request.form.get("role_name", "").strip()
+            selected = normalize_user_permissions(request.form.getlist("role_permissions"))
+            if len(role_name) < 2 or len(role_name) > 80:
+                raise ValueError("اسم الدور مطلوب من حرفين إلى 80 حرفًا.")
+            before_values = {
+                "role_name": current["role_name"],
+                "permissions": normalize_user_permissions(json.loads(current["permissions_json"] or "[]")),
+                "active": current["active"],
+            }
+            after_values = {"role_name": role_name, "permissions": selected, "active": 1}
+            execute_compat(connection, 
+                """UPDATE roles SET role_name=?,permissions_json=?,updated_by=?,updated_at=?
+                   WHERE role_key=? AND is_system=0""",
+                (role_name, json.dumps(selected, ensure_ascii=False), session["user_id"], now(), role_key),
+            )
+            connection.commit()
+            log_change("role_updated", "role", role_key, before_values, after_values,
+                details=role_key, reason=request.form.get("change_reason", "").strip())
+            flash("تم تحديث الدور. المستخدمون الذين يرثون صلاحيات الدور سيحصلون على التحديث عند تسجيل الدخول التالي.", "success")
+        elif action == "deactivate":
+            current = execute_compat(connection, 
+                "SELECT * FROM roles WHERE role_key=? AND is_system=0 AND active=1", (role_key,)
+            ).fetchone()
+            if not current:
+                raise ValueError("الدور المخصص غير موجود أو غير نشط.")
+            assigned = execute_compat(connection, 
+                "SELECT COUNT(*) FROM users WHERE role=?", (role_key,)
+            ).fetchone()[0]
+            if assigned:
+                raise ValueError("لا يمكن تعطيل الدور لأنه مرتبط بمستخدمين. غيّر أدوارهم أولًا.")
+            execute_compat(connection, 
+                "UPDATE roles SET active=0,updated_by=?,updated_at=? WHERE role_key=? AND is_system=0",
+                (session["user_id"], now(), role_key),
+            )
+            connection.commit()
+            log_change("role_deactivated", "role", role_key,
+                {"role_name": current["role_name"], "active": 1},
+                {"role_name": current["role_name"], "active": 0},
+                details=role_key, reason=request.form.get("change_reason", "").strip())
+            flash("تم تعطيل الدور المخصص.", "success")
+        else:
+            raise ValueError("عملية إدارة الدور غير معروفة.")
+    except DB_INTEGRITY_ERROR:
+        connection.rollback()
+        flash("اسم الدور مستخدم بالفعل. اختر اسمًا مختلفًا.", "error")
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        connection.rollback()
+        flash(safe_error_message(exc, "تعذر حفظ الدور. لم يتم حفظ أي تغييرات."), "error")
+    finally:
+        connection.close()
+    return redirect(url_for("users"))
+
+
+@app.route("/users/<int:user_id>/edit",methods=["GET","POST"])
+@requires("users.manage")
+def edit_user(user_id):
+    connection = db()
+    initialize_roles_schema(connection)
+    user = execute_compat(connection, 
+        "SELECT id,username,full_name,role,active,permissions_json FROM users WHERE id=?",
+        (user_id,),
+    ).fetchone()
+    if not user:
+        connection.close()
+        flash("المستخدم غير موجود.", "error")
+        return redirect(url_for("users"))
+    role_permissions, role_names, _custom_roles = role_permissions_catalog(connection, include_role=user["role"])
+    try:
+        assert_user_management_scope(target=user)
+    except ValueError as exc:
+        connection.close()
+        flash(str(exc), "error")
+        return redirect(url_for("users"))
+    is_role_admin = session.get("role") == "admin"
+    actor_permissions = set(normalize_user_permissions(
+        session.get("permissions", role_default_permissions(session.get("role")))
+    ))
+    available_role_permissions = role_permissions if is_role_admin else {
+        key: sorted(set(values) & actor_permissions)
+        for key, values in role_permissions.items() if key != "admin"
+    }
+    available_permissions = list(ALL_PERMISSIONS) if is_role_admin else [
+        permission for permission in ALL_PERMISSIONS if permission in actor_permissions
+    ]
+    if request.method == "POST":
+        role = request.form.get("role")
+        if role not in role_permissions:
+            flash("الدور المحدد غير صحيح أو غير نشط.", "error")
+        else:
+            try:
+                selected = normalize_user_permissions(request.form.getlist("permissions"))
+                assert_user_management_scope(
+                    target=user, requested_role=role, requested_permissions=selected
+                )
+                if user_id == session.get("user_id"):
+                    current_permissions = stored_user_permissions(user["permissions_json"], user["role"])
+                    requested_active = 1 if request.form.get("active") == "yes" else 0
+                    if role != user["role"] or selected != current_permissions or requested_active != user["active"]:
+                        raise ValueError("لا يمكنك تغيير دورك أو صلاحياتك أو حالة حسابك من الجلسة الحالية.")
+                if user["role"] == "admin":
+                    protected_admin_permissions = normalize_user_permissions(PERMISSIONS["admin"])
+                    requested_active = 1 if request.form.get("active") == "yes" else 0
+                    if (role != "admin" or requested_active != 1
+                            or not set(protected_admin_permissions).issubset(selected)):
+                        raise ValueError("لا يمكن تغيير دور مدير النظام أو تعطيل حسابه أو تقليص صلاحياته الأساسية.")
+                before_values = {
+                    "username": user["username"], "full_name": user["full_name"],
+                    "role": user["role"], "role_name": role_names.get(user["role"], user["role"]),
+                    "active": user["active"],
+                    "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
+                }
+                updated_username = request.form.get("username", "").strip()
+                if not updated_username:
+                    raise ValueError("اسم المستخدم مطلوب ولا يمكن تركه فارغًا.")
+                updated_full_name = request.form.get("full_name", "").strip()
+                if not updated_full_name:
+                    raise ValueError("الاسم الكامل مطلوب ولا يمكن تركه فارغًا.")
+                after_values = {
+                    "username": updated_username,
+                    "full_name": updated_full_name, "role": role,
+                    "role_name": role_names.get(role, role),
+                    "active": 1 if request.form.get("active") == "yes" else 0,
+                    "permissions": selected,
+                }
+                stored_permissions = user_permissions_storage(selected, role, role_permissions)
+                execute_compat(connection, 
+                    "UPDATE users SET username=?,full_name=?,role=?,active=?,permissions_json=? WHERE id=?",
+                    (after_values["username"], after_values["full_name"], role,
+                     after_values["active"], stored_permissions, user_id),
+                )
+                connection.commit()
+                connection.close()
+                after_values["permissions_inherited_from_role"] = stored_permissions is None
+                log_change("user_updated", "user", user_id, before_values, after_values,
+                    details=after_values["username"], reason=request.form.get("change_reason", "").strip())
+                flash("تم تعديل المستخدم.", "success")
+                return redirect(url_for("users"))
+            except DB_INTEGRITY_ERROR:
+                connection.rollback()
+                flash("اسم المستخدم مستخدم بالفعل.", "error")
+            except ValueError as exc:
+                connection.rollback()
+                flash(safe_error_message(exc, "تعذر إتمام العملية بسبب تعارض في البيانات أو قاعدة البيانات. لم يتم حفظ أي تغييرات."), "error")
+    selected_permissions = set(stored_user_permissions(user["permissions_json"], user["role"]))
+    connection.close()
+    return render_template(
+        "user_edit.html", user=user, roles=available_role_permissions, role_names=role_names,
+        all_permissions=available_permissions, permission_labels=PERMISSION_LABELS,
+        selected_permissions=selected_permissions,
+    )
+
+
+@app.route("/users/<int:user_id>/delete",methods=["POST"])
+@requires("users.manage")
+def delete_user(user_id):
+    connection=db(); user=execute_compat(connection, "SELECT * FROM users WHERE id=?",(user_id,)).fetchone()
+    if not user:
+        flash("المستخدم غير موجود.","error")
+    elif user_id==session.get("user_id"):
+        flash("لا يمكنك حذف المستخدم الذي سجلت الدخول به.","error")
+    elif user["role"] == "admin":
+        flash("لا يمكن حذف حساب مدير النظام المحمي.","error")
+    elif session.get("role") != "admin" and not set(
+        stored_user_permissions(user["permissions_json"], user["role"])
+    ).issubset(set(session.get("permissions", []))):
+        flash("لا تملك صلاحية حذف مستخدم تتجاوز صلاحياته صلاحياتك.","error")
+    else:
+        checks=[
+          ("SELECT 1 FROM audit_log WHERE user_id=? LIMIT 1","سجل المراجعة والتدقيق"),
+          ("SELECT 1 FROM journal_entries WHERE created_by=? LIMIT 1","قيود اليومية"),
+          ("SELECT 1 FROM stock_movements WHERE created_by=? LIMIT 1","حركات المخزون"),
+          ("SELECT 1 FROM sales_invoices WHERE created_by=? LIMIT 1","فواتير البيع"),
+          ("SELECT 1 FROM purchase_orders WHERE created_by=? LIMIT 1","أوامر الشراء"),
+          ("SELECT 1 FROM goods_receipts WHERE created_by=? LIMIT 1","استلامات المشتريات"),
+          ("SELECT 1 FROM supplier_payments WHERE created_by=? LIMIT 1","مدفوعات الموردين"),
+          ("SELECT 1 FROM supplier_credit_notes WHERE created_by=? LIMIT 1","إشعارات دائنة المشتريات"),
+          ("SELECT 1 FROM bank_transactions WHERE created_by=? LIMIT 1","الحركات البنكية")]
+        used=next((label for q,label in checks if execute_compat(connection, q,(user_id,)).fetchone()),None)
+        if used: flash("لا يمكن حذف المستخدم لوجود نشاط مسجل في "+used+". يمكنك إيقافه بدل الحذف.","error")
+        else:
+            try:
+                before_values = {
+                    "username": user["username"], "full_name": user["full_name"],
+                    "role": user["role"], "active": user["active"],
+                    "permissions": stored_user_permissions(user["permissions_json"], user["role"]),
+                }
+                execute_compat(connection, "DELETE FROM users WHERE id=?",(user_id,))
+                connection.commit()
+                log_change(
+                    "user_deleted", "user", user_id, before_values, None,
+                    details=user["username"], reason=request.form.get("change_reason", "").strip(),
+                )
+                flash("تم حذف المستخدم.","success")
+            except DB_INTEGRITY_ERROR: connection.rollback(); flash("لا يمكن حذف المستخدم لوجود سجلات مرتبطة به.","error")
+    connection.close(); return redirect(url_for("users"))
 
 
 @app.route("/data/export/<format>")
 @requires("import_export.manage")
 def export_data(format):
     connection = db()
-    accounts_data = [dict(row) for row in connection.execute("SELECT code,name_ar,account_type,active FROM accounts ORDER BY code")]
-    entries_data = [dict(row) for row in connection.execute("SELECT * FROM journal_entries ORDER BY id")]
+    accounts_data = [dict(row) for row in execute_compat(connection, "SELECT code,name_ar,account_type,active FROM accounts ORDER BY code")]
+    entries_data = [dict(row) for row in execute_compat(connection, "SELECT * FROM journal_entries ORDER BY id")]
+    lines_data = [dict(row) for row in execute_compat(connection, """
+        SELECT jl.id,jl.entry_id,a.code account_code,jl.debit,jl.credit,jl.memo
+        FROM journal_lines jl JOIN accounts a ON a.id=jl.account_id ORDER BY jl.entry_id,jl.id
+    """)]
     connection.close()
     if format == "json":
-        return Response(json.dumps({"accounts": accounts_data, "journal_entries": entries_data}, ensure_ascii=False, indent=2), mimetype="application/json", headers={"Content-Disposition": "attachment; filename=nexus-export.json"})
+        return Response(json.dumps({"accounts": accounts_data, "journal_entries": entries_data,
+            "journal_lines": lines_data}, ensure_ascii=False, indent=2), mimetype="application/json",
+            headers={"Content-Disposition": "attachment; filename=nexus-export.json"})
     if format == "csv":
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=["code", "name_ar", "account_type", "active"])
-        writer.writeheader(); writer.writerows(accounts_data)
+        writer.writeheader()
+        # Prevent spreadsheet formula execution when a text cell starts with
+        # a formula marker (including markers hidden behind whitespace/control chars).
+        def safe_csv_cell(value):
+            text = "" if value is None else str(value)
+            probe = text.lstrip(" \t\r\n")
+            if probe.startswith(("=", "+", "-", "@")):
+                return "'" + text
+            return text
+        for account_row in accounts_data:
+            writer.writerow({key: safe_csv_cell(value) if key in {"code", "name_ar"} else value
+                             for key, value in account_row.items()})
         return Response(output.getvalue().encode("utf-8-sig"), mimetype="text/csv", headers={"Content-Disposition": "attachment; filename=chart-of-accounts.csv"})
     return "Unsupported format", 400
+
+
+
+IMPORT_DATASETS = {
+    "accounts": {
+        "label": "دليل الحسابات", "permission": "accounts.manage",
+        "fields": [
+            {"key": "code", "label": "كود الحساب", "required": True},
+            {"key": "name_ar", "label": "اسم الحساب", "required": True},
+            {"key": "account_type", "label": "نوع الحساب", "required": True},
+            {"key": "parent_code", "label": "كود الحساب الأب (اختياري للجذر)", "required": False},
+            {"key": "is_group", "label": "حساب تجميعي؟ (1/0)", "required": False},
+        ],
+    },
+    "employees": {
+        "label": "الموظفون", "permission": "workforce.manage",
+        "fields": [
+            {"key": "employee_code", "label": "كود الموظف", "required": True},
+            {"key": "full_name", "label": "اسم الموظف", "required": True},
+            {"key": "hire_date", "label": "تاريخ التعيين (YYYY-MM-DD)", "required": True},
+            {"key": "basic_salary", "label": "الأجر الأساسي", "required": True},
+            {"key": "insured_wage", "label": "الأجر التأميني", "required": False},
+            {"key": "job_title", "label": "الوظيفة", "required": False},
+            {"key": "department", "label": "الإدارة / القسم", "required": False},
+            {"key": "address", "label": "العنوان", "required": False},
+            {"key": "national_id", "label": "الرقم القومي", "required": False},
+            {"key": "work_status", "label": "حالة العمل", "required": False},
+            {"key": "termination_date", "label": "تاريخ انتهاء الخدمة (إن وجد)", "required": False},
+        ],
+    },
+    "customers": {
+        "label": "العملاء", "permission": "sales.manage",
+        "fields": [
+            {"key": "code", "label": "كود العميل", "required": True},
+            {"key": "name", "label": "اسم العميل", "required": True},
+            {"key": "tax_number", "label": "الرقم الضريبي", "required": False},
+            {"key": "phone", "label": "الهاتف", "required": False},
+            {"key": "email", "label": "البريد الإلكتروني", "required": False},
+            {"key": "address", "label": "العنوان", "required": False},
+            {"key": "credit_limit", "label": "حد الائتمان", "required": False},
+        ],
+    },
+    "suppliers": {
+        "label": "الموردون", "permission": "purchases.manage",
+        "fields": [
+            {"key": "code", "label": "كود المورد", "required": True},
+            {"key": "name", "label": "اسم المورد", "required": True},
+            {"key": "tax_number", "label": "الرقم الضريبي", "required": False},
+            {"key": "phone", "label": "الهاتف", "required": False},
+            {"key": "email", "label": "البريد الإلكتروني", "required": False},
+            {"key": "address", "label": "العنوان", "required": False},
+        ],
+    },
+    "products": {
+        "label": "الأصناف / المنتجات", "permission": "stock.manage",
+        "fields": [
+            {"key": "sku", "label": "كود الصنف (SKU)", "required": True},
+            {"key": "name_ar", "label": "اسم الصنف", "required": True},
+            {"key": "product_type", "label": "نوع الصنف (goods/service/consumable)", "required": False},
+            {"key": "category", "label": "التصنيف", "required": False},
+            {"key": "uom", "label": "وحدة القياس", "required": False},
+            {"key": "barcode", "label": "الباركود", "required": False},
+            {"key": "min_qty", "label": "حد إعادة الطلب", "required": False},
+            {"key": "purchase_price", "label": "سعر الشراء", "required": False},
+            {"key": "sale_price", "label": "سعر البيع", "required": False},
+        ],
+    },
+    "opening_balances": {
+        "label": "الأرصدة الافتتاحية (عملاء / موردون / مخزون)", "permission": "journal.manage",
+        "fields": [
+            {"key": "record_type", "label": "نوع الرصيد (customer / supplier / inventory)", "required": True},
+            {"key": "reference", "label": "مرجع المستند الأصلي", "required": True},
+            {"key": "balance_date", "label": "تاريخ الرصيد YYYY-MM-DD", "required": True},
+            {"key": "customer_code", "label": "كود العميل", "required": False},
+            {"key": "supplier_code", "label": "كود المورد", "required": False},
+            {"key": "sku", "label": "كود الصنف", "required": False},
+            {"key": "warehouse_code", "label": "كود المخزن", "required": False},
+            {"key": "due_date", "label": "تاريخ الاستحقاق YYYY-MM-DD", "required": False},
+            {"key": "quantity", "label": "الكمية (للمخزون)", "required": False},
+            {"key": "unit_cost", "label": "تكلفة الوحدة (للمخزون)", "required": False},
+            {"key": "amount", "label": "المبلغ (للعميل / المورد)", "required": False},
+        ],
+    },
+}
+
+def _import_stage_dir():
+    path = DATA_DIR / "import_staging"
+    path.mkdir(parents=True, exist_ok=True)
+    cutoff = datetime.now().timestamp() - 12 * 60 * 60
+    for item in path.glob("*.json"):
+        try:
+            if item.stat().st_mtime < cutoff:
+                item.unlink()
+        except OSError:
+            pass
+    return path
+
+
+def _read_import_upload(upload):
+    filename = (upload.filename or "").lower()
+    raw = upload.stream.read(10 * 1024 * 1024 + 1)
+    if len(raw) > 10 * 1024 * 1024:
+        raise ValueError("حجم الملف أكبر من الحد المسموح (10 ميجابايت).")
+    if not raw:
+        raise ValueError("الملف فارغ.")
+    if filename.endswith(".csv"):
+        try:
+            decoded = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            decoded = raw.decode("cp1256")
+        sample = decoded[:8192]
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.reader(io.StringIO(decoded), dialect)
+        values = list(reader)
+    elif filename.endswith(".xlsx"):
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        sheet = workbook.active
+        values = list(sheet.iter_rows(values_only=True))
+        workbook.close()
+    else:
+        raise ValueError("اختر ملف Excel بصيغة XLSX أو CSV.")
+    if len(values) < 2:
+        raise ValueError("يجب أن يحتوي الملف على صف عناوين وصف بيانات واحد على الأقل.")
+    if len(values) > 10001:
+        raise ValueError("الملف يتجاوز الحد المسموح وهو 10,000 صف بيانات.")
+    headers = []
+    for index, value in enumerate(values[0]):
+        label = str(value).strip() if value is not None else ""
+        label = label or f"عمود {index + 1}"
+        if label in headers:
+            label = f"{label} ({index + 1})"
+        headers.append(label)
+    if len(headers) > 100:
+        raise ValueError("الملف يحتوي على أكثر من 100 عمود.")
+    rows = []
+    for raw_row in values[1:10001]:
+        row = list(raw_row[:len(headers)])
+        row += [None] * (len(headers) - len(row))
+        if any(value is not None and str(value).strip() for value in row):
+            rows.append([str(value).strip() if value is not None else "" for value in row])
+    if len(rows) > 10000:
+        raise ValueError("الملف يتجاوز الحد المسموح وهو 10,000 صف.")
+    if not rows:
+        raise ValueError("لا توجد صفوف بيانات للاستيراد.")
+    return headers, rows
+
+
+@app.route("/data/import", methods=["GET", "POST"])
+@requires("import_export.manage")
+def import_data_wizard():
+    stage_dir = _import_stage_dir()
+    if request.method == "GET":
+        return render_template("import_data.html", datasets=IMPORT_DATASETS)
+    action = request.form.get("action", "upload")
+    token = session.get("import_stage_token")
+    if action == "upload":
+        upload = request.files.get("file")
+        if not upload or not upload.filename:
+            flash("اختر ملف Excel أو CSV أولًا.", "error")
+            return redirect(url_for("import_data_wizard"))
+        dataset = request.form.get("dataset", "accounts")
+        config = IMPORT_DATASETS.get(dataset)
+        if not config:
+            flash("نوع البيانات المطلوب استيراده غير متاح.", "error")
+            return redirect(url_for("import_data_wizard"))
+        if config["permission"] not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
+            flash("لا تملك صلاحية استيراد هذا النوع من البيانات.", "error")
+            return redirect(url_for("dashboard"))
+        try:
+            headers, rows = _read_import_upload(upload)
+            token = uuid.uuid4().hex
+            payload = {"dataset": dataset, "filename": upload.filename.replace("\\", "/").split("/")[-1],
+                       "headers": headers, "rows": rows}
+            (stage_dir / (token + ".json")).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            session["import_stage_token"] = token
+            return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token)
+        except (ValueError, UnicodeDecodeError, OSError) as exc:
+            flash(safe_error_message(exc, "تعذر قراءة الملف."), "error")
+            return redirect(url_for("import_data_wizard"))
+        except Exception:
+            app.logger.exception("Excel/CSV import preview failed.")
+            flash("تعذر قراءة الملف. تأكد من سلامة ملف Excel أو CSV ثم حاول مرة أخرى.", "error")
+            return redirect(url_for("import_data_wizard"))
+    if action == "confirm":
+        submitted_token = request.form.get("token", "")
+        if not token or submitted_token != token or not token.isalnum() or len(token) != 32:
+            flash("انتهت صلاحية ملف الاستيراد. ارفع الملف مرة أخرى.", "error")
+            return redirect(url_for("import_data_wizard"))
+        stage_file = stage_dir / (token + ".json")
+        try:
+            payload = json.loads(stage_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            session.pop("import_stage_token", None)
+            flash("ملف المعاينة غير موجود أو انتهت صلاحيته. ارفع الملف مرة أخرى.", "error")
+            return redirect(url_for("import_data_wizard"))
+        dataset = payload.get("dataset")
+        config = IMPORT_DATASETS.get(dataset)
+        if not config or config["permission"] not in set(session.get("permissions", PERMISSIONS.get(session.get("role"), set()))):
+            flash("لا تملك صلاحية استيراد هذا النوع من البيانات.", "error")
+            return redirect(url_for("dashboard"))
+        headers, rows = payload["headers"], payload["rows"]
+        mapping = {}
+        used_columns = set()
+        for field in config["fields"]:
+            selected = request.form.get("map_" + field["key"], "")
+            if selected == "":
+                if field["required"]:
+                    flash("يجب ربط الحقول الإلزامية قبل الاستيراد.", "error")
+                    return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token, mapping=request.form)
+                mapping[field["key"]] = None
+                continue
+            try:
+                column_index = int(selected)
+            except (TypeError, ValueError):
+                column_index = -1
+            if column_index < 0 or column_index >= len(headers) or column_index in used_columns:
+                flash("اختيار الأعمدة غير صحيح أو تم ربط العمود بأكثر من حقل.", "error")
+                return render_template("import_data.html", datasets=IMPORT_DATASETS, stage=payload, token=token, mapping=request.form)
+            used_columns.add(column_index)
+            mapping[field["key"]] = column_index
+        connection = db()
+        inserted = skipped = 0
+        errors = []
+        try:
+            begin_write_transaction(connection)
+            if dataset == "opening_balances":
+                execute_compat(connection, """CREATE TABLE IF NOT EXISTS opening_balance_import_refs (
+                    id INTEGER PRIMARY KEY, record_type TEXT NOT NULL, reference TEXT NOT NULL,
+                    entity_key TEXT NOT NULL, journal_entry_id INTEGER NOT NULL REFERENCES journal_entries(id),
+                    source_file TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(record_type,reference,entity_key)
+                )""")
+            for row_number, source_row in enumerate(rows, start=2):
+                values = {key: (source_row[index] if index is not None else "") for key, index in mapping.items()}
+                clean = {key: str(value or "").strip() for key, value in values.items()}
+                execute_compat(connection, "SAVEPOINT import_row")
+                try:
+                    if dataset == "opening_balances":
+                        profile = get_active_activity_profile(connection)
+                        role_codes = profile.get("account_roles", {})
+                        posting = profile.get("posting_accounts", {})
+                        retained_codes = role_codes.get("retained_earnings", [])
+                        retained_code = retained_codes[0] if isinstance(retained_codes, (list, tuple)) and retained_codes else retained_codes
+                        record_type = clean.get("record_type", "").strip().lower()
+                        aliases = {"عميل": "customer", "عميل/عملاء": "customer", "مورد": "supplier",
+                                   "مخزون": "inventory", "customer": "customer", "supplier": "supplier",
+                                   "inventory": "inventory"}
+                        record_type = aliases.get(record_type, record_type)
+                        required_permission = {"customer": "sales.manage", "supplier": "purchases.manage",
+                                               "inventory": "stock.manage"}.get(record_type)
+                        granted = set(session.get("permissions", PERMISSIONS.get(session.get("role"), set())))
+                        if not required_permission or required_permission not in granted:
+                            raise ValueError("لا تملك صلاحية تنفيذ نوع الرصيد الافتتاحي المحدد.")
+                        ref = clean.get("reference", "")
+                        entry_date = date.fromisoformat(clean.get("balance_date", "")).isoformat()
+                        if not ref:
+                            raise ValueError("مرجع المستند الأصلي مطلوب لتتبع الرصيد الافتتاحي.")
+                        if execute_compat(connection, """SELECT 1 FROM accounting_periods
+                            WHERE locked=1 AND start_date<=? AND end_date>=? LIMIT 1""",
+                            (entry_date, entry_date)).fetchone():
+                            raise ValueError("تاريخ الرصيد يقع داخل فترة محاسبية مغلقة.")
+                        retained = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                            (str(retained_code),)).fetchone()
+                        if not retained:
+                            raise ValueError("حساب الأرباح المحتجزة/الأرصدة الافتتاحية غير مضبوط في ملف النشاط.")
+                        amount = Decimal("0")
+                        journal_lines = []
+                        entity_key = ""
+                        document_suffix = uuid.uuid4().hex[:10].upper()
+                        if record_type == "customer":
+                            customer = execute_compat(connection, "SELECT * FROM customers WHERE code=? AND active=1",
+                                (clean.get("customer_code", ""),)).fetchone()
+                            amount = Decimal(clean.get("amount", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                            if not customer or not amount.is_finite() or amount <= 0:
+                                raise ValueError("تأكد من كود العميل النشط والمبلغ الموجب.")
+                            ar_code = posting.get("ar")
+                            ar = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                                (str(ar_code),)).fetchone()
+                            if not ar: raise ValueError("حساب العملاء المدينين غير مضبوط في ملف النشاط.")
+                            invoice_no = "OB-C-" + document_suffix
+                            due_date = clean.get("due_date") or entry_date
+                            if due_date: date.fromisoformat(due_date)
+                            invoice_id = insert_and_get_id(connection, """INSERT INTO sales_invoices
+                                (invoice_no,customer_id,invoice_date,due_date,subtotal,tax_rate,tax_amount,
+                                 total_amount,paid_amount,status,created_by)
+                                VALUES(?,?,?,?,?,'0','0',?,'0','posted',?)""",
+                                (invoice_no, customer["id"], entry_date, due_date, str(amount), str(amount), session.get("user_id")))
+                            execute_compat(connection, """INSERT INTO sales_invoice_lines
+                                (invoice_id,description,quantity,unit_price,line_total,cost_total)
+                                VALUES(?,?, '1', ?, ?, '0')""",
+                                (invoice_id, "رصيد افتتاحي - " + ref, str(amount), str(amount)))
+                            entity_key = customer["code"]
+                            journal_lines = [(ar["id"], amount, Decimal("0"), "رصيد عميل افتتاحي: " + customer["name"]),
+                                             (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")]
+                            journal_ref = "OPENING-CUSTOMER-" + document_suffix
+                            journal_id = post_journal(connection, entry_date, journal_ref,
+                                "إثبات رصيد افتتاحي للعميل " + customer["name"], journal_lines, session.get("user_id"))
+                            execute_compat(connection, "UPDATE sales_invoices SET journal_entry_id=? WHERE id=?",
+                                (journal_id, invoice_id))
+                        elif record_type == "supplier":
+                            supplier = execute_compat(connection, "SELECT * FROM suppliers WHERE code=? AND active=1",
+                                (clean.get("supplier_code", ""),)).fetchone()
+                            amount = Decimal(clean.get("amount", "")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                            if not supplier or not amount.is_finite() or amount <= 0:
+                                raise ValueError("تأكد من كود المورد النشط والمبلغ الموجب.")
+                            ap_code = posting.get("supplier_ap")
+                            ap = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                                (str(ap_code),)).fetchone()
+                            if not ap: raise ValueError("حساب الموردين الدائنين غير مضبوط في ملف النشاط.")
+                            bill_no = "OB-S-" + document_suffix
+                            due_date = clean.get("due_date") or entry_date
+                            if due_date: date.fromisoformat(due_date)
+                            bill_id = insert_and_get_id(connection, """INSERT INTO supplier_bills
+                                (bill_no,supplier_id,bill_date,due_date,supplier_invoice_no,subtotal,tax_rate,
+                                 tax_amount,total_amount,paid_amount,status,created_by)
+                                VALUES(?,?,?,?,?,?,'0','0',?,'0','posted',?)""",
+                                (bill_no, supplier["id"], entry_date, due_date, ref, str(amount), str(amount), session.get("user_id")))
+                            entity_key = supplier["code"]
+                            journal_lines = [(retained["id"], amount, Decimal("0"), "مقابل الأرصدة الافتتاحية"),
+                                             (ap["id"], Decimal("0"), amount, "رصيد مورد افتتاحي: " + supplier["name"])]
+                            journal_ref = "OPENING-SUPPLIER-" + document_suffix
+                            journal_id = post_journal(connection, entry_date, journal_ref,
+                                "إثبات رصيد افتتاحي للمورد " + supplier["name"], journal_lines, session.get("user_id"))
+                            execute_compat(connection, "UPDATE supplier_bills SET journal_entry_id=? WHERE id=?",
+                                (journal_id, bill_id))
+                        elif record_type == "inventory":
+                            product = execute_compat(connection, "SELECT * FROM stock_products WHERE sku=? AND active=1",
+                                (clean.get("sku", ""),)).fetchone()
+                            warehouse = execute_compat(connection, "SELECT * FROM stock_warehouses WHERE code=? AND active=1",
+                                (clean.get("warehouse_code", ""),)).fetchone()
+                            qty = Decimal(clean.get("quantity", "")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                            unit_cost = Decimal(clean.get("unit_cost", "")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                            if not product or not warehouse or not qty.is_finite() or not unit_cost.is_finite() or qty <= 0 or unit_cost < 0:
+                                raise ValueError("تأكد من كود الصنف والمخزن والكمية الموجبة والتكلفة غير السالبة.")
+                            amount = (qty * unit_cost).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                            if amount <= 0: raise ValueError("قيمة المخزون الافتتاحي يجب أن تكون أكبر من صفر.")
+                            inv_code = posting.get("inventory")
+                            inv = execute_compat(connection, "SELECT id FROM accounts WHERE code=? AND active=1 AND COALESCE(is_group,0)=0",
+                                (str(inv_code),)).fetchone()
+                            if not inv: raise ValueError("حساب المخزون غير مضبوط في ملف النشاط الحالي.")
+                            entity_key = product["sku"] + "|" + warehouse["code"]
+                            journal_ref = "OPENING-STOCK-" + document_suffix
+                            journal_id = post_journal(connection, entry_date, journal_ref,
+                                "إثبات مخزون افتتاحي: " + product["name_ar"],
+                                [(inv["id"], amount, Decimal("0"), "مخزون افتتاحي " + ref),
+                                 (retained["id"], Decimal("0"), amount, "مقابل الأرصدة الافتتاحية")],
+                                session.get("user_id"))
+                            movement_no = "OB-STK-" + document_suffix
+                            movement_id = insert_and_get_id(connection, """INSERT INTO stock_movements
+                                (movement_no,movement_type,product_id,target_warehouse_id,quantity,unit_cost,total_cost,
+                                 movement_date,notes,created_by,journal_entry_id,accounting_status)
+                                VALUES(?,'receipt',?,?,?,?,?,?,?,?,?,'posted')""",
+                                (movement_no, product["id"], warehouse["id"], str(qty), str(unit_cost), str(amount),
+                                 entry_date, "رصيد افتتاحي - " + ref, session.get("user_id"), journal_id))
+                            execute_compat(connection, """INSERT INTO stock_valuation_layers
+                                (product_id,warehouse_id,source_movement_id,qty_in,qty_remaining,unit_cost,value_remaining)
+                                VALUES(?,?,?,?,?,?,?)""",
+                                (product["id"], warehouse["id"], movement_id, str(qty), str(qty), str(unit_cost), str(amount)))
+                        else:
+                            raise ValueError("نوع الرصيد يجب أن يكون customer أو supplier أو inventory.")
+                        execute_compat(connection, """INSERT INTO opening_balance_import_refs
+                            (record_type,reference,entity_key,journal_entry_id,source_file)
+                            VALUES(?,?,?,?,?)""",
+                            (record_type, ref, entity_key, journal_id, payload.get("filename", "")))
+                    elif dataset == "accounts":
+                        allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+                        arabic_types = {"أصل": "asset", "الأصول": "asset", "التزام": "liability", "الالتزامات": "liability",
+                            "حقوق ملكية": "equity", "حقوق الملكية": "equity", "إيراد": "revenue", "الإيرادات": "revenue",
+                            "مصروف": "expense", "المصروفات": "expense"}
+                        account_type = arabic_types.get(clean["account_type"].lower(), clean["account_type"].lower())
+                        code, name = clean["code"], clean["name_ar"]
+                        if not code or not name or account_type not in allowed_types:
+                            raise ValueError("كود الحساب أو اسمه أو نوعه غير صحيح.")
+                        if execute_compat(connection, "SELECT 1 FROM accounts WHERE code=?", (code,)).fetchone():
+                            raise ValueError(f"كود الحساب {code} موجود بالفعل.")
+                        parent_id = None
+                        parent_code = clean.get("parent_code", "")
+                        if parent_code:
+                            parent = execute_compat(connection, "SELECT id,account_type,is_group,active FROM accounts WHERE code=?",
+                                (parent_code,)).fetchone()
+                            if not parent or not parent["active"] or not parent["is_group"]:
+                                raise ValueError(f"الحساب الأب {parent_code} غير موجود أو غير نشط أو ليس حسابًا تجميعيًا.")
+                            if parent["account_type"] != account_type:
+                                raise ValueError("نوع الحساب يجب أن يطابق نوع الحساب الأب.")
+                            parent_id = int(parent["id"])
+                        group_raw = clean.get("is_group", "").strip().lower()
+                        is_group = 1 if group_raw in {"1", "true", "yes", "نعم", "تجميعي", "مجموعة"} else 0
+                        if group_raw and group_raw not in {"1", "0", "true", "false", "yes", "no", "نعم", "لا", "تجميعي", "مجموعة", "تفصيلي"}:
+                            raise ValueError("قيمة حقل الحساب التجميعي غير صحيحة؛ استخدم 1 أو 0.")
+                        execute_compat(connection, "INSERT INTO accounts(code,name_ar,account_type,parent_id,is_group) VALUES(?,?,?,?,?)",
+                            (code, name, account_type, parent_id, is_group))
+                    elif dataset == "employees":
+                        if not clean["employee_code"] or not clean["full_name"] or not clean["hire_date"]:
+                            raise ValueError("كود الموظف والاسم وتاريخ التعيين حقول إلزامية.")
+                        date.fromisoformat(clean["hire_date"])
+                        salary = Decimal(clean["basic_salary"])
+                        insured_wage = Decimal(clean.get("insured_wage") or "0")
+                        if not salary.is_finite() or salary < 0:
+                            raise ValueError("الأجر الأساسي يجب أن يكون رقمًا غير سالب.")
+                        if not insured_wage.is_finite() or insured_wage < 0:
+                            raise ValueError("الأجر التأميني يجب أن يكون رقمًا غير سالب.")
+                        status = clean.get("work_status") or "permanent"
+                        if status not in {"permanent", "temporary", "comprehensive_bonus", "unpaid_leave", "resigned", "retired"}:
+                            raise ValueError("حالة العمل غير معروفة.")
+                        termination_date = clean.get("termination_date", "")
+                        if termination_date:
+                            date.fromisoformat(termination_date)
+                        if status in {"resigned", "retired"} and not termination_date:
+                            raise ValueError("يجب تحديد تاريخ انتهاء الخدمة للموظف المستقيل أو المحال للمعاش.")
+                        execute_compat(connection, """INSERT INTO employees
+                            (employee_code,full_name,job_title,department,hire_date,basic_salary,insured_wage,
+                             address,national_id,work_status,termination_date)
+                            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                            (clean["employee_code"], clean["full_name"], clean.get("job_title",""),
+                             clean.get("department",""), clean["hire_date"], str(salary), str(insured_wage),
+                             clean.get("address",""), clean.get("national_id",""), status, termination_date))
+                    elif dataset in {"customers", "suppliers"}:
+                        if not clean["code"] or not clean["name"]:
+                            raise ValueError("الكود والاسم حقول إلزامية.")
+                        if dataset == "customers":
+                            limit = Decimal(clean.get("credit_limit") or "0")
+                            if not limit.is_finite() or limit < 0:
+                                raise ValueError("حد الائتمان يجب أن يكون رقمًا غير سالب.")
+                            execute_compat(connection, """INSERT INTO customers
+                                (code,name,tax_number,phone,email,address,credit_limit)
+                                VALUES(?,?,?,?,?,?,?)""",
+                                (clean["code"],clean["name"],clean.get("tax_number",""),clean.get("phone",""),
+                                 clean.get("email",""),clean.get("address",""),str(limit)))
+                        else:
+                            execute_compat(connection, """INSERT INTO suppliers
+                                (code,name,tax_number,phone,email,address) VALUES(?,?,?,?,?,?)""",
+                                (clean["code"],clean["name"],clean.get("tax_number",""),clean.get("phone",""),
+                                 clean.get("email",""),clean.get("address","")))
+                    elif dataset == "products":
+                        if not clean["sku"] or not clean["name_ar"]:
+                            raise ValueError("كود الصنف والاسم حقول إلزامية.")
+                        product_type = clean.get("product_type") or "goods"
+                        if product_type not in {"goods", "service", "consumable"}:
+                            raise ValueError("نوع الصنف يجب أن يكون goods أو service أو consumable.")
+                        min_qty = Decimal(clean.get("min_qty") or "0")
+                        purchase_price = Decimal(clean.get("purchase_price") or "0")
+                        sale_price = Decimal(clean.get("sale_price") or "0")
+                        if any(not v.is_finite() or v < 0 for v in (min_qty,purchase_price,sale_price)):
+                            raise ValueError("الكميات والأسعار يجب أن تكون أرقامًا غير سالبة.")
+                        execute_compat(connection, """INSERT INTO stock_products
+                            (sku,name_ar,category,product_type,uom,barcode,min_qty,purchase_price,sale_price)
+                            VALUES(?,?,?,?,?,?,?,?,?)""",
+                            (clean["sku"],clean["name_ar"],clean.get("category",""),product_type,
+                             clean.get("uom") or "قطعة",clean.get("barcode") or None,str(min_qty),
+                             str(purchase_price),str(sale_price)))
+                    else:
+                        raise ValueError("وجهة الاستيراد غير مدعومة.")
+                    inserted += 1
+                    execute_compat(connection, "RELEASE SAVEPOINT import_row")
+                except (ValueError, InvalidOperation, *DB_INTEGRITY_ERROR) as exc:
+                    execute_compat(connection, "ROLLBACK TO SAVEPOINT import_row")
+                    execute_compat(connection, "RELEASE SAVEPOINT import_row")
+                    skipped += 1
+                    if len(errors) < 20:
+                        reason = str(exc) if isinstance(exc, (ValueError, InvalidOperation)) else "الكود أو المرجع مكرر أو توجد مخالفة لقيد فريد."
+                        errors.append({"row": row_number, "reason": reason or "قيمة غير صحيحة."})
+            if dataset == "accounts":
+                ensure_account_metadata(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        log(dataset + "_imported", f"source={payload.get('filename')}; inserted={inserted}; skipped={skipped}")
+        try:
+            stage_file.unlink()
+        except OSError:
+            pass
+        session.pop("import_stage_token", None)
+        return render_template("import_data_result.html", inserted=inserted, skipped=skipped, errors=errors,
+                               total=len(rows), source_name=payload.get("filename"), dataset=dataset)
+    if action == "cancel":
+        if token and token.isalnum() and len(token) == 32:
+            try:
+                (stage_dir / (token + ".json")).unlink()
+            except OSError:
+                pass
+        session.pop("import_stage_token", None)
+        flash("تم إلغاء عملية الاستيراد ولم تُضف أي بيانات.", "info")
+        return redirect(url_for("import_data_wizard"))
+    flash("طلب الاستيراد غير معروف.", "error")
+    return redirect(url_for("import_data_wizard"))
 
 
 @app.route("/data/import/accounts", methods=["POST"])
@@ -263,50 +4542,369 @@ def import_accounts():
     upload = request.files.get("file")
     if not upload or not upload.filename.lower().endswith(".csv"):
         flash("اختر ملف CSV للحسابات.", "error"); return redirect(url_for("accounts"))
-    reader = csv.DictReader(io.StringIO(upload.stream.read().decode("utf-8-sig")))
-    connection, count = db(), 0
-    for row in reader:
-        if row.get("code") and row.get("name_ar") and row.get("account_type"):
-            connection.execute("INSERT OR IGNORE INTO accounts(code,name_ar,account_type) VALUES(?,?,?)", (row["code"].strip(), row["name_ar"].strip(), row["account_type"].strip()))
-            count += 1
-    connection.commit(); connection.close()
-    log("accounts_imported", str(count)); flash(f"تمت معالجة {count} صفًا.", "success")
+    raw = upload.stream.read()
+    try:
+        decoded = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            decoded = raw.decode("cp1256")
+        except UnicodeDecodeError:
+            flash("ترميز ملف CSV غير مدعوم. احفظه بصيغة UTF-8 أو Windows-1256.", "error")
+            return redirect(url_for("accounts"))
+    reader = csv.DictReader(io.StringIO(decoded))
+    allowed_types = {"asset", "liability", "equity", "revenue", "expense"}
+    connection, inserted, skipped = db(), 0, 0
+    try:
+        for row in reader:
+            code = (row.get("code") or "").strip()
+            name = (row.get("name_ar") or "").strip()
+            account_type = (row.get("account_type") or "").strip().lower()
+            if not code or not name or account_type not in allowed_types:
+                skipped += 1
+                continue
+            try:
+                execute_compat(connection, "INSERT INTO accounts(code,name_ar,account_type) VALUES(?,?,?)",
+                                   (code, name, account_type))
+                inserted += 1
+            except DB_INTEGRITY_ERROR:
+                skipped += 1
+        ensure_account_metadata(connection)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    log("accounts_imported", f"inserted={inserted}; skipped={skipped}")
+    flash(f"تم استيراد {inserted} حسابًا، وتخطي {skipped} صفًا غير صالح أو مكرر.", "success" if skipped == 0 else "warning")
     return redirect(url_for("accounts"))
 
 
 @app.route("/backup/create")
 @requires("backup.manage")
 def create_backup():
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    filename = BACKUP_DIR / f"nexus-backup-{stamp}.zip"
-    with zipfile.ZipFile(filename, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.write(DB_PATH, "nexus.db")
-        archive.writestr("manifest.json", json.dumps({"application": "NEXUS ERP", "created_at": now()}, ensure_ascii=False))
+    connection = db()
+    keep_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
+    connection.close()
+    keep_count = int(keep_row["setting_value"]) if keep_row else 30
+    if configured_database_backend() == "postgresql":
+        filename = create_postgres_backup_archive(
+            os.environ.get("NEXUS_POSTGRES_DSN"), BACKUP_DIR, keep_count
+        )
+    else:
+        filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
     log("backup_created", filename.name)
     return send_file(filename, as_attachment=True, download_name=filename.name)
+
+
+@app.route("/backup/download/<filename>")
+@requires("backup.manage")
+def backup_download(filename):
+    allowed_prefixes = ("nexus-backup-", "nexus-postgres-backup-")
+    if (Path(filename).name != filename
+            or not filename.startswith(allowed_prefixes)
+            or not filename.endswith(".zip")):
+        return "Not found", 404
+    archive_path = BACKUP_DIR / filename
+    if not archive_path.is_file():
+        return "Not found", 404
+    return send_file(archive_path, as_attachment=True, download_name=filename)
+
+
+@app.route("/backup/settings", methods=["GET", "POST"])
+@requires("backup.manage")
+def backup_settings():
+    connection = db()
+    if request.method == "POST":
+        try:
+            enabled = request.form.get("enabled") == "1"
+            frequency = request.form.get("frequency", "daily").strip()
+            backup_time = request.form.get("backup_time", "").strip()
+            weekday = int(request.form.get("weekday", "0"))
+            month_day = int(request.form.get("month_day", "1"))
+            interval_days = int(request.form.get("interval_days", "1"))
+            keep_count = int(request.form.get("keep_count", "30"))
+            if frequency not in {"daily", "weekly", "monthly", "every_n_days"}:
+                raise ValueError("اختر تكرارًا صحيحًا للنسخ الاحتياطي.")
+            if keep_count < 1 or keep_count > 365:
+                raise ValueError("عدد النسخ المحتفظ بها يجب أن يكون من 1 إلى 365.")
+            next_run = next_backup_datetime(frequency, backup_time, weekday=weekday,
+                month_day=month_day, interval_days=interval_days)
+            values = {
+                "backup_enabled": "1" if enabled else "0",
+                "backup_frequency": frequency, "backup_time": backup_time,
+                "backup_weekday": str(weekday), "backup_month_day": str(month_day),
+                "backup_interval_days": str(interval_days), "backup_keep_count": str(keep_count),
+                "backup_next_run": next_run.isoformat(timespec="seconds"),
+                "backup_last_status": "scheduled" if enabled else "disabled",
+                "backup_last_error": "",
+            }
+            executemany_compat(connection, """INSERT INTO company_settings(setting_key,setting_value)
+                VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+                list(values.items()))
+            connection.commit()
+            connection.close()
+            log("backup_schedule_updated", f"{frequency}; next={next_run.isoformat(timespec='seconds')}")
+            flash("تم حفظ إعدادات النسخ الاحتياطي التلقائي.", "success")
+            return redirect(url_for("backup_settings"))
+        except (ValueError, TypeError) as exc:
+            connection.rollback()
+            flash(safe_error_message(exc, "راجع إعدادات النسخ الاحتياطي."), "error")
+    settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(connection, 
+        "SELECT setting_key,setting_value FROM company_settings WHERE setting_key LIKE 'backup_%'")}
+    connection.close()
+    files = sorted(
+        [*BACKUP_DIR.glob("nexus-backup-*.zip"),
+         *BACKUP_DIR.glob("nexus-postgres-backup-*.zip")],
+        key=lambda item: item.stat().st_mtime, reverse=True,
+    )
+    backup_files = [{"name": item.name, "size_mb": round(item.stat().st_size / 1024 / 1024, 2),
+                     "modified": datetime.fromtimestamp(item.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")}
+                    for item in files[:30]]
+    return render_template(
+        "backup_settings.html", settings=settings, files=backup_files,
+        database_backend=configured_database_backend(),
+    )
+
+
+@app.route("/backup/run-now", methods=["POST"])
+@requires("backup.manage")
+def backup_run_now():
+    connection = db()
+    keep_row = execute_compat(connection, "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'").fetchone()
+    keep_count = int(keep_row["setting_value"]) if keep_row else 30
+    connection.close()
+    if configured_database_backend() == "postgresql":
+        filename = create_postgres_backup_archive(
+            os.environ.get("NEXUS_POSTGRES_DSN"), BACKUP_DIR, keep_count
+        )
+    else:
+        filename = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
+    connection = db()
+    values = {"backup_last_run": now(), "backup_last_status": "success",
+              "backup_last_error": "", "backup_last_file": filename.name}
+    executemany_compat(connection, """INSERT INTO company_settings(setting_key,setting_value)
+        VALUES(?,?) ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value""",
+        list(values.items()))
+    connection.commit()
+    connection.close()
+    log("backup_created", filename.name)
+    flash("تم إنشاء النسخة الاحتياطية الآن بنجاح.", "success")
+    return redirect(url_for("backup_settings"))
+
+
+@app.route("/backup/reset-data", methods=["POST"])
+@requires("backup.manage")
+def reset_company_data():
+    if session.get("role") != "admin":
+        log("company_data_reset_rejected", "محاولة تصفير دون دور مدير النظام", entity_type="system",
+            outcome="failure")
+        flash("تصفير البرنامج متاح لمدير النظام الأعلى فقط.", "error")
+        return redirect(url_for("backup_settings"))
+
+    supplied_password = request.form.get("super_admin_password", "")
+    remote_addr = request.remote_addr or "unknown"
+    cutoff_text = datetime.fromtimestamp(datetime.now().timestamp() - 900).isoformat(timespec="seconds")
+    connection = db()
+    if login_attempts_exceeded(connection, "super-admin-reset", remote_addr, cutoff_text):
+        connection.close()
+        log("company_data_reset_locked", "تجاوز الحد المسموح لمحاولات كلمة مرور المدير الأعلى",
+            entity_type="system", outcome="failure")
+        flash("تم إيقاف محاولة التصفير مؤقتًا بسبب تكرار كلمات المرور الخاطئة.", "error")
+        return redirect(url_for("backup_settings"))
+
+    current_admin = execute_compat(connection, 
+        "SELECT id FROM users WHERE id=? AND role='admin' AND active=1",
+        (session.get("user_id"),),
+    ).fetchone()
+    root_admin = execute_compat(connection, 
+        "SELECT id,password_hash FROM users "
+        "WHERE username='admin' AND role='admin' AND active=1"
+    ).fetchone()
+    if not current_admin or not root_admin or not verify_password(supplied_password, root_admin["password_hash"]):
+        execute_compat(connection, 
+            "INSERT INTO login_attempts(username,remote_addr,attempted_at) VALUES(?,?,?)",
+            ("super-admin-reset", remote_addr, now()),
+        )
+        connection.commit()
+        connection.close()
+        log("company_data_reset_rejected", "كلمة مرور مدير النظام الأعلى غير صحيحة أو لا توجد جلسة مدير فعالة",
+            entity_type="system", outcome="failure")
+        flash("بيانات مدير النظام الأعلى غير صحيحة. لم يتم حذف أي بيانات.", "error")
+        return redirect(url_for("backup_settings"))
+
+    execute_compat(connection, 
+        "DELETE FROM login_attempts WHERE username='super-admin-reset' AND remote_addr=?",
+        (remote_addr,),
+    )
+    connection.commit()
+    connection.close()
+
+    try:
+        settings_connection = db()
+        keep_row = execute_compat(settings_connection, 
+            "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'"
+        ).fetchone()
+        keep_count = int(keep_row["setting_value"]) if keep_row else 30
+        settings_connection.close()
+
+        # A verified backup must exist before the first destructive statement.
+        if configured_database_backend() == "postgresql":
+            safety_archive = create_postgres_backup_archive(
+                os.environ.get("NEXUS_POSTGRES_DSN"), BACKUP_DIR, keep_count
+            )
+        else:
+            safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
+        reset_connection = db()
+        try:
+            summary = clear_company_data(reset_connection)
+        finally:
+            reset_connection.close()
+    except (OSError, *DB_ERROR, RuntimeError, ValueError) as exc:
+        app.logger.exception("Company data reset failed before completion.")
+        try:
+            log("company_data_reset_failed", str(exc)[:500], entity_type="system", outcome="failure")
+        except Exception:
+            app.logger.exception("Could not audit failed company data reset.")
+        flash(f"تعذر تصفير البرنامج؛ لم يتم اعتماد عملية الحذف: {exc}", "error")
+        return redirect(url_for("backup_settings"))
+
+    try:
+        log(
+            "company_data_reset",
+            f"backup={safety_archive.name}; tables={summary['deleted_tables']}; rows={summary['deleted_rows']}",
+            entity_type="system",
+            after_values={
+                "deleted_tables": summary["deleted_tables"],
+                "deleted_rows": summary["deleted_rows"],
+                "backup_file": safety_archive.name,
+            },
+        )
+    except Exception:
+        # The reset is already committed; never report it as rolled back because
+        # an audit-write failed after the database transaction completed.
+        app.logger.exception("Company data reset completed but audit logging failed.")
+
+    flash(
+        f"تم تصفير بيانات الشركة بنجاح. حُذفت {summary['deleted_rows']} سجلات من "
+        f"{summary['deleted_tables']} جداول. تم الاحتفاظ بنسخة الأمان: {safety_archive.name}",
+        "success",
+    )
+    return redirect(url_for("backup_settings"))
 
 
 @app.route("/backup/restore", methods=["POST"])
 @requires("backup.manage")
 def restore_backup():
     upload = request.files.get("backup")
-    if not upload or not upload.filename.endswith(".zip"):
-        flash("اختر ملف نسخة احتياطية بصيغة ZIP.", "error"); return redirect(url_for("dashboard"))
-    temp = BACKUP_DIR / "restore-temp.zip"; upload.save(temp)
-    try:
-        with zipfile.ZipFile(temp) as archive:
-            if "nexus.db" not in archive.namelist(): raise ValueError("ملف غير صالح")
-            safety_copy = BACKUP_DIR / f"before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-            shutil.copy2(DB_PATH, safety_copy)
-            with archive.open("nexus.db") as source, open(DB_PATH, "wb") as target: shutil.copyfileobj(source, target)
-        log("backup_restored", upload.filename); flash("تمت الاستعادة مع حفظ نسخة أمان من قاعدة البيانات السابقة.", "success")
-    except (zipfile.BadZipFile, ValueError):
-        flash("ملف النسخة الاحتياطية غير صالح.", "error")
-    finally:
-        temp.unlink(missing_ok=True)
-    return redirect(url_for("dashboard"))
+    if not upload or not upload.filename or not upload.filename.lower().endswith(".zip"):
+        flash("اختر ملف نسخة احتياطية بصيغة ZIP.", "error")
+        return redirect(url_for("backup_settings"))
 
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    temp_paths = []
+    safety_path = None
+    try:
+        archive_fd, archive_name = tempfile.mkstemp(prefix="restore-upload-", suffix=".zip", dir=BACKUP_DIR)
+        os.close(archive_fd)
+        archive_path = Path(archive_name)
+        temp_paths.append(archive_path)
+        max_archive_bytes = (
+            16 * 1024 * 1024 * 1024
+            if configured_database_backend() == "postgresql"
+            else 2 * 1024 * 1024 * 1024
+        )
+        written = 0
+        with archive_path.open("wb") as target:
+            while True:
+                chunk = upload.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_archive_bytes:
+                    raise ValueError("حجم ملف النسخة الاحتياطية أكبر من الحد المسموح.")
+                target.write(chunk)
+
+        if configured_database_backend() == "postgresql":
+            admin_dsn = (
+                os.environ.get("NEXUS_POSTGRES_ADMIN_DSN")
+                or os.environ.get("NEXUS_POSTGRES_DSN")
+            )
+            restored = restore_postgres_backup_to_new_database(
+                archive_path, admin_dsn
+            )
+            # Revoke cookies issued before a successful PostgreSQL restore,
+            # matching the SQLite restore security behavior.
+            rotate_session_epoch(SESSION_EPOCH_PATH)
+            session.clear()
+            log("postgres_backup_restored_to_new_database", restored["database_name"])
+            flash(
+                "تم استرجاع النسخة والتحقق منها في قاعدة PostgreSQL مستقلة باسم "
+                f"{restored['database_name']}. لم يتم تغيير قاعدة التشغيل الحالية. "
+                "لتفعيل النسخة، حدّث NEXUS_POSTGRES_DSN ليشير إلى قاعدة الاستعادة ثم أعد تشغيل النظام.",
+                "success",
+            )
+            return redirect(url_for("backup_settings"))
+
+        candidate_path = create_extraction_target(BACKUP_DIR, prefix="restore-candidate-")
+        temp_paths.append(candidate_path)
+        extract_validated_backup(archive_path, candidate_path)
+
+        settings_connection = db()
+        keep_row = execute_compat(settings_connection, 
+            "SELECT setting_value FROM company_settings WHERE setting_key='backup_keep_count'"
+        ).fetchone()
+        keep_count = int(keep_row["setting_value"]) if keep_row else 30
+        settings_connection.close()
+        safety_archive = create_backup_archive(DB_PATH, BACKUP_DIR, keep_count)
+        safety_path = create_extraction_target(BACKUP_DIR, prefix="before-restore-")
+        temp_paths.append(safety_path)
+        extract_validated_backup(safety_archive, safety_path)
+        restore_database_with_rollback(candidate_path, DB_PATH, safety_path, initialize_database)
+
+        log("backup_restored", upload.filename)
+        rotate_session_epoch(SESSION_EPOCH_PATH)
+        session.clear()
+        flash("تم استرجاع النسخة بنجاح بعد فحصها، وتم إنهاء جميع الجلسات القديمة. سجّل الدخول مرة أخرى.", "success")
+        return redirect(url_for("login"))
+    except (zipfile.BadZipFile, ValueError, *DB_ERROR, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        flash(f"تعذرت الاستعادة: {exc}", "error")
+    finally:
+        for path in temp_paths:
+            path.unlink(missing_ok=True)
+    return redirect(url_for("backup_settings"))
+
+
+# Initialize schema for every WSGI entry point. The explicit skip switch is only
+# intended for isolated route tests that provide their own temporary database.
+if os.environ.get("NEXUS_SKIP_DB_INIT", "0").strip() != "1":
+    initialize_database()
+    # Preserve the clean, initialized company baseline before any business data is entered.
+    if configured_database_backend() == "postgresql":
+        postgres_dsn = os.environ.get("NEXUS_POSTGRES_DSN")
+        ensure_initial_postgres_backup(postgres_dsn, BACKUP_DIR)
+        start_postgres_backup_scheduler(postgres_dsn, BACKUP_DIR)
+    else:
+        ensure_initial_backup(DB_PATH, BACKUP_DIR)
+        start_backup_scheduler(DB_PATH, BACKUP_DIR)
 
 if __name__ == "__main__":
-    initialize_database()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+    from waitress import serve
+    requested_host = os.environ.get("HOST", "127.0.0.1").strip()
+    lan_binding = requested_host not in {"127.0.0.1", "::1", "localhost"}
+    if lan_binding:
+        if NEXUS_DEMO_MODE:
+            raise RuntimeError("LAN binding is prohibited in local demo mode. Disable NEXUS_DEMO_MODE and use a properly secured deployment before enabling LAN.")
+        if os.environ.get("NEXUS_ALLOW_LAN", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            raise RuntimeError("LAN binding is disabled by default. Set NEXUS_ALLOW_LAN=1 explicitly only after securing the administrator account and HTTPS.")
+        if os.environ.get("NEXUS_COOKIE_SECURE", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+            raise RuntimeError("LAN binding requires NEXUS_COOKIE_SECURE=1. Put NEXUS behind HTTPS before enabling LAN.")
+        startup_db = db()
+        try:
+            default_admin = execute_compat(startup_db, "SELECT password_hash,must_change_password FROM users WHERE username='admin' AND active=1").fetchone()
+            if default_admin and default_admin["must_change_password"]:
+                raise RuntimeError("Complete the administrator's required password change locally before enabling LAN access.")
+        finally:
+            startup_db.close()
+    serve(app, host=requested_host, port=int(os.environ.get("PORT", 5000)),
+          threads=max(2, int(os.environ.get("NEXUS_THREADS", "32"))))

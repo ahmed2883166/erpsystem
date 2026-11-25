@@ -1,0 +1,48 @@
+from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied, ValidationError
+
+from accounting.permissions import CompanyRolePermission
+from companies.access import accessible_companies, can_access_company, has_company_role, is_platform_owner
+
+from .models import Supplier
+from .serializers import SupplierSerializer
+
+
+class SupplierViewSet(viewsets.ModelViewSet):
+    serializer_class = SupplierSerializer
+    permission_classes = (CompanyRolePermission,)
+    queryset = Supplier.objects.select_related("company").all()
+    filterset_fields = ("company", "supplier_type", "is_active")
+    search_fields = ("code", "name_ar", "name_en", "tax_number", "phone", "mobile", "email")
+    ordering_fields = ("code", "name_ar", "created_at", "credit_limit")
+
+    def get_queryset(self):
+        """تجهيز السجلات التي يمكن للمستخدم الوصول إليها ضمن شركته وصلاحياته."""
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
+            return self.queryset
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def _check_company_write(self, company_id):
+        """التحقق من صلاحية الكتابة داخل الشركة قبل تنفيذ التعديل."""
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company_id, ("admin", "accountant")):
+            raise PermissionDenied("إضافة وتعديل الموردين متاحة لمدير الشركة والمحاسب فقط.")
+
+    def perform_create(self, serializer):
+        """حفظ العميل أو المورد بعد التحقق من نطاق الشركة."""
+        self._check_company_write(serializer.validated_data["company"].pk)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """حفظ التعديل بعد التحقق من صلاحية الشركة وثبات نطاق السجل."""
+        company = serializer.validated_data.get("company", serializer.instance.company)
+        if company.pk != serializer.instance.company_id:
+            raise ValidationError("لا يمكن نقل سجل مورد إلى شركة أخرى بعد إنشائه.")
+        self._check_company_write(company.pk)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """منع الحذف النهائي والحفاظ على مراجع المستندات المحاسبية التاريخية."""
+        self._check_company_write(instance.company_id)
+        raise ValidationError("لا يمكن حذف المورد نهائيًا؛ أوقفه من خلال حالة النشاط للحفاظ على السجلات التاريخية.")
