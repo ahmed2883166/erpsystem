@@ -1643,6 +1643,130 @@ class JournalEntryViewSet(AccountingViewSet):
             "note": "القائمة غير المباشرة تعتمد على أدوار الحسابات المرتبطة. اربط حسابات العملاء والمخزون والضريبة والموردين والبضاعة المستلمة غير المفوترة والمرتبات المستحقة وحصتي التأمينات للحصول على تسوية مكتملة. فرق المطابقة يُعرض للمراجعة ولا يُرحّل تلقائيًا.",
         })
 
+
+    @decorators.action(detail=False, methods=("get",), url_path="direct-cash-flow")
+    def direct_cash_flow(self, request):
+        """إعداد التدفقات النقدية بالطريقة المباشرة من الحركات النقدية المرحلة."""
+        from decimal import Decimal
+        from django.db.models import Sum
+        from treasury.models import TreasuryAccount, TreasuryTransaction
+
+        company_raw = request.query_params.get("company")
+        if not company_raw or not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض قائمة التدفقات النقدية المباشرة."})
+        company_id = int(company_raw)
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        date_from = parse_date(request.query_params.get("date_from") or "")
+        date_to = parse_date(request.query_params.get("date_to") or "")
+        if not date_from or not date_to:
+            raise ValidationError({"date_from": "حدد تاريخ البداية والنهاية بصيغة YYYY-MM-DD."})
+        if date_from > date_to:
+            raise ValidationError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.")
+
+        visible_branches = accessible_branches(request.user, company_id)
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            visible_branches = visible_branches.filter(pk=int(branch_raw))
+
+        treasury_rows = TreasuryTransaction.objects.filter(
+            company_id=company_id,
+            status=TreasuryTransaction.Status.POSTED,
+            transaction_date__gte=date_from,
+            transaction_date__lte=date_to,
+            branch__in=visible_branches,
+        ).exclude(kind=TreasuryTransaction.Kind.TRANSFER).select_related(
+            "counter_account", "source_account", "branch", "journal_entry"
+        )
+
+        grouped = list(treasury_rows.values(
+            "cash_flow_category", "kind", "counter_account_id",
+            "counter_account__code", "counter_account__name_ar",
+        ).annotate(amount=Sum("amount")).order_by(
+            "cash_flow_category", "kind", "counter_account__code"
+        ))
+
+        sections = []
+        net_change_in_cash = Decimal("0")
+        for category, label in TreasuryTransaction.CashFlowCategory.choices:
+            selected = [row for row in grouped if row["cash_flow_category"] == category]
+            inflows = sum(
+                (row["amount"] or Decimal("0") for row in selected
+                 if row["kind"] == TreasuryTransaction.Kind.RECEIPT),
+                Decimal("0"),
+            )
+            outflows = sum(
+                (row["amount"] or Decimal("0") for row in selected
+                 if row["kind"] == TreasuryTransaction.Kind.PAYMENT),
+                Decimal("0"),
+            )
+            details = [{
+                "counter_account_id": row["counter_account_id"],
+                "counter_account_code": row["counter_account__code"],
+                "counter_account_name": row["counter_account__name_ar"] or "حساب مقابل غير محدد",
+                "kind": row["kind"],
+                "inflows": row["amount"] if row["kind"] == TreasuryTransaction.Kind.RECEIPT else Decimal("0"),
+                "outflows": row["amount"] if row["kind"] == TreasuryTransaction.Kind.PAYMENT else Decimal("0"),
+            } for row in selected]
+            sections.append({
+                "category": category, "label": label,
+                "cash_receipts": inflows, "cash_payments": outflows,
+                "net_cash_flow": inflows - outflows, "details": details,
+            })
+            net_change_in_cash += inflows - outflows
+
+        treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id).filter(
+            Q(branch__isnull=True) | Q(branch__in=visible_branches)
+        )
+        cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
+        cash_lines = JournalLine.objects.filter(
+            account_id__in=cash_account_ids,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            entry__company_id=company_id,
+            entry__entry_date__gte=date_from,
+            entry__entry_date__lte=date_to,
+            entry__branch__in=visible_branches,
+        ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
+        cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        ledger_cash_change = (
+            (cash_totals["debit"] or Decimal("0"))
+            - (cash_totals["credit"] or Decimal("0"))
+        )
+
+        uncategorized_counterparties = list(treasury_rows.filter(
+            counter_account__isnull=True
+        ).values("id", "transaction_date", "document_number", "kind", "amount"))
+
+        return response.Response({
+            "company": company_id, "branch": int(branch_raw) if branch_raw else None,
+            "date_from": date_from, "date_to": date_to,
+            "method": "direct",
+            "sections": sections,
+            "operating_cash_flow": next(
+                (item["net_cash_flow"] for item in sections
+                 if item["category"] == TreasuryTransaction.CashFlowCategory.OPERATING),
+                Decimal("0"),
+            ),
+            "investing_cash_flow": next(
+                (item["net_cash_flow"] for item in sections
+                 if item["category"] == TreasuryTransaction.CashFlowCategory.INVESTING),
+                Decimal("0"),
+            ),
+            "financing_cash_flow": next(
+                (item["net_cash_flow"] for item in sections
+                 if item["category"] == TreasuryTransaction.CashFlowCategory.FINANCING),
+                Decimal("0"),
+            ),
+            "net_change_in_cash": net_change_in_cash,
+            "ledger_cash_change": ledger_cash_change,
+            "reconciliation_difference": ledger_cash_change - net_change_in_cash,
+            "uncategorized_counterparty_transactions": uncategorized_counterparties,
+            "note": "تُعرض المقبوضات والمدفوعات النقدية الفعلية حسب تصنيف الحركة والحساب المقابل. يجب مراجعة تصنيف كل حركة (تشغيلي/استثماري/تمويلي) قبل اعتماد القائمة؛ التحويلات الداخلية والحركات غير النقدية مستبعدة، ويجب الإفصاح عن المعاملات الاستثمارية والتمويلية غير النقدية بصورة منفصلة.",
+        })
+
     @decorators.action(detail=False, methods=("get",), url_path="vat-return")
     def vat_return(self, request):
         """تجميع بيانات الإقرار الضريبي حسب الأكواد والفترات الضريبية."""
