@@ -622,9 +622,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             if obj.transaction_currency_id else
             sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
         )
-        batch_paid = obj.receipt_batch_allocations.filter(
-            batch__status=CustomerReceiptBatch.Status.POSTED,
-        ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        batch_paid = sum(
+            (row.amount for row in obj.receipt_batch_allocations.all()
+             if row.batch.status == CustomerReceiptBatch.Status.POSTED),
+            Decimal("0"),
+        )
         return direct_paid + batch_paid
 
     def get_paid_total(self, obj):
