@@ -180,6 +180,21 @@ class TreasuryTransaction(models.Model):
             expected_base = (self.transaction_amount * self.exchange_rate).quantize(Decimal("0.0001"))
             if self.amount != expected_base:
                 raise ValidationError({"amount": "القيمة بالعملة الأساسية لا تطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
+        if self.reversal_of_id:
+            original = self.reversal_of
+            if (
+                self.kind != self.Kind.RECEIPT
+                or original.kind != self.Kind.PAYMENT
+                or original.status != self.Status.POSTED
+                or original.company_id != self.company_id
+                or original.source_account_id != self.source_account_id
+                or original.amount != self.amount
+                or original.transaction_currency_id != self.transaction_currency_id
+                or original.transaction_amount != self.transaction_amount
+                or original.exchange_rate != self.exchange_rate
+                or original.exchange_rate_date != self.exchange_rate_date
+            ):
+                raise ValidationError("حركة عكس العملة الأجنبية يجب أن تطابق سند الصرف الأصلي.")
         if self.kind == self.Kind.TRANSFER:
             if not self.destination_account_id or self.counter_account_id:
                 raise ValidationError("التحويل يتطلب خزينة مستقبلة ولا يقبل حسابًا مقابلًا.")
