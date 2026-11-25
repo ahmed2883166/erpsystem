@@ -6,6 +6,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ("companies", "0001_initial"),
         ("sales", "0022_customer_refunds"),
+        ("treasury", "0010_treasury_transaction_reversal_link"),
     ]
 
     operations = [
