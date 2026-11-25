@@ -16,7 +16,7 @@ from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
 from customers.models import Customer
 from sales.models import CustomerRefund, CustomerReceipt, CustomerReceiptBatch, SalesInvoice, SalesReturn
-from treasury.models import TreasuryAccount, TreasuryTransaction
+from treasury.models import TreasuryAccount, TreasuryFxRevaluation, TreasuryTransaction
 from treasury.services import post_treasury_transaction
 
 
@@ -297,6 +297,22 @@ def reverse_customer_refund(refund_id, user, entry_date):
     original = refund.treasury_transaction
     if not original.journal_entry_id or original.journal_entry.status != "posted":
         raise ValidationError("قيد رد المبلغ الأصلي ليس مرحّلًا.")
+    if refund.transaction_currency_id:
+        later_movement = TreasuryTransaction.objects.filter(
+            Q(source_account_id=original.source_account_id)
+            | Q(destination_account_id=original.source_account_id),
+            status=TreasuryTransaction.Status.POSTED,
+            transaction_date__gte=original.transaction_date,
+        ).exclude(pk=original.pk).exists()
+        active_revaluation = TreasuryFxRevaluation.objects.filter(
+            account_id=original.source_account_id,
+            revaluation_date__gte=original.transaction_date,
+            reversal_journal_entry__isnull=True,
+        ).exists()
+        if later_movement or active_revaluation:
+            raise ValidationError(
+                "لعكس رد بعملة أجنبية، اعكس أولًا الحركات أو تقييمات العملة الأحدث على نفس حساب الخزينة."
+            )
 
     year = FiscalYear.objects.filter(
         company=refund.company, status=FiscalYear.Status.OPEN,
