@@ -54,6 +54,7 @@ class Migration(migrations.Migration):
             fields=[
                 ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 ("amount", models.DecimalField(decimal_places=4, max_digits=20, validators=[django.core.validators.MinValueValidator(Decimal("0.0001"))])),
+                ("allocation_date", models.DateField()),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("batch", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="allocations", to="sales.customerreceiptbatch")),
                 ("created_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="created_customer_receipt_batch_allocations", to=settings.AUTH_USER_MODEL)),
