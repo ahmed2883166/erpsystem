@@ -788,7 +788,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             row["invoice_id"]: row["total"]
             for row in CustomerReceiptBatchAllocation.objects.filter(
                 invoice__in=invoices, batch__receipt_date__lte=as_of,
-                created_at__date__lte=as_of,
+                allocation_date__lte=as_of,
             ).filter(
                 Q(batch__status=CustomerReceiptBatch.Status.POSTED)
                 | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
@@ -874,7 +874,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         allocated_by_batch = {
             row["batch_id"]: row["total"]
             for row in CustomerReceiptBatchAllocation.objects.filter(
-                batch__in=advance_batches, created_at__date__lte=as_of,
+                batch__in=advance_batches, allocation_date__lte=as_of,
             ).values("batch_id").annotate(total=Sum("amount"))
         }
         for batch in advance_batches:
