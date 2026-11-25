@@ -168,6 +168,8 @@ def post_customer_receipt(receipt_id, user):
     invoice = SalesInvoice.objects.select_for_update().get(pk=receipt.invoice_id)
     if invoice.status != SalesInvoice.Status.POSTED:
         raise ValidationError("لا يمكن قبض فاتورة غير مرحلة.")
+    if receipt.receipt_date < invoice.invoice_date:
+        raise ValidationError("تاريخ سند القبض لا يجوز أن يسبق تاريخ فاتورة المبيعات.")
     if receipt.company_id != invoice.company_id or receipt.customer_id != invoice.customer_id:
         raise ValidationError("بيانات السند لا تطابق فاتورة العميل.")
     if CustomerReceipt.objects.filter(
