@@ -1,4 +1,3 @@
-import hashlib
 import unittest
 
 from app import password_hash, password_hash_needs_upgrade, verify_password
@@ -13,9 +12,9 @@ class PasswordSecurityTests(unittest.TestCase):
         self.assertFalse(verify_password("wrong", first))
         self.assertFalse(password_hash_needs_upgrade(first))
 
-    def test_legacy_sha256_is_verified_and_marked_for_upgrade(self):
-        legacy = hashlib.sha256("Legacy-Password-For-Test-Only".encode("utf-8")).hexdigest()
-        self.assertTrue(verify_password("Legacy-Password-For-Test-Only", legacy))
+    def test_legacy_fast_hashes_fail_closed_and_require_reset(self):
+        legacy = "a" * 64
+        self.assertFalse(verify_password("Legacy-Password-For-Test-Only", legacy))
         self.assertFalse(verify_password("wrong", legacy))
         self.assertTrue(password_hash_needs_upgrade(legacy))
 
