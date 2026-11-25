@@ -80,10 +80,17 @@ class SalesOrderViewSet(SalesBaseViewSet):
         if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return qs
         branches = accessible_branches(self.request.user)
+        default_company_ids = []
+        for company_id in accessible_companies(self.request.user).values_list("id", flat=True):
+            default_branch = Branch.objects.filter(
+                company_id=company_id, is_active=True
+            ).order_by("-is_head_office", "code").first()
+            if default_branch and can_access_branch(self.request.user, default_branch.pk, company_id):
+                default_company_ids.append(company_id)
         return qs.filter(
             Q(warehouse__branch__in=branches)
-            | Q(warehouse__branch__isnull=True, company__branches__in=branches)
-        ).distinct()
+            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
+        )
 
     def perform_create(self, serializer):
         data = serializer.validated_data
