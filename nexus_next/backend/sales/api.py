@@ -19,8 +19,8 @@ from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
 from companies.models import Branch
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate
-from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate, SalesOrder
+from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
 
@@ -65,6 +65,68 @@ class SalesBaseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         raise PermissionDenied("لا يمكن حذف مستندات المبيعات؛ استخدم إجراء مردود المبيعات أو عكس سند القبض المعتمد حسب نوع المستند.")
+
+
+class SalesOrderViewSet(SalesBaseViewSet):
+    """إدارة أوامر البيع واعتمادها قبل بدء التسليم."""
+    serializer_class = SalesOrderSerializer
+    queryset = SalesOrder.objects.select_related("company", "customer", "warehouse").prefetch_related("lines__product", "lines__tax_code")
+    filterset_fields = ("company", "customer", "warehouse", "status", "order_date")
+    search_fields = ("order_number", "customer__name_ar")
+    ordering_fields = ("order_date", "order_number", "created_at", "grand_total")
+
+    def get_queryset(self):
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
+            return qs
+        branches = accessible_branches(self.request.user)
+        return qs.filter(
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, company__branches__in=branches)
+        ).distinct()
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_write(data["company"].pk)
+        if not _sales_warehouse_accessible(self.request.user, data["warehouse"]):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مخزن أمر البيع.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        order = serializer.instance
+        self._check_write(order.company_id)
+        if order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل أمر بيع معتمد.")
+        warehouse = serializer.validated_data.get("warehouse", order.warehouse)
+        if not _sales_warehouse_accessible(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مخزن أمر البيع.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_write(instance.company_id)
+        if instance.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر بيع معتمد.")
+        for line in instance.lines.all():
+            line.delete()
+        instance.delete()
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def confirm(self, request, pk=None):
+        order = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)), pk=self.kwargs["pk"],
+        )
+        self.check_object_permissions(request, order)
+        self._check_write(order.company_id)
+        if order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("أمر البيع ليس في حالة مسودة.")
+        if not order.lines.exists():
+            raise ValidationError("لا يمكن اعتماد أمر بيع بدون بنود.")
+        if not order.customer.is_active or not order.warehouse.is_active:
+            raise ValidationError("العميل أو المخزن موقوف.")
+        order.status = SalesOrder.Status.CONFIRMED
+        order.save(update_fields=("status", "updated_at"))
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
 
 class SalesDeliveryViewSet(SalesBaseViewSet):
