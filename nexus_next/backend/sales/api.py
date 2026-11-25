@@ -361,7 +361,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 default_company_ids.append(company_id)
         return qs.filter(
             Q(delivery__warehouse__branch__in=branches)
-            | Q(delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(delivery__isnull=False, delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
             | Q(branch__in=branches)
         )
 
@@ -770,7 +770,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
                     default_company_ids.append(company_id)
         return qs.filter(
             Q(invoice__delivery__warehouse__branch__in=branches)
-            | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
             | Q(invoice__branch__in=branches)
         )
 
