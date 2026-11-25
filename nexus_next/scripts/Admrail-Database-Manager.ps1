@@ -33,16 +33,19 @@ function Save-ConfigValue([string]$Key,[string]$Value) {
     Move-Item $tmp $EnvFile -Force
 }
 function Get-PgTool([string]$Name) {
-    $cmd = Get-Command "$Name.exe" -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $base = Join-Path $env:ProgramFiles "PostgreSQL"
-    if (Test-Path $base) {
-        foreach ($d in (Get-ChildItem $base -Directory | Sort-Object Name -Descending)) {
-            $p = Join-Path $d.FullName "bin\$Name.exe"
-            if (Test-Path $p) { return $p }
+    $allowed = @('pg_dump', 'pg_restore', 'psql', 'createdb')
+    if ($allowed -notcontains $Name) { throw "Unsupported PostgreSQL tool: $Name" }
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles 'PostgreSQL') }
+    if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) { $roots += (Join-Path $env:ProgramW6432 'PostgreSQL') }
+    $versions = @('16', '17', '18', '15', '14')
+    foreach ($root in $roots) {
+        foreach ($version in $versions) {
+            $candidate = Join-Path $root ($version + '\bin\' + $Name + '.exe')
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
         }
     }
-    throw "أداة PostgreSQL $Name.exe غير موجودة. ثبّت Command Line Tools."
+    throw "Trusted PostgreSQL $Name.exe was not found under Program Files\PostgreSQL. Install the official PostgreSQL client tools."
 }
 function Assert-AppStopped {
     $listener = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue
@@ -148,6 +151,84 @@ function Create-Db {
         Write-Host "البرنامج متصل الآن بالقاعدة الجديدة. القاعدة القديمة محفوظة ولم تُحذف." -ForegroundColor Green
     }
 }
+function Get-DatabaseNames {
+    $raw = Invoke-Psql "SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn AND datname <> 'postgres' ORDER BY datname;"
+    return @($raw -split "\r?\n" | Where-Object { $_ })
+}
+function Show-DatabaseList {
+    $config = Read-Config
+    $names = @(Get-DatabaseNames)
+    Write-Host ""
+    Write-Host "قواعد البيانات الموجودة على خادم PostgreSQL:" -ForegroundColor Cyan
+    if ($names.Count -eq 0) { Write-Host "لا توجد قواعد بيانات للتطبيق."; return }
+    foreach ($name in $names) {
+        $marker = if ($name -eq $config.POSTGRES_DB) { "  <== قاعدة Admrail النشطة" } else { "" }
+        $escaped = $name.Replace("'","''")
+        $size = Invoke-Psql "SELECT pg_size_pretty(pg_database_size('$escaped'));"
+        Write-Host (" - {0}   ({1}){2}" -f $name,$size,$marker)
+    }
+}
+function Install-FreshDatabase {
+    Assert-AppStopped
+    $config = Read-Config
+    $names = @(Get-DatabaseNames)
+    if ($names.Count -eq 0) { throw "لم يتم العثور على قواعد بيانات يمكن إدارتها." }
+    Write-Host "اختر القاعدة القديمة التي تريد استبدالها بعد تجهيز قاعدة جديدة:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $names.Count; $i++) {
+        $marker = if ($names[$i] -eq $config.POSTGRES_DB) { "  <== النشطة حاليًا" } else { "" }
+        Write-Host ("[{0}] {1}{2}" -f ($i + 1),$names[$i],$marker)
+    }
+    $pick = (Read-Host "رقم القاعدة القديمة (Enter للإلغاء)").Trim()
+    if (-not $pick) { return }
+    if ($pick -notmatch '^\d+$' -or [int]$pick -lt 1 -or [int]$pick -gt $names.Count) {
+        throw "اختيار قاعدة البيانات غير صحيح."
+    }
+    $oldDb = $names[[int]$pick - 1]
+    $newDb = (Read-Host "اكتب اسم قاعدة البيانات الجديدة").Trim()
+    if ($newDb -notmatch '^[A-Za-z][A-Za-z0-9_]{2,62}$' -or $newDb -eq $oldDb) {
+        throw "اسم القاعدة الجديدة غير صالح أو مطابق لاسم القاعدة القديمة."
+    }
+    $escapedNew = $newDb.Replace("'","''")
+    $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname = '$escapedNew';"
+    if ($exists) { throw "قاعدة البيانات الجديدة موجودة بالفعل؛ اختر اسمًا مختلفًا." }
+
+    Write-Host "سيتم حفظ نسخة مشفرة من [$oldDb] ثم إنشاء [$newDb] وتجهيزها." -ForegroundColor Yellow
+    Write-Host "لن تُحذف القاعدة القديمة إلا بعد نجاح التجهيز وتأكيدك مرتين." -ForegroundColor Yellow
+    $backup = Save-VerifiedBackup $oldDb
+    $null = Invoke-Psql ("CREATE DATABASE " + (Quote-Name $newDb) + " OWNER " + (Quote-Name $config.POSTGRES_USER) + " ENCODING 'UTF8' TEMPLATE template0;")
+    try {
+        Save-ConfigValue "POSTGRES_DB" $newDb
+        Push-Location $Backend
+        try {
+            & $Python manage.py migrate --noinput
+            if ($LASTEXITCODE -ne 0) { throw "فشل إنشاء جداول قاعدة البيانات الجديدة." }
+            & $Python manage.py seed_reference_data
+            if ($LASTEXITCODE -ne 0) { throw "فشل تجهيز العملات المرجعية." }
+            & $Python manage.py check
+            if ($LASTEXITCODE -ne 0) { throw "فشل فحص التطبيق بعد تجهيز القاعدة الجديدة." }
+        } finally { Pop-Location }
+    } catch {
+        Save-ConfigValue "POSTGRES_DB" $config.POSTGRES_DB
+        throw "لم يكتمل تجهيز القاعدة الجديدة. أُعيد اتصال البرنامج إلى [$($config.POSTGRES_DB)]، ولم تُحذف [$oldDb]. التفاصيل: $($_.Exception.Message)"
+    }
+
+    Write-Host "نجح تجهيز [$newDb] وأصبح البرنامج متصلًا بها." -ForegroundColor Green
+    Write-Host "النسخة الاحتياطية المشفرة: $backup" -ForegroundColor Green
+    Write-Host "القاعدة القديمة [$oldDb] ما زالت موجودة." -ForegroundColor Yellow
+    if ((Read-Host "لحذف القاعدة القديمة بعد نجاح الجديدة، اكتب نعم") -cne "نعم") {
+        Write-Host "تم الاحتفاظ بالقاعدة القديمة كما هي." -ForegroundColor Cyan
+        return
+    }
+    if ((Read-Host "تأكيد نهائي: اكتب اسم القاعدة حرفيًا [$oldDb]") -cne $oldDb) {
+        Write-Host "تم إلغاء الحذف؛ القاعدة القديمة محفوظة." -ForegroundColor Cyan
+        return
+    }
+    if ((Read-Config).POSTGRES_DB -eq $oldDb) { throw "رفض الحذف لأن القاعدة المختارة ما زالت نشطة." }
+    $escapedOld = $oldDb.Replace("'","''")
+    $null = Invoke-Psql "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$escapedOld' AND pid <> pg_backend_pid();"
+    $null = Invoke-Psql ("DROP DATABASE " + (Quote-Name $oldDb) + " WITH (FORCE);")
+    Write-Host "تم حذف [$oldDb] بعد نجاح القاعدة الجديدة وحفظ النسخة المشفرة." -ForegroundColor Green
+}
 function Rename-Db {
     Assert-AppStopped
     $c = Read-Config; $old = $c.POSTGRES_DB; $new = (Read-Host "الاسم الجديد للقاعدة").Trim()
@@ -225,6 +306,8 @@ try {
         Write-Host "6 - تغيير كلمة مرور مستخدم PostgreSQL الخاص بالبرنامج"
         Write-Host "7 - تغيير كلمة مرور مستخدم Admrail"
         Write-Host "8 - استعادة نسخة إلى قاعدة منفصلة"
+        Write-Host "9 - عرض قواعد البيانات وتحديد القاعدة النشطة"
+        Write-Host "10 - تجهيز قاعدة جديدة واختيار قاعدة قديمة لحذفها بعد النجاح"
         Write-Host "0 - خروج"
         Write-Host "ملاحظة: استعادة كلمة مرور postgres المنسية تتطلب إجراء استرداد مسؤول Windows؛ الأداة لا تتجاوز حماية PostgreSQL." -ForegroundColor Yellow
         $choice = Read-Host "اختر رقم العملية"
@@ -243,6 +326,8 @@ try {
                     $restore = Join-Path $PSScriptRoot "restore-postgres-to-new-db.ps1"
                     if ($target) { & $restore -BackupFile $file -TargetDatabase $target } else { & $restore -BackupFile $file }
                 }
+                "9" { Show-DatabaseList }
+                "10" { Install-FreshDatabase }
                 "0" { break }
                 default { Write-Host "اختيار غير صحيح." }
             }

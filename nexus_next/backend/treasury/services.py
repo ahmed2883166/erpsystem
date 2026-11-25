@@ -48,7 +48,7 @@ def _foreign_position(account):
 
 def record_posted_document_bank_movement(*, company, branch, fiscal_year, account, kind, amount,
                                          transaction_date, document_number, description,
-                                         counter_account, journal_entry, user=None, reference=""):
+                                         counter_account, journal_entry, user=None, reference="", cash_flow_category=None):
     """تسجيل مرآة لحركة بنك مستند مرحّل وربطها بالقيد الأصلي دون إنشاء قيد مكرر."""
     expected_kind = TreasuryAccount.Kind.BANK if kind in (
         TreasuryTransaction.Kind.RECEIPT, TreasuryTransaction.Kind.PAYMENT
@@ -74,6 +74,7 @@ def record_posted_document_bank_movement(*, company, branch, fiscal_year, accoun
         document_number=document_number, transaction_date=transaction_date,
         amount=amount, description=description[:500], reference=reference,
         journal_entry=journal_entry, created_by=user, posted_at=timezone.now(),
+        **({"cash_flow_category": cash_flow_category} if cash_flow_category else {}),
     )
 
 
@@ -168,6 +169,11 @@ def post_treasury_transaction(transaction_id, user=None):
         if doc.kind in (TreasuryTransaction.Kind.PAYMENT, TreasuryTransaction.Kind.TRANSFER) and available < doc.amount:
             raise ValidationError("الرصيد المتاح غير كافٍ لتنفيذ الحركة؛ تم إيقاف الترحيل لمنع الرصيد السالب.")
 
+    from assets.models import FixedAsset
+    asset_acquisition = FixedAsset.objects.filter(
+        acquisition_treasury_transaction_id=doc.pk,
+    ).select_related("company", "asset_account").first()
+
     debit_lines = []
     credit_lines = []
     description = doc.description
@@ -183,7 +189,27 @@ def post_treasury_transaction(transaction_id, user=None):
     elif doc.kind == TreasuryTransaction.Kind.PAYMENT:
         if not doc.counter_account.is_active or doc.counter_account.is_group or not doc.counter_account.allow_posting:
             raise ValidationError("الحساب المقابل غير صالح للترحيل.")
-        debit_lines.append((doc.counter_account, doc.amount))
+        if asset_acquisition and asset_acquisition.recoverable_tax_amount:
+            if foreign:
+                raise ValidationError("شراء أصل بضريبة مدخلات قابلة للاسترداد يتطلب حساب خزينة بعملة الشركة الأساسية لضمان توزيع لقطة سعر الصرف بدقة.")
+            from accounting.services import get_account_for_role
+            recoverable_tax = asset_acquisition.recoverable_tax_amount
+            if (
+                doc.counter_account_id != asset_acquisition.asset_account_id
+                or doc.amount != asset_acquisition.original_cost + recoverable_tax
+            ):
+                raise ValidationError("قيمة حركة خزينة اقتناء الأصل لا تطابق تكلفة الأصل وضريبة المدخلات.")
+            vat_input = get_account_for_role(asset_acquisition.company, "vat_input")
+            if (
+                vat_input.pk in (doc.counter_account_id, source.account_id)
+                or vat_input.nature != "asset" or not vat_input.is_active
+                or vat_input.is_group or not vat_input.allow_posting
+            ):
+                raise ValidationError("حساب ضريبة المدخلات غير صالح أو غير مستقل عن حساب الأصل والبنك.")
+            debit_lines.append((doc.counter_account, asset_acquisition.original_cost))
+            debit_lines.append((vat_input, recoverable_tax))
+        else:
+            debit_lines.append((doc.counter_account, doc.amount))
         credit_lines.append((source.account, carrying_amount))
         if foreign:
             if fx_difference:
@@ -218,8 +244,6 @@ def post_treasury_transaction(transaction_id, user=None):
     if foreign:
         source_position.save(update_fields=("foreign_amount", "carrying_base_amount", "updated_at"))
 
-    from assets.models import FixedAsset
-    asset_acquisition = FixedAsset.objects.filter(acquisition_treasury_transaction_id=doc.pk).first()
     entry = JournalEntry.objects.create(
         company=doc.company, branch=doc.branch, fiscal_year=doc.fiscal_year,
         entry_number=f"FA-ACQ-{asset_acquisition.pk}" if asset_acquisition else f"TR-{doc.pk}",

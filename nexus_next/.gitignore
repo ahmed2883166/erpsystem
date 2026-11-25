@@ -14,3 +14,7 @@ backups/
 
 .secrets/
 *.nexusenc
+
+# Local vendor-only Owner Toolkit authentication and diagnostics
+Admrail-Owner-Toolkit/.owner-auth.json
+Admrail-Owner-Toolkit/logs/

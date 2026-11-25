@@ -34,6 +34,29 @@ def invoice_discount_snapshot(invoice):
 
 def financial_document_snapshot(document_type, document):
     """Capture immutable, JSON-safe approval details for purchasing and payment documents."""
+    if document_type == "purchase_order":
+        return {
+            "document_type": document_type,
+            "document_number": document.order_number,
+            "date": document.order_date.isoformat(),
+            "supplier_id": document.supplier_id,
+            "supplier_name": document.supplier.name_ar,
+            "warehouse_id": document.warehouse_id,
+            "warehouse_name": document.warehouse.name_ar,
+            "expected_date": document.expected_date.isoformat() if document.expected_date else None,
+            "grand_total": str(document.grand_total),
+            "lines": [
+                {
+                    "product_id": line.product_id,
+                    "product_code": line.product.code,
+                    "product_name": line.product.name_ar,
+                    "quantity": str(line.quantity),
+                    "unit_price": str(line.unit_price),
+                    "tax_rate": str(line.tax_rate),
+                }
+                for line in document.lines.select_related("product").order_by("pk")
+            ],
+        }
     if document_type == "purchase_invoice":
         return {
             "document_type": document_type,
@@ -51,7 +74,8 @@ def financial_document_snapshot(document_type, document):
                     "product_id": line.receipt_line.product_id,
                     "product_code": line.receipt_line.product.code,
                     "product_name": line.receipt_line.product.name_ar,
-                    "quantity": str(line.receipt_line.quantity),
+                    "quantity": str(line.billed_quantity),
+                    "receipt_quantity": str(line.receipt_line.quantity),
                     "unit_price": str(line.unit_price),
                     "tax_code": line.tax_code.code if line.tax_code_id else None,
                     "tax_rate": str(line.tax_rate),
@@ -92,4 +116,38 @@ def financial_document_snapshot(document_type, document):
             "reference": document.reference,
             "cash_flow_category": document.cash_flow_category,
         }
+
+    if document_type == "asset_purchase_invoice":
+        return {
+            "document_type": document_type,
+            "document_number": document.invoice_number,
+            "date": document.invoice_date.isoformat(),
+            "supplier_id": document.supplier_id,
+            "supplier_name": document.supplier.name_ar,
+            "asset_id": document.asset_id,
+            "asset_code": document.asset.code,
+            "asset_name": document.asset.name_ar,
+            "net_amount": str(document.net_amount),
+            "tax_code_id": document.tax_code_id,
+            "tax_code": document.tax_code.code if document.tax_code_id else None,
+            "tax_amount": str(document.tax_amount),
+            "recoverable_tax_amount": str(document.recoverable_tax_amount),
+            "nonrecoverable_tax_amount": str(document.nonrecoverable_tax_amount),
+            "grand_total": str(document.grand_total),
+        }
+    if document_type == "asset_supplier_payment":
+        return {
+            "document_type": document_type,
+            "document_number": document.payment_number,
+            "date": document.payment_date.isoformat(),
+            "supplier_id": document.supplier_id,
+            "supplier_name": document.supplier.name_ar,
+            "invoice_id": document.invoice_id,
+            "invoice_number": document.invoice.invoice_number,
+            "payment_account_id": document.payment_account_id,
+            "payment_account": document.payment_account.name_ar,
+            "amount": str(document.amount),
+            "reference": document.reference,
+        }
+
     raise ValueError("Unsupported financial approval document type")

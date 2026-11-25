@@ -157,6 +157,55 @@ class PostingEngineTests(TestCase):
         with self.assertRaises(ValidationError):
             post_journal(entry.pk)
 
+    def test_opening_journal_rejects_income_statement_accounts(self):
+        revenue = ChartOfAccount.objects.create(
+            company=self.company, code="4001", name_ar="إيرادات الاختبار",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="OPEN-PL-001", entry_date=self.year.start_date,
+            description="اختبار منع حسابات الدخل في الافتتاحي",
+            source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=entry, account=revenue, credit=Decimal("100"))
+
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+    def test_opening_journal_must_use_fiscal_year_start_date(self):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="OPEN-DATE-001", entry_date=date(2026, 1, 2),
+            description="اختبار تاريخ القيد الافتتاحي",
+            source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal("100"))
+
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
+    def test_closing_journal_must_use_fiscal_year_end_date(self):
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CLOSE-DATE-001", entry_date=date(2026, 12, 30),
+            description="اختبار تاريخ قيد الإقفال",
+            source_type=JournalEntry.Source.CLOSING,
+        )
+        JournalLine.objects.create(entry=entry, account=self.cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=entry, account=self.capital, credit=Decimal("100"))
+
+        with self.assertRaises(ValidationError):
+            post_journal(entry.pk)
+        entry.refresh_from_db()
+        self.assertEqual(entry.status, JournalEntry.Status.DRAFT)
+
     def test_closed_monthly_period_rejects_journal_posting(self):
         FiscalPeriod.objects.create(
             fiscal_year=self.year, name="2026-01",
@@ -676,6 +725,93 @@ class IndirectCashFlowApiTests(TestCase):
         self.assertEqual(response.data["reconciliation_difference"], Decimal("0.0000"))
 
 
+    def test_cash_flow_and_equity_use_branch_specific_opening_snapshots(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="BR-CF-EQ", name_ar="شركة افتتاحيات الفروع",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        snapshot_branch = Branch.objects.create(
+            company=company, code="SNAP", name_ar="فرع افتتاحيه", is_head_office=True,
+        )
+        carry_branch = Branch.objects.create(
+            company=company, code="CARRY", name_ar="فرع مرحل",
+        )
+        prior_year = FiscalYear.objects.create(
+            company=company, name="2025",
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+        )
+        current_year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية", nature=ChartOfAccount.Nature.ASSET,
+        )
+        receivable = ChartOfAccount.objects.create(
+            company=company, code="1100", name_ar="العملاء", nature=ChartOfAccount.Nature.ASSET,
+        )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3000", name_ar="رأس المال", nature=ChartOfAccount.Nature.EQUITY,
+        )
+        AccountRole.objects.create(
+            company=company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE, account=receivable,
+        )
+        TreasuryAccount.objects.create(
+            company=company, account=cash, kind="cash", code="CASH",
+            name_ar="الخزينة الرئيسية",
+        )
+
+        prior_entry = JournalEntry.objects.create(
+            company=company, branch=carry_branch, fiscal_year=prior_year,
+            entry_number="BR-CARRY-OPEN", entry_date=date(2025, 12, 31),
+            description="أرصدة الفرع المرحل",
+        )
+        JournalLine.objects.create(entry=prior_entry, account=cash, debit=Decimal("50"))
+        JournalLine.objects.create(entry=prior_entry, account=receivable, debit=Decimal("25"))
+        JournalLine.objects.create(entry=prior_entry, account=capital, credit=Decimal("75"))
+        post_journal(prior_entry.pk)
+
+        opening_entry = JournalEntry.objects.create(
+            company=company, branch=snapshot_branch, fiscal_year=current_year,
+            entry_number="BR-SNAPSHOT-OPEN", entry_date=date(2026, 1, 1),
+            description="أرصدة افتتاحية للفرع", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening_entry, account=cash, debit=Decimal("70"))
+        JournalLine.objects.create(entry=opening_entry, account=receivable, debit=Decimal("30"))
+        JournalLine.objects.create(entry=opening_entry, account=capital, credit=Decimal("100"))
+        post_journal(opening_entry.pk)
+
+        user = User.objects.create_user(username="branch_statement_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        cash_flow = client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        equity = client.get(
+            f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(equity.status_code, 200, equity.data)
+        receivable_row = next(
+            row for row in cash_flow.data["working_capital"]
+            if row["role"] == AccountRole.Role.ACCOUNTS_RECEIVABLE
+        )
+        self.assertEqual(receivable_row["opening_balance"], Decimal("55.0000"))
+        self.assertEqual(receivable_row["closing_balance"], Decimal("55.0000"))
+        self.assertEqual(receivable_row["cash_flow_adjustment"], Decimal("0.0000"))
+        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(equity.data["opening_equity"], Decimal("175.0000"))
+        self.assertEqual(equity.data["period_net_profit"], Decimal("0.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("175.0000"))
+
+
 class FinancialStatementsApiTests(TestCase):
     def test_balance_sheet_includes_unclosed_profit_and_income_statement_excludes_opening(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
@@ -764,6 +900,212 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(equity_response.data["opening_equity"], Decimal("100.0000"))
         self.assertEqual(equity_response.data["period_net_profit"], Decimal("150.0000"))
         self.assertEqual(equity_response.data["closing_equity"], Decimal("250.0000"))
+
+
+    def test_balance_sheet_carries_forward_only_branches_without_opening_snapshots(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="BR-BAL", name_ar="شركة ميزانية الفروع", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        snapshot_branch = Branch.objects.create(
+            company=company, code="SNAP", name_ar="فرع له افتتاحي", is_head_office=True,
+        )
+        carry_branch = Branch.objects.create(
+            company=company, code="CARRY", name_ar="فرع بدون افتتاحي",
+        )
+        prior_year = FiscalYear.objects.create(
+            company=company, name="2025",
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+        )
+        current_year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية", nature=ChartOfAccount.Nature.ASSET,
+        )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3000", name_ar="رأس المال", nature=ChartOfAccount.Nature.EQUITY,
+        )
+
+        prior_entry = JournalEntry.objects.create(
+            company=company, branch=carry_branch, fiscal_year=prior_year,
+            entry_number="BR-PRIOR-001", entry_date=date(2025, 12, 31),
+            description="رصيد مرحل للفرع دون افتتاحي",
+        )
+        JournalLine.objects.create(entry=prior_entry, account=cash, debit=Decimal("75"))
+        JournalLine.objects.create(entry=prior_entry, account=capital, credit=Decimal("75"))
+        post_journal(prior_entry.pk)
+
+        opening_entry = JournalEntry.objects.create(
+            company=company, branch=snapshot_branch, fiscal_year=current_year,
+            entry_number="BR-OPEN-001", entry_date=date(2026, 1, 1),
+            description="افتتاحي الفرع الأول", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening_entry, account=cash, debit=Decimal("100"))
+        JournalLine.objects.create(entry=opening_entry, account=capital, credit=Decimal("100"))
+        post_journal(opening_entry.pk)
+
+        user = User.objects.create_user(username="branch_balance_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        result = client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={company.pk}&as_of=2026-01-31"
+        )
+
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["total_assets"], Decimal("175.0000"))
+        self.assertEqual(result.data["total_equity"], Decimal("175.0000"))
+        self.assertEqual(result.data["difference"], Decimal("0.0000"))
+
+    def test_prior_unclosed_profit_carries_into_balance_sheet_and_equity(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="PRIOR-PL", name_ar="شركة أرباح سنوات سابقة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        prior_year = FiscalYear.objects.create(
+            company=company, name="2025",
+            start_date=date(2025, 1, 1), end_date=date(2025, 12, 31),
+        )
+        FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4000", name_ar="الإيرادات",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        expense = ChartOfAccount.objects.create(
+            company=company, code="5000", name_ar="المصروفات",
+            nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        prior_operations = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=prior_year,
+            entry_number="PRIOR-OPS-001", entry_date=date(2025, 12, 20),
+            description="إيرادات ومصروفات سنة سابقة لم تقفل",
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=cash, debit=Decimal("200"),
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=revenue, credit=Decimal("200"),
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=expense, debit=Decimal("50"),
+        )
+        JournalLine.objects.create(
+            entry=prior_operations, account=cash, credit=Decimal("50"),
+        )
+        post_journal(prior_operations.pk)
+
+        user = User.objects.create_user(username="prior_profit_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        balance = client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={company.pk}&as_of=2026-01-31"
+        )
+        equity = client.get(
+            f"/api/accounting/journal-entries/changes-in-equity/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+
+        self.assertEqual(balance.status_code, 200, balance.data)
+        self.assertEqual(equity.status_code, 200, equity.data)
+        self.assertEqual(balance.data["total_assets"], Decimal("150.0000"))
+        self.assertEqual(balance.data["prior_unclosed_profit"], Decimal("150.0000"))
+        self.assertEqual(balance.data["total_equity"], Decimal("150.0000"))
+        self.assertEqual(balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(equity.data["opening_equity"], Decimal("150.0000"))
+        self.assertEqual(equity.data["period_net_profit"], Decimal("0.0000"))
+        self.assertEqual(equity.data["closing_equity"], Decimal("150.0000"))
+        self.assertTrue(any(
+            row["code"] == "PRIOR-UNCLOSED-PROFIT" for row in equity.data["accounts"]
+        ))
+
+
+    def test_balance_sheet_does_not_double_count_profit_already_closed_to_equity(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="CLOSED-PL", name_ar="شركة نتيجة مقفلة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        retained = ChartOfAccount.objects.create(
+            company=company, code="3000", name_ar="الأرباح المرحلة",
+            nature=ChartOfAccount.Nature.EQUITY,
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4000", name_ar="الإيرادات",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        expense = ChartOfAccount.objects.create(
+            company=company, code="5000", name_ar="المصروفات",
+            nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        operations = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="CLOSED-OPS-001", entry_date=date(2026, 12, 20),
+            description="نتيجة النشاط قبل الإقفال",
+        )
+        JournalLine.objects.create(entry=operations, account=cash, debit=Decimal("200"))
+        JournalLine.objects.create(entry=operations, account=revenue, credit=Decimal("200"))
+        JournalLine.objects.create(entry=operations, account=expense, debit=Decimal("50"))
+        JournalLine.objects.create(entry=operations, account=cash, credit=Decimal("50"))
+        post_journal(operations.pk)
+
+        closing = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="CLOSED-CLOSE-001", entry_date=date(2026, 12, 31),
+            description="إقفال نتيجة الأعمال", source_type=JournalEntry.Source.CLOSING,
+        )
+        JournalLine.objects.create(entry=closing, account=revenue, debit=Decimal("200"))
+        JournalLine.objects.create(entry=closing, account=expense, credit=Decimal("50"))
+        JournalLine.objects.create(entry=closing, account=retained, credit=Decimal("150"))
+        post_journal(closing.pk)
+
+        user = User.objects.create_user(username="closed_profit_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        result = client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={company.pk}&as_of=2026-12-31"
+        )
+
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["total_assets"], Decimal("150.0000"))
+        self.assertEqual(result.data["current_year_profit"], Decimal("0.0000"))
+        self.assertEqual(result.data["total_equity"], Decimal("150.0000"))
+        self.assertEqual(result.data["difference"], Decimal("0.0000"))
 
 
     def test_income_statement_separates_cost_of_sales_from_operating_expenses(self):
@@ -1484,15 +1826,9 @@ class AccountRoleRuntimeValidationTests(TestCase):
         self.assertEqual(len(response.data["existing"]), 1)
 
 
-from datetime import date
-from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
-from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
-from accounting.services import post_journal
 from inventory.models import StockMovement
 from django.utils import timezone
 
@@ -1816,6 +2152,92 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(payroll["party_balances"][0]["code"], "EMP-001")
         self.assertEqual(Decimal(payroll["party_balances"][0]["balance"]), Decimal("9000"))
 
+
+    def test_fixed_asset_supplier_invoice_and_payment_are_in_ap_reconciliation(self):
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
+        from suppliers.models import Supplier
+
+        payable = ChartOfAccount.objects.create(
+            company=self.company, code="2100", name_ar="الموردون", nature="liability",
+        )
+        asset_account = ChartOfAccount.objects.create(
+            company=self.company, code="1500", name_ar="الأصول الثابتة", nature="asset",
+        )
+        accumulated = ChartOfAccount.objects.create(
+            company=self.company, code="1590", name_ar="مجمع الإهلاك", nature="asset",
+        )
+        depreciation = ChartOfAccount.objects.create(
+            company=self.company, code="6100", name_ar="مصروف الإهلاك", nature="expense",
+        )
+        disposal = ChartOfAccount.objects.create(
+            company=self.company, code="6900", name_ar="أرباح وخسائر الأصول", nature="expense",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company, code="SUP-RECON-FA", name_ar="مورد أصول للمطابقة",
+        )
+        asset = FixedAsset.objects.create(
+            company=self.company, branch=self.branch, code="FA-RECON-001",
+            name_ar="أصل اختبار المطابقة", acquisition_date=date(2026, 3, 1),
+            depreciation_start_date=date(2026, 3, 1), original_cost=Decimal("1000"),
+            acquisition_net_amount=Decimal("1000"), salvage_value=Decimal("0"),
+            useful_life_months=60, asset_account=asset_account,
+            accumulated_depreciation_account=accumulated,
+            depreciation_expense_account=depreciation,
+            acquisition_counter_account=self.cash, disposal_gain_loss_account=disposal,
+            disposal_loss_account=disposal,
+        )
+
+        invoice_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="FA-RECON-INV-001", entry_date=date(2026, 3, 2),
+            description="فاتورة شراء أصل للمطابقة", source_type=JournalEntry.Source.ASSETS,
+        )
+        JournalLine.objects.create(entry=invoice_entry, account=asset_account, debit=Decimal("1000"))
+        JournalLine.objects.create(entry=invoice_entry, account=payable, credit=Decimal("1000"))
+        post_journal(invoice_entry.pk)
+        asset.acquisition_journal = invoice_entry
+        asset.save(update_fields=("acquisition_journal",))
+
+        invoice = AssetPurchaseInvoice.objects.create(
+            company=self.company, branch=self.branch, asset=asset, supplier=supplier,
+            fiscal_year=self.year, invoice_number="FA-RECON-INV-001",
+            invoice_date=date(2026, 3, 2), net_amount=Decimal("1000"),
+            tax_amount=Decimal("0"), recoverable_tax_amount=Decimal("0"),
+            nonrecoverable_tax_amount=Decimal("0"), grand_total=Decimal("1000"),
+            status=AssetPurchaseInvoice.Status.POSTED, journal_entry=invoice_entry,
+        )
+
+        payment_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="FA-RECON-PAY-001", entry_date=date(2026, 3, 10),
+            description="سداد فاتورة أصل للمطابقة", source_type=JournalEntry.Source.ASSETS,
+        )
+        JournalLine.objects.create(entry=payment_entry, account=payable, debit=Decimal("400"))
+        JournalLine.objects.create(entry=payment_entry, account=self.cash, credit=Decimal("400"))
+        post_journal(payment_entry.pk)
+        AssetSupplierPayment.objects.create(
+            company=self.company, branch=self.branch, invoice=invoice, supplier=supplier,
+            payment_number="FA-RECON-PAY-001", payment_date=date(2026, 3, 10),
+            payment_account=self.cash, amount=Decimal("400"),
+            status=AssetSupplierPayment.Status.POSTED, journal_entry=payment_entry,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        suppliers = next(item for item in result.data["rows"] if item["key"] == "suppliers")
+        self.assertEqual(suppliers["status"], "matched", suppliers)
+        self.assertEqual(Decimal(suppliers["subledger_balance"]), Decimal("600"))
+        self.assertEqual(Decimal(suppliers["gl_balance"]), Decimal("600"))
+        self.assertEqual(Decimal(suppliers["difference"]), Decimal("0"))
+        self.assertEqual(suppliers["unmatched_entry_count"], 0)
+        self.assertEqual(suppliers["party_balances"][0]["party_id"], supplier.pk)
+        self.assertEqual(Decimal(suppliers["party_balances"][0]["balance"]), Decimal("600"))
+
 class HistoricalBalanceAndCashFlowRegressionTests(TestCase):
     def setUp(self):
         self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
@@ -1937,4 +2359,121 @@ class HistoricalBalanceAndCashFlowRegressionTests(TestCase):
         self.assertEqual(result.data["operating_cash_flow"], Decimal("0.0000"))
         self.assertEqual(result.data["ledger_cash_change"], Decimal("0.0000"))
         self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
+
+
+
+class FixedAssetIAS36ReversalTests(TestCase):
+    def setUp(self):
+        from assets.models import FixedAsset
+        self.currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="FA-IAS36", name_ar="شركة اختبار الأصول", country="EG",
+            activity="commercial", base_currency=self.currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026", start_date=date(2026, 1, 1),
+            end_date=date(2026, 12, 31),
+        )
+        self.asset_account = ChartOfAccount.objects.create(
+            company=self.company, code="1500", name_ar="تكلفة الأصول", nature="asset",
+        )
+        self.accumulated_depreciation = ChartOfAccount.objects.create(
+            company=self.company, code="1590", name_ar="مجمع الإهلاك", nature="asset",
+        )
+        self.depreciation_expense = ChartOfAccount.objects.create(
+            company=self.company, code="6100", name_ar="مصروف الإهلاك", nature="expense",
+        )
+        self.impairment_expense = ChartOfAccount.objects.create(
+            company=self.company, code="6110", name_ar="خسائر انخفاض القيمة", nature="expense",
+        )
+        self.accumulated_impairment = ChartOfAccount.objects.create(
+            company=self.company, code="1595", name_ar="مجمع انخفاض القيمة", nature="asset",
+        )
+        self.impairment_reversal_income = ChartOfAccount.objects.create(
+            company=self.company, code="4105", name_ar="عكس خسائر انخفاض القيمة", nature="revenue",
+        )
+        self.bank = ChartOfAccount.objects.create(
+            company=self.company, code="1000", name_ar="البنك", nature="asset",
+        )
+        self.disposal = ChartOfAccount.objects.create(
+            company=self.company, code="6900", name_ar="أرباح استبعاد", nature="revenue",
+        )
+        acquisition = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="FA-IAS36-ACQ", entry_date=date(2026, 1, 1),
+            description="إثبات اقتناء أصل للاختبار", source_type=JournalEntry.Source.ASSETS,
+        )
+        JournalLine.objects.create(entry=acquisition, account=self.asset_account, debit=Decimal("1200"))
+        JournalLine.objects.create(entry=acquisition, account=self.bank, credit=Decimal("1200"))
+        post_journal(acquisition.pk)
+        self.asset = FixedAsset.objects.create(
+            company=self.company, branch=self.branch, code="FA-IAS36-001",
+            name_ar="أصل اختبار انخفاض القيمة", acquisition_date=date(2026, 1, 1),
+            depreciation_start_date=date(2026, 1, 1), original_cost=Decimal("1200"),
+            acquisition_net_amount=Decimal("1200"), salvage_value=Decimal("0"),
+            useful_life_months=12, asset_account=self.asset_account,
+            accumulated_depreciation_account=self.accumulated_depreciation,
+            depreciation_expense_account=self.depreciation_expense,
+            acquisition_counter_account=self.bank, disposal_gain_loss_account=self.disposal,
+            disposal_loss_account=self.impairment_expense, acquisition_journal=acquisition,
+        )
+
+    def test_ias36_reversal_is_capped_and_allocated_to_original_contra_account(self):
+        from django.db.models import Sum
+        from assets.services import depreciate_asset, record_asset_impairment, reverse_asset_impairment
+        from assets.models import AssetImpairmentReversalAllocation
+
+        depreciate_asset(self.asset.pk, date(2026, 1, 31), self.year.pk)
+        impairment = record_asset_impairment(
+            self.asset.pk, date(2026, 1, 31), Decimal("800"),
+            self.impairment_expense.pk, self.accumulated_impairment.pk, self.year.pk,
+        )
+        depreciate_asset(self.asset.pk, date(2026, 2, 28), self.year.pk)
+        reversal = reverse_asset_impairment(
+            self.asset.pk, date(2026, 2, 28), Decimal("1100"),
+            self.impairment_reversal_income.pk, self.year.pk,
+        )
+
+        self.assertGreater(reversal.reversal_amount, Decimal("0"))
+        self.assertLess(reversal.reversal_amount, impairment.impairment_loss)
+        self.assertLessEqual(
+            reversal.carrying_amount_before + reversal.reversal_amount,
+            reversal.hypothetical_carrying_amount,
+        )
+        self.assertEqual(
+            AssetImpairmentReversalAllocation.objects.filter(reversal=reversal).aggregate(
+                total=Sum("amount")
+            )["total"],
+            reversal.reversal_amount,
+        )
+        lines = list(reversal.journal_entry.lines.all())
+        self.assertEqual(
+            sum((line.debit for line in lines), Decimal("0")),
+            sum((line.credit for line in lines), Decimal("0")),
+        )
+        contra_line = next(line for line in lines if line.account_id == self.accumulated_impairment.pk)
+        income_line = next(line for line in lines if line.account_id == self.impairment_reversal_income.pk)
+        self.assertEqual(contra_line.debit, reversal.reversal_amount)
+        self.assertEqual(income_line.credit, reversal.reversal_amount)
+
+    def test_ias36_reversal_cannot_exceed_no_impairment_carrying_amount(self):
+        from assets.services import depreciate_asset, record_asset_impairment, reverse_asset_impairment
+
+        depreciate_asset(self.asset.pk, date(2026, 1, 31), self.year.pk)
+        record_asset_impairment(
+            self.asset.pk, date(2026, 1, 31), Decimal("800"),
+            self.impairment_expense.pk, self.accumulated_impairment.pk, self.year.pk,
+        )
+        depreciate_asset(self.asset.pk, date(2026, 2, 28), self.year.pk)
+        reversal = reverse_asset_impairment(
+            self.asset.pk, date(2026, 2, 28), Decimal("5000"),
+            self.impairment_reversal_income.pk, self.year.pk,
+        )
+        self.assertEqual(
+            reversal.carrying_amount_before + reversal.reversal_amount,
+            reversal.hypothetical_carrying_amount,
+        )
 

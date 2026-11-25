@@ -1,18 +1,18 @@
 """واجهات الأصول الثابتة للاقتناء والإهلاك والاستبعاد وربط الخزينة."""
 
-from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Sum
 from rest_framework import decorators, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.utils import timezone, dateparse
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from .models import FixedAsset, AssetDepreciation
+from .models import FixedAsset, AssetDepreciation, AssetPurchaseInvoice, AssetSupplierPayment, AssetImpairmentReversal
 from .serializers import FixedAssetSerializer, AssetDepreciationSerializer
-from .services import acquire_asset, depreciate_asset, dispose_asset
-from accounting.models import JournalEntry, JournalLine
+from .services import acquire_asset, depreciate_asset, dispose_asset, record_asset_impairment, reverse_asset_impairment, post_asset_purchase_invoice, post_asset_supplier_payment
+from accounting.models import ChartOfAccount, JournalEntry, JournalLine
 
 
 class FixedAssetViewSet(viewsets.ModelViewSet):
@@ -20,7 +20,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     serializer_class = FixedAssetSerializer
     queryset = FixedAsset.objects.select_related("company", "branch", "asset_account",
         "accumulated_depreciation_account", "depreciation_expense_account",
-        "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction").prefetch_related("depreciations").all()
+        "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction", "vendor_invoice").prefetch_related("depreciations", "impairments", "impairment_reversals", "vendor_invoice__payments").all()
 
     def get_queryset(self):
         """تجهيز السجلات المسموح بعرضها بعد تطبيق نطاق الشركة والفرع."""
@@ -48,7 +48,8 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         try:
             with transaction.atomic():
                 asset = serializer.save()
-                acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
+                if self.request.data.get("acquisition_mode") != "supplier_invoice":
+                    acquire_asset(asset.pk, self.request.data.get("fiscal_year"), self.request.user)
                 serializer.instance.refresh_from_db()
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
@@ -56,16 +57,16 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
-        if serializer.instance.acquisition_journal_id:
-            raise ValidationError("الأصل المثبت محاسبيًا لا يمكن تعديل بيانات تكلفته أو حساباته.")
+        if serializer.instance.acquisition_journal_id or serializer.instance.acquisition_treasury_transaction_id or getattr(serializer.instance, "vendor_invoice", None):
+            raise ValidationError("الأصل المرتبط بحركة اقتناء أو فاتورة مورد أو المثبت محاسبيًا لا يمكن تعديل بياناته أو حساباته.")
         self._write(serializer.instance.company_id)
         serializer.save()
 
     def perform_destroy(self, instance):
         """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         self._write(instance.company_id)
-        if instance.acquisition_journal_id or instance.depreciations.exists():
-            raise ValidationError("لا يمكن حذف أصل له أثر محاسبي؛ استخدم إجراء الاستبعاد.")
+        if instance.acquisition_journal_id or instance.acquisition_treasury_transaction_id or instance.depreciations.exists() or instance.impairments.exists() or getattr(instance, "vendor_invoice", None):
+            raise ValidationError("لا يمكن حذف أصل مرتبط بحركة اقتناء أو فاتورة مورد أو له أثر محاسبي؛ استخدم إجراء الاستبعاد.")
         instance.delete()
 
     @decorators.action(detail=True, methods=("post",))
@@ -80,16 +81,101 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             raise ValidationError(detail) from exc
         return response.Response({"asset_id": asset.pk, "depreciation_amount": amount}, status=status.HTTP_201_CREATED)
 
+    @decorators.action(detail=True, methods=("post",), url_path="impair")
+    def impair(self, request, pk=None):
+        """اختبار انخفاض القيمة وترحيل الخسارة وفق IAS 36."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            impairment = record_asset_impairment(
+                asset.pk, request.data.get("impairment_date"),
+                request.data.get("recoverable_amount"),
+                request.data.get("impairment_expense_account"),
+                request.data.get("accumulated_impairment_account"),
+                request.data.get("fiscal_year"), request.user,
+            )
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": impairment.pk, "asset_id": asset.pk,
+            "impairment_date": impairment.impairment_date,
+            "carrying_amount_before": impairment.carrying_amount_before,
+            "recoverable_amount": impairment.recoverable_amount,
+            "impairment_loss": impairment.impairment_loss,
+            "journal_entry": impairment.journal_entry_id,
+            "accounting_model": "cost",
+            "oci_impact": "none_under_cost_model",
+            "oci_note": "خسارة الانخفاض تُثبت في قائمة الدخل؛ لا يوجد نموذج إعادة تقييم للأصول مفعّل لمعالجة فائض إعادة التقييم ضمن الدخل الشامل الآخر.",
+        }, status=status.HTTP_201_CREATED)
+
+
+    @decorators.action(detail=True, methods=("post",), url_path="reverse-impairment")
+    def reverse_impairment(self, request, pk=None):
+        """عكس انخفاض القيمة مع الالتزام بسقف القيمة الدفترية الافتراضية وفق IAS 36."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            reversal = reverse_asset_impairment(
+                asset.pk, request.data.get("reversal_date"),
+                request.data.get("recoverable_amount"),
+                request.data.get("reversal_income_account"),
+                request.data.get("fiscal_year"), request.user,
+            )
+        except (DjangoValidationError, TypeError, ValueError) as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": reversal.pk, "asset_id": asset.pk,
+            "reversal_date": reversal.reversal_date,
+            "carrying_amount_before": reversal.carrying_amount_before,
+            "recoverable_amount": reversal.recoverable_amount,
+            "hypothetical_carrying_amount": reversal.hypothetical_carrying_amount,
+            "reversal_amount": reversal.reversal_amount,
+            "journal_entry": reversal.journal_entry_id,
+            "accounting_model": "cost",
+            "oci_impact": "none_under_cost_model",
+        }, status=status.HTTP_201_CREATED)
+
+
     @decorators.action(detail=True, methods=("get",))
     def schedule(self, request, pk=None):
-        """عرض جدول الإهلاك المتوقع للأصل الثابت."""
+        """عرض سجل الإهلاك والانخفاض والقيمة الدفترية الحالية للأصل."""
         asset = self.get_object()
         rows = asset.depreciations.select_related("journal_entry").order_by("period_date")
-        accumulated = sum((row.amount for row in rows), start=0)
+        impairments = asset.impairments.select_related(
+            "journal_entry", "impairment_expense_account", "accumulated_impairment_account"
+        ).order_by("impairment_date")
+        reversals = asset.impairment_reversals.select_related(
+            "journal_entry", "reversal_income_account"
+        ).prefetch_related("allocations").order_by("reversal_date")
+        accumulated = sum((row.amount for row in rows if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
+        impairment_total = sum((row.impairment_loss for row in impairments if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
+        reversal_total = sum((row.reversal_amount for row in reversals if row.journal_entry.status == JournalEntry.Status.POSTED), start=Decimal("0"))
         return response.Response({
             "asset_id": asset.pk, "original_cost": asset.original_cost,
-            "accumulated_depreciation": accumulated, "net_book_value": asset.original_cost - accumulated,
+            "accumulated_depreciation": accumulated,
+            "accumulated_impairment": impairment_total - reversal_total,
+            "net_book_value": asset.original_cost - accumulated - impairment_total + reversal_total,
             "rows": AssetDepreciationSerializer(rows, many=True).data,
+            "impairments": [{
+                "id": row.pk, "impairment_date": row.impairment_date,
+                "carrying_amount_before": row.carrying_amount_before,
+                "recoverable_amount": row.recoverable_amount,
+                "impairment_loss": row.impairment_loss, "journal_entry": row.journal_entry_id, "status": row.journal_entry.status,
+            } for row in impairments],
+            "impairment_reversals": [{
+                "id": row.pk, "reversal_date": row.reversal_date,
+                "carrying_amount_before": row.carrying_amount_before,
+                "recoverable_amount": row.recoverable_amount,
+                "hypothetical_carrying_amount": row.hypothetical_carrying_amount,
+                "reversal_amount": row.reversal_amount,
+                "journal_entry": row.journal_entry_id, "status": row.journal_entry.status,
+            } for row in reversals],
         })
 
 
@@ -117,30 +203,45 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
         if not as_of:
             raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
-        assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED).annotate(
-            reported_accumulated=Sum("depreciations__amount", filter=Q(depreciations__period_date__lte=as_of))
-        ).select_related("branch")
+        assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch").prefetch_related(
+            "depreciations__journal_entry", "impairments__journal_entry", "impairment_reversals__journal_entry"
+        )
         rows = []
-        total_cost = total_accumulated = total_book = 0
+        total_cost = total_accumulated = total_impairment = total_book = 0
         for asset in assets:
-            accumulated = min(asset.reported_accumulated or 0, asset.depreciable_amount)
-            book_value = asset.original_cost - accumulated
+            accumulated = min(sum((
+                dep.amount for dep in asset.depreciations.all()
+                if dep.period_date <= as_of and dep.journal_entry.status == JournalEntry.Status.POSTED
+            ), Decimal("0")), asset.depreciable_amount)
+            impairment_total = sum((
+                item.impairment_loss for item in asset.impairments.all()
+                if item.impairment_date <= as_of and item.journal_entry.status == JournalEntry.Status.POSTED
+            ), Decimal("0"))
+            reversal_total = sum((
+                item.reversal_amount for item in asset.impairment_reversals.all()
+                if item.reversal_date <= as_of and item.journal_entry.status == JournalEntry.Status.POSTED
+            ), Decimal("0"))
+            net_impairment = impairment_total - reversal_total
+            book_value = asset.original_cost - accumulated - net_impairment
             disposed = bool(asset.disposed_at and asset.disposed_at <= as_of)
             rows.append({
                 "asset_id": asset.pk, "code": asset.code, "name_ar": asset.name_ar,
                 "branch_id": asset.branch_id, "branch_name": asset.branch.name_ar,
                 "acquisition_date": asset.acquisition_date, "original_cost": asset.original_cost,
                 "salvage_value": asset.salvage_value, "useful_life_months": asset.useful_life_months,
-                "accumulated_depreciation": accumulated, "net_book_value": book_value,
+                "accumulated_depreciation": accumulated, "accumulated_impairment": net_impairment,
+                "net_book_value": book_value,
                 "status": "disposed" if disposed else "active", "disposed_at": asset.disposed_at,
                 "acquisition_journal": asset.acquisition_journal_id, "disposal_journal": asset.disposal_journal_id,
             })
             total_cost += asset.original_cost
             total_accumulated += accumulated
+            total_impairment += net_impairment
             total_book += book_value if not disposed else 0
         return response.Response({
             "company": int(request.query_params["company"]), "as_of": as_of,
             "totals": {"original_cost": total_cost, "accumulated_depreciation": total_accumulated,
+                       "accumulated_impairment": total_impairment,
                        "net_book_value_active": total_book, "asset_count": len(rows)},
             "rows": rows,
         })
@@ -184,7 +285,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=("get",), url_path="movement-report")
     def movement_report(self, request):
         """إعداد تقرير حركة الأصول والإضافات والاستبعادات."""
-        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations")
+        assets = self._report_assets(request).filter(acquisition_journal__status=JournalEntry.Status.POSTED).select_related("branch", "acquisition_journal", "disposal_journal").prefetch_related("depreciations__journal_entry", "impairments__journal_entry", "impairment_reversals__journal_entry")
         asset_id = request.query_params.get("asset")
         if asset_id:
             if not asset_id.isdigit():
@@ -207,10 +308,25 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 "treasury_transaction": asset.acquisition_treasury_transaction_id,
             }]
             for dep in asset.depreciations.all():
-                candidates.append({
-                    "date": dep.period_date, "event_type": "depreciation", "event_label": "إهلاك",
-                    "amount": dep.amount, "journal_entry": dep.journal_entry_id, "treasury_transaction": None,
-                })
+                if dep.journal_entry.status == JournalEntry.Status.POSTED:
+                    candidates.append({
+                        "date": dep.period_date, "event_type": "depreciation", "event_label": "إهلاك",
+                        "amount": dep.amount, "journal_entry": dep.journal_entry_id, "treasury_transaction": None,
+                    })
+            for impairment in asset.impairments.all():
+                if impairment.journal_entry.status == JournalEntry.Status.POSTED:
+                    candidates.append({
+                        "date": impairment.impairment_date, "event_type": "impairment",
+                        "event_label": "انخفاض قيمة", "amount": impairment.impairment_loss,
+                        "journal_entry": impairment.journal_entry_id, "treasury_transaction": None,
+                    })
+            for reversal in asset.impairment_reversals.all():
+                if reversal.journal_entry.status == JournalEntry.Status.POSTED:
+                    candidates.append({
+                        "date": reversal.reversal_date, "event_type": "impairment_reversal",
+                        "event_label": "عكس انخفاض قيمة", "amount": reversal.reversal_amount,
+                        "journal_entry": reversal.journal_entry_id, "treasury_transaction": None,
+                    })
             if asset.disposed_at:
                 candidates.append({
                     "date": asset.disposed_at, "event_type": "disposal", "event_label": "بيع / استبعاد",
@@ -248,7 +364,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 status=FiscalYear.Status.OPEN,
             )
         except (FiscalYear.DoesNotExist, TypeError, ValueError):
-            raise ValidationError({"fiscal_year": "حدد سنة مالية مفتوحة وصحيحة."})
+            raise ValidationError({"fiscal_year": "حدد سنة مالية مفتوحة وصحيحة."}) from None
         if not (year.start_date <= period_date <= year.end_date):
             raise ValidationError({"period_date": "تاريخ الإهلاك خارج السنة المالية المحددة."})
         processed, skipped = [], []
@@ -273,7 +389,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
 
     @decorators.action(detail=False, methods=("get",), url_path="account-reconciliation")
     def account_reconciliation(self, request):
-        """مطابقة سجل الأصول ومجمع الإهلاك ومصروفه مع دفتر الأستاذ العام."""
+        """مطابقة تكلفة الأصل ومجمع الإهلاك والانخفاض ومصروفاتهما مع الأستاذ العام."""
         from collections import defaultdict
         from decimal import Decimal
 
@@ -281,7 +397,15 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
         assets = self._report_assets(request).select_related(
             "asset_account", "accumulated_depreciation_account", "depreciation_expense_account"
-        ).prefetch_related("depreciations")
+        ).prefetch_related(
+            "depreciations__journal_entry",
+            "impairments__journal_entry",
+            "impairments__impairment_expense_account",
+            "impairments__accumulated_impairment_account",
+            "impairments__reversal_allocations__reversal__journal_entry",
+            "impairment_reversals__journal_entry",
+            "impairment_reversals__reversal_income_account",
+        )
         date_from_raw, date_to_raw = request.query_params.get("date_from"), request.query_params.get("date_to")
         date_from = dateparse.parse_date(date_from_raw) if date_from_raw else (as_of.replace(month=1, day=1) if as_of else None)
         date_to = dateparse.parse_date(date_to_raw) if date_to_raw else as_of
@@ -292,7 +416,10 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         company_id = int(request.query_params["company"])
         expected_cost = defaultdict(Decimal)
         expected_accum = defaultdict(Decimal)
-        expected_expense = defaultdict(Decimal)
+        expected_impairment = defaultdict(Decimal)
+        expected_depreciation_expense = defaultdict(Decimal)
+        expected_impairment_expense = defaultdict(Decimal)
+        expected_impairment_reversal_income = defaultdict(Decimal)
         account_objects = {}
         for asset in assets:
             account_objects[asset.asset_account_id] = asset.asset_account
@@ -308,18 +435,35 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 )
             for dep in asset.depreciations.all():
                 if date_from <= dep.period_date <= date_to and dep.journal_entry.status == JournalEntry.Status.POSTED:
-                    expected_expense[asset.depreciation_expense_account_id] += dep.amount
+                    expected_depreciation_expense[asset.depreciation_expense_account_id] += dep.amount
+            for impairment in asset.impairments.all():
+                account_objects[impairment.accumulated_impairment_account_id] = impairment.accumulated_impairment_account
+                account_objects[impairment.impairment_expense_account_id] = impairment.impairment_expense_account
+                if not disposed_by_date and impairment.impairment_date <= as_of and impairment.journal_entry.status == JournalEntry.Status.POSTED:
+                    reversed_amount = impairment.reversal_allocations.filter(
+                        reversal__reversal_date__lte=as_of,
+                        reversal__journal_entry__status=JournalEntry.Status.POSTED,
+                    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+                    expected_impairment[impairment.accumulated_impairment_account_id] += impairment.impairment_loss - reversed_amount
+                if date_from <= impairment.impairment_date <= date_to and impairment.journal_entry.status == JournalEntry.Status.POSTED:
+                    expected_impairment_expense[impairment.impairment_expense_account_id] += impairment.impairment_loss
+            for reversal in asset.impairment_reversals.all():
+                account_objects[reversal.reversal_income_account_id] = reversal.reversal_income_account
+                if date_from <= reversal.reversal_date <= date_to and reversal.journal_entry.status == JournalEntry.Status.POSTED:
+                    expected_impairment_reversal_income[reversal.reversal_income_account_id] += reversal.reversal_amount
 
+        reversal_journal_ids = list(AssetImpairmentReversal.objects.filter(
+            asset__in=assets, reversal_date__gte=date_from, reversal_date__lte=date_to,
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).values_list("journal_entry_id", flat=True))
         account_ids = list(account_objects)
         ledger = JournalLine.objects.filter(
-            entry__company_id=company_id,
-            entry__status=JournalEntry.Status.POSTED,
-            entry__entry_date__lte=as_of,
-            entry__branch_id__in=branch_ids,
+            entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
+            entry__entry_date__lte=as_of, entry__branch_id__in=branch_ids,
             account_id__in=account_ids,
         ).values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
         actual = {row["account_id"]: row for row in ledger}
-        cost_rows, accum_rows, expense_rows = [], [], []
+        cost_rows, accum_rows, impairment_rows, expense_rows, reversal_income_rows = [], [], [], [], []
         for account_id, account in account_objects.items():
             row = actual.get(account_id, {})
             debit = row.get("debit") or Decimal("0")
@@ -334,24 +478,56 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 actual_value = credit - debit
                 accum_rows.append({"account_id": account_id, "code": account.code, "name": account.name_ar,
                                    "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value)})
-            if any(asset.depreciation_expense_account_id == account_id for asset in assets):
+            if expected_impairment[account_id] or any(
+                item.accumulated_impairment_account_id == account_id
+                for asset in assets for item in asset.impairments.all()
+            ):
+                expected = expected_impairment[account_id]
+                actual_value = credit - debit
+                impairment_rows.append({"account_id": account_id, "code": account.code, "name": account.name_ar,
+                                        "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value)})
+            if expected_depreciation_expense[account_id] or expected_impairment_expense[account_id] or any(
+                asset.depreciation_expense_account_id == account_id for asset in assets
+            ) or any(
+                item.impairment_expense_account_id == account_id
+                for asset in assets for item in asset.impairments.all()
+            ):
                 expense_lines = JournalLine.objects.filter(
                     entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
                     entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
                     entry__branch_id__in=branch_ids, account_id=account_id,
                 ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-                expected = expected_expense[account_id]
+                expected_dep = expected_depreciation_expense[account_id]
+                expected_imp = expected_impairment_expense[account_id]
+                expected = expected_dep + expected_imp
                 actual_value = (expense_lines["debit"] or Decimal("0")) - (expense_lines["credit"] or Decimal("0"))
-                expense_rows.append({"account_id": account_id, "code": account.code, "name": account.name_ar,
-                                     "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value)})
-        all_rows = cost_rows + accum_rows + expense_rows
+                expense_rows.append({
+                    "account_id": account_id, "code": account.code, "name": account.name_ar,
+                    "expected_depreciation": str(expected_dep), "expected_impairment": str(expected_imp),
+                    "expected": str(expected), "actual": str(actual_value), "difference": str(expected - actual_value),
+                })
+            if expected_impairment_reversal_income[account_id]:
+                income_lines = JournalLine.objects.filter(
+                    entry_id__in=reversal_journal_ids, account_id=account_id,
+                ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+                expected = expected_impairment_reversal_income[account_id]
+                actual_value = (income_lines["credit"] or Decimal("0")) - (income_lines["debit"] or Decimal("0"))
+                reversal_income_rows.append({
+                    "account_id": account_id, "code": account.code, "name": account.name_ar,
+                    "expected_reversal_income": str(expected), "actual": str(actual_value),
+                    "difference": str(expected - actual_value),
+                })
+        all_rows = cost_rows + accum_rows + impairment_rows + expense_rows + reversal_income_rows
         return response.Response({
             "company": company_id, "as_of": as_of, "date_from": date_from, "date_to": date_to,
             "cost_accounts": cost_rows, "accumulated_depreciation_accounts": accum_rows,
+            "accumulated_impairment_accounts": impairment_rows,
+            "asset_expense_accounts": expense_rows,
             "depreciation_expense_accounts": expense_rows,
+            "impairment_reversal_income_accounts": reversal_income_rows,
             "is_reconciled": all(Decimal(row["difference"]) == 0 for row in all_rows),
             "difference_count": sum(1 for row in all_rows if Decimal(row["difference"]) != 0),
-            "note": "المطابقة تقارن سجل الأصول بالقيود المرحلة فقط. أي فروق تحتاج مراجعة قبل تعديل القيود أو بيانات الأصول.",
+            "note": "المطابقة تقارن سجل الأصول والقيود المرحلة، بما فيها مجمع انخفاض القيمة ومصروفه. أي فروق تحتاج مراجعة قبل تعديل القيود أو بيانات الأصول.",
         })
 
     @decorators.action(detail=True, methods=("post",))
@@ -370,3 +546,196 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
             raise ValidationError(detail) from exc
         return response.Response(result, status=status.HTTP_201_CREATED)
+
+
+    @decorators.action(detail=True, methods=("post",), url_path="purchase-invoice")
+    @transaction.atomic
+    def purchase_invoice(self, request, pk=None):
+        """إثبات فاتورة مورد مباشرة للأصل دون المرور بدورة استلام المخزون."""
+        from suppliers.models import Supplier
+        from core.money import round_currency_amount
+
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        if asset.acquisition_journal_id or asset.status != FixedAsset.Status.ACTIVE:
+            raise ValidationError("يجب أن يكون الأصل غير مثبت محاسبيًا قبل ربط فاتورة المورد.")
+        if hasattr(asset, "vendor_invoice"):
+            raise ValidationError("تم ربط فاتورة مورد بهذا الأصل بالفعل.")
+        try:
+            supplier = Supplier.objects.get(
+                pk=request.data.get("supplier"), company_id=asset.company_id, is_active=True,
+            )
+            from companies.models import FiscalYear
+            year = FiscalYear.objects.get(
+                pk=request.data.get("fiscal_year"), company_id=asset.company_id,
+                status=FiscalYear.Status.OPEN,
+            )
+            invoice_date = dateparse.parse_date(str(request.data.get("invoice_date", "")))
+            net_amount = Decimal(str(request.data.get("net_amount", "")))
+            if not invoice_date or net_amount <= 0:
+                raise ValueError("تاريخ الفاتورة أو صافي قيمتها غير صحيح.")
+            if not (year.start_date <= invoice_date <= year.end_date):
+                raise ValueError("تاريخ الفاتورة خارج السنة المالية المفتوحة.")
+            tax_code = None
+            tax_amount = recoverable = nonrecoverable = Decimal("0")
+            tax_code_id = request.data.get("tax_code")
+            if tax_code_id not in (None, ""):
+                from accounting.models import TaxCode
+                tax_code = TaxCode.objects.get(pk=tax_code_id, company_id=asset.company_id)
+                if (
+                    not tax_code.is_active or tax_code.country != asset.company.country
+                    or tax_code.category == TaxCode.Category.REVERSE_CHARGE
+                    or tax_code.effective_from > invoice_date
+                    or (tax_code.effective_to and tax_code.effective_to < invoice_date)
+                ):
+                    raise ValueError("كود الضريبة غير صالح لتاريخ الفاتورة.")
+                tax_amount = round_currency_amount(
+                    net_amount * tax_code.rate / Decimal("100"), asset.company.base_currency,
+                )
+                if tax_code.input_tax_recoverable:
+                    recoverable = tax_amount
+                else:
+                    nonrecoverable = tax_amount
+            grand_total = net_amount + tax_amount
+            capitalized_cost = net_amount + nonrecoverable
+            if asset.salvage_value > capitalized_cost:
+                raise ValueError("القيمة التخريدية تتجاوز تكلفة الأصل بعد الضريبة غير القابلة للاسترداد.")
+            invoice = AssetPurchaseInvoice(
+                company=asset.company, branch=asset.branch, asset=asset, supplier=supplier,
+                fiscal_year=year, invoice_number=str(request.data.get("invoice_number", "")).strip(),
+                invoice_date=invoice_date, net_amount=net_amount, tax_code=tax_code,
+                tax_amount=tax_amount, recoverable_tax_amount=recoverable,
+                nonrecoverable_tax_amount=nonrecoverable, grand_total=grand_total,
+                created_by=request.user,
+            )
+            if not invoice.invoice_number:
+                raise ValueError("رقم فاتورة المورد مطلوب.")
+            invoice.full_clean()
+            invoice.save()
+            # Normalize DecimalField values from the database before taking the
+            # immutable approval snapshot (e.g. 0 becomes 0.0000).
+            invoice.refresh_from_db()
+            from approvals.models import FinancialApprovalRequest
+            from approvals.services import refresh_financial_approval
+            approval = refresh_financial_approval(
+                FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE, invoice, request.user,
+            )
+            if approval:
+                return response.Response({
+                    "id": invoice.pk, "asset": asset.pk, "supplier": supplier.pk,
+                    "invoice_number": invoice.invoice_number, "status": invoice.status,
+                    "approval_required": True, "approval_request": approval.pk,
+                    "grand_total": invoice.grand_total,
+                }, status=status.HTTP_201_CREATED)
+            invoice = post_asset_purchase_invoice(invoice.pk, request.user)
+            asset.refresh_from_db()
+        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
+            raise ValidationError(str(exc) or "بيانات فاتورة المورد غير صحيحة.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": invoice.pk, "asset": asset.pk, "supplier": supplier.pk,
+            "supplier_name": supplier.name_ar, "invoice_number": invoice.invoice_number,
+            "invoice_date": invoice.invoice_date, "net_amount": invoice.net_amount,
+            "tax_amount": invoice.tax_amount, "recoverable_tax_amount": invoice.recoverable_tax_amount,
+            "nonrecoverable_tax_amount": invoice.nonrecoverable_tax_amount,
+            "grand_total": invoice.grand_total, "status": invoice.status,
+            "journal_entry": invoice.journal_entry_id,
+            "asset_cost": asset.original_cost,
+        }, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=("post",), url_path="supplier-payment")
+    @transaction.atomic
+    def supplier_payment(self, request, pk=None):
+        """إنشاء وترحيل سند سداد مخصص لفاتورة شراء الأصل."""
+        from django.utils.dateparse import parse_date
+
+        asset = self.get_object()
+        self._write(asset.company_id)
+        if not can_access_branch(request.user, asset.branch_id, asset.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الأصل.")
+        try:
+            invoice = AssetPurchaseInvoice.objects.select_related("supplier").get(
+                asset=asset, company=asset.company, status=AssetPurchaseInvoice.Status.POSTED,
+            )
+            payment_date = parse_date(str(request.data.get("payment_date", "")))
+            amount = Decimal(str(request.data.get("amount", "")))
+            account = ChartOfAccount.objects.get(
+                pk=request.data.get("payment_account"), company=asset.company,
+            )
+            payment = AssetSupplierPayment(
+                company=asset.company, branch=asset.branch, invoice=invoice,
+                supplier=invoice.supplier, payment_number=str(request.data.get("payment_number", "")).strip(),
+                payment_date=payment_date, payment_account=account, amount=amount,
+                reference=str(request.data.get("reference", ""))[:120], created_by=request.user,
+            )
+            if not payment.payment_number or not payment.payment_date:
+                raise ValueError("رقم السند وتاريخ السداد مطلوبان.")
+            payment.full_clean()
+            payment.save()
+            from approvals.models import FinancialApprovalRequest
+            from approvals.services import refresh_financial_approval
+            approval = refresh_financial_approval(
+                FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT, payment, request.user,
+            )
+            if approval:
+                return response.Response({
+                    "id": payment.pk, "invoice": invoice.pk, "payment_number": payment.payment_number,
+                    "payment_date": payment.payment_date, "amount": payment.amount,
+                    "status": payment.status, "approval_required": True,
+                    "approval_request": approval.pk,
+                }, status=status.HTTP_201_CREATED)
+            payment = post_asset_supplier_payment(payment.pk, request.user)
+        except (ObjectDoesNotExist, ValueError, TypeError, InvalidOperation) as exc:
+            raise ValidationError(str(exc) or "بيانات سند السداد غير صحيحة.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": payment.pk, "invoice": invoice.pk, "payment_number": payment.payment_number,
+            "payment_date": payment.payment_date, "amount": payment.amount,
+            "status": payment.status, "journal_entry": payment.journal_entry_id,
+        }, status=status.HTTP_201_CREATED)
+
+
+    @decorators.action(detail=True, methods=("post",), url_path="post-purchase-invoice")
+    def post_purchase_invoice(self, request, pk=None):
+        """ترحيل فاتورة الأصل بعد استكمال اعتمادها المالي عند اللزوم."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        try:
+            invoice = AssetPurchaseInvoice.objects.get(asset=asset, status=AssetPurchaseInvoice.Status.DRAFT)
+            invoice = post_asset_purchase_invoice(invoice.pk, request.user)
+        except AssetPurchaseInvoice.DoesNotExist as exc:
+            raise ValidationError("لا توجد فاتورة أصل مسودة لهذا الأصل.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": invoice.pk, "status": invoice.status,
+            "journal_entry": invoice.journal_entry_id, "grand_total": invoice.grand_total,
+        }, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=True, methods=("post",), url_path="post-supplier-payment")
+    def post_supplier_payment(self, request, pk=None):
+        """ترحيل سند سداد الأصل بعد استكمال اعتماده المالي عند اللزوم."""
+        asset = self.get_object()
+        self._write(asset.company_id)
+        try:
+            payment = AssetSupplierPayment.objects.get(
+                invoice__asset=asset, status=AssetSupplierPayment.Status.DRAFT,
+                pk=request.data.get("payment"),
+            )
+            payment = post_asset_supplier_payment(payment.pk, request.user)
+        except AssetSupplierPayment.DoesNotExist as exc:
+            raise ValidationError("سند السداد المسودة غير موجود لهذا الأصل.") from exc
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from exc
+        return response.Response({
+            "id": payment.pk, "status": payment.status,
+            "journal_entry": payment.journal_entry_id, "amount": payment.amount,
+        }, status=status.HTTP_200_OK)

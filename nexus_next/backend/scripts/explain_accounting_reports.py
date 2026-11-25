@@ -25,6 +25,7 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Company, CompanyMembership
 from accounting.models import ChartOfAccount
+from accounting.api import _accounting_report_profile
 
 def require_isolated_benchmark_database():
     with connection.cursor() as cursor:
@@ -99,9 +100,15 @@ def main():
         ),
     }
 
+    work_mem, parallel_workers = _accounting_report_profile()
     report = {
         "dataset": "1,000,000 journal entries / 2,000,000 journal lines",
         "company_id": company.pk,
+        "report_session_profile": {
+            "work_mem": work_mem,
+            "max_parallel_workers_per_gather": parallel_workers,
+            "jit": "off",
+        },
         "plans": {},
     }
     for name, url in targets.items():
@@ -114,12 +121,21 @@ def main():
                 continue
             seen.add(signature)
             started = perf_counter()
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql,
-                    params,
-                )
-                plan = cursor.fetchone()[0]
+            # Match the PostgreSQL settings used inside the live report request;
+            # otherwise EXPLAIN would measure a different plan (including parallel
+            # workers and sort spills) than the API actually executes.
+            from django.db import transaction
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    if connection.vendor == "postgresql":
+                        cursor.execute(f"SET LOCAL work_mem = '{work_mem}'")
+                        cursor.execute(f"SET LOCAL max_parallel_workers_per_gather = {parallel_workers}")
+                        cursor.execute("SET LOCAL jit = off")
+                    cursor.execute(
+                        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " + sql,
+                        params,
+                    )
+                    plan = cursor.fetchone()[0]
             plans.append({
                 "sql_shape": " ".join(sql.split())[:3000],
                 "execution_ms": round((perf_counter() - started) * 1000, 2),

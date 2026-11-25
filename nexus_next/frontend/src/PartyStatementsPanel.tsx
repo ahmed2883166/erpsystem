@@ -19,6 +19,8 @@ const documentLabel = (kind: string) => ({
   invoice: "فاتورة",
   receipt: "مقبوض",
   payment: "دفعة",
+  asset_invoice: "فاتورة شراء أصل",
+  asset_payment: "سداد فاتورة أصل",
 }[kind] || kind);
 
 // عرض كشف حساب طرف واحد مع حركة تفصيلية ورصيد متحرك.
@@ -33,6 +35,7 @@ export default function PartyStatementsPanel({ companyId, currency }: Props) {
   const [statement, setStatement] = useState<Statement | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [movementSearch, setMovementSearch] = useState("");
   const requestSequence = useRef(0);
 
   const parties = partyType === "customer" ? customers : suppliers;
@@ -89,6 +92,7 @@ export default function PartyStatementsPanel({ companyId, currency }: Props) {
   };
 
   const rows: StatementRow[] = statement?.rows || [];
+  const visibleRows = useMemo(() => rows.filter(row => `${row.date} ${documentLabel(row.document_type)} ${row.document_number} ${row.description}`.toLocaleLowerCase("ar").includes(movementSearch.trim().toLocaleLowerCase("ar"))), [rows, movementSearch]);
   const downloadCsv = () => {
     if (!statement) return;
     const values = [
@@ -121,9 +125,10 @@ export default function PartyStatementsPanel({ companyId, currency }: Props) {
         <article className="metric-card"><div className="metric-top">رصيد آخر المدة</div><strong className="metric-value">{money(statement.closing_balance, currency)}</strong></article>
       </div>
       <div className="work-panel-head"><div><h3>حركة الحساب</h3><p>{statement.date_from || dateFrom} إلى {statement.date_to || dateTo}</p></div></div>
+      <div className="table-toolbar"><input aria-label="البحث في حركة كشف الحساب" placeholder="ابحث برقم المستند أو البيان أو التاريخ…" value={movementSearch} onChange={event=>setMovementSearch(event.target.value)}/><span className="module-count">{visibleRows.length} من {rows.length} حركة</span></div>
       <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>النوع</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد المتحرك</th></tr></thead><tbody>
-        {rows.map((row, index) => <tr key={`${row.document_type}-${row.document_number}-${index}`}><td>{row.date}</td><td>{documentLabel(row.document_type)}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit, currency)}</td><td>{money(row.credit, currency)}</td><td>{money(row.balance, currency)}</td></tr>)}
-      </tbody></table>{!rows.length && <div className="table-empty">لا توجد حركات للطرف خلال الفترة المحددة.</div>}</div>
+        {visibleRows.map((row, index) => <tr key={`${row.document_type}-${row.document_number}-${index}`}><td>{row.date}</td><td>{documentLabel(row.document_type)}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit, currency)}</td><td>{money(row.credit, currency)}</td><td>{money(row.balance, currency)}</td></tr>)}
+      </tbody></table>{!rows.length && <div className="table-empty">لا توجد حركات للطرف خلال الفترة المحددة.</div>}{rows.length>0&&!visibleRows.length&&<div className="table-empty">لا توجد حركات مطابقة للبحث.</div>}</div>
     </>}
     {!statement && !busy && !error && <div className="table-empty">اختر عميلًا أو موردًا لعرض كشف حسابه.</div>}
   </section>;

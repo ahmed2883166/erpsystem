@@ -25,6 +25,8 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
   const [ledgerBusy,setLedgerBusy]=useState(false);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
+  const [tableSearch,setTableSearch]=useState("");
+  const [ledgerSearch,setLedgerSearch]=useState("");
   useEffect(()=>{ if(!companyId){setCenters([]);return;} api.costCenters(companyId).then(setCenters).catch(()=>setCenters([])); },[companyId]);
   const load=async()=>{
     if(!companyId)return;
@@ -36,6 +38,8 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
   useEffect(()=>{if(companyId)void load();},[companyId]);
   const openLedger=async(accountId:number)=>{if(!companyId)return;setLedgerBusy(true);try{setLedger(await api.generalLedger(companyId,accountId,from,to,branch?Number(branch):undefined));}catch(e){setError(e instanceof Error?e.message:"تعذر فتح دفتر الأستاذ للحساب.");}finally{setLedgerBusy(false);}};
   const maxMonth=Math.max(1,...(report?.monthly_rows||[]).map(x=>Number(x.amount)));
+  const visibleExpenseRows=(report?.rows||[]).filter(x=>`${x.code} ${x.name_ar} ${x.branch_name} ${x.cost_center_name} ${x.category}`.toLocaleLowerCase("ar").includes(tableSearch.trim().toLocaleLowerCase("ar")));
+  const visibleLedgerRows=(ledger?.rows||[]).filter(row=>`${row.date} ${row.entry_number} ${row.description} ${row.branch}`.toLocaleLowerCase("ar").includes(ledgerSearch.trim().toLocaleLowerCase("ar")));
   const exportRows=useMemo(()=>[
     ["كود الحساب","الحساب","الفرع","مركز التكلفة","التصنيف","مدين","دائن","صافي المصروف"],
     ...(report?.rows||[]).map(x=>[x.code,x.name_ar,x.branch_name,x.cost_center_name,x.category==="direct_cost"?"تكلفة مبيعات مباشرة":"مصروف تشغيلي / إداري",x.debit,x.credit,x.amount] as (string|number)[])
@@ -64,16 +68,18 @@ export default function ExpenseAnalysisPanel({companyId,branches}:{companyId:num
       <h3>الاتجاه الشهري</h3>
       <div className="expense-month-chart">{report.monthly_rows.map(x=><div className="expense-month" key={x.month}><div className="expense-month-track"><span style={{height:`${Math.max(2,Math.abs(Number(x.amount))/maxMonth*100)}%`}} /></div><b>{money(x.amount)}</b><small>{x.month}</small></div>)}</div>
       <h3>تفصيل المصروفات حسب الحساب والفرع ومركز التكلفة</h3>
+      <div className="table-toolbar"><input aria-label="البحث في تحليل المصروفات" placeholder="ابحث بكود الحساب أو الاسم أو الفرع…" value={tableSearch} onChange={e=>setTableSearch(e.target.value)}/><span className="module-count">{visibleExpenseRows.length} من {report.rows.length} بند</span></div>
       <div className="data-table-wrap"><table><thead><tr><th>كود الحساب</th><th>الحساب</th><th>الفرع</th><th>مركز التكلفة</th><th>التصنيف</th><th>مدين</th><th>دائن</th><th>الصافي</th><th>التفاصيل</th></tr></thead>
-        <tbody>{report.rows.map((x,i)=><tr key={`${x.account_id}-${x.branch_id}-${x.cost_center_id}-${i}`}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.branch_name}</td><td>{x.cost_center_name}</td><td>{x.category==="direct_cost"?"تكلفة مباشرة":"تشغيلي / إداري"}</td><td>{money(x.debit)}</td><td>{money(x.credit)}</td><td>{money(x.amount)}</td><td><button type="button" className="text-action-button" disabled={ledgerBusy} onClick={()=>void openLedger(x.account_id)}>{ledgerBusy?"جارٍ التحميل…":"دفتر الأستاذ ←"}</button></td></tr>)}</tbody>
+        <tbody>{visibleExpenseRows.map((x,i)=><tr key={`${x.account_id}-${x.branch_id}-${x.cost_center_id}-${i}`}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.branch_name}</td><td>{x.cost_center_name}</td><td>{x.category==="direct_cost"?"تكلفة مباشرة":"تشغيلي / إداري"}</td><td>{money(x.debit)}</td><td>{money(x.credit)}</td><td>{money(x.amount)}</td><td><button type="button" className="text-action-button" disabled={ledgerBusy} onClick={()=>void openLedger(x.account_id)}>{ledgerBusy?"جارٍ التحميل…":"دفتر الأستاذ ←"}</button></td></tr>)}</tbody>
         <tfoot><tr><th colSpan={8}>الإجمالي</th><th>{money(report.total)}</th></tr></tfoot>
-      </table>{!report.rows.length&&<div className="table-empty">لا توجد مصروفات مرحلة خلال الفترة المحددة.</div>}</div>
+      </table>{!report.rows.length&&<div className="table-empty">لا توجد مصروفات مرحلة خلال الفترة المحددة.</div>}{report.rows.length>0&&!visibleExpenseRows.length&&<div className="table-empty">لا توجد بنود مطابقة للبحث.</div>}</div>
       {ledger&&<section className="report-drilldown">
         <div className="work-panel-head"><div><h3>دفتر الأستاذ — {ledger.account_code} · {ledger.account_name}</h3><p>حركة الحساب خلال نفس الفترة المحددة</p></div><button type="button" className="subtle-button" onClick={()=>setLedger(null)}>إغلاق التفاصيل</button></div>
         <div className="asset-cashflow-totals"><span>رصيد أول المدة: {money(ledger.opening_balance)}</span><b>رصيد آخر المدة: {money(ledger.closing_balance)}</b></div>
+        <div className="table-toolbar"><input aria-label="البحث في دفتر الأستاذ" placeholder="ابحث برقم القيد أو البيان أو التاريخ…" value={ledgerSearch} onChange={e=>setLedgerSearch(e.target.value)}/><span className="module-count">{visibleLedgerRows.length} من {ledger.rows.length} حركة</span></div>
         <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم القيد</th><th>البيان</th><th>الفرع</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>
-          {ledger.rows.map(row=><tr key={row.line_id}><td>{row.date}</td><td>{row.entry_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.running_balance)}</td></tr>)}
-        </tbody></table></div>
+          {visibleLedgerRows.map(row=><tr key={row.line_id}><td>{row.date}</td><td>{row.entry_number}</td><td>{row.description}</td><td>{row.branch}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.running_balance)}</td></tr>)}
+        </tbody></table>{ledger.rows.length>0&&!visibleLedgerRows.length&&<div className="table-empty">لا توجد حركات مطابقة للبحث.</div>}</div>
       </section>}
       <p className="asset-report-note">{report.note}</p>
     </>}

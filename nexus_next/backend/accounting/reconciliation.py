@@ -195,6 +195,17 @@ class SubledgerReconciliationView(APIView):
             company_id=company_id, purchase_invoice__isnull=False, revaluation_date__lte=as_of
         ).filter(Q(purchase_invoice__receipt__warehouse__branch_id__in=branch_ids) | (Q(purchase_invoice__receipt__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[])))
 
+        # Direct fixed-asset vendor invoices and their payments also belong to AP.
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+        asset_purchase_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id, invoice_date__lte=as_of,
+            status=AssetPurchaseInvoice.Status.POSTED, branch_id__in=branch_ids,
+        )
+        asset_supplier_payments = AssetSupplierPayment.objects.filter(
+            company_id=company_id, payment_date__lte=as_of,
+            status=AssetSupplierPayment.Status.POSTED, branch_id__in=branch_ids,
+        )
+
         # Rebuild AR/AP from posted source documents grouped by the actual party.
         # Receipt/payment carrying amounts are used for foreign-currency settlements.
         active_sales_returns = sales_returns.filter(
@@ -280,9 +291,11 @@ class SubledgerReconciliationView(APIView):
         )
 
         supplier_invoice_totals = grouped_amount(purchase_invoices, "supplier_id", "grand_total")
+        asset_supplier_invoice_totals = grouped_amount(asset_purchase_invoices, "supplier_id", "grand_total")
         supplier_payment_totals = grouped_amount(
             posted_supplier_payments, "supplier_id", "amount", "carrying_base_amount"
         )
+        asset_supplier_payment_totals = grouped_amount(asset_supplier_payments, "supplier_id", "amount")
         supplier_return_totals = grouped_amount(active_supplier_returns, "supplier_id", "grand_total")
         supplier_refund_totals = grouped_amount(posted_supplier_refunds, "supplier_id", "amount")
         active_purchase_fx = purchase_fx.annotate(
@@ -296,8 +309,9 @@ class SubledgerReconciliationView(APIView):
             active_purchase_fx, "purchase_invoice__supplier_id", "difference",
         )
         supplier_ids = set().union(
-            supplier_invoice_totals, supplier_payment_totals, supplier_return_totals,
-            supplier_refund_totals, supplier_fx_totals,
+            supplier_invoice_totals, asset_supplier_invoice_totals,
+            supplier_payment_totals, asset_supplier_payment_totals,
+            supplier_return_totals, supplier_refund_totals, supplier_fx_totals,
         )
         supplier_rows = {
             item["id"]: item for item in Supplier.objects.filter(
@@ -308,7 +322,9 @@ class SubledgerReconciliationView(APIView):
         for party_id in supplier_ids:
             balance = (
                 supplier_invoice_totals.get(party_id, Decimal("0"))
+                + asset_supplier_invoice_totals.get(party_id, Decimal("0"))
                 - supplier_payment_totals.get(party_id, Decimal("0"))
+                - asset_supplier_payment_totals.get(party_id, Decimal("0"))
                 - supplier_return_totals.get(party_id, Decimal("0"))
                 + supplier_refund_totals.get(party_id, Decimal("0"))
                 + supplier_fx_totals.get(party_id, Decimal("0"))
@@ -329,8 +345,11 @@ class SubledgerReconciliationView(APIView):
             [("journal_entry_id",), ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"), ("journal_entry_id",)],
         ))
         purchase_journal_ids = _with_reversals(_collect_ids(
-            [purchase_invoices, supplier_payments, supplier_returns, supplier_refunds, purchase_fx],
-            [("journal_entry_id",), ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"), ("journal_entry_id", "reversal_journal_entry_id"), ("journal_entry_id",)],
+            [purchase_invoices, supplier_payments, supplier_returns, supplier_refunds, purchase_fx,
+             asset_purchase_invoices, asset_supplier_payments],
+            [("journal_entry_id",), ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"),
+             ("journal_entry_id", "reversal_journal_entry_id"), ("journal_entry_id",),
+             ("journal_entry_id",), ("journal_entry_id",)],
         ))
 
         payroll_rows = PayrollPosting.objects.filter(
@@ -473,6 +492,8 @@ class SubledgerReconciliationView(APIView):
             + SalesReturn.objects.filter(company_id=company_id, return_date__lte=as_of, status=SalesReturn.Status.DRAFT).filter(sales_return_scope).count(),
             "purchasing": PurchaseInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=PurchaseInvoice.Status.DRAFT).filter(purchase_invoice_scope).count()
             + SupplierPayment.objects.filter(company_id=company_id, payment_date__lte=as_of, status=SupplierPayment.Status.DRAFT).filter(supplier_payment_scope).count()
+            + AssetPurchaseInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=AssetPurchaseInvoice.Status.DRAFT, branch_id__in=branch_ids).count()
+            + AssetSupplierPayment.objects.filter(company_id=company_id, payment_date__lte=as_of, status=AssetSupplierPayment.Status.DRAFT, branch_id__in=branch_ids).count()
             + SupplierReturn.objects.filter(company_id=company_id, return_date__lte=as_of, status=SupplierReturn.Status.DRAFT).filter(supplier_return_scope).count()
             + SupplierRefund.objects.filter(company_id=company_id, refund_date__lte=as_of, status=SupplierRefund.Status.DRAFT).filter(supplier_refund_scope).count(),
             "payroll": PayrollCycle.objects.filter(company_id=company_id, period_end__lte=as_of, status__in=(PayrollCycle.Status.DRAFT, PayrollCycle.Status.CALCULATED, PayrollCycle.Status.REVIEW, PayrollCycle.Status.APPROVED)).count(),

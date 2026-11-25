@@ -36,6 +36,19 @@ def _safe_backup_audit_event(**kwargs):
         logger.exception("Could not persist backup audit event")
 
 
+def _powershell_executable():
+    """Resolve the Windows PowerShell executable to a trusted absolute path."""
+    system_root = Path(os.environ.get("SystemRoot", "C:/Windows"))
+    candidates = [
+        system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+        system_root / "Sysnative" / "WindowsPowerShell" / "v1.0" / "powershell.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    raise FileNotFoundError("Windows PowerShell executable was not found in System32 or Sysnative.")
+
 _BACKUP_THREAD_LOCK = threading.Lock()
 
 
@@ -157,7 +170,7 @@ class BackupConfigurationView(APIView):
         try:
             with _backup_execution_lock():
                 result = subprocess.run(
-                    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                    [_powershell_executable(), "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                     cwd=str(settings.BASE_DIR.parent),
                     capture_output=True,
                     text=True,
@@ -256,7 +269,7 @@ class BackupConfigurationView(APIView):
                 try:
                     value = int(request.data[field])
                 except (TypeError, ValueError):
-                    raise ValidationError({field: "أدخل رقمًا صحيحًا."})
+                    raise ValidationError({field: "أدخل رقمًا صحيحًا."}) from None
                 if not low <= value <= high:
                     raise ValidationError({field: f"القيمة يجب أن تكون بين {low} و{high}."})
                 setattr(config, field, value)

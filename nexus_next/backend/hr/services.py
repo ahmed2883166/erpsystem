@@ -494,7 +494,7 @@ def prepare_payroll_payment(cycle_id, treasury_account_id, actor=None):
     try:
         treasury_account = TreasuryAccount.objects.select_related("account", "branch").select_for_update(of=("self",)).get(pk=treasury_account_id)
     except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
-        raise ValidationError("حساب الخزينة المحدد غير موجود أو أن رقمه غير صالح.")
+        raise ValidationError("حساب الخزينة المحدد غير موجود أو أن رقمه غير صالح.") from None
     if treasury_account.company_id != cycle.company_id or not treasury_account.is_active:
         raise ValidationError("حساب الخزينة غير نشط أو لا يتبع الشركة.")
     validate_account = treasury_account.account

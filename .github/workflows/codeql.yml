@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - feature/purchasing-completion
   pull_request:
     branches:
       - work/nexus-django-react-rebuild
+      - feature/inventory-completion
   schedule:
     - cron: "23 4 * * 1"
 

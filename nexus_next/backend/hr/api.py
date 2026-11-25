@@ -337,7 +337,7 @@ class EmployeeLoanViewSet(EmployeeScopedViewSet):
                     "account", "company__base_currency",
                 ).get(pk=treasury_account_id, company_id=employee.company_id)
             except (TreasuryAccount.DoesNotExist, TypeError, ValueError):
-                raise ValidationError({"treasury_account": "حساب الخزينة غير موجود ضمن الشركة."})
+                raise ValidationError({"treasury_account": "حساب الخزينة غير موجود ضمن الشركة."}) from None
             if not treasury_account.is_active or treasury_account.account.nature != "asset":
                 raise ValidationError({"treasury_account": "اختر حساب خزينة نشطًا مرتبطًا بحساب أصول."})
             if treasury_account.branch_id and treasury_account.branch_id != employee.branch_id:

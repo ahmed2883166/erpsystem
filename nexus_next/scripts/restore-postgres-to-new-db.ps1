@@ -5,6 +5,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-PgTool([string]$Name) {
+    $allowed = @('pg_dump', 'pg_restore', 'psql', 'createdb')
+    if ($allowed -notcontains $Name) { throw "Unsupported PostgreSQL tool: $Name" }
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles 'PostgreSQL') }
+    if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) { $roots += (Join-Path $env:ProgramW6432 'PostgreSQL') }
+    $versions = @('16', '17', '18', '15', '14')
+    foreach ($root in $roots) {
+        foreach ($version in $versions) {
+            $candidate = Join-Path $root ($version + '\bin\' + $Name + '.exe')
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
+        }
+    }
+    throw "Trusted PostgreSQL $Name.exe was not found under Program Files\PostgreSQL. Install the official PostgreSQL client tools."
+}
 if (-not (Test-Path -LiteralPath $BackupFile -PathType Leaf)) { throw "Backup file does not exist: $BackupFile" }
 $BackupFile = (Resolve-Path -LiteralPath $BackupFile).Path
 if ($TargetDatabase -notmatch "^[a-zA-Z][a-zA-Z0-9_]{2,62}$") { throw "Target database name must be 3-63 letters, digits or underscores and start with a letter." }
@@ -33,21 +49,9 @@ if ($TargetDatabase -eq $Values["POSTGRES_DB"]) { throw "Restore target must be 
 $PgHost = if ($Values["POSTGRES_HOST"]) { $Values["POSTGRES_HOST"] } else { "127.0.0.1" }
 $PgPort = if ($Values["POSTGRES_PORT"]) { $Values["POSTGRES_PORT"] } else { "5432" }
 
-$PgRestore = Get-Command "pg_restore.exe" -ErrorAction SilentlyContinue
-$Createdb = Get-Command "createdb.exe" -ErrorAction SilentlyContinue
-$Psql = Get-Command "psql.exe" -ErrorAction SilentlyContinue
-if (-not $PgRestore -or -not $Createdb -or -not $Psql) {
-    $PgRoot = Join-Path $env:ProgramFiles "PostgreSQL"
-    $PgBin = if (Test-Path $PgRoot) { Get-ChildItem $PgRoot -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName "bin" } | Where-Object { (Test-Path (Join-Path $_ "pg_restore.exe")) -and (Test-Path (Join-Path $_ "createdb.exe")) -and (Test-Path (Join-Path $_ "psql.exe")) } | Select-Object -First 1 } else { $null }
-    if (-not $PgBin) { throw "PostgreSQL pg_restore.exe, createdb.exe and psql.exe were not found in PATH or Program Files." }
-    $PgRestorePath = Join-Path $PgBin "pg_restore.exe"
-    $CreatedbPath = Join-Path $PgBin "createdb.exe"
-    $PsqlPath = Join-Path $PgBin "psql.exe"
-} else {
-    $PgRestorePath = $PgRestore.Source
-    $CreatedbPath = $Createdb.Source
-    $PsqlPath = $Psql.Source
-}
+$PgRestorePath = Get-PgTool "pg_restore"
+$CreatedbPath = Get-PgTool "createdb"
+$PsqlPath = Get-PgTool "psql"
 
 $DecryptedTemp = $null
 $RestoreSource = $BackupFile

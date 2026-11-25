@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - fix/audit-performance-and-owner-toolkit-2026-11
     paths:
       - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
       - "nexus_next/backend/scripts/benchmark_posting_concurrency.py"
@@ -10,6 +11,7 @@ on:
       - "nexus_next/backend/config/settings.py"
       - "nexus_next/backend/requirements.txt"
       - "nexus_next/backend/accounting/api.py"
+      - "nexus_next/backend/accounting/services.py"
       - "nexus_next/backend/accounting/tests*.py"
       - "nexus_next/backend/accounting/reconciliation.py"
       - "nexus_next/backend/sales/api.py"
@@ -57,6 +59,10 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       ALLOW_BENCHMARK_DATABASE: "1"
+      # Isolated candidate profile: 16MB plus one parallel worker.
+      # The application default remains 32MB / zero workers unless explicitly configured.
+      ADMRAIL_REPORT_WORK_MEM: "16MB"
+      ADMRAIL_REPORT_PARALLEL_WORKERS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

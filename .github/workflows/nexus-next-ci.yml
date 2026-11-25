@@ -4,9 +4,14 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - feature/purchasing-completion
+      - feature/inventory-completion
+      - fix/audit-performance-and-owner-toolkit-2026-11
+      - fix/purchasing-partial-invoices-safe
   pull_request:
     branches:
       - work/nexus-django-react-rebuild
+      - feature/inventory-completion
 
 jobs:
   backend:
@@ -49,7 +54,7 @@ jobs:
           python -m pip install pip-audit
           pip-audit -r requirements.txt
       - name: Enforce high-signal Ruff checks
-        run: ruff check . --select F841,F401,BLE001,B023 --output-format concise
+        run: ruff check . --select F841,F401,F811,BLE001,B023,B904 --output-format concise
       - run: python manage.py check
       - run: python manage.py makemigrations --check --dry-run core accounts companies accounting customers inventory suppliers purchasing sales treasury assets audit approvals hr
       - run: python manage.py migrate --noinput
@@ -183,6 +188,7 @@ jobs:
             Get-Item nexus_next/run-admrail-lan.ps1
             Get-Item nexus_next/start-production.ps1
             Get-Item nexus_next/configure-admrail-lan.ps1
+            Get-Item nexus_next/Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1
             Get-Item nexus_next/scripts/Remove-Old-Admrail-Database.ps1
           )
           foreach ($script in $scripts) {

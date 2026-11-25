@@ -98,13 +98,45 @@ export type Customer = {
 };
 export type PurchaseOrder = {
   id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string;
-  order_number: string; order_date: string; expected_date: string | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
+  order_number: string; order_date: string; expected_date: string | null; grand_total: string; approval_status: "pending" | "approved" | "rejected" | "superseded" | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
   notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string;
     received_quantity: string; remaining_quantity: string; unit_price: string; tax_rate: string }[];
   created_at: string; confirmed_at: string | null;
 };
+export type PurchaseRequisition = {
+  id: number; company: number; request_number: string; request_date: string; required_date: string | null;
+  department: string; purpose: string; notes: string;
+  status: "draft" | "submitted" | "approved" | "rejected" | "converted" | "cancelled";
+  requested_by: number; requested_by_name: string; reviewed_by: number | null; reviewed_by_name: string | null;
+  reviewed_at: string | null; review_note: string; converted_order: number | null;
+  line_items: { id: number; product: number; product_code: string; product_name: string;
+    requested_quantity: string; estimated_unit_price: string | null; notes: string }[];
+  created_at: string;
+};
+
+export type PurchaseRFQ = {
+  id: number; company: number; source_requisition: number | null; rfq_number: string; issue_date: string; closing_date: string;
+  status: "draft" | "open" | "closed" | "awarded" | "cancelled"; terms: string;
+  line_items: {id:number;product:number;product_code:string;product_name:string;quantity:string;notes:string}[];
+  supplier_list: {id:number;code:string;name:string;status:string}[];
+  awarded_quotation: number | null; converted_order: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
+};
+
+export type GRNIAgingReport = {
+  company:number; as_of:string; grand_total:string;
+  aging: { "0_30":string; "31_60":string; "61_90":string; over_90:string };
+  monthly_summary:{month:string;amount:string}[];
+  rows:{receipt_id:number;receipt_number:string;receipt_date:string;age_days:number;aging_bucket:string;supplier_id:number;supplier_name:string;warehouse_id:number;warehouse_name:string;branch_id:number|null;amount:string;invoiced_amount:string;invoice_status:string;invoice_number:string|null}[];
+};
+
+export type SupplierQuotation = {
+  id:number; rfq:number; supplier:number; supplier_name:string; quotation_number:string; quotation_date:string;
+  valid_until:string; delivery_days:number; payment_terms:string; notes:string; status:"submitted"|"withdrawn";
+  line_items:{id:number;rfq_line:number;product_code:string;product_name:string;quantity:string;unit_price:string;discount_percent:string;tax_rate:string;net_amount:string;tax_amount:string;total_amount:string}[];
+  total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
+};
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
-export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; billed_quantity: string; receipt_quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
 // قراءة رمز CSRF من ملفات تعريف الارتباط لاستخدامه في الطلبات التي تغيّر البيانات.
 function csrfToken(): string { const item = document.cookie.split("; ").find((part) => part.startsWith("csrftoken=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
@@ -149,22 +181,38 @@ export type SupplierRefund = {
 export type SupplierStatement = {
   company: number; supplier: number; supplier_name: string; date_from: string | null; date_to: string | null;
   opening_balance: string; closing_balance: string;
-  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return" | "supplier_return_reversal" | "supplier_refund"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
+  rows: { date: string; document_type: "invoice" | "payment" | "supplier_return" | "supplier_return_reversal" | "supplier_refund" | "asset_invoice" | "asset_payment"; document_number: string; description: string; debit: string; credit: string; balance: string }[];
 };
 export type SupplierAging = {
   company: number; as_of: string;
   totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
   suppliers: { supplier: number; supplier_code: string; supplier_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
-    invoices: { invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; balance_due: string }[] }[];
+    invoices: { invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; balance_due: string; document_type?: "asset_purchase_invoice"; asset_name?: string }[] }[];
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
+  requisitions: (companyId: number) => request<PurchaseRequisition[]>(`/api/purchasing/requisitions/?company=${companyId}&ordering=-request_date`),
+  createRequisition: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>("/api/purchasing/requisitions/", { method: "POST", body: JSON.stringify(payload) }); },
+  submitRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/submit/`, { method: "POST" }); },
+  reviewRequisition: async (id: number, decision: "approve" | "reject", note = "") => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/review/`, { method: "POST", body: JSON.stringify({ decision, note }) }); },
+  convertRequisition: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<{ requisition: PurchaseRequisition; purchase_order_id: number }>(`/api/purchasing/requisitions/${id}/convert/`, { method: "POST", body: JSON.stringify(payload) }); },
+  cancelRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/cancel/`, { method: "POST" }); },
+
+  grniAging: (companyId:number, asOf:string) => request<GRNIAgingReport>(`/api/purchasing/receipts/grni-aging/?company=${companyId}&as_of=${asOf}`),
+  rfqs: (companyId: number) => request<PurchaseRFQ[]>(`/api/purchasing/rfqs/?company=${companyId}&ordering=-issue_date`),
+  quotations: (companyId: number) => request<SupplierQuotation[]>(`/api/purchasing/quotations/?rfq__company=${companyId}&ordering=-quotation_date`),
+  createRFQ: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRFQ>("/api/purchasing/rfqs/", { method:"POST", body:JSON.stringify(payload) }); },
+  openRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/open/`, {method:"POST"}); },
+  closeRFQ: async (id:number) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/close/`, {method:"POST"}); },
+  awardRFQ: async (id:number, quotation:number, reason:string) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/award/`, {method:"POST",body:JSON.stringify({quotation,reason})}); },
+  convertAward: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<{rfq:PurchaseRFQ;purchase_order_id:number}>(`/api/purchasing/rfqs/${id}/convert-award/`,{method:"POST",body:JSON.stringify(payload)}); },
+  createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
   createOrder: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>("/api/purchasing/orders/", { method: "POST", body: JSON.stringify(payload) }); },
   // تأكيد أمر الشراء المحدد للانتقال إلى مرحلة التنفيذ.
-  confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
+  confirmOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder | {status:"pending_approval";detail:string;approval_request_id:number;order:PurchaseOrder}>(`/api/purchasing/orders/${id}/confirm/`, { method: "POST" }); },
   // إلغاء أمر شراء مسودة أو معتمد قبل تسجيل أي استلام.
   cancelOrder: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseOrder>(`/api/purchasing/orders/${id}/cancel/`, { method: "POST" }); },
 
@@ -532,7 +580,7 @@ export const api = {
 
 export type InventoryUnit = { id: number; company: number; code: string; name_ar: string; symbol: string; decimal_places: number; is_active: boolean };
 export type InventoryCategory = { id: number; company: number; code: string; name_ar: string; parent: number | null; is_active: boolean };
-export type Product = { id: number; company: number; category: number | null; category_name: string | null; unit: number; unit_name: string; code: string; barcode: string; name_ar: string; name_en: string; product_type: "goods" | "service"; purchase_price: string; sale_price: string; costing_method: string; min_stock: string; track_expiry: boolean; is_active: boolean };
+export type Product = { id: number; company: number; category: number | null; category_name: string | null; unit: number; unit_name: string; code: string; barcode: string; name_ar: string; name_en: string; product_type: "goods" | "service"; stock_class: "raw_material" | "finished_goods" | "operating_supplies" | "spare_parts" | null; purchase_price: string; sale_price: string; costing_method: string; min_stock: string; track_expiry: boolean; is_active: boolean };
 export type Warehouse = { id: number; company: number; branch: number | null; branch_code: string; code: string; name_ar: string; address: string; is_active: boolean };
 // واجهات تعريفات المخزون: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const inventoryApi = {
@@ -566,16 +614,46 @@ export const inventoryApi = {
 
 export type WarehouseProductSetting = { id: number; product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; min_stock: string; is_active: boolean; updated_at: string };
 export type InventoryLocation = { id: number; warehouse: number; warehouse_name: string; code: string; name_ar: string; location_type: "floor" | "area" | "rack" | "bin"; parent: number | null; is_active: boolean };
+export type InventoryCountLine = {
+  id: number; count: number; product: number; product_code: string; product_name: string; unit_name: string;
+  location: number | null; location_name: string | null; expiry_date: string | null;
+  system_quantity: string; system_value: string; counted_quantity: string | null; variance_quantity: string | null;
+  adjustment_unit_cost: string; notes: string; counted_by: number | null; counted_by_name: string | null;
+  counted_at: string | null; created_at: string; updated_at: string;
+};
+export type InventoryCount = {
+  id: number; company: number; warehouse: number; warehouse_name: string; count_number: string;
+  count_date: string; status: "draft" | "posted" | "cancelled"; notes: string;
+  lines: InventoryCountLine[]; lines_count: number; created_by: number | null; created_by_name: string | null;
+  posted_by: number | null; posted_by_name: string | null; posted_at: string | null;
+  gain_movement: number | null; gain_movement_number: string | null;
+  loss_movement: number | null; loss_movement_number: string | null;
+  created_at: string; updated_at: string;
+};
 
 
 export type StockMovementLine = { id: number; product: number; product_code: string; product_name: string; source_location: number | null; source_location_name: string | null; destination_location: number | null; destination_location_name: string | null; expiry_date: string | null; quantity: string; unit_cost: string; cost_amount: string; adjustment_direction: "in" | "out" | "" };
 export type StockMovement = {
-  id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "sup_return" | "sup_rev" | "transfer" | "adjustment";
+  id: number; company: number; movement_number: string; movement_type: "receipt" | "issue" | "sup_return" | "sup_rev" | "sal_rev" | "transfer" | "adjustment"; adjustment_reason: "count" | "damage" | "expired" | "write_off" | "other" | "";
   movement_date: string; source_warehouse: number | null; source_warehouse_name: string | null;
   destination_warehouse: number | null; destination_warehouse_name: string | null;
   status: "draft" | "posted"; notes: string; lines: StockMovementLine[]; journal_entries: { id: number; entry_number: string; branch_code: string; status: string }[]; created_at: string; posted_at: string | null;
 };
-export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[] };
+export type InventoryStockAging = {
+  company: number; branch: number | null; as_of: string;
+  summary: Record<"active" | "slow" | "very_slow" | "stagnant" | "unknown", number>;
+  total_rows: number;
+  rows: { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; quantity: string; value: string; last_movement: string | null; age_days: number | null; age_band: "active" | "slow" | "very_slow" | "stagnant" | "unknown" }[];
+  truncated: boolean; scope_note: string;
+};
+export type StockCard = { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; date_from: string | null; date_to: string | null; opening_quantity: string; opening_value: string; closing_quantity: string; closing_value: string; rows: { date: string; posted_at: string | null; movement_number: string; movement_type: string; direction: "in" | "out"; quantity_in: string; quantity_out: string; unit_cost: string; value_in: string; value_out: string; balance_quantity: string; balance_value: string }[]; pagination: { page: number; page_size: number; total_rows: number; total_pages: number; has_next: boolean; has_previous: boolean } };
+export type InventoryCostAging = {
+  company: number; branch: number | null; branch_name: string; as_of: string; basis: string; costing_method: "FIFO";
+  totals: { layers: number; quantity: string; value: string };
+  buckets: Record<"active" | "slow" | "very_slow" | "stagnant", { layers: number; quantity: string; value: string }>;
+  rows: { id: number; product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; location_name: string; source_movement_number: string; receipt_date: string; age_days: number; quantity_remaining: string; unit_cost: string; layer_value: string; expiry_date: string | null; expiry_status: "none" | "expired" | "expiring" | "valid" }[];
+  truncated: boolean; untraceable_legacy_layers_count: number; scope_branch_ids: number[]; scope_note: string;
+};
 export type InventoryValuationIntegrity = {
   company: number; branch: number | null; branch_name: string; scope_branch_ids: number[];
   fifo_mismatch_count: number;
@@ -592,7 +670,24 @@ export type StockBalance = {
 // واجهات حركات المخزون وتقاريره: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const stockApi = {
   // جلب حركات المخزون مرتبة من الأحدث.
-  movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/?company=${companyId}&ordering=-movement_date`),
+  movements: (companyId: number) => request<StockMovement[]>(`/api/inventory/movements/recent/?company=${companyId}&limit=100`),
+  // تحليل أعمار الحركة من قاعدة البيانات دون تنزيل سجل الحركات الكامل.
+  stockAging: (companyId: number, branchId?: number) => request<InventoryStockAging>(`/api/inventory/balances/stock-aging/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
+  // جلب مستندات الجرد الفعلي للشركة.
+  counts: (companyId: number) => request<InventoryCount[]>(`/api/inventory/counts/?company=${companyId}&ordering=-count_date`),
+  // بدء جرد جديد وأخذ لقطة من أرصدة المخزن الحالية.
+  createCount: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>("/api/inventory/counts/", { method: "POST", body: JSON.stringify(payload) }); },
+  // إدخال صنف ظهر أثناء العد ولم يكن له رصيد دفتري.
+  createCountLine: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCountLine>("/api/inventory/count-lines/", { method: "POST", body: JSON.stringify(payload) }); },
+  // حفظ الكمية الفعلية وتكلفة الزيادة وملاحظات بند الجرد.
+  updateCountLine: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCountLine>(`/api/inventory/count-lines/${id}/`, { method: "PATCH", body: JSON.stringify(payload) }); },
+  // حذف بند إضافي أُدخل أثناء الجرد ولم يكن ضمن لقطة رصيد الدفاتر.
+  removeExtraCountLine: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<{ detail: string }>(`/api/inventory/count-lines/${id}/remove/`, { method: "POST" }); },
+  // ترحيل فروق الجرد بعد التأكد من عدم تغير المخزون منذ أخذ اللقطة.
+  postCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>(`/api/inventory/counts/${id}/post-count/`, { method: "POST" }); },
+  // إلغاء مستند جرد مسودة.
+  cancelCount: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<InventoryCount>(`/api/inventory/counts/${id}/cancel/`, { method: "POST" }); },
+
   // جلب أرصدة الأصناف حسب المخازن.
   balances: (companyId: number) => request<StockBalance[]>(`/api/inventory/balances/?warehouse__company=${companyId}&ordering=product__code`),
   // إنشاء مستند حركة مخزنية.
@@ -602,9 +697,10 @@ export const stockApi = {
   // جلب تقرير مطابقة قيمة المخزون مع الحسابات.
   reconciliation: (companyId: number, branchId?: number) => request<InventoryReconciliation>(`/api/inventory/balances/reconciliation/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب فحص سلامة تقييم المخزون والحركات المرتبطة.
+  costAging: (companyId: number, branchId?: number) => request<InventoryCostAging>(`/api/inventory/balances/cost-aging/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   valuationIntegrity: (companyId: number, branchId?: number) => request<InventoryValuationIntegrity>(`/api/inventory/balances/valuation-integrity/?company=${companyId}${branchId ? `&branch=${branchId}` : ""}`),
   // جلب كارت الصنف وحركاته داخل مخزن وفترة محددين.
-  stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
+  stockCard: (productId: number, warehouseId: number, dateFrom: string, dateTo: string, page = 1, pageSize = 50) => request<StockCard>(`/api/inventory/movements/stock-card/?product=${productId}&warehouse=${warehouseId}&page=${page}&page_size=${pageSize}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
 };
 
 
@@ -642,7 +738,7 @@ export type SalesQuotation = {
 };
 export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; movement_status:string; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;cost_amount:string}[]; created_at:string; posted_at:string|null };
 
-export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
+export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_purchase_order_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
   delivery_line_id: number; product_id: number; product_code: string; product_name: string;
   quantity: string; unit_price: string; tax_code_id: number | null; tax_code: string | null;
@@ -659,8 +755,9 @@ export type SalesInvoiceApproval = {
 };
 export type FinancialApprovalRequest = {
   id: number; company: number;
-  document_type: "purchase_invoice" | "supplier_payment" | "treasury_payment";
-  purchase_invoice: number | null; supplier_payment: number | null; treasury_transaction: number | null;
+  document_type: "purchase_invoice" | "purchase_order" | "supplier_payment" | "treasury_payment" | "asset_purchase_invoice" | "asset_supplier_payment";
+  purchase_invoice: number | null; purchase_order: number | null; supplier_payment: number | null; treasury_transaction: number | null;
+  asset_purchase_invoice: number | null; asset_supplier_payment: number | null;
   document_number: string; document_total: string;
   requested_by: number; requested_by_name: string; requested_limit: string; requested_amount: string;
   requested_snapshot: Record<string, unknown>;
@@ -800,20 +897,24 @@ export const importBankStatementCsv = async (id: number, file: File): Promise<{i
 
 
 export type FixedAsset = {
-  id: number; company: number; branch: number; code: string; name_ar: string; description: string;
-  acquisition_date: string; depreciation_start_date: string; original_cost: string; salvage_value: string;
+  id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;
+  acquisition_date: string; depreciation_start_date: string; original_cost: string; acquisition_net_amount: string|null; recoverable_tax_amount:string; nonrecoverable_tax_amount:string; acquisition_tax_code:number|null; salvage_value: string;
   useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
   acquisition_counter_account: number; disposal_gain_loss_account: number; disposal_loss_account: number | null; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
   status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null; disposal_journal: number | null; disposal_treasury_transaction: number | null;
-  accumulated_depreciation: string; net_book_value: string; created_at: string;
+  vendor_invoice_id: number | null; vendor_invoice_status: "draft" | "posted" | null;
+  vendor_payments: {id:number;payment_number:string;payment_date:string;amount:string;status:"draft"|"posted"|"reversed";journal_entry:number|null}[];
+  accumulated_depreciation: string; accumulated_impairment?:string; net_book_value: string; created_at: string;
 };
-export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; net_book_value: string;
-  rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[] };
+export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; accumulated_impairment:string; net_book_value: string;
+  rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];
+  impairments:{id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;status:string}[];
+  impairment_reversals:{id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;status:string}[] };
 export type AssetRegisterReport = {
   company:number;as_of:string;
-  totals:{original_cost:string;accumulated_depreciation:string;net_book_value_active:string;asset_count:number};
-  rows:{asset_id:number;code:string;name_ar:string;branch_id:number;branch_name:string;acquisition_date:string;original_cost:string;salvage_value:string;useful_life_months:number;accumulated_depreciation:string;net_book_value:string;status:"active"|"disposed";disposed_at:string|null;acquisition_journal:number|null;disposal_journal:number|null}[];
+  totals:{original_cost:string;accumulated_depreciation:string;accumulated_impairment:string;net_book_value_active:string;asset_count:number};
+  rows:{asset_id:number;code:string;name_ar:string;branch_id:number;branch_name:string;acquisition_date:string;original_cost:string;salvage_value:string;useful_life_months:number;accumulated_depreciation:string;accumulated_impairment:string;net_book_value:string;status:"active"|"disposed";disposed_at:string|null;acquisition_journal:number|null;disposal_journal:number|null}[];
 };
 export type AssetDepreciationReport = {company:number;date_from:string|null;date_to:string|null;total_depreciation:string;branch_totals:{branch_name:string;amount:string}[];rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;period_date:string;amount:string;is_partial_period:boolean;journal_entry:number}[]};
 export type AssetMovementReport = {company:number;date_from:string|null;date_to:string|null;rows:{asset_id:number;asset_code:string;asset_name:string;branch_name:string;date:string;event_type:string;event_label:string;amount:string;journal_entry:number|null;treasury_transaction:number|null}[]};
@@ -823,6 +924,9 @@ export type AssetAccountReconciliation = {
   cost_accounts:AssetReconciliationRow[];
   accumulated_depreciation_accounts:AssetReconciliationRow[];
   depreciation_expense_accounts:AssetReconciliationRow[];
+  accumulated_impairment_accounts:AssetReconciliationRow[];
+  asset_expense_accounts:(AssetReconciliationRow & {expected_depreciation:string;expected_impairment:string})[];
+  impairment_reversal_income_accounts?:AssetReconciliationRow[];
   is_reconciled:boolean;difference_count:number;note:string;
 };
 export type AssetDepreciationRunResult = {
@@ -862,10 +966,40 @@ export const fixedAssetsApi = {
   },
   // إنشاء بطاقة أصل ثابت جديدة.
   create: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<FixedAsset>("/api/assets/fixed-assets/", {method:"POST",body:JSON.stringify(payload)}); },
+  // تسجيل فاتورة مورد مباشرة للأصل مع معالجة ضريبة المدخلات.
+  purchaseInvoice: async (id:number, payload:{supplier:number;invoice_number:string;invoice_date:string;net_amount:string;tax_code:number|null;fiscal_year:number}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;asset:number;invoice_number:string;status:"draft"|"posted";approval_required?:boolean;approval_request?:number;grand_total:string;journal_entry:number|null;asset_cost?:string}>(`/api/assets/fixed-assets/${id}/purchase-invoice/`, {method:"POST",body:JSON.stringify(payload)});
+  },
+  // إنشاء سند سداد مرتبط بفاتورة الأصل.
+  supplierPayment: async (id:number, payload:{payment_number:string;payment_date:string;payment_account:number;amount:string;reference?:string}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;invoice:number;payment_number:string;status:"draft"|"posted";approval_required?:boolean;approval_request?:number;amount:string;journal_entry:number|null}>(`/api/assets/fixed-assets/${id}/supplier-payment/`, {method:"POST",body:JSON.stringify(payload)});
+  },
+  // ترحيل فاتورة أصل بعد الموافقة المالية.
+  postPurchaseInvoice: async (id:number) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;status:"posted";journal_entry:number;grand_total:string}>(`/api/assets/fixed-assets/${id}/post-purchase-invoice/`, {method:"POST"});
+  },
+  // ترحيل سند سداد أصل بعد الموافقة المالية.
+  postSupplierPayment: async (id:number, payment:number) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;status:"posted";journal_entry:number;amount:string}>(`/api/assets/fixed-assets/${id}/post-supplier-payment/`, {method:"POST",body:JSON.stringify({payment})});
+  },
   // احتساب وترحيل إهلاك الأصل عن الفترة والسنة المالية.
   depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
-  // جلب جدول الإهلاك التفصيلي للأصل.
+  // جلب جدول الإهلاك والانخفاض والقيمة الدفترية للأصل.
   schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
+  // إثبات خسارة انخفاض القيمة بعد تحديد القيمة القابلة للاسترداد وحسابات القيد.
+  impair: async (id:number, payload:{impairment_date:string;recoverable_amount:string;impairment_expense_account:number;accumulated_impairment_account:number;fiscal_year:number}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;asset_id:number;impairment_date:string;carrying_amount_before:string;recoverable_amount:string;impairment_loss:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model";oci_note:string}>(`/api/assets/fixed-assets/${id}/impair/`, {method:"POST",body:JSON.stringify(payload)});
+  },
+  // عكس خسارة انخفاض القيمة وفق سقف IAS 36 للقيمة الدفترية الافتراضية.
+  reverseImpairment: async (id:number, payload:{reversal_date:string;recoverable_amount:string;reversal_income_account:number;fiscal_year:number}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<{id:number;asset_id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model"}>(`/api/assets/fixed-assets/${id}/reverse-impairment/`, {method:"POST",body:JSON.stringify(payload)});
+  },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
   dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
 };

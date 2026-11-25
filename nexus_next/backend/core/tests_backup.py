@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -66,9 +66,15 @@ class BackupConfigurationApiTests(TestCase):
                 )
 
             with patch("core.backup_api.sys.platform", "win32"), patch(
+                "core.backup_api._powershell_executable",
+                return_value=r"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            ), patch(
                 "core.backup_api.subprocess.run", side_effect=run_script,
-            ):
+            ) as run_process:
                 response = self.client.post(self.url, {}, format="json")
+            command = run_process.call_args.args[0]
+            self.assertTrue(PureWindowsPath(command[0]).is_absolute())
+            self.assertEqual(PureWindowsPath(command[0]).name.lower(), "powershell.exe")
             self.assertEqual(response.status_code, 201, response.data)
             self.assertEqual(BackupRun.objects.count(), 1)
             run = BackupRun.objects.get()

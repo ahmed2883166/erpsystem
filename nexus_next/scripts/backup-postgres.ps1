@@ -1,5 +1,21 @@
 $ErrorActionPreference = "Stop"
 
+function Get-PgTool([string]$Name) {
+    $allowed = @('pg_dump', 'pg_restore', 'psql', 'createdb')
+    if ($allowed -notcontains $Name) { throw "Unsupported PostgreSQL tool: $Name" }
+    $roots = @()
+    if ($env:ProgramFiles) { $roots += (Join-Path $env:ProgramFiles 'PostgreSQL') }
+    if ($env:ProgramW6432 -and $env:ProgramW6432 -ne $env:ProgramFiles) { $roots += (Join-Path $env:ProgramW6432 'PostgreSQL') }
+    $versions = @('16', '17', '18', '15', '14')
+    foreach ($root in $roots) {
+        foreach ($version in $versions) {
+            $candidate = Join-Path $root ($version + '\bin\' + $Name + '.exe')
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Resolve-Path -LiteralPath $candidate).Path }
+        }
+    }
+    throw "Trusted PostgreSQL $Name.exe was not found under Program Files\PostgreSQL. Install the official PostgreSQL client tools."
+}
+
 # Share the same host-wide lock used by the Django backup API. This prevents
 # Task Scheduler and a manual/API backup from running against the same files.
 $BackupLockPath = Join-Path ([System.IO.Path]::GetTempPath()) "admrail-backup-operation.lock"
@@ -76,18 +92,8 @@ foreach ($Key in @("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD")) {
 $PgHost = if ($Values["POSTGRES_HOST"]) { $Values["POSTGRES_HOST"] } else { "127.0.0.1" }
 $PgPort = if ($Values["POSTGRES_PORT"]) { $Values["POSTGRES_PORT"] } else { "5432" }
 
-$PgDump = Get-Command "pg_dump.exe" -ErrorAction SilentlyContinue
-$PgRestore = Get-Command "pg_restore.exe" -ErrorAction SilentlyContinue
-if (-not $PgDump -or -not $PgRestore) {
-    $PgRoot = Join-Path $env:ProgramFiles "PostgreSQL"
-    $PgBin = if (Test-Path $PgRoot) { Get-ChildItem $PgRoot -Directory | Sort-Object Name -Descending | ForEach-Object { Join-Path $_.FullName "bin" } | Where-Object { (Test-Path (Join-Path $_ "pg_dump.exe")) -and (Test-Path (Join-Path $_ "pg_restore.exe")) } | Select-Object -First 1 } else { $null }
-    if (-not $PgBin) { throw "PostgreSQL pg_dump.exe and pg_restore.exe were not found in PATH or Program Files." }
-    $PgDumpPath = Join-Path $PgBin "pg_dump.exe"
-    $PgRestorePath = Join-Path $PgBin "pg_restore.exe"
-} else {
-    $PgDumpPath = $PgDump.Source
-    $PgRestorePath = $PgRestore.Source
-}
+$PgDumpPath = Get-PgTool "pg_dump"
+$PgRestorePath = Get-PgTool "pg_restore"
 
 $DailyRoot = Join-Path $BackupRoot "daily"
 $MonthlyRoot = Join-Path $BackupRoot "monthly"

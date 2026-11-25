@@ -401,7 +401,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
                         )
                     )
                 ):
-                    raise PermissionDenied("لا تملك صلاحية الوصول إلى تسوية هذا الحساب البنكي.")
+                    raise PermissionDenied("لا تملك صلاحية الوصول إلى تسوية هذا الحساب البنكي.") from None
             raise
 
     def perform_create(self, serializer):
@@ -460,7 +460,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             dialect = csv.Sniffer().sniff(raw[:4096], delimiters=",;\t")
             reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
         except (UnicodeDecodeError, csv.Error):
-            raise ValidationError({"file": "تعذر قراءة الملف. احفظه بصيغة CSV UTF-8."})
+            raise ValidationError({"file": "تعذر قراءة الملف. احفظه بصيغة CSV UTF-8."}) from None
         if not reader.fieldnames:
             raise ValidationError({"file": "الملف فارغ أو لا يحتوي على عناوين أعمدة."})
         headers = {str(h).strip().lower(): h for h in reader.fieldnames if h}
@@ -539,7 +539,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             line = BankStatementLine.objects.select_for_update().get(pk=request.data.get("line_id"), reconciliation=recon)
             doc = TreasuryTransaction.objects.select_for_update().get(pk=request.data.get("transaction_id"), company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date)
         except (BankStatementLine.DoesNotExist, TreasuryTransaction.DoesNotExist, ValueError, TypeError):
-            raise ValidationError("سطر كشف البنك أو الحركة المحاسبية غير موجودة.")
+            raise ValidationError("سطر كشف البنك أو الحركة المحاسبية غير موجودة.") from None
         if not can_access_branch(request.user, doc.branch_id, doc.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحركة المحاسبية.")
         if recon.bank_account.branch_id and doc.branch_id != recon.bank_account.branch_id:
@@ -568,7 +568,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         try:
             line = BankStatementLine.objects.get(pk=request.data.get("line_id"), reconciliation=recon)
         except (BankStatementLine.DoesNotExist, ValueError, TypeError):
-            raise ValidationError("سطر كشف البنك غير موجود.")
+            raise ValidationError("سطر كشف البنك غير موجود.") from None
         line.matched_transaction = None
         line.matched_at = None
         line.save(update_fields=("matched_transaction", "matched_at"))

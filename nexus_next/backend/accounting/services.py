@@ -9,7 +9,7 @@ from django.utils import timezone
 from companies.models import FiscalYear
 from companies.access import acquire_fiscal_year_lock, ensure_fiscal_period_open
 from audit.models import AuditEvent
-from .models import JournalEntry
+from .models import ChartOfAccount, JournalEntry
 
 ACCOUNT_ROLE_NATURES = {
     "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
@@ -48,7 +48,10 @@ def get_account_for_role(company, role):
 @transaction.atomic
 def post_journal(entry_id: int, actor=None) -> JournalEntry:
     """ترحيل القيد اليومي بعد التحقق من توازنه وصلاحية حساباته."""
-    entry = JournalEntry.objects.select_for_update().select_related(
+    # Lock only the journal row. Locking select_related rows (company/branch/
+    # fiscal year) creates a lock cycle with FK KEY SHARE checks when the audit
+    # trail inserts its company/branch references during concurrent postings.
+    entry = JournalEntry.objects.select_for_update(of=("self",)).select_related(
         "company", "company__base_currency", "branch", "fiscal_year"
     ).get(pk=entry_id)
     # Shared transaction lock allows independent postings to proceed together,
@@ -69,6 +72,10 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
         raise ValidationError("لا يمكن الترحيل داخل سنة مالية مغلقة.")
     if not (fiscal_year.start_date <= entry.entry_date <= fiscal_year.end_date):
         raise ValidationError("تاريخ القيد خارج حدود السنة المالية المحددة.")
+    if entry.source_type == JournalEntry.Source.OPENING and entry.entry_date != fiscal_year.start_date:
+        raise ValidationError("القيد الافتتاحي يجب أن يكون بتاريخ بداية السنة المالية.")
+    if entry.source_type == JournalEntry.Source.CLOSING and entry.entry_date != fiscal_year.end_date:
+        raise ValidationError("قيد الإقفال يجب أن يكون بتاريخ نهاية السنة المالية.")
     ensure_fiscal_period_open(fiscal_year, entry.entry_date)
     if entry.branch.company_id != entry.company_id:
         raise ValidationError("الفرع لا يتبع شركة القيد.")
@@ -92,6 +99,12 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
             line.save(update_fields=("debit", "credit"))
         if line.account.company_id != entry.company_id:
             raise ValidationError("يوجد حساب لا يتبع شركة القيد.")
+        if entry.source_type == JournalEntry.Source.OPENING and line.account.nature not in (
+            ChartOfAccount.Nature.ASSET,
+            ChartOfAccount.Nature.LIABILITY,
+            ChartOfAccount.Nature.EQUITY,
+        ):
+            raise ValidationError("القيد الافتتاحي يقبل حسابات الأصول والالتزامات وحقوق الملكية فقط.")
         if not line.account.is_active or line.account.is_group or not line.account.allow_posting:
             raise ValidationError(f"الحساب {line.account.code} غير متاح للترحيل.")
         if line.debit < 0 or line.credit < 0 or ((line.debit > 0) == (line.credit > 0)):
@@ -166,7 +179,9 @@ def post_journal(entry_id: int, actor=None) -> JournalEntry:
 @transaction.atomic
 def reverse_operational_journal(entry_id: int, user, entry_date, expected_source: str) -> JournalEntry:
     """Create and post a full, linked reversal for an approved operational source document."""
-    original = JournalEntry.objects.select_for_update().select_related(
+    # Keep related rows readable without taking write locks on company/branch;
+    # the journal row alone protects this reversal workflow from duplicate work.
+    original = JournalEntry.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "fiscal_year"
     ).get(pk=entry_id)
     if original.status != JournalEntry.Status.POSTED or original.reversal_of_id:
@@ -177,6 +192,13 @@ def reverse_operational_journal(entry_id: int, user, entry_date, expected_source
         raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
     if entry_date < original.entry_date:
         raise ValidationError("تاريخ القيد العكسي لا يجوز أن يسبق تاريخ القيد الأصلي.")
+
+    # IAS 36 reversals are capped by the carrying amount that would have
+    # existed without impairment. A generic full journal reversal cannot
+    # calculate that cap or revise the remaining depreciation basis safely.
+    from assets.models import AssetImpairment
+    if AssetImpairment.objects.filter(journal_entry=original).exists():
+        raise ValidationError("لا يمكن عكس خسارة انخفاض القيمة بعكس قيد عام؛ يلزم إجراء عكس مخصص وفق حدود IAS 36.")
 
     fiscal_year = FiscalYear.objects.filter(
         company=original.company,

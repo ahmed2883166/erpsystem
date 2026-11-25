@@ -5,6 +5,7 @@
 from contextlib import contextmanager
 from io import BytesIO
 from decimal import Decimal
+import os
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import DatabaseError, connection, transaction
@@ -31,20 +32,31 @@ from .account_imports import inspect_account_workbook, import_account_rows
 from treasury.models import TreasuryFxRevaluation, TreasuryTransaction
 
 
+def _accounting_report_profile():
+    """Return a validated, opt-in PostgreSQL report profile; defaults stay unchanged."""
+    work_mem = os.environ.get("ADMRAIL_REPORT_WORK_MEM", "32MB").upper()
+    parallel_workers = os.environ.get("ADMRAIL_REPORT_PARALLEL_WORKERS", "0")
+    if work_mem not in {"8MB", "16MB", "32MB"}:
+        raise ValueError("ADMRAIL_REPORT_WORK_MEM must be 8MB, 16MB, or 32MB.")
+    if parallel_workers not in {"0", "1", "2"}:
+        raise ValueError("ADMRAIL_REPORT_PARALLEL_WORKERS must be 0, 1, or 2.")
+    return work_mem, int(parallel_workers)
+
+
 @contextmanager
 def _accounting_report_work_mem():
     """Give large PostgreSQL report aggregates a bounded memory budget per request."""
     if connection.vendor != "postgresql":
         yield
         return
-    # Keep report memory bounded per request and avoid multiplying hash/sort
-    # memory across PostgreSQL parallel workers under concurrent LAN load.
-    # The benchmark showed large hash-join spills at 8MB with parallel workers;
-    # validate this 16MB single-worker profile against the same load test.
+    # The default profile remains 32MB with no parallel workers. Environment
+    # overrides are opt-in and are used for isolated benchmark comparisons only.
+    work_mem, parallel_workers = _accounting_report_profile()
     with transaction.atomic():
         with connection.cursor() as cursor:
-            cursor.execute("SET LOCAL work_mem = '16MB'")
-            cursor.execute("SET LOCAL max_parallel_workers_per_gather = 0")
+            cursor.execute(f"SET LOCAL work_mem = '{work_mem}'")
+            cursor.execute(f"SET LOCAL max_parallel_workers_per_gather = {parallel_workers}")
+            cursor.execute("SET LOCAL jit = off")
         yield
 
 
@@ -836,21 +848,29 @@ class JournalEntryViewSet(AccountingViewSet):
         current_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=as_of, end_date__gte=as_of
         ).order_by("-start_date").first()
-        has_current_year_opening = bool(current_year and JournalEntry.objects.filter(
-            company_id=company_id, fiscal_year=current_year,
-            status=JournalEntry.Status.POSTED,
-            source_type=JournalEntry.Source.OPENING,
-            entry_date__lte=as_of, branch__in=visible_branches,
-        ).exists())
-        posted_filter = Q(
-            journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-            journal_lines__entry__entry_date__lte=as_of,
-            journal_lines__entry__branch__in=visible_branches,
+        balance_branch_ids = list(visible_branches.values_list("pk", flat=True))
+        opening_snapshot_branch_ids = set()
+        if current_year:
+            opening_snapshot_branch_ids = set(JournalEntry.objects.filter(
+                company_id=company_id, fiscal_year=current_year,
+                status=JournalEntry.Status.POSTED,
+                source_type=JournalEntry.Source.OPENING,
+                entry_date__lte=as_of, branch_id__in=balance_branch_ids,
+            ).values_list("branch_id", flat=True).distinct())
+        # Opening snapshots are branch-specific: a branch without an opening
+        # journal must continue carrying its prior-year posted balances forward.
+        balance_scope = _branch_aware_balance_filter(
+            balance_branch_ids, opening_snapshot_branch_ids, as_of,
+            current_year.start_date if current_year else as_of,
+            prefix="journal_lines__entry__",
         )
-        # When a fiscal year has a posted opening journal, it is the brought-forward
-        # balance. Do not add the prior year's closing ledger movements a second time.
-        if has_current_year_opening:
-            posted_filter &= Q(journal_lines__entry__entry_date__gte=current_year.start_date)
+        posted_filter = (
+            Q(
+                journal_lines__entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+                journal_lines__entry__branch__in=visible_branches,
+            )
+            & balance_scope
+        )
         accounts = ChartOfAccount.objects.filter(company_id=company_id).annotate(
             debit_total=Sum("journal_lines__debit", filter=posted_filter),
             credit_total=Sum("journal_lines__credit", filter=posted_filter),
@@ -868,28 +888,65 @@ class JournalEntryViewSet(AccountingViewSet):
                 "debit_total": debit, "credit_total": credit, "balance": balance,
             })
             totals[account.nature] += balance
-        current_profit = Decimal("0")
-        if current_year and current_year.status == FiscalYear.Status.OPEN:
-            current_year_entries = JournalEntry.objects.filter(
-                company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-                entry_date__gte=current_year.start_date, entry_date__lte=as_of,
-                branch__in=visible_branches,
-            ).exclude(source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
-            current_year_lines = JournalLine.objects.filter(entry__in=current_year_entries)
-            rev = current_year_lines.filter(account__nature=ChartOfAccount.Nature.REVENUE).aggregate(
-                credit=Sum("credit"), debit=Sum("debit")
+        prior_unclosed_profit = Decimal("0")
+        if current_year:
+            prior_lines = JournalLine.objects.filter(
+                entry__company_id=company_id,
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+                entry__entry_date__lt=current_year.start_date,
+                entry__branch__in=visible_branches,
+                account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+            ).exclude(entry__source_type=JournalEntry.Source.OPENING)
+            prior_totals = prior_lines.aggregate(
+                revenue_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                revenue_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                expense_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+                expense_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
             )
-            exp = current_year_lines.filter(account__nature=ChartOfAccount.Nature.EXPENSE).aggregate(
-                debit=Sum("debit"), credit=Sum("credit")
+            prior_unclosed_profit = (
+                (prior_totals["revenue_credit"] or Decimal("0"))
+                - (prior_totals["revenue_debit"] or Decimal("0"))
+                - (prior_totals["expense_debit"] or Decimal("0"))
+                + (prior_totals["expense_credit"] or Decimal("0"))
+            )
+        if prior_unclosed_profit:
+            sections["equity"].append({
+                "account_id": None, "code": "PRIOR-UNCLOSED-PROFIT",
+                "name_ar": "نتائج سنوات سابقة غير مقفلة",
+                "debit_total": Decimal("0"), "credit_total": Decimal("0"),
+                "balance": prior_unclosed_profit,
+            })
+            totals["equity"] += prior_unclosed_profit
+
+        # Derive the current-year result from the remaining posted P&L account
+        # balances. Including closing journals makes a properly closed branch
+        # contribute zero, while branches not yet closed retain their result.
+        current_profit = Decimal("0")
+        if current_year:
+            current_year_lines = JournalLine.objects.filter(
+                entry__company_id=company_id,
+                entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+                entry__entry_date__gte=current_year.start_date,
+                entry__entry_date__lte=as_of,
+                entry__branch__in=visible_branches,
+                account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+            ).exclude(entry__source_type=JournalEntry.Source.OPENING)
+            current_totals = current_year_lines.aggregate(
+                revenue_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                revenue_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+                expense_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+                expense_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
             )
             current_profit = (
-                (rev["credit"] or Decimal("0")) - (rev["debit"] or Decimal("0"))
-                - (exp["debit"] or Decimal("0")) + (exp["credit"] or Decimal("0"))
+                (current_totals["revenue_credit"] or Decimal("0"))
+                - (current_totals["revenue_debit"] or Decimal("0"))
+                - (current_totals["expense_debit"] or Decimal("0"))
+                + (current_totals["expense_credit"] or Decimal("0"))
             )
             if current_profit:
                 sections["equity"].append({
                     "account_id": None, "code": "CURRENT-PROFIT",
-                    "name_ar": "صافي ربح السنة حتى تاريخ الميزانية",
+                    "name_ar": "صافي ربح السنة غير المقفل حتى تاريخ الميزانية",
                     "debit_total": Decimal("0"), "credit_total": Decimal("0"),
                     "balance": current_profit,
                 })
@@ -898,7 +955,8 @@ class JournalEntryViewSet(AccountingViewSet):
             "company": company_id, "as_of": as_of,
             "assets": sections["asset"], "liabilities": sections["liability"], "equity": sections["equity"],
             "total_assets": totals["asset"], "total_liabilities": totals["liability"],
-            "total_equity": totals["equity"], "current_year_profit": current_profit,
+            "total_equity": totals["equity"], "prior_unclosed_profit": prior_unclosed_profit,
+            "current_year_profit": current_profit,
             "liabilities_and_equity": totals["liability"] + totals["equity"],
             "difference": totals["asset"] - totals["liability"] - totals["equity"],
         })
@@ -1160,6 +1218,39 @@ class JournalEntryViewSet(AccountingViewSet):
                 })
             opening_total += opening_balance
             movement_total += period_movement
+
+        # P&L balances from earlier periods remain part of equity until a
+        # closing journal transfers them. Closing entries are included so a
+        # properly closed year contributes zero; opening entries are excluded.
+        prior_result_lines = JournalLine.objects.filter(
+            entry__company_id=company_id,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            entry__entry_date__lt=date_from,
+            entry__branch__in=visible_branches,
+            account__nature__in=(ChartOfAccount.Nature.REVENUE, ChartOfAccount.Nature.EXPENSE),
+        ).exclude(entry__source_type=JournalEntry.Source.OPENING)
+        prior_result_totals = prior_result_lines.aggregate(
+            revenue_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+            revenue_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.REVENUE)),
+            expense_debit=Sum("debit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+            expense_credit=Sum("credit", filter=Q(account__nature=ChartOfAccount.Nature.EXPENSE)),
+        )
+        opening_unclosed_result = (
+            (prior_result_totals["revenue_credit"] or Decimal("0"))
+            - (prior_result_totals["revenue_debit"] or Decimal("0"))
+            - (prior_result_totals["expense_debit"] or Decimal("0"))
+            + (prior_result_totals["expense_credit"] or Decimal("0"))
+        )
+        if opening_unclosed_result:
+            account_rows.append({
+                "account_id": None, "code": "PRIOR-UNCLOSED-PROFIT",
+                "name_ar": "نتائج فترات سابقة غير مقفلة",
+                "opening_balance": opening_unclosed_result,
+                "period_movement": Decimal("0"),
+                "closing_balance_before_profit": opening_unclosed_result,
+            })
+            opening_total += opening_unclosed_result
+
         period_entries = JournalEntry.objects.filter(
             company_id=company_id, status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry_date__gte=date_from, entry_date__lte=date_to, branch__in=visible_branches,
@@ -1188,7 +1279,7 @@ class JournalEntryViewSet(AccountingViewSet):
         """إعداد التدفقات النقدية بالطريقة غير المباشرة مع إظهار فروق المطابقة."""
         from decimal import Decimal
         from django.db.models import Sum
-        from assets.models import AssetDepreciation, FixedAsset
+        from assets.models import AssetDepreciation, AssetImpairment, AssetImpairmentReversal, FixedAsset
         from treasury.models import TreasuryAccount, TreasuryTransaction
 
         company_raw = request.query_params.get("company")
@@ -1321,12 +1412,81 @@ class JournalEntryViewSet(AccountingViewSet):
                 "change": movement, "cash_flow_adjustment": adjustment,
             })
 
+        # Capital-asset invoices and their recoverable VAT are investing-related,
+        # not operating working-capital movements. Remove their net contribution
+        # from the indirect operating section; the actual cash settlement remains
+        # in investing cash flow through the linked treasury transaction.
+        from datetime import timedelta
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+
+        def asset_supplier_balance(as_of_date):
+            if as_of_date is None:
+                return Decimal("0")
+            invoices = AssetPurchaseInvoice.objects.filter(
+                company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+                journal_entry__status=JournalEntry.Status.POSTED,
+                invoice_date__lte=as_of_date, branch__in=visible_branches,
+            ).prefetch_related("payments")
+            balance = Decimal("0")
+            for invoice in invoices:
+                paid = sum((
+                    payment.amount for payment in invoice.payments.all()
+                    if payment.status == AssetSupplierPayment.Status.POSTED
+                    and payment.payment_date <= as_of_date
+                ), Decimal("0"))
+                balance += invoice.grand_total - paid
+            return balance
+
+        def asset_recoverable_input_vat(as_of_date):
+            if as_of_date is None:
+                return Decimal("0")
+            supplier_vat = AssetPurchaseInvoice.objects.filter(
+                company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+                journal_entry__status=JournalEntry.Status.POSTED,
+                invoice_date__lte=as_of_date, branch__in=visible_branches,
+            ).aggregate(total=Sum("recoverable_tax_amount"))["total"] or Decimal("0")
+            cash_asset_vat = FixedAsset.objects.filter(
+                company_id=company_id, acquisition_date__lte=as_of_date,
+                acquisition_journal__status=JournalEntry.Status.POSTED,
+                branch__in=visible_branches,
+            ).aggregate(total=Sum("recoverable_tax_amount"))["total"] or Decimal("0")
+            return supplier_vat + cash_asset_vat
+
+        opening_date = date_from - timedelta(days=1)
+        asset_ap_change = asset_supplier_balance(date_to) - asset_supplier_balance(opening_date)
+        asset_vat_change = asset_recoverable_input_vat(date_to) - asset_recoverable_input_vat(opening_date)
+        asset_capex_working_capital_offset = -asset_ap_change + asset_vat_change
+        operating_adjustments += asset_capex_working_capital_offset
+        working_capital.append({
+            "role": "fixed_asset_acquisition_non_cash_offset",
+            "account_code": None,
+            "account_name": "استبعاد مشتريات الأصول وضريبة مدخلاتها من رأس المال العامل التشغيلي",
+            "opening_balance": Decimal("0"),
+            "closing_balance": Decimal("0"),
+            "change": asset_ap_change - asset_vat_change,
+            "cash_flow_adjustment": asset_capex_working_capital_offset,
+        })
+
         depreciation_qs = AssetDepreciation.objects.filter(
             asset__company_id=company_id, period_date__gte=date_from, period_date__lte=date_to,
             journal_entry__status=JournalEntry.Status.POSTED,
         )
         depreciation_qs = depreciation_qs.filter(asset__branch__in=visible_branches)
         depreciation_addback = depreciation_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+
+        impairment_qs = AssetImpairment.objects.filter(
+            asset__company_id=company_id, impairment_date__gte=date_from, impairment_date__lte=date_to,
+            journal_entry__status=JournalEntry.Status.POSTED,
+            asset__branch__in=visible_branches,
+        )
+        impairment_addback = impairment_qs.aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+        impairment_reversal_qs = AssetImpairmentReversal.objects.filter(
+            asset__company_id=company_id, reversal_date__gte=date_from, reversal_date__lte=date_to,
+            journal_entry__status=JournalEntry.Status.POSTED, asset__branch__in=visible_branches,
+        )
+        impairment_reversal_deduction = impairment_reversal_qs.aggregate(
+            total=Sum("reversal_amount")
+        )["total"] or Decimal("0")
 
         disposals = FixedAsset.objects.filter(
             company_id=company_id, status=FixedAsset.Status.DISPOSED,
@@ -1387,7 +1547,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "cash_flow_adjustment": fx_working_capital_offset,
         })
         non_cash_adjustments = (
-            depreciation_addback + disposal_loss - disposal_gain + unrealized_fx_adjustment
+            depreciation_addback + impairment_addback - impairment_reversal_deduction + disposal_loss - disposal_gain + unrealized_fx_adjustment
         )
         operating_cash_flow = net_profit + operating_adjustments + non_cash_adjustments
 
@@ -1409,6 +1569,39 @@ class JournalEntryViewSet(AccountingViewSet):
         financing_cash_flow = cash_category_total(financing_rows)
         net_change = operating_cash_flow + investing_cash_flow + financing_cash_flow
 
+        non_cash_investing_transactions = []
+        non_cash_asset_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+            journal_entry__status=JournalEntry.Status.POSTED,
+            invoice_date__gte=date_from, invoice_date__lte=date_to,
+            branch__in=visible_branches,
+        ).select_related("asset", "supplier").prefetch_related("payments")
+        for invoice in non_cash_asset_invoices:
+            paid_in_period = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED
+                and date_from <= payment.payment_date <= date_to
+            ), Decimal("0"))
+            paid_by_end = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED
+                and payment.payment_date <= date_to
+            ), Decimal("0"))
+            non_cash_investing_transactions.append({
+                "document_type": "asset_purchase_invoice",
+                "invoice_number": invoice.invoice_number,
+                "asset_name": invoice.asset.name_ar,
+                "supplier_name": invoice.supplier.name_ar,
+                "recognition_date": invoice.invoice_date,
+                "gross_amount": invoice.grand_total,
+                "recoverable_tax": invoice.recoverable_tax_amount,
+                "nonrecoverable_tax": invoice.nonrecoverable_tax_amount,
+                "cash_paid_during_period": paid_in_period,
+                "unpaid_at_period_end": invoice.grand_total - paid_by_end,
+                "journal_entry": invoice.journal_entry_id,
+                "disclosure": "معاملة استثمارية غير نقدية عند الاعتراف؛ تظهر المدفوعات الفعلية ضمن التدفقات الاستثمارية.",
+            })
+
         treasury_accounts = TreasuryAccount.objects.filter(company_id=company_id)
         treasury_accounts = treasury_accounts.filter(Q(branch__isnull=True) | Q(branch__in=visible_branches))
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
@@ -1424,7 +1617,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "company": company_id, "branch": branch_id, "date_from": date_from, "date_to": date_to,
             "net_profit": net_profit,
             "non_cash_adjustments": {
-                "depreciation": depreciation_addback, "disposal_loss": disposal_loss,
+                "depreciation": depreciation_addback, "impairment_loss": impairment_addback, "impairment_reversal": impairment_reversal_deduction, "disposal_loss": disposal_loss,
                 "disposal_gain": disposal_gain,
                 "unrealized_fx_gain": unrealized_fx_gain,
                 "unrealized_fx_loss": unrealized_fx_loss,
@@ -1443,6 +1636,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "investing_transactions": list(investing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
+            "non_cash_investing_transactions": non_cash_investing_transactions,
             "financing_transactions": list(financing_rows.values(
                 "id", "transaction_date", "document_number", "description", "kind", "amount"
             ).order_by("transaction_date", "id")),
