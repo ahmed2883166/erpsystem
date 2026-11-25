@@ -523,8 +523,12 @@ class FixedAssetWorkflowTests(APITestCase):
         })
         self.assertEqual(direct_cash_flow.status_code, 200, direct_cash_flow.data)
         self.assertEqual(direct_cash_flow.data["investing_cash_flow"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["opening_cash_balance"], Decimal("0.0000"))
         self.assertEqual(direct_cash_flow.data["net_change_in_cash"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["closing_cash_balance"], Decimal("-120000.0000"))
         self.assertEqual(direct_cash_flow.data["ledger_cash_change"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["ledger_closing_cash_balance"], Decimal("-120000.0000"))
+        self.assertEqual(direct_cash_flow.data["closing_balance_difference"], Decimal("0.0000"))
         self.assertEqual(direct_cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
 
         reconciliation = self.client.get("/api/assets/fixed-assets/account-reconciliation/", {

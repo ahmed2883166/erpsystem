@@ -308,7 +308,12 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
   useEffect(() => { void load(); }, [companyId, branchId]);
   const money = (value: string) => formatMoney(value);
   const exportRows = report ? [
+    ["رصيد النقدية أول الفترة",report.opening_cash_balance,"",""],
     ...report.sections.map(x=>[x.label,x.cash_receipts,x.cash_payments,x.net_cash_flow]),
+    ["صافي التغير النقدي",report.net_change_in_cash,"",report.net_change_in_cash],
+    ["رصيد النقدية آخر الفترة",report.closing_cash_balance,"",""],
+    ["رصيد الأستاذ آخر الفترة",report.ledger_closing_cash_balance,"",""],
+    ["فرق رصيد الإقفال",report.closing_balance_difference,"",""],
     ...report.sections.flatMap(section=>section.details.map(x=>[`تفصيل — ${section.label} — ${x.counter_account_code||"بدون كود"} — ${x.counter_account_name}`,x.inflows,x.outflows,""])),
     ...report.non_cash_investing_transactions.map(x=>[`إفصاح غير نقدي — ${x.invoice_number} — ${x.asset_name}`,x.cash_paid_during_period,x.unpaid_at_period_end,x.gross_amount]),
   ] : [];
@@ -328,10 +333,16 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
         <b>صافي التغير النقدي: {money(report.net_change_in_cash)}</b>
       </div>
       <div className="asset-cashflow-totals">
-        <span>التغير النقدي بالأستاذ: {money(report.ledger_cash_change)}</span>
-        <b>فرق المطابقة: {money(report.reconciliation_difference)}</b>
+        <span>رصيد النقدية أول الفترة: {money(report.opening_cash_balance)}</span>
+        <b>رصيد النقدية آخر الفترة: {money(report.closing_cash_balance)}</b>
       </div>
-      {Number(report.reconciliation_difference)!==0 && <div className="error-banner">يوجد فرق بين التدفقات المباشرة وحركة حسابات النقدية والبنوك في الأستاذ؛ راجع الحركات غير المسجلة أو التصنيفات قبل اعتماد القائمة.</div>}
+      <div className="asset-cashflow-totals">
+        <span>رصيد الأستاذ آخر الفترة: {money(report.ledger_closing_cash_balance)}</span>
+        <span>التغير النقدي بالأستاذ: {money(report.ledger_cash_change)}</span>
+        <b>فرق مطابقة التدفقات: {money(report.reconciliation_difference)}</b>
+        <b>فرق رصيد الإقفال: {money(report.closing_balance_difference)}</b>
+      </div>
+      {(Number(report.reconciliation_difference)!==0 || Number(report.closing_balance_difference)!==0) && <div className="error-banner">يوجد فرق بين التدفقات المباشرة وأرصدة النقدية والبنوك في الأستاذ؛ راجع الحركات غير المسجلة أو التصنيفات قبل اعتماد القائمة.</div>}
       {!!report.uncategorized_counterparty_transactions.length && <div className="error-banner">توجد حركات نقدية بلا حساب مقابل؛ يلزم استكمال بياناتها قبل اعتماد القائمة.</div>}
       {report.sections.map(section=><section key={section.category}>
         <h3>{section.label}</h3>

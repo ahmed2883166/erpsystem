@@ -1722,19 +1722,38 @@ class JournalEntryViewSet(AccountingViewSet):
             Q(branch__isnull=True) | Q(branch__in=visible_branches)
         )
         cash_account_ids = list(treasury_accounts.values_list("account_id", flat=True))
-        cash_lines = JournalLine.objects.filter(
+        cash_ledger_lines = JournalLine.objects.filter(
             account_id__in=cash_account_ids,
             entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
             entry__company_id=company_id,
-            entry__entry_date__gte=date_from,
             entry__entry_date__lte=date_to,
             entry__branch__in=visible_branches,
-        ).exclude(entry__source_type__in=(JournalEntry.Source.OPENING, JournalEntry.Source.CLOSING))
+        ).exclude(entry__source_type=JournalEntry.Source.CLOSING)
+        opening_cash_lines = cash_ledger_lines.filter(
+            Q(entry__entry_date__lt=date_from)
+            | Q(entry__entry_date=date_from, entry__source_type=JournalEntry.Source.OPENING)
+        )
+        opening_totals = opening_cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        opening_cash_balance = (
+            (opening_totals["debit"] or Decimal("0"))
+            - (opening_totals["credit"] or Decimal("0"))
+        )
+
+        cash_lines = cash_ledger_lines.filter(
+            entry__entry_date__gte=date_from,
+        ).exclude(entry__source_type=JournalEntry.Source.OPENING)
         cash_totals = cash_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
         ledger_cash_change = (
             (cash_totals["debit"] or Decimal("0"))
             - (cash_totals["credit"] or Decimal("0"))
         )
+        closing_totals = cash_ledger_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        ledger_closing_cash_balance = (
+            (closing_totals["debit"] or Decimal("0"))
+            - (closing_totals["credit"] or Decimal("0"))
+        )
+        closing_cash_balance = opening_cash_balance + net_change_in_cash
+        closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
 
         uncategorized_counterparties = list(treasury_rows.filter(
             counter_account__isnull=True
@@ -1795,6 +1814,10 @@ class JournalEntryViewSet(AccountingViewSet):
                  if item["category"] == TreasuryTransaction.CashFlowCategory.FINANCING),
                 Decimal("0"),
             ),
+            "opening_cash_balance": opening_cash_balance,
+            "closing_cash_balance": closing_cash_balance,
+            "ledger_closing_cash_balance": ledger_closing_cash_balance,
+            "closing_balance_difference": closing_balance_difference,
             "net_change_in_cash": net_change_in_cash,
             "ledger_cash_change": ledger_cash_change,
             "reconciliation_difference": ledger_cash_change - net_change_in_cash,
