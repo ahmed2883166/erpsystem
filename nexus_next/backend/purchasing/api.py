@@ -859,8 +859,14 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        if invoice.branch_id:
+            if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif invoice.receipt_id:
+            if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        else:
+            raise ValidationError("فاتورة المورد لا تحتوي على فرع أو إذن استلام صالح.")
         invoice = post_purchase_invoice(invoice.pk, request.user)
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
 
