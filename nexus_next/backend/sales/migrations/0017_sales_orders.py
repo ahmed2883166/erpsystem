@@ -7,11 +7,6 @@ import decimal
 class Migration(migrations.Migration):
     dependencies = [
         ("sales", "0016_service_sales_returns"),
-        ("companies", "0001_initial"),
-        ("customers", "0001_initial"),
-        ("inventory", "0001_initial"),
-        ("accounting", "0001_initial"),
-        ("accounts", "0001_initial"),
     ]
 
     operations = [
@@ -40,7 +35,7 @@ class Migration(migrations.Migration):
                 "indexes": [models.Index(fields=["company", "status", "order_date"], name="sales_order_co_status_idx")],
                 "constraints": [
                     models.UniqueConstraint(fields=("company", "order_number"), name="uq_sales_order_company_no"),
-                    models.CheckConstraint(condition=models.Q(("requested_delivery_date__isnull", True), ("requested_delivery_date__gte", models.F("order_date")), _connector="OR"), name="ck_sales_order_delivery_date"),
+                    models.CheckConstraint(condition=models.Q(requested_delivery_date__isnull=True) | models.Q(requested_delivery_date__gte=models.F("order_date")), name="ck_sales_order_delivery_date"),
                 ],
             },
         ),
