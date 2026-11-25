@@ -202,7 +202,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         """تنفيذ وظيفة _locked_document ضمن واجهات api.py مع احترام دورة المستند والصلاحيات المحاسبية."""
         if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE:
             from purchasing.models import PurchaseInvoice
-            return PurchaseInvoice.objects.select_for_update().select_related(
+            return PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
                 "supplier", "branch", "receipt"
             ).prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__cost_center", "lines__tax_code").get(pk=approval.purchase_invoice_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_ORDER:
@@ -212,7 +212,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             ).prefetch_related("lines__product").get(pk=approval.purchase_order_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT:
             from purchasing.models import SupplierPayment
-            return SupplierPayment.objects.select_for_update().select_related(
+            return SupplierPayment.objects.select_for_update(of=("self",)).select_related(
                 "supplier", "invoice"
             ).get(pk=approval.supplier_payment_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE:
