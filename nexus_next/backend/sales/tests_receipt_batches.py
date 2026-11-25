@@ -114,6 +114,11 @@ class CustomerReceiptBatchTests(APITestCase):
         )
         self.assertEqual(allocated.status_code, 200, allocated.data)
         self.assertEqual(allocated.data["unallocated_amount"], "0.0000")
+        historical_aging = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-12"
+        )
+        self.assertEqual(historical_aging.status_code, 200, historical_aging.data)
+        self.assertEqual(historical_aging.data["totals"]["unallocated_advances"], "30.0000")
         self.assertEqual(
             self.client.get(f"/api/sales-documents/invoices/{second_invoice}/").data["balance_due"],
             "120.0000",
