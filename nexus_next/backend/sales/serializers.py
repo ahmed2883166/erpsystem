@@ -248,7 +248,9 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             order_line = row.get("order_line")
             if not order_line or order_line.order_id != order.pk or order_line.product_id != row["product"].pk:
                 raise serializers.ValidationError({"lines": "اربط كل صنف ببند صحيح من أمر البيع."})
-            totals[order_line.pk] = totals.get(order_line.pk, Decimal("0")) + row["quantity"]
+            if order_line.pk in totals:
+                raise serializers.ValidationError({"lines": "لا تكرر بند أمر البيع داخل إذن واحد؛ اجمع الكمية في سطر واحد."})
+            totals[order_line.pk] = row["quantity"]
         locked_lines = {
             line.pk: line for line in SalesOrderLine.objects.filter(
                 pk__in=sorted(totals), order_id=order.pk
