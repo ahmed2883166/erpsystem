@@ -84,6 +84,14 @@ def post_customer_refund(refund_id, user):
         raise ValidationError("أدخل مبلغ رد صحيحًا وأكبر من صفر.")
     if refund.amount >= Decimal("10000000000000000"):
         raise ValidationError("مبلغ الرد يتجاوز الحد الأقصى المسموح.")
+    if refund.transaction_currency_id:
+        if not refund.transaction_currency.is_active:
+            raise ValidationError("عملة الرد الأجنبية موقوفة.")
+        nominal_quantum = Decimal("1").scaleb(-refund.transaction_currency.decimal_places)
+        if refund.transaction_amount != refund.transaction_amount.quantize(nominal_quantum):
+            raise ValidationError(
+                f"مبلغ الرد يجب أن يطابق دقة العملة الأجنبية ({refund.transaction_currency.decimal_places} منازل عشرية)."
+            )
     currency_quantum = Decimal("1").scaleb(-refund.company.base_currency.decimal_places)
     if refund.amount != refund.amount.quantize(currency_quantum):
         raise ValidationError(
