@@ -1534,7 +1534,7 @@ class PurchasingWorkflowTests(APITestCase):
             {"company": self.company.pk, "as_of": "2026-03-25"},
         )
         self.assertEqual(restricted_aging.status_code, 200, restricted_aging.data)
-        self.assertEqual(restricted_aging.data["totals"]["total_due"], "0.0000")
+        self.assertEqual(restricted_aging.data["totals"]["total_due"], "0")
 
         denied_create = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk,
