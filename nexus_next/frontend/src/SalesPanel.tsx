@@ -6,10 +6,10 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import DocumentTemplatesPanel from "./DocumentTemplatesPanel";
 import SalesDocumentPrint from "./SalesDocumentPrint";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type Company } from "./api";
+import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerReceipt, type Product, type SalesDelivery, type SalesInvoice, type SalesReturn, type TreasuryAccount, type Warehouse, type CustomerAging, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type SalesQuotation, type SalesOrder, type Company } from "./api";
 
 type Props = { companyId: number | null };
-type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
+type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string; order_line?: string };
 type InvoiceDraftLine = { delivery_line?: number; product?: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string; discount_percent: string };
 type QuotationDraftLine = { product:string; quantity:string; unit_price:string; tax_rate:string; tax_code:string; discount_percent:string };
 const money = (value: string) => formatMoney(value);
@@ -17,7 +17,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: 
 
 // شاشة دورة المبيعات وتبويبات التسليمات والفواتير والتحصيل وأعمار الديون.
 export default function SalesPanel({ companyId }: Props) {
-  const [tab, setTab] = useState<"quotations" | "deliveries" | "invoices" | "receipts" | "returns" | "aging">("deliveries");
+  const [tab, setTab] = useState<"quotations" | "orders" | "deliveries" | "invoices" | "receipts" | "returns" | "aging">("deliveries");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -27,6 +27,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [branches, setBranches] = useState<import("./api").Branch[]>([]);
   const [deliveries, setDeliveries] = useState<SalesDelivery[]>([]);
+  const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
   const [returns, setReturns] = useState<SalesReturn[]>([]);
@@ -45,7 +46,9 @@ export default function SalesPanel({ companyId }: Props) {
   const [showForm, setShowForm] = useState(false);
   const [showTemplatesPanel, setShowTemplatesPanel] = useState(false);
   const [search, setSearch] = useState("");
-  const [deliveryForm, setDeliveryForm] = useState({ customer: "", warehouse: "", delivery_number: "", delivery_date: new Date().toISOString().slice(0, 10) });
+  const [deliveryForm, setDeliveryForm] = useState({ customer: "", warehouse: "", order: "", delivery_number: "", delivery_date: new Date().toISOString().slice(0, 10) });
+  const [orderForm, setOrderForm] = useState({customer:"",warehouse:"",order_number:"",order_date:new Date().toISOString().slice(0,10),requested_delivery_date:"",notes:""});
+  const [orderLines, setOrderLines] = useState<QuotationDraftLine[]>([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]);
   const [deliveryLines, setDeliveryLines] = useState<DeliveryDraftLine[]>([{ product: "", quantity: "1", expiry_date: "" }]);
   const [invoiceForm, setInvoiceForm] = useState({ mode: "delivery" as "delivery" | "service", delivery: "", branch: "", customer: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10) });
   const [invoiceLines, setInvoiceLines] = useState<InvoiceDraftLine[]>([]);
@@ -61,11 +64,11 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, companyRows] = await Promise.all([
+      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, so, companyRows] = await Promise.all([
         api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId), api.branches(companyId),
-        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), api.companies(),
+        salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), salesApi.orders(companyId), api.companies(),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setInvoices(i); setReceipts(r); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
+      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setOrders(so); setInvoices(i); setReceipts(r); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
       setReceiptForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
@@ -148,6 +151,25 @@ const refresh = async () => {
     finally { setBusy(false); }
   };
 
+  const createOrder = async (event: FormEvent) => {
+    event.preventDefault(); if (!companyId) return;
+    setBusy(true); setError("");
+    try {
+      await salesApi.createOrder({
+        company:companyId, customer:Number(orderForm.customer), warehouse:Number(orderForm.warehouse),
+        order_number:orderForm.order_number, order_date:orderForm.order_date,
+        requested_delivery_date:orderForm.requested_delivery_date || null, notes:orderForm.notes,
+        lines:orderLines.map(line=>({product:Number(line.product),quantity:line.quantity,unit_price:line.unit_price,
+          tax_rate:line.tax_rate, tax_code:line.tax_code ? Number(line.tax_code) : null,
+          discount_percent:line.discount_percent || "0"})),
+      });
+      setShowForm(false); setOrderForm(old=>({...old,order_number:"",notes:""}));
+      setOrderLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]);
+      await refresh();
+    } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر إنشاء أمر البيع."); }
+    finally { setBusy(false); }
+  };
+
   // إنشاء مستند تسليم بالأصناف والكميات والمخزن وتفاصيل الصلاحية.
 const createDelivery = async (event: FormEvent) => {
     event.preventDefault();
@@ -155,12 +177,13 @@ const createDelivery = async (event: FormEvent) => {
     setBusy(true); setError("");
     try {
       await salesApi.createDelivery({
-        company: companyId, customer: Number(deliveryForm.customer), warehouse: Number(deliveryForm.warehouse),
+        company: companyId, customer: Number(orders.find(o=>o.id===Number(deliveryForm.order))?.customer || deliveryForm.customer), warehouse: Number(orders.find(o=>o.id===Number(deliveryForm.order))?.warehouse || deliveryForm.warehouse),
+        order: deliveryForm.order ? Number(deliveryForm.order) : null,
         delivery_number: deliveryForm.delivery_number, delivery_date: deliveryForm.delivery_date,
-        lines: deliveryLines.map(line => ({ product: Number(line.product), quantity: line.quantity, expiry_date: line.expiry_date || null })),
+        lines: deliveryLines.map(line => ({ product: Number(line.product), quantity: line.quantity, expiry_date: line.expiry_date || null, ...(line.order_line ? {order_line:Number(line.order_line)} : {}) })),
       });
       setShowForm(false);
-      setDeliveryForm(old => ({ ...old, delivery_number: "" }));
+      setDeliveryForm(old => ({ ...old, order:"", delivery_number: "" }));
       setDeliveryLines([{ product: "", quantity: "1", expiry_date: "" }]);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء إذن التسليم."); }
@@ -278,7 +301,8 @@ const post = async (action: () => Promise<unknown>) => {
      {showTemplatesPanel && <DocumentTemplatesPanel companyId={companyId} />}
     {error && <div className="error-banner">{error}</div>}
     <div className="inventory-tabs">
-      <button type="button" className={tab === "quotations" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("quotations"); setShowForm(false); setEditingInvoiceId(null); }}>عروض الأسعار <b>{quotations.length}</b></button>
+      <button type="button" className={tab === "quotations" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("quotations"); setShowForm(false); setEditingInvoiceId(null); }}>عروض الأسعار 
+       <button type="button" className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setEditingInvoiceId(null); }}>أوامر البيع <b>{orders.length}</b></button> <b>{quotations.length}</b></button>
       <button type="button" className={tab === "deliveries" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("deliveries"); setShowForm(false); setEditingInvoiceId(null); }}>أذون التسليم <b>{deliveries.length}</b></button>
       <button type="button" className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setEditingInvoiceId(null); }}>فواتير المبيعات <b>{invoices.length}</b></button>
       <button type="button" className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setEditingInvoiceId(null); }}>سندات القبض <b>{receipts.length}</b></button>
@@ -303,8 +327,28 @@ const post = async (action: () => Promise<unknown>) => {
         <p className="inventory-report-note">يعتمد التقرير على الفواتير المرحلة فقط، ويخصم سندات القبض المرحلة حتى تاريخ التقرير. تاريخ الاستحقاق = تاريخ الفاتورة + أجل السداد المسجل للعميل.</p>
       </div>}
     </div>}
-    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : tab === "quotations" ? quotations : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } if (tab === "quotations") { setEditingQuotationId(null); setQuoteForm(old => ({...old, customer:"", quotation_number:"", notes:""})); setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : tab === "quotations" ? "عرض سعر جديد" : "التقرير"}</button></div>
+    <div className="customer-toolbar"><div className="customer-count">عدد المستندات <strong>{(tab === "orders" ? orders : tab === "deliveries" ? deliveries : tab === "invoices" ? invoices : tab === "receipts" ? receipts : tab === "returns" ? returns : tab === "quotations" ? quotations : []).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو العميل…" value={search} onChange={e => setSearch(e.target.value)} /><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button><button type="button" className="primary-button" disabled={busy || tab === "aging"} onClick={() => { if (showForm) { setEditingInvoiceId(null); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); } if (tab === "quotations") { setEditingQuotationId(null); setQuoteForm(old => ({...old, customer:"", quotation_number:"", notes:""})); setQuoteLines([{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]); } setShowForm(v => !v); }}>{showForm ? "إغلاق النموذج" : tab === "orders" ? "أمر بيع جديد" : tab === "deliveries" ? "إذن تسليم جديد" : tab === "invoices" ? "فاتورة جديدة" : tab === "receipts" ? "سند قبض جديد" : tab === "returns" ? "مردود مبيعات جديد" : tab === "quotations" ? "عرض سعر جديد" : "التقرير"}</button></div>
 
+    {showForm && tab === "orders" && <form className="inventory-form" onSubmit={createOrder}>
+      <label>العميل<select required value={orderForm.customer} onChange={e=>setOrderForm({...orderForm,customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
+      <label>مخزن التسليم<select required value={orderForm.warehouse} onChange={e=>setOrderForm({...orderForm,warehouse:e.target.value})}><option value="">اختر المخزن</option>{warehouses.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
+      <label>رقم أمر البيع<input required maxLength={80} value={orderForm.order_number} onChange={e=>setOrderForm({...orderForm,order_number:e.target.value})}/></label>
+      <label>تاريخ الأمر<input required type="date" value={orderForm.order_date} onChange={e=>setOrderForm({...orderForm,order_date:e.target.value})}/></label>
+      <label>تاريخ التسليم المطلوب<input type="date" min={orderForm.order_date} value={orderForm.requested_delivery_date} onChange={e=>setOrderForm({...orderForm,requested_delivery_date:e.target.value})}/></label>
+      <div className="inventory-line-editor inventory-wide"><div className="inventory-line-heading"><strong>بنود أمر البيع</strong><button type="button" className="subtle-button" onClick={()=>setOrderLines(old=>[...old,{product:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}])}>إضافة بند</button></div>
+        {orderLines.map((line,index)=><div className="inventory-form-row" key={index}>
+          <label>الصنف<select required value={line.product} onChange={e=>{const product=products.find(x=>x.id===Number(e.target.value));setOrderLines(old=>old.map((x,i)=>i===index?{...x,product:e.target.value,unit_price:product?.sale_price||"0"}:x));}}><option value="">اختر الصنف</option>{products.filter(x=>x.is_active&&x.product_type==="goods").map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
+          <label>الكمية<input required type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={e=>setOrderLines(old=>old.map((x,i)=>i===index?{...x,quantity:e.target.value}:x))}/></label>
+          <label>سعر الوحدة<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e=>setOrderLines(old=>old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))}/></label>
+          <label>الضريبة %<input type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e=>setOrderLines(old=>old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))}/></label>
+          <label>كود الضريبة<select value={line.tax_code} onChange={e=>{const code=taxCodes.find(x=>x.id===Number(e.target.value));setOrderLines(old=>old.map((x,i)=>i===index?{...x,tax_code:e.target.value,tax_rate:code?.rate||"0"}:x));}}><option value="">بدون كود</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar}</option>)}</select></label>
+          <label>خصم %<input type="number" min="0" max="100" step="0.0001" value={line.discount_percent} onChange={e=>setOrderLines(old=>old.map((x,i)=>i===index?{...x,discount_percent:e.target.value}:x))}/></label>
+          <button type="button" className="subtle-button" disabled={orderLines.length===1} onClick={()=>setOrderLines(old=>old.filter((_,i)=>i!==index))}>حذف</button>
+        </div>)}
+      </div>
+      <label className="inventory-wide">ملاحظات<textarea rows={2} value={orderForm.notes} onChange={e=>setOrderForm({...orderForm,notes:e.target.value})}/></label>
+      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy?"جارٍ الحفظ…":"حفظ أمر البيع كمسودة"}</button></div>
+    </form>}
     {showForm && tab === "quotations" && <form className="inventory-form" onSubmit={createQuotation}>
       <label>العميل<select required value={quoteForm.customer} onChange={e=>setQuoteForm({...quoteForm,customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
       <label>رقم عرض السعر<input required maxLength={80} value={quoteForm.quotation_number} onChange={e=>setQuoteForm({...quoteForm,quotation_number:e.target.value})}/></label>
@@ -416,6 +460,14 @@ const post = async (action: () => Promise<unknown>) => {
       </tr>)}
     </tbody></table>{!busy && quotations.length===0 && <div className="table-empty">لا توجد عروض أسعار.</div>}</div>}
 
+    {tab === "orders" && <div className="data-table-wrap"><table><thead><tr><th>رقم الأمر</th><th>العميل</th><th>تاريخ الأمر</th><th>التسليم المطلوب</th><th>الإجمالي</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>
+      {orders.filter(o=>[o.order_number,o.customer_name].join(" ").toLowerCase().includes(search.toLowerCase())).map(o=><tr key={o.id}>
+        <td className="code-cell">{o.order_number}<details className="aging-invoice-details"><summary>البنود ({o.order_lines.length})</summary><div className="aging-invoice-list">{o.order_lines.map(line=><div key={line.id}><span>{line.product_code} · {line.product_name} — متبقي {line.remaining_quantity}</span><strong>{line.quantity}</strong></div>)}</div></details></td>
+        <td>{o.customer_name}</td><td>{o.order_date}</td><td>{o.requested_delivery_date||"—"}</td><td>{money(o.grand_total)}</td>
+        <td><span className={statusPill(o.status)}>{o.status==="draft"?"مسودة":o.status==="confirmed"?"معتمد":o.status==="partially_delivered"?"تسليم جزئي":o.status==="delivered"?"مكتمل":"ملغي"}</span></td>
+        <td><div className="table-actions">{o.status==="draft"&&<button type="button" className="primary-button" disabled={busy} onClick={()=>void post(()=>salesApi.confirmOrder(o.id))}>اعتماد</button>}{(o.status==="confirmed"||o.status==="partially_delivered")&&<><button type="button" className="primary-button" disabled={busy} onClick={()=>{setTab("deliveries");setShowForm(true);setDeliveryForm(old=>({...old,order:String(o.id),customer:String(o.customer),warehouse:String(o.warehouse),delivery_number:""}));setDeliveryLines([{product:"",quantity:"1",expiry_date:""}]);}}>تسليم كمية</button><button type="button" className="subtle-button" disabled={busy} onClick={()=>void post(()=>salesApi.cancelOrder(o.id))}>إلغاء المتبقي</button></>}</div></td>
+      </tr>)}
+    </tbody></table>{!busy&&!orders.length&&<div className="table-empty">لا توجد أوامر بيع.</div>}</div>}
     {tab === "deliveries" && <div className="data-table-wrap"><table><thead><tr><th>رقم الإذن</th><th>العميل</th><th>المخزن</th><th>التاريخ</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{filteredDeliveries.map(d=><tr key={d.id}><td className="code-cell">{d.delivery_number}</td><td>{d.customer_name}</td><td>{d.warehouse_name}</td><td>{d.delivery_date}</td><td><span className={statusPill(d.movement_status)}>{d.movement_status === "posted" ? "مرحّل" : "مسودة"}</span></td><td>{d.movement_status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postDelivery(d.id))}>ترحيل وصرف المخزون</button> : "تم الصرف"}</td></tr>)}</tbody></table>{!busy && !filteredDeliveries.length && <div className="table-empty">لا توجد أذون تسليم.</div>}</div>}
     {tab === "invoices" && <div className="data-table-wrap"><table><thead><tr><th>رقم الفاتورة</th><th>العميل</th><th>إذن التسليم</th><th>التاريخ</th><th>الخصم</th><th>الصافي</th><th>الضريبة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th><th>القيد</th><th>الإجراء</th></tr></thead><tbody>{filteredInvoices.map(i=><tr key={i.id}><td className="code-cell">{i.invoice_number}</td><td>{i.customer_name}</td><td>{i.delivery_number || "خدمة مباشرة"}</td><td>{i.invoice_date}</td><td>{money(i.discount_total)}</td><td>{money(i.net_total)}</td><td>{money(i.tax_total)}</td><td>{money(i.grand_total)}</td><td>{money(i.paid_total)}</td><td>{money(i.balance_due)}</td><td><span className={statusPill(i.status === "posted" && Number(i.balance_due) > 0 && Number(i.paid_total) > 0 ? "partial" : i.status)}>{i.status === "posted" ? (Number(i.balance_due) <= 0 ? "مدفوعة" : Number(i.paid_total) > 0 ? "مدفوعة جزئيًا" : "مرحّلة") : "مسودة"}</span></td><td>{i.journal_number || "—"}</td><td>{i.status === "draft" ? <div className="table-actions"><button type="button" className="subtle-button" disabled={busy} onClick={()=>setPrintTarget({kind:"invoice",id:i.id})}>معاينة / طباعة</button>{(i.approval_status === "pending" || i.approval_status === "rejected" || i.approval_status === "superseded") && <span>{i.approval_status === "pending" ? "بانتظار اعتماد المدير" : i.approval_status === "rejected" ? "الخصم مرفوض — يلزم تعديل" : "طلب سابق — راجع المسودة"}</span>}<button type="button" className="subtle-button" disabled={busy} onClick={() => beginEditInvoice(i)}>تعديل المسودة</button>{(i.approval_status === "not_required" || i.approval_status === "approved") && <button className="primary-button" type="button" disabled={busy} onClick={() => void post(() => salesApi.postInvoice(i.id))}>ترحيل الفاتورة</button>}</div> : <div className="table-actions"><button type="button" className="subtle-button" disabled={busy} onClick={()=>setPrintTarget({kind:"invoice",id:i.id})}>معاينة / طباعة</button><span>مرحّلة</span>{i.transaction_currency && Number(i.balance_due)>0 && <button type="button" className="subtle-button" disabled={busy} onClick={()=>void beginFxRevaluation(i)}>إعادة تقييم العملة</button>}</div>}</td></tr>)}</tbody></table>{!busy && !filteredInvoices.length && <div className="table-empty">لا توجد فواتير مبيعات.</div>}</div>}
     {tab === "invoices" && fxInvoice && <form className="inventory-form" onSubmit={submitFxRevaluation}>
