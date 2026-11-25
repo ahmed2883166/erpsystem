@@ -444,6 +444,57 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(amounts[("2200", "credit")], Decimal("114.0000"))
         self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
 
+    def test_direct_expense_invoice_is_included_in_supplier_statement_and_aging(self):
+        self.supplier.payment_terms_days = 0
+        self.supplier.save(update_fields=["payment_terms_days"])
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense",
+            "branch": self.branch.pk,
+            "invoice_number": "EXP-SUBLEDGER-001",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "description": "اشتراك خدمات سحابية",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "100.0000",
+                "tax_rate": "14.0000",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            "/api/purchasing/invoices/%s/post/" % created.data["id"], {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        statement = self.client.get(
+            "/api/purchasing/invoices/supplier-statement/",
+            {
+                "company": self.company.pk,
+                "supplier": self.supplier.pk,
+                "date_from": "2026-03-01",
+                "date_to": "2026-03-31",
+            },
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["opening_balance"], "0")
+        self.assertEqual(statement.data["closing_balance"], "114.0000")
+        self.assertEqual(len(statement.data["rows"]), 1)
+        self.assertEqual(statement.data["rows"][0]["document_type"], "invoice")
+        self.assertEqual(statement.data["rows"][0]["document_number"], "EXP-SUBLEDGER-001")
+        self.assertEqual(statement.data["rows"][0]["credit"], "114.0000")
+
+        aging = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-25"},
+        )
+        self.assertEqual(aging.status_code, 200, aging.data)
+        self.assertEqual(aging.data["totals"]["total_due"], "114.0000")
+        self.assertEqual(aging.data["suppliers"][0]["invoices"][0]["invoice_number"], "EXP-SUBLEDGER-001")
+        self.assertEqual(aging.data["suppliers"][0]["invoices"][0]["balance_due"], "114.0000")
+
     def test_direct_service_invoice_requires_branch_and_expense_account(self):
         missing_branch = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk,
@@ -1411,7 +1462,29 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(repeated.status_code, 400, repeated.data)
 
-    def test_branch_limited_user_cannot_read_or_create_documents_in_shared_default_warehouse(self):
+    def test_branch_limited_user_cannot_read_or_create_purchasing_documents_outside_assigned_branch(self):
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        direct_invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense",
+            "branch": self.branch.pk,
+            "invoice_number": "EXP-BRANCH-PRIVATE",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "description": "مصروف فرع آخر",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "100",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(direct_invoice.status_code, 201, direct_invoice.data)
+        posted_invoice = self.client.post(
+            "/api/purchasing/invoices/%s/post/" % direct_invoice.data["id"], {}, format="json,
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
         shared_warehouse = Warehouse.objects.create(
             company=self.company, branch=None, code="WH-SHARED", name_ar="مخزن عام"
         )
@@ -1432,18 +1505,46 @@ class PurchasingWorkflowTests(APITestCase):
         membership.branches.add(restricted_branch)
         self.client.force_authenticate(limited_user)
 
-        listing = self.client.get(f"/api/purchasing/orders/?company={self.company.pk}")
+        listing = self.client.get("/api/purchasing/orders/?company=%s" % self.company.pk)
         self.assertEqual(listing.status_code, 200, listing.data)
         self.assertNotIn(created.data["id"], [row["id"] for row in listing.data])
-        detail = self.client.get(f"/api/purchasing/orders/{created.data['id']}/")
+        detail = self.client.get("/api/purchasing/orders/%s/" % created.data["id"])
         self.assertEqual(detail.status_code, 404, detail.data)
 
-        denied_create = self.client.post("/api/purchasing/orders/", {
+        invoice_listing = self.client.get("/api/purchasing/invoices/?company=%s" % self.company.pk)
+        self.assertEqual(invoice_listing.status_code, 200, invoice_listing.data)
+        self.assertNotIn(direct_invoice.data["id"], [row["id"] for row in invoice_listing.data])
+        invoice_detail = self.client.get("/api/purchasing/invoices/%s/" % direct_invoice.data["id"])
+        self.assertEqual(invoice_detail.status_code, 404, invoice_detail.data)
+        denied_post = self.client.post(
+            "/api/purchasing/invoices/%s/post/" % direct_invoice.data["id"], {}, format="json",
+        )
+        self.assertEqual(denied_post.status_code, 404, denied_post.data)
+
+        denied_create = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense",
+            "branch": self.branch.pk,
+            "invoice_number": "EXP-BRANCH-DENIED",
+            "invoice_date": "2026-03-11",
+            "lines": [{
+                "description": "مصروف غير مصرح",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "100",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(denied_create.status_code, 403, denied_create.data)
+
+        denied_order = self.client.post("/api/purchasing/orders/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": shared_warehouse.pk,
             "order_number": "PO-SHARED-DENIED", "order_date": "2026-03-11",
             "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
         }, format="json")
-        self.assertEqual(denied_create.status_code, 403, denied_create.data)
+        self.assertEqual(denied_order.status_code, 403, denied_order.data)
+
 
     def test_purchase_invoice_accepts_exempt_zero_rate_code_even_when_input_is_not_recoverable(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
