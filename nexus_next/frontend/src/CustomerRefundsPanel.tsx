@@ -17,7 +17,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const money = (value: string) => formatMoney(value);
 
 export default function CustomerRefundsPanel({
-  companyId, invoices, returns, receiptBatches, treasuryAccounts, baseCurrencyCode, onRefresh,
+  companyId, invoices, returns, receiptBatches, treasuryAccounts, baseCurrencyCode, baseCurrencyDecimalPlaces, onRefresh,
 }: Props) {
   const [rows, setRows] = useState<CustomerRefund[]>([]);
   const [sourceKind, setSourceKind] = useState<"return" | "advance">("return");
