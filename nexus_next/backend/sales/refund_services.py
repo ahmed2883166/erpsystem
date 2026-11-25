@@ -54,8 +54,15 @@ def post_customer_refund(refund_id, user):
         latest_refund_date = posted_refunds.order_by("-refund_date").values_list("refund_date", flat=True).first()
         if latest_refund_date and refund.refund_date < latest_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق عن نفس المردود.")
-        already_refunded = CustomerRefund.objects.filter(
+        return_refunded = source.refunds.filter(
+            refund_date__lte=refund.refund_date,
+        ).filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
+        ).exclude(pk=refund.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        invoice_refunded = CustomerRefund.objects.filter(
             source_return__invoice_id=source.invoice_id,
+            refund_date__lte=refund.refund_date,
         ).filter(
             Q(status=CustomerRefund.Status.POSTED)
             | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
@@ -87,8 +94,8 @@ def post_customer_refund(refund_id, user):
                 batch__reversal_date__gt=refund.refund_date,
             )
         ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-        available_credit = max(source.grand_total - already_refunded, Decimal("0"))
-        available_collected = max(direct_paid + batch_paid - already_refunded, Decimal("0"))
+        available_credit = max(source.grand_total - return_refunded, Decimal("0"))
+        available_collected = max(direct_paid + batch_paid - invoice_refunded, Decimal("0"))
         available = min(available_credit, available_collected)
         source_label = f"مردود المبيعات {source.return_number}"
     else:
