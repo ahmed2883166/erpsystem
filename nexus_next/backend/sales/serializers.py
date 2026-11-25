@@ -570,11 +570,18 @@ class SalesInvoiceLineSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source="product.code", read_only=True)
     product_name = serializers.CharField(source="product.name_ar", read_only=True)
     discount_rule_name = serializers.CharField(source="discount_rule.notes", read_only=True, allow_null=True)
+    transaction_discount_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesInvoiceLine
         fields = ("id", "delivery_line", "product", "product_code", "product_name", "quantity",
-                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_rule", "discount_rule_name", "discount_amount", "net_amount", "tax_amount", "total_amount")
+                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_discount_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_rule", "discount_rule_name", "discount_amount", "net_amount", "tax_amount", "total_amount")
+
+    def get_transaction_discount_amount(self, obj):
+        if obj.transaction_unit_price is None or obj.transaction_net_amount is None:
+            return None
+        gross = obj.quantity * obj.transaction_unit_price
+        return str((gross - obj.transaction_net_amount).quantize(Decimal("0.0001")))
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
@@ -586,16 +593,28 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
     approval_status = serializers.SerializerMethodField()
+    transaction_currency_code = serializers.CharField(source="transaction_currency.code", read_only=True, allow_null=True)
+    transaction_discount_total = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesInvoice
         fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number", "branch",
-                  "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
+                  "invoice_number", "invoice_date", "transaction_currency", "transaction_currency_code", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_discount_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "print_template_snapshot", "created_at", "posted_at")
         read_only_fields = ("status", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
                             "created_at", "posted_at", "print_template_snapshot")
+
+    def get_transaction_discount_total(self, obj):
+        if not obj.transaction_currency_id:
+            return None
+        total = sum((
+            line.quantity * line.transaction_unit_price - line.transaction_net_amount
+            for line in obj.lines.all()
+            if line.transaction_unit_price is not None and line.transaction_net_amount is not None
+        ), Decimal("0"))
+        return str(total.quantize(Decimal("0.0001")))
 
     def get_paid_total(self, obj):
         """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""

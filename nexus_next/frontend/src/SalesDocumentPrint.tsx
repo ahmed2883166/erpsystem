@@ -18,9 +18,11 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
   const doc=invoice||quotation;
   const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
   const isInvoice=Boolean(invoice);
-  const currencyCode=company?.base_currency_code||"";
+  const currencyCode=isInvoice&&invoice!.transaction_currency_code
+    ? invoice!.transaction_currency_code
+    : company?.base_currency_code||"";
   useEffect(()=>{
-    if(!company?.id||doc?.print_template_snapshot)return;
+    if(!company?.id||(doc?.print_template_snapshot&&Object.keys(doc.print_template_snapshot).length>0))return;
     let active=true;
     void salesApi.documentTemplates(company.id).then(rows=>{
       if(active)setDefaultTemplate(rows.find(row=>row.document_type===(isInvoice?"invoice":"quotation")&&row.is_active&&row.is_default)||null);
@@ -28,7 +30,8 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
     return ()=>{active=false;};
   },[company?.id,doc?.id,isInvoice,doc?.print_template_snapshot]);
   if(!doc)return null;
-  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=doc.print_template_snapshot||{
+  const savedSnapshot=doc.print_template_snapshot&&Object.keys(doc.print_template_snapshot).length>0?doc.print_template_snapshot:null;
+  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=savedSnapshot||{
     template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",
     style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{},
   };
@@ -36,14 +39,20 @@ export default function SalesDocumentPrint({company,invoice,quotation,onClose}:P
   const language=config.language||"ar";
   const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
   const lines:PrintLine[]=isInvoice
-    ? invoice!.invoice_lines.map(line=>({product_code:line.product_code,product_name:line.product_name,quantity:line.quantity,unit_price:line.unit_price,discount_percent:line.discount_percent,discount_amount:line.discount_amount,tax_rate:line.tax_rate,tax_amount:line.tax_amount,total_amount:line.total_amount}))
+    ? invoice!.invoice_lines.map(line=>({product_code:line.product_code,product_name:line.product_name,quantity:line.quantity,
+        unit_price:invoice!.transaction_currency?line.transaction_unit_price||line.unit_price:line.unit_price,
+        discount_percent:line.discount_percent,
+        discount_amount:invoice!.transaction_currency?line.transaction_discount_amount||"0":line.discount_amount,
+        tax_rate:line.tax_rate,
+        tax_amount:invoice!.transaction_currency?line.transaction_tax_amount||line.tax_amount:line.tax_amount,
+        total_amount:invoice!.transaction_currency?line.transaction_total_amount||line.total_amount:line.total_amount}))
     : quotation!.quotation_lines.map(line=>({product_code:line.product_code,product_name:line.product_name,quantity:line.quantity,unit_price:line.unit_price,discount_percent:line.discount_percent,discount_amount:line.discount_amount,tax_rate:line.tax_rate,tax_amount:line.tax_amount,total_amount:line.total_amount}));
   const number=isInvoice?invoice!.invoice_number:quotation!.quotation_number;
   const date=isInvoice?invoice!.invoice_date:quotation!.quotation_date;
-  const total=isInvoice?invoice!.grand_total:quotation!.grand_total;
-  const net=isInvoice?invoice!.net_total:quotation!.net_total;
-  const discount=isInvoice?invoice!.discount_total:quotation!.discount_total;
-  const tax=isInvoice?invoice!.tax_total:quotation!.tax_total;
+  const total=isInvoice?(invoice!.transaction_currency?invoice!.transaction_grand_total||invoice!.grand_total:invoice!.grand_total):quotation!.grand_total;
+  const net=isInvoice?(invoice!.transaction_currency?invoice!.transaction_net_total||invoice!.net_total:invoice!.net_total):quotation!.net_total;
+  const discount=isInvoice?(invoice!.transaction_currency?invoice!.transaction_discount_total||"0":invoice!.discount_total):quotation!.discount_total;
+  const tax=isInvoice?(invoice!.transaction_currency?invoice!.transaction_tax_total||invoice!.tax_total:invoice!.tax_total):quotation!.tax_total;
   const customer=isInvoice?invoice!.customer_name:quotation!.customer_name;
   return <div className="sales-print-overlay">
     <div className="print-controls"><span>معاينة {isInvoice?"فاتورة المبيعات":"عرض السعر"} · {snapshot.name}</span><div><button type="button" className="subtle-button" onClick={onClose}>إغلاق</button><button type="button" className="primary-button" onClick={()=>window.print()}>طباعة / حفظ PDF</button></div></div>

@@ -1849,6 +1849,102 @@ class SalesWorkflowTests(APITestCase):
         )
 
 
+    def test_foreign_currency_service_invoice_exposes_print_amounts_in_transaction_currency(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-FX-PRINT",
+            name_ar="خدمة بالدولار", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 12), rate=Decimal("50"),
+        )
+        created = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-SERVICE-FX-PRINT",
+            "invoice_date": "2026-03-12", "transaction_currency": usd.pk,
+            "exchange_rate": "50", "exchange_rate_date": "2026-03-12",
+            "lines": [{
+                "product": service.pk, "quantity": "2",
+                "transaction_unit_price": "100", "tax_rate": "14",
+                "discount_percent": "10",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["transaction_currency_code"], "USD")
+        self.assertEqual(created.data["transaction_net_total"], "180.0000")
+        self.assertEqual(created.data["transaction_discount_total"], "20.0000")
+        self.assertEqual(created.data["transaction_tax_total"], "25.2000")
+        self.assertEqual(created.data["transaction_grand_total"], "205.2000")
+        line = created.data["invoice_lines"][0]
+        self.assertEqual(line["transaction_unit_price"], "100.0000")
+        self.assertEqual(line["transaction_discount_amount"], "20.0000")
+        self.assertEqual(line["transaction_tax_amount"], "25.2000")
+        self.assertEqual(line["transaction_total_amount"], "205.2000")
+
+    def test_foreign_currency_service_return_preserves_transaction_amounts_without_stock(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SRV-FX-RETURN",
+            name_ar="خدمة صيانة بالدولار", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 12), rate=Decimal("50"),
+        )
+        movements_before = StockMovement.objects.count()
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "branch": self.branch.pk, "invoice_number": "INV-SERVICE-FX-RETURN",
+            "invoice_date": "2026-03-12", "transaction_currency": usd.pk,
+            "exchange_rate": "50", "exchange_rate_date": "2026-03-12",
+            "lines": [{
+                "product": service.pk, "quantity": "2",
+                "transaction_unit_price": "100", "tax_rate": "14",
+                "discount_percent": "10",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        created = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-SERVICE-FX-RETURN",
+            "return_date": "2026-03-13",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertIsNone(created.data["movement_status"])
+        posted = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data["grand_total"], "5130.0000")
+        self.assertEqual(posted.data["transaction_net_total"], "90.0000")
+        self.assertEqual(posted.data["transaction_tax_total"], "12.6000")
+        self.assertEqual(posted.data["transaction_grand_total"], "102.6000")
+        self.assertIsNone(posted.data["cost_journal_entry"])
+        self.assertIsNone(posted.data["movement_status"])
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+        self.assertIsNone(reversed_return.data["reversal_stock_movement"])
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+
     def test_service_return_posts_credit_note_and_reverses_without_stock(self):
         service = Product.objects.create(
             company=self.company, unit=self.product.unit, code="SRV-RET-001",
