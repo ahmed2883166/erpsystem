@@ -526,15 +526,32 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "debit": invoice.grand_total, "credit": Decimal("0"), "sort": 0,
             })
         receipts = CustomerReceipt.objects.filter(
-            invoice__in=invoices, status=CustomerReceipt.Status.POSTED,
-        ).select_related("invoice")
+            invoice__in=invoices,
+            status__in=(CustomerReceipt.Status.POSTED, CustomerReceipt.Status.REVERSED),
+        ).select_related("invoice", "journal_entry__reversal_entry")
         for receipt in receipts:
+            carrying_amount = (
+                receipt.carrying_base_amount
+                if receipt.carrying_base_amount is not None else receipt.amount
+            )
             events.append({
                 "date": receipt.receipt_date, "kind": "receipt",
                 "number": receipt.receipt_number,
                 "description": f"سند قبض عن فاتورة {receipt.invoice.invoice_number}",
-                "debit": Decimal("0"), "credit": receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount, "sort": 1,
+                "debit": Decimal("0"), "credit": carrying_amount, "sort": 1,
             })
+            reversal = (
+                receipt.journal_entry.reversal_entry
+                if receipt.status == CustomerReceipt.Status.REVERSED and receipt.journal_entry_id
+                else None
+            )
+            if reversal:
+                events.append({
+                    "date": reversal.entry_date, "kind": "receipt_reversal",
+                    "number": f"REV-{receipt.receipt_number}",
+                    "description": f"عكس سند قبض العميل {receipt.receipt_number}",
+                    "debit": carrying_amount, "credit": Decimal("0"), "sort": 3,
+                })
         returns = SalesReturn.objects.filter(
             invoice__in=invoices,
             status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
@@ -621,7 +638,9 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             company_id=company_id,
             status=SalesInvoice.Status.POSTED,
             invoice_date__lte=as_of,
-        ).select_related("customer", "delivery__warehouse").prefetch_related("receipts")
+        ).select_related("customer", "delivery__warehouse").prefetch_related(
+            "receipts__journal_entry__reversal_entry"
+        )
         if customer_id:
             invoices = invoices.filter(customer_id=customer_id)
         if branch_id:
@@ -643,12 +662,24 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             "over_90": Decimal("0"), "total_due": Decimal("0"),
         }
         for invoice in invoices:
-            paid_as_of = sum(
-                ((receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount) for receipt in invoice.receipts.all()
-                 if receipt.status == CustomerReceipt.Status.POSTED
-                 and receipt.receipt_date <= as_of),
-                Decimal("0"),
-            )
+            paid_as_of = Decimal("0")
+            for receipt in invoice.receipts.all():
+                if (
+                    receipt.status not in (CustomerReceipt.Status.POSTED, CustomerReceipt.Status.REVERSED)
+                    or receipt.receipt_date > as_of
+                ):
+                    continue
+                reversal = (
+                    receipt.journal_entry.reversal_entry
+                    if receipt.status == CustomerReceipt.Status.REVERSED and receipt.journal_entry_id
+                    else None
+                )
+                if reversal and reversal.entry_date <= as_of:
+                    continue
+                paid_as_of += (
+                    receipt.carrying_base_amount
+                    if receipt.carrying_base_amount is not None else receipt.amount
+                )
             returned_as_of = returned_by_invoice.get(invoice.pk, Decimal("0"))
             balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
             if balance_due <= 0:

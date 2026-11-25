@@ -1381,6 +1381,35 @@ class SalesWorkflowTests(APITestCase):
         invoice_after = self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data
         self.assertEqual(invoice_after["paid_total"], "0")
         self.assertEqual(invoice_after["balance_due"], "228.0000")
+
+        # Historical reports must retain the receipt before its reversal date.
+        before_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-11"
+        )
+        self.assertEqual(before_reversal.status_code, 200, before_reversal.data)
+        self.assertEqual(before_reversal.data["totals"]["total_due"], "128.0000")
+        after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-12"
+        )
+        self.assertEqual(after_reversal.status_code, 200, after_reversal.data)
+        self.assertEqual(after_reversal.data["totals"]["total_due"], "228.0000")
+
+        statement_before_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-01&date_to=2026-03-11"
+        )
+        self.assertEqual(statement_before_reversal.status_code, 200, statement_before_reversal.data)
+        self.assertEqual(len(statement_before_reversal.data["rows"]), 2)
+        self.assertEqual(statement_before_reversal.data["closing_balance"], "128.0000")
+        statement_after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-01&date_to=2026-03-12"
+        )
+        self.assertEqual(statement_after_reversal.status_code, 200, statement_after_reversal.data)
+        self.assertEqual(len(statement_after_reversal.data["rows"]), 3)
+        self.assertEqual(statement_after_reversal.data["rows"][2]["document_type"], "receipt_reversal")
+        self.assertEqual(statement_after_reversal.data["closing_balance"], "228.0000")
+
         repeated = self.client.post(
             f"/api/sales-documents/receipts/{receipt_id}/reverse/",
             {"entry_date": "2026-03-13"}, format="json",
