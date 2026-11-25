@@ -309,7 +309,9 @@ function Reset-AppPassword {
     try { & $Python manage.py changepassword $u; if ($LASTEXITCODE -ne 0) { throw "لم يتم تغيير كلمة مرور مستخدم البرنامج." } } finally { Pop-Location }
 }
 function Get-LoginRoles {
-    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND rolname !~ '^pg_' ORDER BY rolname;"
+    $config = Read-Config
+    $appRole = $config.POSTGRES_USER.Replace("'","''")
+    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND rolname !~ '^pg_' AND rolname <> '$appRole' ORDER BY rolname;"
     return @($raw -split "\r?\n" | Where-Object { $_ })
 }
 function Show-LoginRoles {
