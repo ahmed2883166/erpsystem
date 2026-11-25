@@ -10,7 +10,7 @@ import { api, inventoryApi, salesApi, treasuryApi, type Customer, type CustomerR
 
 type Props = { companyId: number | null };
 type DeliveryDraftLine = { product: string; quantity: string; expiry_date: string };
-type InvoiceDraftLine = { delivery_line: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string; discount_percent: string };
+type InvoiceDraftLine = { delivery_line?: number; product?: number; product_name: string; quantity: string; unit_price: string; tax_rate: string; tax_code: string; discount_percent: string };
 type QuotationDraftLine = { product:string; quantity:string; unit_price:string; tax_rate:string; tax_code:string; discount_percent:string };
 const money = (value: string) => formatMoney(value);
 const statusPill = (status: string) => `status-pill ${{ draft: "draft", posted: "posted", reversed: "reversed", sent: "sent", accepted: "accepted", rejected: "rejected", expired: "expired", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
@@ -25,6 +25,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
   const [treasuryAccounts, setTreasuryAccounts] = useState<TreasuryAccount[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [branches, setBranches] = useState<import("./api").Branch[]>([]);
   const [deliveries, setDeliveries] = useState<SalesDelivery[]>([]);
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [receipts, setReceipts] = useState<CustomerReceipt[]>([]);
@@ -46,7 +47,7 @@ export default function SalesPanel({ companyId }: Props) {
   const [search, setSearch] = useState("");
   const [deliveryForm, setDeliveryForm] = useState({ customer: "", warehouse: "", delivery_number: "", delivery_date: new Date().toISOString().slice(0, 10) });
   const [deliveryLines, setDeliveryLines] = useState<DeliveryDraftLine[]>([{ product: "", quantity: "1", expiry_date: "" }]);
-  const [invoiceForm, setInvoiceForm] = useState({ delivery: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10) });
+  const [invoiceForm, setInvoiceForm] = useState({ mode: "delivery" as "delivery" | "service", delivery: "", branch: "", customer: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10) });
   const [invoiceLines, setInvoiceLines] = useState<InvoiceDraftLine[]>([]);
   const [editingInvoiceId, setEditingInvoiceId] = useState<number | null>(null);
   const [fxInvoice, setFxInvoice] = useState<SalesInvoice | null>(null);
@@ -60,11 +61,11 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [c, p, w, d, i, r, sr, t, ta, cur, fx, q, companyRows] = await Promise.all([
-        api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
+      const [c, p, w, b, d, i, r, sr, t, ta, cur, fx, q, companyRows] = await Promise.all([
+        api.customers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId), api.branches(companyId),
         salesApi.deliveries(companyId), salesApi.invoices(companyId), salesApi.receipts(companyId), salesApi.returns(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), salesApi.quotations(companyId), api.companies(),
       ]);
-      setCustomers(c); setProducts(p); setWarehouses(w); setDeliveries(d); setInvoices(i); setReceipts(r); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
+      setCustomers(c); setProducts(p); setWarehouses(w); setBranches(b); setDeliveries(d); setInvoices(i); setReceipts(r); setReturns(sr); setQuotations(q); setCompanyProfile(companyRows.find(x=>x.id===companyId)||null); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active)); setCurrencies(cur.filter(x => x.is_active)); setExchangeRates(fx);
       setReceiptForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المبيعات."); }
     finally { setBusy(false); }
@@ -165,27 +166,37 @@ const createDelivery = async (event: FormEvent) => {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء إذن التسليم."); }
     finally { setBusy(false); }
   };
-  // إنشاء فاتورة البيع وربطها ببنود التسليم والأسعار والخصومات والضرائب.
+  // إنشاء فاتورة بضاعة من إذن تسليم أو فاتورة خدمة مباشرة على فرع الشركة.
 const createInvoice = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!companyId) return;
-    const delivery = deliveries.find(d => d.id === Number(invoiceForm.delivery));
-    if (!delivery || !delivery.line_items.length) { setError("اختر إذن تسليم صالحًا."); return; }
-    const customer = delivery.customer;
-    const deliveryLine = delivery.line_items[0];
+    const delivery = invoiceForm.mode === "delivery" ? deliveries.find(d => d.id === Number(invoiceForm.delivery)) : null;
+    if (invoiceForm.mode === "delivery" && (!delivery || !delivery.line_items.length)) { setError("اختر إذن تسليم صالحًا."); return; }
+    const customer = delivery ? delivery.customer : Number(invoiceForm.customer);
+    if (!customer || (invoiceForm.mode === "service" && (!invoiceForm.branch || !invoiceLines.every(line => line.product && Number(line.quantity) > 0)))) {
+      setError("حدد العميل والفرع وأدخل خدمة وكمية صحيحة."); return;
+    }
     setBusy(true); setError("");
     try {
       const payload = {
-        company: companyId, customer, delivery: delivery.id, invoice_number: invoiceForm.invoice_number,
-        invoice_date: invoiceForm.invoice_date,
+        company: companyId, customer, delivery: delivery?.id ?? null,
+        branch: invoiceForm.mode === "service" ? Number(invoiceForm.branch) : null,
+        invoice_number: invoiceForm.invoice_number, invoice_date: invoiceForm.invoice_date,
         transaction_currency: invoiceForm.transaction_currency ? Number(invoiceForm.transaction_currency) : null,
         exchange_rate: invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
         exchange_rate_date: invoiceForm.transaction_currency ? invoiceForm.exchange_rate_date : null,
-        lines: invoiceLines.map(line => ({ delivery_line: line.delivery_line, ...(invoiceForm.transaction_currency ? { transaction_unit_price: line.unit_price } : { unit_price: line.unit_price }), tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null, ...(line.discount_percent !== "" ? { discount_percent: line.discount_percent } : {}) })),
+        lines: invoiceLines.map(line => ({
+          ...(invoiceForm.mode === "delivery" ? { delivery_line: line.delivery_line } : { product: line.product, quantity: line.quantity }),
+          ...(invoiceForm.transaction_currency ? { transaction_unit_price: line.unit_price } : { unit_price: line.unit_price }),
+          tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null,
+          ...(line.discount_percent !== "" ? { discount_percent: line.discount_percent } : {}),
+        })),
       };
       if (editingInvoiceId) await salesApi.updateInvoice(editingInvoiceId, { lines: payload.lines });
       else await salesApi.createInvoice(payload);
-      setShowForm(false); setEditingInvoiceId(null); setInvoiceForm(old => ({ ...old, delivery: "", invoice_number: "" })); setInvoiceLines([]);
+      setShowForm(false); setEditingInvoiceId(null);
+      setInvoiceForm(old => ({ ...old, delivery: "", customer: "", branch: "", invoice_number: "" }));
+      setInvoiceLines([]);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إنشاء فاتورة المبيعات."); }
     finally { setBusy(false); }
@@ -193,9 +204,9 @@ const createInvoice = async (event: React.FormEvent) => {
   // تحميل بيانات الفاتورة المختارة داخل نموذج التعديل دون إرسال تغييرات للخادم.
 const beginEditInvoice = (invoice: SalesInvoice) => {
     setTab("invoices"); setShowForm(true); setError(""); setEditingInvoiceId(invoice.id);
-    setInvoiceForm({ delivery: String(invoice.delivery), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date, transaction_currency: invoice.transaction_currency ? String(invoice.transaction_currency) : "", exchange_rate: invoice.exchange_rate || "", exchange_rate_date: invoice.exchange_rate_date || invoice.invoice_date });
+    setInvoiceForm({ mode: invoice.delivery ? "delivery" : "service", delivery: invoice.delivery ? String(invoice.delivery) : "", branch: invoice.branch ? String(invoice.branch) : "", customer: String(invoice.customer), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date, transaction_currency: invoice.transaction_currency ? String(invoice.transaction_currency) : "", exchange_rate: invoice.exchange_rate || "", exchange_rate_date: invoice.exchange_rate_date || invoice.invoice_date });
     setInvoiceLines(invoice.invoice_lines.map(line => ({
-      delivery_line: line.delivery_line, product_name: line.product_name, quantity: line.quantity,
+      delivery_line: line.delivery_line ?? undefined, product: line.product, product_name: line.product_name, quantity: line.quantity,
       unit_price: line.transaction_unit_price || line.unit_price, tax_rate: line.tax_rate,
       tax_code: line.tax_code ? String(line.tax_code) : "",
       discount_percent: line.discount_percent,
@@ -337,7 +348,11 @@ const post = async (action: () => Promise<unknown>) => {
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ إذن التسليم كمسودة"}</button></div>
     </form>}
     {showForm && tab === "invoices" && <form className="inventory-form" onSubmit={createInvoice}>
-      <label>إذن التسليم<select required disabled={!!editingInvoiceId} value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map((line,index) => { const quoteLine=d.quotation_snapshot?.lines[index]; return {delivery_line:line.id, product_name:line.product_name, quantity:line.quantity, unit_price:quoteLine?.unit_price || products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:quoteLine?.tax_rate || "0", tax_code:quoteLine?.tax_code ? String(quoteLine.tax_code) : "", discount_percent:quoteLine?.discount_percent || ""}; }) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label>
+      <label>نوع الفاتورة<select disabled={!!editingInvoiceId} value={invoiceForm.mode} onChange={e=>{const mode=e.target.value as "delivery"|"service";setInvoiceForm({...invoiceForm,mode,delivery:"",customer:"",branch:""});setInvoiceLines(mode==="service"?[{product:undefined,product_name:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]:[]);}}><option value="delivery">فاتورة بضاعة من إذن تسليم</option><option value="service">فاتورة خدمة مباشرة</option></select></label>
+      {invoiceForm.mode === "delivery" ? <label>إذن التسليم<select required disabled={!!editingInvoiceId} value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map((line,index) => { const quoteLine=d.quotation_snapshot?.lines[index]; return {delivery_line:line.id, product:line.product, product_name:line.product_name, quantity:line.quantity, unit_price:quoteLine?.unit_price || products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:quoteLine?.tax_rate || "0", tax_code:quoteLine?.tax_code ? String(quoteLine.tax_code) : "", discount_percent:quoteLine?.discount_percent || ""}; }) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label> : <>
+        <label>العميل<select required disabled={!!editingInvoiceId} value={invoiceForm.customer} onChange={e=>setInvoiceForm({...invoiceForm,customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
+        <label>الفرع<select required disabled={!!editingInvoiceId} value={invoiceForm.branch} onChange={e=>setInvoiceForm({...invoiceForm,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
+      </>}
       <label>رقم الفاتورة<input required disabled={!!editingInvoiceId} value={invoiceForm.invoice_number} onChange={e => setInvoiceForm({...invoiceForm, invoice_number:e.target.value})} /></label>
       <label>التاريخ<input required type="date" disabled={!!editingInvoiceId} value={invoiceForm.invoice_date} onChange={e => setInvoiceForm({...invoiceForm, invoice_date:e.target.value})} /></label>
       <label>عملة الفاتورة<select disabled={!!editingInvoiceId} value={invoiceForm.transaction_currency} onChange={e => { const rate=e.target.value ? findRate(e.target.value, invoiceForm.invoice_date) : null; setInvoiceForm({...invoiceForm, transaction_currency:e.target.value, exchange_rate:rate?.rate || "", exchange_rate_date:rate?.rate_date || invoiceForm.invoice_date}); }}><option value="">العملة الأساسية للشركة</option>{currencies.map(currency=><option key={currency.id} value={currency.id}>{currency.code} · {currency.name_ar}</option>)}</select></label>
@@ -346,14 +361,21 @@ const post = async (action: () => Promise<unknown>) => {
         <label>سعر الصرف مقابل العملة الأساسية<input required type="number" min="0.0000000001" step="0.0000000001" value={invoiceForm.exchange_rate} onChange={e => setInvoiceForm({...invoiceForm, exchange_rate:e.target.value})} /></label>
         <p className="inventory-wide">أدخل أسعار الوحدات بالعملة الأجنبية؛ سيُحفظ المقابل بالعملة الأساسية في الأستاذ العام.</p>
       </>}
-      {invoiceLines.map((line,index) => <div className="inventory-form-row" key={line.delivery_line}>
-        <label>الصنف<input readOnly value={line.product_name} /></label><label>الكمية<input readOnly value={line.quantity} /></label>
+      {invoiceLines.map((line,index) => <div className="inventory-form-row" key={line.delivery_line ?? `service-${index}`}>
+        {invoiceForm.mode === "service" ? <>
+          <label>الخدمة<select required value={line.product ? String(line.product) : ""} onChange={e=>{const product=products.find(p=>p.id===Number(e.target.value));setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,product:product?.id,product_name:product?.name_ar||"",unit_price:product?.sale_price||"0"}:x));}}><option value="">اختر الخدمة</option>{products.filter(p=>p.product_type==="service"&&p.is_active).map(p=><option key={p.id} value={p.id}>{p.code} · {p.name_ar}</option>)}</select></label>
+          <label>الكمية<input required type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={e=>setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,quantity:e.target.value}:x))}/></label>
+          <button type="button" className="subtle-button" disabled={invoiceLines.length===1} onClick={()=>setInvoiceLines(old=>old.filter((_,i)=>i!==index))}>حذف الخدمة</button>
+        </> : <>
+          <label>الصنف<input readOnly value={line.product_name} /></label><label>الكمية<input readOnly value={line.quantity} /></label>
+        </>}
         <label>{invoiceForm.transaction_currency ? "سعر الوحدة بالعملة الأجنبية" : "سعر الوحدة بالعملة الأساسية"}<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))} /></label>
         <label>كود الضريبة<select value={line.tax_code} onChange={e => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,tax_code:e.target.value,tax_rate:selected?.rate || "0"}:x)); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}%</option>)}</select></label>
         {!line.tax_code && <label>الضريبة %<input required type="number" min="0" max="100" step="0.0001" value={line.tax_rate} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,tax_rate:e.target.value}:x))} /></label>}
         <label>خصم %<input type="number" min="0" max="100" step="0.0001" placeholder="تلقائي حسب قواعد العميل" value={line.discount_percent} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,discount_percent:e.target.value}:x))} /></label>
       </div>)}
-      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceForm.delivery || !invoiceLines.length}>{busy ? "جارٍ الحفظ…" : editingInvoiceId ? "حفظ تعديلات المسودة" : "حفظ الفاتورة كمسودة"}</button>{editingInvoiceId && <button type="button" className="subtle-button" onClick={() => { setEditingInvoiceId(null); setShowForm(false); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", invoice_number:""})); }}>إلغاء التعديل</button>}</div>
+      {invoiceForm.mode==="service" && <button type="button" className="subtle-button" onClick={()=>setInvoiceLines(old=>[...old,{product:undefined,product_name:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}])}>إضافة خدمة أخرى</button>}
+      <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy || !invoiceLines.length || (invoiceForm.mode==="delivery" ? !invoiceForm.delivery : !invoiceForm.customer || !invoiceForm.branch)}>{busy ? "جارٍ الحفظ…" : editingInvoiceId ? "حفظ تعديلات المسودة" : "حفظ الفاتورة كمسودة"}</button>{editingInvoiceId && <button type="button" className="subtle-button" onClick={() => { setEditingInvoiceId(null); setShowForm(false); setInvoiceLines([]); setInvoiceForm(old => ({...old, delivery:"", customer:"", branch:"", invoice_number:""})); }}>إلغاء التعديل</button>}</div>
     </form>}
     {showForm && tab === "returns" && <form className="inventory-form" onSubmit={createReturn}>
       <label>فاتورة المبيعات<select required value={returnForm.invoice} onChange={e=>setReturnForm({...returnForm,invoice:e.target.value,invoice_line:""})}><option value="">اختر فاتورة مرحلة</option>{invoices.filter(row=>row.status==="posted").map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.customer_name}</option>)}</select></label>
