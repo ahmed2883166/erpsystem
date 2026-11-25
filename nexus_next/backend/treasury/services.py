@@ -329,6 +329,8 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
         raise ValidationError("يوجد حركة خزينة مرحّلة بتاريخ لاحق؛ أعد التقييم بعد آخر حركة أو عالج التسلسل الزمني أولًا.")
     if rate_date > revaluation_date:
         raise ValidationError("تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ إعادة التقييم.")
+    if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date__gt=revaluation_date).exists():
+        raise ValidationError("يوجد تقييم أو حدث إعادة تقييم أحدث؛ لا يمكن إنشاء تقييم بتاريخ رجعي.")
     if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date=revaluation_date).exists():
         raise ValidationError("تمت إعادة تقييم هذا الحساب في التاريخ نفسه من قبل.")
     rate_row = ExchangeRate.objects.filter(
@@ -378,3 +380,86 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
         foreign_amount=position.foreign_amount, previous_carrying_amount=previous,
         new_carrying_amount=new_value, difference=difference, journal_entry=journal,
     )
+
+
+
+def _treasury_fx_revaluation_reversal_blocker(revaluation, *, account=None, position=None):
+    """Return a safe, user-facing reason when a treasury FX revaluation is not reversible."""
+    if not revaluation.journal_entry_id:
+        return "إعادة التقييم دون فرق محاسبي ولا يوجد قيد يمكن عكسه."
+    if revaluation.reversal_journal_entry_id or revaluation.reversed_at:
+        return "تم عكس إعادة التقييم من قبل."
+    if revaluation.journal_entry.status != JournalEntry.Status.POSTED:
+        return "قيد إعادة التقييم الأصلي ليس في حالة ترحيل تسمح بالعكس."
+
+    account = account or revaluation.account
+    position = position or TreasuryFxPosition.objects.filter(account=account).first()
+    if not position:
+        return "مركز العملة غير موجود؛ لا يمكن تنفيذ العكس بأمان."
+    if (
+        position.foreign_amount != revaluation.foreign_amount
+        or position.carrying_base_amount != revaluation.new_carrying_amount
+    ):
+        return "مركز العملة تغير بعد هذا التقييم؛ لا يمكن عكس تقييم أقدم قبل معالجة الأحداث اللاحقة."
+
+    later_revaluations = TreasuryFxRevaluation.objects.filter(
+        account=account,
+        revaluation_date__gt=revaluation.revaluation_date,
+        difference__gt=0,
+        reversal_journal_entry__isnull=True,
+    ).exists() or TreasuryFxRevaluation.objects.filter(
+        account=account,
+        revaluation_date__gt=revaluation.revaluation_date,
+        difference__lt=0,
+        reversal_journal_entry__isnull=True,
+    ).exists()
+    if later_revaluations:
+        return "يوجد تقييم أحدث غير معكوس؛ ابدأ بعكس آخر تقييم أولًا."
+
+    later_movements = TreasuryTransaction.objects.filter(
+        Q(source_account=account) | Q(destination_account=account),
+        status=TreasuryTransaction.Status.POSTED,
+    ).filter(
+        Q(transaction_date__gt=revaluation.revaluation_date)
+        | Q(transaction_date=revaluation.revaluation_date, posted_at__gt=revaluation.created_at)
+    ).exists()
+    if later_movements:
+        return "توجد حركة خزينة مرحّلة بعد إعادة التقييم؛ لا يمكن عكسه قبل معالجة الحركة اللاحقة."
+    return None
+
+
+def can_reverse_treasury_fx_revaluation(revaluation):
+    """Read-only eligibility check used by the revaluation history screen."""
+    return _treasury_fx_revaluation_reversal_blocker(revaluation) is None
+
+
+@transaction.atomic
+def reverse_treasury_fx_revaluation(*, revaluation_id, entry_date, user=None):
+    """Reverse the latest safe treasury FX revaluation and restore its subledger carrying value."""
+    revaluation = TreasuryFxRevaluation.objects.select_for_update(of=("self",)).select_related(
+        "journal_entry", "account",
+    ).get(pk=revaluation_id)
+    account = TreasuryAccount.objects.select_for_update(of=("self",)).get(pk=revaluation.account_id)
+    position = TreasuryFxPosition.objects.select_for_update().filter(account=account).first()
+    blocker = _treasury_fx_revaluation_reversal_blocker(
+        revaluation, account=account, position=position,
+    )
+    if blocker:
+        raise ValidationError(blocker)
+    if entry_date < revaluation.revaluation_date:
+        raise ValidationError("تاريخ قيد العكس لا يجوز أن يسبق تاريخ إعادة التقييم.")
+
+    from accounting.services import reverse_operational_journal
+    reversal = reverse_operational_journal(
+        revaluation.journal_entry_id, user, entry_date,
+        expected_source=JournalEntry.Source.FX_REVALUATION,
+    )
+    position.carrying_base_amount = revaluation.previous_carrying_amount
+    position.save(update_fields=("carrying_base_amount", "updated_at"))
+    revaluation.reversal_journal_entry = reversal
+    revaluation.reversed_at = timezone.now()
+    revaluation.reversed_by = user
+    revaluation.save(update_fields=(
+        "reversal_journal_entry", "reversed_at", "reversed_by",
+    ))
+    return revaluation
