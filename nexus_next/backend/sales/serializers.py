@@ -483,8 +483,9 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"invoice_date": "تاريخ الفاتورة لا يجوز أن يسبق تاريخ إذن التسليم."})
             if delivery.company_id != company.pk or delivery.customer_id != customer.pk:
                 raise serializers.ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة."})
-            if branch and delivery.warehouse.branch_id and branch.pk != delivery.warehouse.branch_id:
-                raise serializers.ValidationError({"branch": "فرع الفاتورة لا يطابق فرع إذن التسليم."})
+            resolved_branch = resolve_warehouse_branch(company, delivery.warehouse)
+            if branch and resolved_branch and branch.pk != resolved_branch.pk:
+                raise serializers.ValidationError({"branch": "فرع الفاتورة لا يطابق فرع إذن التسليم أو الفرع الافتراضي للمخزن."})
         elif not branch or branch.company_id != company.pk or not branch.is_active:
             raise serializers.ValidationError({"branch": "حدد فرعًا نشطًا تابعًا للشركة لفاتورة الخدمة."})
         if not customer.is_active:
@@ -513,7 +514,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         else:
             for line in lines:
                 product = line.get("product")
-                if not product or product.product_type != Product.ProductType.SERVICE or product.company_id != company.pk:
+                if not product or product.product_type != Product.ProductType.SERVICE or product.company_id != company.pk or not product.is_active:
                     raise serializers.ValidationError({"lines": "فاتورة الخدمة تقبل خدمات تابعة للشركة فقط، دون بنود مخزنية."})
                 if not line.get("quantity"):
                     raise serializers.ValidationError({"lines": "الكمية مطلوبة لكل خدمة."})
