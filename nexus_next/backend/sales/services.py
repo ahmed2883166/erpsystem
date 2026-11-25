@@ -195,8 +195,8 @@ def post_customer_receipt(receipt_id, user):
                 rate_date=receipt.exchange_rate_date, document_date=receipt.receipt_date,
                 approved_rate=approved.rate,
             )
-        except (ValueError, TypeError) as exc:
-            raise ValidationError(str(exc)) from exc
+        except (ValueError, TypeError):
+            raise ValidationError("تعذر التحقق من سعر الصرف لسند تحصيل العميل.") from None
         if expected_amount != receipt.amount:
             raise ValidationError("مبلغ التحصيل الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
         from accounting.fx_settlement import allocate_carrying_base_amount, calculate_realized_fx
