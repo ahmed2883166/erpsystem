@@ -882,7 +882,9 @@ export type SalesPerformanceReport = {
   }>;
 };
 
-export const salesApi = {\n  // تقرير المبيعات والمرتجعات وصافي الربح حسب العميل والصنف.\n  salesPerformance: (companyId:number,dateFrom:string,dateTo:string,branchId?:number) => request<SalesPerformanceReport>(`/api/sales-documents/invoices/sales-performance/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branchId?`&branch=${branchId}`:""}`),
+export const salesApi = {
+  // تقرير المبيعات والمرتجعات وصافي الربح حسب العميل والصنف.
+  salesPerformance: (companyId:number,dateFrom:string,dateTo:string,branchId?:number) => request<SalesPerformanceReport>(`/api/sales-documents/invoices/sales-performance/?company=${companyId}&date_from=${dateFrom}&date_to=${dateTo}${branchId?`&branch=${branchId}`:""}`),
   // جلب كشف حساب العميل مع رصيد أول وآخر المدة والحركات المرحلة.
   customerStatement: (companyId:number, customerId:number, dateFrom="", dateTo="") => request<CustomerStatement>(`/api/sales-documents/invoices/customer-statement/?company=${companyId}&customer=${customerId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
   documentTemplates: (companyId:number) => request<SalesDocumentTemplate[]>(`/api/sales-documents/document-templates/?company=${companyId}&ordering=document_type`),
