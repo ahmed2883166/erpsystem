@@ -532,26 +532,24 @@ def password_hash(password, salt=None, iterations=310000):
 
 
 def verify_password(password, stored_hash):
-    """Verify current PBKDF2 hashes and legacy SHA-256 hashes during migration."""
-    if not stored_hash:
+    """Verify PBKDF2 password hashes; legacy fast hashes must be reset by an administrator."""
+    if not stored_hash or not stored_hash.startswith("pbkdf2_sha256$"):
+        # Deliberately fail closed: never verify passwords using fast legacy digests.
+        # Accounts with legacy hashes must receive an administrator-issued reset.
         return False
-    if stored_hash.startswith("pbkdf2_sha256$"):
-        try:
-            algorithm, rounds, salt_hex, expected_hex = stored_hash.split("$", 3)
-            if algorithm != "pbkdf2_sha256":
-                return False
-            rounds = int(rounds)
-            if rounds < 100000 or rounds > 2000000:
-                return False
-            salt = bytes.fromhex(salt_hex)
-            expected = bytes.fromhex(expected_hex)
-            actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
-            return hmac.compare_digest(actual, expected)
-        except (ValueError, TypeError):
+    try:
+        algorithm, rounds, salt_hex, expected_hex = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
             return False
-    # Compatibility only: successful legacy logins are upgraded immediately.
-    legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
-    return hmac.compare_digest(legacy, stored_hash)
+        rounds = int(rounds)
+        if rounds < 100000 or rounds > 2000000:
+            return False
+        salt = bytes.fromhex(salt_hex)
+        expected = bytes.fromhex(expected_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
 
 
 def password_hash_needs_upgrade(stored_hash):
