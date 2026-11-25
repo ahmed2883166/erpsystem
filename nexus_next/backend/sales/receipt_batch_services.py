@@ -272,12 +272,16 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
     for allocation in allocations:
         later_direct = CustomerReceipt.objects.filter(
             invoice=allocation.invoice, status=CustomerReceipt.Status.POSTED,
-            receipt_date__gt=allocation.allocation_date,
+        ).filter(
+            Q(receipt_date__gt=allocation.allocation_date)
+            | Q(receipt_date=allocation.allocation_date, created_at__gt=allocation.created_at)
         ).exists()
         later_batch = CustomerReceiptBatchAllocation.objects.filter(
             invoice=allocation.invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
-            allocation_date__gt=allocation.allocation_date,
-        ).exclude(batch=batch).exists()
+        ).exclude(batch=batch).filter(
+            Q(allocation_date__gt=allocation.allocation_date)
+            | Q(allocation_date=allocation.allocation_date, created_at__gt=allocation.created_at)
+        ).exists()
         if later_direct or later_batch:
             raise ValidationError("يجب عكس أحدث سند قبض مخصص إلى الفاتورة أولًا.")
 
