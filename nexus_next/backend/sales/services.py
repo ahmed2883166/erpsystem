@@ -114,8 +114,8 @@ def post_sales_invoice(invoice_id, user):
                 rate_date=invoice.exchange_rate_date, document_date=invoice.invoice_date,
                 approved_rate=approved.rate,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر التحقق من سعر الصرف لفاتورة المبيعات؛ راجع بيانات العملة والسعر المعتمد.") from None
         if abs(expected_base - total) > Decimal("0.0002") * max(len(lines), 1):
             raise ValidationError("قيمة الفاتورة بالعملة الأساسية لا تطابق إجماليها الأجنبي وسعر الصرف.")
         invoice.transaction_net_total = foreign_net
