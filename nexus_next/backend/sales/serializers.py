@@ -911,6 +911,7 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     payment_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all(), required=False, allow_null=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    transaction_currency_code = serializers.CharField(source="transaction_currency.code", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
 
@@ -926,7 +927,7 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerReceipt
         fields = ("id", "company", "customer", "customer_name", "invoice", "invoice_number",
-                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
+                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_currency_code", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
                   "journal_entry", "journal_number", "created_at", "posted_at", "reversal_journal_entry")
         read_only_fields = ("status", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
