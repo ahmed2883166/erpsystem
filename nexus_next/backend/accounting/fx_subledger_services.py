@@ -125,8 +125,8 @@ def _branch_and_year(invoice, direction, entry_date):
     if direction == "receivable":
         from sales.services import _branch_and_year as resolver
         return resolver(invoice.delivery, entry_date)
-    from purchasing.services import _branch_and_year as resolver
-    return resolver(invoice.receipt, entry_date)
+    from purchasing.services import _branch_and_year_for_invoice
+    return _branch_and_year_for_invoice(invoice, entry_date)
 
 
 @transaction.atomic
@@ -139,7 +139,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         invoice_model = SalesInvoice
     elif direction == "payable":
         invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
-            "company", "transaction_currency", "receipt__warehouse",
+            "company", "transaction_currency", "branch", "receipt__warehouse",
         ).get(pk=invoice_id)
         invoice_model = PurchaseInvoice
     else:
