@@ -865,10 +865,19 @@ export type CustomerReceiptBatch = {
   journal_entry:number|null;journal_number:string|null;reversal_journal_entry:number|null;
   reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
 };
+export type CustomerRefund = {
+  id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
+  refund_number:string;refund_date:string;source_return:number|null;source_return_number:string|null;
+  source_receipt_batch:number|null;source_receipt_number:string|null;treasury_account:number;
+  treasury_account_name:string;amount:string;reference:string;status:"draft"|"posted"|"reversed";
+  treasury_transaction:number|null;treasury_document_number:string|null;journal_number:string|null;
+  reversal_treasury_transaction:number|null;reversal_journal_entry:number|null;
+  reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
+};
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
-  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
+  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal"|"customer_refund"|"customer_refund_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
 };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
@@ -961,6 +970,14 @@ export const salesApi = {
   allocateReceiptBatch: async (id:number,invoice:number,amount:string,allocation_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/allocate/`, {method:"POST",body:JSON.stringify({invoice,amount,allocation_date})}); },
   // عكس سند قبض مجمع وقيد التحصيل المرتبط به.
   reverseReceiptBatch: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
+  // جلب عمليات رد مبالغ العملاء.
+  refunds: (companyId:number) => request<CustomerRefund[]>(`/api/sales-documents/refunds/?company=${companyId}&ordering=-refund_date`),
+  // إنشاء مسودة رد مبلغ عن مردود مبيعات أو دفعة مقدمة.
+  createRefund: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerRefund>("/api/sales-documents/refunds/", {method:"POST",body:JSON.stringify(payload)}); },
+  // صرف المبلغ من الخزينة/البنك وترحيل القيد.
+  postRefund: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerRefund>(`/api/sales-documents/refunds/${id}/post/`, {method:"POST",body:"{}"}); },
+  // عكس رد المبلغ بإثبات قبض مقابل من نفس الخزينة.
+  reverseRefund: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerRefund>(`/api/sales-documents/refunds/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
 };
 
 
