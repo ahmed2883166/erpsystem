@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from rest_framework.test import APITestCase
@@ -323,7 +324,7 @@ class CustomerRefundTests(APITestCase):
     def test_foreign_currency_return_refund_posts_and_reverses_exact_treasury_carrying_value(self):
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي", decimal_places=2)
         for rate_date, rate in (
-            ("2026-03-10", "50"), ("2026-03-11", "52"), ("2026-03-13", "50"),
+            (date(2026, 3, 10), "50"), (date(2026, 3, 11), "52"), (date(2026, 3, 13), "50"),
         ):
             ExchangeRate.objects.create(
                 company=self.company, currency=usd, rate_date=rate_date, rate=Decimal(rate),
