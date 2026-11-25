@@ -108,6 +108,65 @@ def _branch_aware_balance_filter(branch_ids, snapshot_branch_ids, cutoff, fiscal
     return result
 
 
+
+
+def _treasury_fx_cash_flow_effect(company_id, date_from, date_to, visible_branches):
+    """Return IAS 7 FX effects on cash, keeping original and reversal events in their own periods."""
+    revaluations = list(TreasuryFxRevaluation.objects.filter(
+        company_id=company_id,
+        revaluation_date__gte=date_from,
+        revaluation_date__lte=date_to,
+        journal_entry__isnull=False,
+        journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+        journal_entry__branch__in=visible_branches,
+    ).select_related("account__account", "journal_entry").order_by(
+        "revaluation_date", "account__code", "id"
+    ))
+    reversals = list(TreasuryFxRevaluation.objects.filter(
+        company_id=company_id,
+        reversal_journal_entry__isnull=False,
+        reversal_journal_entry__entry_date__gte=date_from,
+        reversal_journal_entry__entry_date__lte=date_to,
+        reversal_journal_entry__status=JournalEntry.Status.POSTED,
+        reversal_journal_entry__branch__in=visible_branches,
+    ).select_related(
+        "account__account", "journal_entry", "reversal_journal_entry",
+    ).order_by("reversal_journal_entry__entry_date", "account__code", "id"))
+    effect = (
+        sum((row.difference for row in revaluations), Decimal("0"))
+        - sum((row.difference for row in reversals), Decimal("0"))
+    )
+    details = [{
+        "account_id": row.account_id,
+        "account_code": row.account.account.code,
+        "account_name": row.account.name_ar,
+        "currency": row.account.currency_code,
+        "event_type": "revaluation",
+        "event_date": row.revaluation_date,
+        "original_revaluation_date": row.revaluation_date,
+        "rate": row.rate,
+        "foreign_amount": row.foreign_amount,
+        "difference": row.difference,
+        "journal_number": row.journal_entry.entry_number,
+        "original_journal_number": row.journal_entry.entry_number,
+    } for row in revaluations] + [{
+        "account_id": row.account_id,
+        "account_code": row.account.account.code,
+        "account_name": row.account.name_ar,
+        "currency": row.account.currency_code,
+        "event_type": "reversal",
+        "event_date": row.reversal_journal_entry.entry_date,
+        "original_revaluation_date": row.revaluation_date,
+        "rate": row.rate,
+        "foreign_amount": row.foreign_amount,
+        "difference": -row.difference,
+        "journal_number": row.reversal_journal_entry.entry_number,
+        "original_journal_number": row.journal_entry.entry_number,
+    } for row in reversals]
+    details.sort(key=lambda item: (item["event_date"], item["account_code"], item["event_type"]))
+    return effect, details
+
+
 def _ensure_period_open(fiscal_year, entry_date):
     """تحويل أخطاء إقفال الفترة إلى استجابة تحقق مناسبة لواجهة API."""
     try:
@@ -1755,59 +1814,8 @@ class JournalEntryViewSet(AccountingViewSet):
         # IAS 7: show exchange-rate effects on cash separately from the three activity classes.
         # Scope by the journal branch because a company-wide treasury account may be
         # revalued under a particular branch.
-        fx_revaluations = list(TreasuryFxRevaluation.objects.filter(
-            company_id=company_id,
-            revaluation_date__gte=date_from,
-            revaluation_date__lte=date_to,
-            journal_entry__isnull=False,
-            journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-            journal_entry__branch__in=visible_branches,
-        ).select_related("account__account", "journal_entry").order_by(
-            "revaluation_date", "account__code", "id"
-        ))
-        fx_reversals = list(TreasuryFxRevaluation.objects.filter(
-            company_id=company_id,
-            reversal_journal_entry__isnull=False,
-            reversal_journal_entry__entry_date__gte=date_from,
-            reversal_journal_entry__entry_date__lte=date_to,
-            reversal_journal_entry__status=JournalEntry.Status.POSTED,
-            reversal_journal_entry__branch__in=visible_branches,
-        ).select_related(
-            "account__account", "journal_entry", "reversal_journal_entry",
-        ).order_by("reversal_journal_entry__entry_date", "account__code", "id"))
-        effect_of_exchange_rate_changes = (
-            sum((row.difference for row in fx_revaluations), Decimal("0"))
-            - sum((row.difference for row in fx_reversals), Decimal("0"))
-        )
-        exchange_rate_effect_details = [{
-            "account_id": row.account_id,
-            "account_code": row.account.account.code,
-            "account_name": row.account.name_ar,
-            "currency": row.account.currency_code,
-            "event_type": "revaluation",
-            "event_date": row.revaluation_date,
-            "original_revaluation_date": row.revaluation_date,
-            "rate": row.rate,
-            "foreign_amount": row.foreign_amount,
-            "difference": row.difference,
-            "journal_number": row.journal_entry.entry_number,
-            "original_journal_number": row.journal_entry.entry_number,
-        } for row in fx_revaluations] + [{
-            "account_id": row.account_id,
-            "account_code": row.account.account.code,
-            "account_name": row.account.name_ar,
-            "currency": row.account.currency_code,
-            "event_type": "reversal",
-            "event_date": row.reversal_journal_entry.entry_date,
-            "original_revaluation_date": row.revaluation_date,
-            "rate": row.rate,
-            "foreign_amount": row.foreign_amount,
-            "difference": -row.difference,
-            "journal_number": row.reversal_journal_entry.entry_number,
-            "original_journal_number": row.journal_entry.entry_number,
-        } for row in fx_reversals]
-        exchange_rate_effect_details.sort(
-            key=lambda item: (item["event_date"], item["account_code"], item["event_type"])
+        effect_of_exchange_rate_changes, exchange_rate_effect_details = (
+            _treasury_fx_cash_flow_effect(company_id, date_from, date_to, visible_branches)
         )
         net_increase_decrease_in_cash = net_change_in_cash + effect_of_exchange_rate_changes
         closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
