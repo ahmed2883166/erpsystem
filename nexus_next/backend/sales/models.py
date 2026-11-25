@@ -741,9 +741,9 @@ class CustomerReceiptBatch(models.Model):
         indexes = [
             models.Index(
                 fields=("company", "status", "receipt_date"),
-                name="sales_rcpt_batch_co_status_idx",
+                name="sales_rcpt_batch_co_stat_idx",
             ),
-            models.Index(fields=("branch", "receipt_date"), name="sales_rcpt_batch_branch_date_idx"),
+            models.Index(fields=("branch", "receipt_date"), name="sales_rcpt_batch_branch_idx"),
         ]
 
     @property
@@ -771,7 +771,7 @@ class CustomerReceiptBatch(models.Model):
         ).exists():
             allowed = {
                 "status", "reversal_journal_entry", "reversal_date",
-                "reversed_at", "reversed_by", "updated_at",
+                "reversed_at", "reversed_by",
             }
             fields = set(kwargs.get("update_fields") or ())
             if not fields or not fields.issubset(allowed):
