@@ -228,8 +228,8 @@ def post_customer_receipt(receipt_id, user):
             realized_gain, realized_loss = calculate_realized_fx(
                 "receivable", historical_carrying, settlement.settlement_base_amount,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر احتساب تسوية العملة لتحصيل العميل.") from None
         carrying_amount = settlement.carrying_base_amount
         unrealized_adjustment = carrying_amount - historical_carrying
     else:
