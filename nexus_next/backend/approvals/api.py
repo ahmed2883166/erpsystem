@@ -2,6 +2,7 @@
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -145,7 +146,8 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             company__in=accessible_companies(self.request.user)
         ).select_related(
             "company", "requested_by", "decided_by", "purchase_invoice",
-            "purchase_invoice__supplier", "supplier_payment", "supplier_payment__supplier",
+            "purchase_invoice__supplier", "purchase_order", "purchase_order__supplier",
+            "purchase_order__warehouse", "purchase_order__warehouse__branch", "supplier_payment", "supplier_payment__supplier",
             "treasury_transaction", "treasury_transaction__source_account",
             "treasury_transaction__counter_account", "asset_purchase_invoice",
             "asset_purchase_invoice__supplier", "asset_purchase_invoice__asset",
@@ -169,6 +171,10 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
                   purchase_invoice__receipt__warehouse__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
                     purchase_invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_ORDER,
+                    purchase_order__warehouse__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_ORDER,
+                    purchase_order__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
                     supplier_payment__invoice__receipt__warehouse__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
@@ -195,6 +201,11 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             return PurchaseInvoice.objects.select_for_update().select_related(
                 "supplier", "receipt"
             ).prefetch_related("lines__receipt_line__product", "lines__tax_code").get(pk=approval.purchase_invoice_id)
+        if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_ORDER:
+            from purchasing.models import PurchaseOrder
+            return PurchaseOrder.objects.select_for_update(of=("self",)).select_related(
+                "supplier", "warehouse", "warehouse__branch",
+            ).prefetch_related("lines__product").get(pk=approval.purchase_order_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT:
             from purchasing.models import SupplierPayment
             return SupplierPayment.objects.select_for_update().select_related(
@@ -225,6 +236,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             raise ValidationError("تم اتخاذ قرار على هذا الطلب بالفعل.")
         relation = {
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "purchase_invoice",
+            FinancialApprovalRequest.DocumentType.PURCHASE_ORDER: "purchase_order",
             FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "supplier_payment",
             FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "treasury_transaction",
             FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE: "asset_purchase_invoice",
@@ -238,10 +250,11 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         if document.status != "draft":
             raise ValidationError("لا يمكن اعتماد مستند ليس مسودة.")
         snapshot = financial_document_snapshot(approval.document_type, document)
-        amount = document.grand_total if approval.document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount
+        amount = document.grand_total if approval.document_type in (FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, FinancialApprovalRequest.DocumentType.PURCHASE_ORDER, FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE) else document.amount
         policy = DiscountApprovalPolicy.objects.filter(company_id=approval.company_id).first()
         field = {
             FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE: "max_purchase_invoice_amount",
+            FinancialApprovalRequest.DocumentType.PURCHASE_ORDER: "max_purchase_order_amount",
             FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT: "max_payment_amount",
             FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT: "max_payment_amount",
             FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE: "max_purchase_invoice_amount",
@@ -273,6 +286,10 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         approval.decided_by = request.user
         approval.decision_note = str(request.data.get("note", "")).strip()[:500]
         approval.save()
+        if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_ORDER:
+            document.status = "confirmed"
+            document.confirmed_at = timezone.now()
+            document.save(update_fields=("status", "confirmed_at"))
         return Response(self.get_serializer(approval).data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=("post",))

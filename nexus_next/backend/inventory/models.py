@@ -1,5 +1,7 @@
 """نماذج الأصناف والمخازن ومواقع التخزين وحركات المخزون وتقييم التكلفة والربط المحاسبي."""
 
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
@@ -67,6 +69,12 @@ class Product(models.Model):
         WEIGHTED_AVERAGE = "weighted_average", "متوسط مرجح"
         FIFO = "fifo", "الوارد أولاً يصرف أولاً"
 
+    class StockClass(models.TextChoices):
+        RAW_MATERIAL = "raw_material", "مواد خام"
+        FINISHED_GOODS = "finished_goods", "منتجات تامة"
+        OPERATING_SUPPLIES = "operating_supplies", "مستلزمات تشغيل"
+        SPARE_PARTS = "spare_parts", "قطع غيار"
+
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="products")
     category = models.ForeignKey(ProductCategory, null=True, blank=True, on_delete=models.PROTECT, related_name="products")
     unit = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, related_name="products")
@@ -75,6 +83,7 @@ class Product(models.Model):
     name_ar = models.CharField(max_length=180)
     name_en = models.CharField(max_length=180, blank=True)
     product_type = models.CharField(max_length=10, choices=ProductType.choices, default=ProductType.GOODS)
+    stock_class = models.CharField(max_length=20, choices=StockClass.choices, default=StockClass.FINISHED_GOODS, null=True, blank=True)
     purchase_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     sale_price = models.DecimalField(max_digits=18, decimal_places=4, default=0, validators=[MinValueValidator(0)])
     costing_method = models.CharField(max_length=20, choices=CostingMethod.choices, default=CostingMethod.WEIGHTED_AVERAGE)
@@ -105,6 +114,10 @@ class Product(models.Model):
             raise ValidationError({"unit": "وحدة القياس يجب أن تتبع نفس الشركة."})
         if self.product_type == self.ProductType.SERVICE and self.track_expiry:
             raise ValidationError({"track_expiry": "لا يمكن تتبع صلاحية خدمة."})
+        if self.product_type == self.ProductType.SERVICE and self.stock_class is not None:
+            raise ValidationError({"stock_class": "تصنيف المخزون لا يطبق على الخدمات."})
+        if self.product_type == self.ProductType.GOODS and not self.stock_class:
+            raise ValidationError({"stock_class": "حدد تصنيف الصنف المخزني."})
 
 
 class Warehouse(models.Model):
@@ -212,6 +225,13 @@ class StockMovement(models.Model):
         TRANSFER = "transfer", "تحويل"
         ADJUSTMENT = "adjustment", "تسوية جرد"
 
+    class AdjustmentReason(models.TextChoices):
+        COUNT = "count", "جرد فعلي"
+        DAMAGE = "damage", "تالف"
+        EXPIRED = "expired", "منتهي الصلاحية"
+        WRITE_OFF = "write_off", "شطب أو إعدام"
+        OTHER = "other", "أخرى"
+
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
         POSTED = "posted", "مرحّل"
@@ -219,6 +239,7 @@ class StockMovement(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="stock_movements")
     movement_number = models.CharField(max_length=40)
     movement_type = models.CharField(max_length=12, choices=MovementType.choices)
+    adjustment_reason = models.CharField(max_length=16, choices=AdjustmentReason.choices, blank=True)
     movement_date = models.DateField()
     source_warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="outgoing_movements")
     destination_warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="incoming_movements")
@@ -236,6 +257,7 @@ class StockMovement(models.Model):
         ]
         indexes = [
             models.Index(fields=("company", "status", "movement_date"), name="inv_move_status_date_idx"),
+            models.Index(fields=("status", "movement_date", "posted_at", "id"), name="inv_move_card_order_idx"),
         ]
 
     def clean(self):
@@ -254,6 +276,10 @@ class StockMovement(models.Model):
                 raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
         if self.movement_type == self.MovementType.ADJUSTMENT and bool(self.source_warehouse_id) == bool(self.destination_warehouse_id):
             raise ValidationError("التسوية تتطلب تحديد مخزن واحد فقط.")
+        if self.movement_type == self.MovementType.ADJUSTMENT and not self.adjustment_reason:
+            raise ValidationError({"adjustment_reason": "حدد سبب التسوية."})
+        if self.movement_type != self.MovementType.ADJUSTMENT and self.adjustment_reason:
+            raise ValidationError({"adjustment_reason": "سبب التسوية لا يستخدم إلا مع حركات التسوية."})
 
 
 class StockMovementLine(models.Model):
@@ -275,6 +301,9 @@ class StockMovementLine(models.Model):
 
     class Meta:
         ordering = ("id",)
+        indexes = [
+            models.Index(fields=("product", "movement"), name="inv_line_prod_move_idx"),
+        ]
 
     def clean(self):
         super().clean()
@@ -346,7 +375,10 @@ class StockCostConsumption(models.Model):
 
     class Meta:
         ordering = ("id",)
-        indexes = [models.Index(fields=("movement_line", "source_layer"), name="inv_cost_consume_idx")]
+        indexes = [
+            models.Index(fields=("movement_line", "source_layer"), name="inv_cost_consume_idx"),
+            models.Index(fields=("source_layer", "movement_line"), name="inv_consume_source_move_idx"),
+        ]
 
 
 class StockMovementJournalLink(models.Model):
@@ -360,3 +392,128 @@ class StockMovementJournalLink(models.Model):
             models.UniqueConstraint(fields=("movement", "journal_entry"), name="uq_stock_movement_journal_link"),
         ]
         ordering = ("id",)
+
+
+class InventoryCount(models.Model):
+    """مستند جرد فعلي يثبت لقطة الرصيد قبل اعتماد فروق الجرد."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "قيد العد"
+        POSTED = "posted", "مرحّل"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="inventory_counts")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="inventory_counts")
+    count_number = models.CharField(max_length=40)
+    count_date = models.DateField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_inventory_counts",
+    )
+    posted_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="posted_inventory_counts",
+    )
+    posted_at = models.DateTimeField(null=True, blank=True)
+    gain_movement = models.ForeignKey(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="gain_inventory_counts",
+    )
+    loss_movement = models.ForeignKey(
+        StockMovement, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="loss_inventory_counts",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-count_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "count_number"), name="uq_inventory_count_company_number"),
+            models.UniqueConstraint(
+                fields=("warehouse",), condition=Q(status="draft"),
+                name="uq_inventory_count_open_warehouse",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "count_date"), name="inv_count_status_date_idx"),
+        ]
+        verbose_name = "مستند جرد مخزني"
+        verbose_name_plural = "مستندات الجرد المخزني"
+
+    def clean(self):
+        super().clean()
+        if self.warehouse_id and self.company_id != self.warehouse.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+
+
+class InventoryCountLine(models.Model):
+    """سطر جرد يحتفظ برصيد الدفاتر وقت بدء الجرد والكمية الفعلية المعدودة."""
+    count = models.ForeignKey(InventoryCount, on_delete=models.CASCADE, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="inventory_count_lines")
+    location = models.ForeignKey(
+        StorageLocation, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="inventory_count_lines",
+    )
+    expiry_date = models.DateField(null=True, blank=True)
+    system_quantity = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    system_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    counted_quantity = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    adjustment_unit_cost = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    counted_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="counted_inventory_lines",
+    )
+    counted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def company_id(self):
+        """Expose the owning company for the shared company-role permission."""
+        return self.count.company_id
+
+    class Meta:
+        ordering = ("product__code", "id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("count", "product", "location", "expiry_date"),
+                nulls_distinct=False,
+                name="uq_inventory_count_line_dimension",
+            ),
+            models.CheckConstraint(condition=Q(system_quantity__gte=0), name="ck_inv_count_system_qty_nonnegative"),
+            models.CheckConstraint(condition=Q(system_value__gte=0), name="ck_inv_count_system_value_nonnegative"),
+            models.CheckConstraint(condition=Q(counted_quantity__isnull=True) | Q(counted_quantity__gte=0), name="ck_inv_count_counted_qty_nonnegative"),
+            models.CheckConstraint(condition=Q(adjustment_unit_cost__gte=0), name="ck_inv_count_unit_cost_nonnegative"),
+        ]
+        indexes = [
+            models.Index(fields=("count", "product"), name="inv_count_line_product_idx"),
+        ]
+        verbose_name = "بند جرد مخزني"
+        verbose_name_plural = "بنود الجرد المخزني"
+
+    @property
+    def variance_quantity(self):
+        if self.counted_quantity is None:
+            return None
+        return self.counted_quantity - self.system_quantity
+
+    def clean(self):
+        super().clean()
+        if self.count_id and self.product_id:
+            if self.product.company_id != self.count.company_id:
+                raise ValidationError({"product": "الصنف لا يتبع شركة مستند الجرد."})
+            if self.product.product_type != Product.ProductType.GOODS:
+                raise ValidationError({"product": "لا يمكن جرد خدمة غير مخزنية."})
+            if self.location_id and self.location.warehouse_id != self.count.warehouse_id:
+                raise ValidationError({"location": "موقع الجرد لا يتبع مخزن المستند."})
+            if self.product.track_expiry and not self.expiry_date:
+                raise ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب للصنف المتتبع."})
+            if not self.product.track_expiry and self.expiry_date:
+                raise ValidationError({"expiry_date": "الصنف لا يتطلب تتبع الصلاحية."})
+            if self.counted_quantity is not None:
+                quantum = Decimal("1").scaleb(-self.product.unit.decimal_places)
+                if self.counted_quantity != self.counted_quantity.quantize(quantum):
+                    raise ValidationError({"counted_quantity": "الكمية تتجاوز دقة وحدة قياس الصنف."})

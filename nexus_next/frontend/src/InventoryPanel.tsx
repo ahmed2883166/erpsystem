@@ -4,9 +4,9 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { formatMoney, sumDecimalToFixed } from "./formatters";
-import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
+import { accountRoleApi, api, inventoryApi, stockApi, type Account, type AccountRole, type Branch, type InventoryCategory, type InventoryLocation, type InventoryUnit, type Product, type InventoryReconciliation, type InventoryValuationIntegrity, type InventoryCostAging, type InventoryCount, type InventoryStockAging, type StockBalance, type StockCard, type StockMovement, type Warehouse, type WarehouseProductSetting } from "./api";
 
-type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
+type Tab = "products" | "categories" | "warehouses" | "units" | "locations" | "movements" | "counts" | "balances" | "reports" | "reorder" | "stock-card" | "accounting";
 // شاشة المخزون الرئيسية وتبديل التبويبات بين الأصناف والمخازن والحركات والتقارير.
 export default function InventoryPanel({ companyId, currency = "" }: { companyId: number | null; currency?: string }) {
   const [tab, setTab] = useState<Tab>("products");
@@ -42,22 +42,29 @@ export default function InventoryPanel({ companyId, currency = "" }: { companyId
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ code: "", name_ar: "", barcode: "", unit: "", category: "", product_type: "goods", purchase_price: "0", sale_price: "0", min_stock: "0", costing_method: "weighted_average", track_expiry: false });
+  const [form, setForm] = useState({ code: "", name_ar: "", barcode: "", unit: "", category: "", product_type: "goods", stock_class: "finished_goods", purchase_price: "0", sale_price: "0", min_stock: "0", costing_method: "weighted_average", track_expiry: false });
   const [unitForm, setUnitForm] = useState({ code: "", name_ar: "", symbol: "", decimal_places: "2" });
   const [categoryForm, setCategoryForm] = useState({ code: "", name_ar: "" });
   const [warehouseForm, setWarehouseForm] = useState({ code: "", name_ar: "", branch: "", address: "" });
   const [locationForm, setLocationForm] = useState({ warehouse: "", code: "", name_ar: "", location_type: "area", parent: "" });
   const [roleForm, setRoleForm] = useState({ role: "inventory", account: "" });
-  const [stockForm, setStockForm] = useState({ movement_number: "", movement_type: "receipt", movement_date: new Date().toISOString().slice(0, 10), source_warehouse: "", destination_warehouse: "", source_location: "", destination_location: "", expiry_date: "", product: "", quantity: "1", unit_cost: "0", adjustment_direction: "in", notes: "" });
+  const [stockForm, setStockForm] = useState({ movement_number: "", movement_type: "receipt", adjustment_reason: "other", movement_date: new Date().toISOString().slice(0, 10), source_warehouse: "", destination_warehouse: "", source_location: "", destination_location: "", expiry_date: "", product: "", quantity: "1", unit_cost: "0", adjustment_direction: "in", notes: "" });
   const [stockLines, setStockLines] = useState([{ product: "", quantity: "1", unit_cost: "0", expiry_date: "" }]);
+  const [counts, setCounts] = useState<InventoryCount[]>([]);
+  const [stockAging, setStockAging] = useState<InventoryStockAging | null>(null);
+  const [selectedCountId, setSelectedCountId] = useState<number | null>(null);
+  const [countForm, setCountForm] = useState({ warehouse: "", count_number: "", count_date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [countLineDraft, setCountLineDraft] = useState({ product: "", location: "", expiry_date: "", counted_quantity: "", adjustment_unit_cost: "0", notes: "" });
+
 
   // تحديث قوائم الأصناف والمخازن والوحدات والأرصدة وفق الشركة الحالية.
 const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [p, c, u, w, l, m, b, a, ar, ws, br] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId)]);
-      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br);
+      const [p, c, u, w, l, m, b, a, ar, ws, br, ct, sa] = await Promise.all([inventoryApi.products(companyId), inventoryApi.categories(companyId), inventoryApi.units(companyId), inventoryApi.warehouses(companyId), inventoryApi.locations(companyId), stockApi.movements(companyId), stockApi.balances(companyId), api.accounts(companyId), accountRoleApi.list(companyId), inventoryApi.warehouseProductSettings(companyId), api.branches(companyId), stockApi.counts(companyId), stockApi.stockAging(companyId)]);
+      setProducts(p); setCategories(c); setUnits(u); setWarehouses(w); setLocations(l); setMovements(m); setBalances(b); setAccounts(a); setRoleAssignments(ar); setWarehouseSettings(ws); setBranches(br); setCounts(ct); setStockAging(sa);
+      setSelectedCountId((old) => old && ct.some((item) => item.id === old) ? old : (ct[0]?.id ?? null));
       setReconciliationBranch((old) => old && br.some((item) => String(item.id) === old) ? old : "");
       setRoleForm((old) => ({ ...old, account: String(ar.find((item) => item.role === old.role)?.account || "") }));
       setLocationForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || "") }));
@@ -67,6 +74,7 @@ const refresh = async () => {
       setStockForm((old) => ({ ...old, source_warehouse: old.source_warehouse || String(w.find((item) => item.is_active)?.id || ""), destination_warehouse: old.destination_warehouse || String(w.find((item) => item.is_active)?.id || "") }));
       setStockLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? defaultProduct : "") })));
       setForm((old) => ({ ...old, unit: old.unit || String(u[0]?.id || ""), category: old.category || String(c[0]?.id || "") }));
+      setCountForm((old) => ({ ...old, warehouse: old.warehouse || String(w.find((item) => item.is_active)?.id || "") }));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المخزون."); }
     finally { setBusy(false); }
   };
@@ -89,10 +97,10 @@ const refresh = async () => {
     document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
   };
   // تحميل كارت الصنف وحركاته التفصيلية للفلاتر المحددة.
-const loadStockCard = async () => {
+const loadStockCard = async (page = 1) => {
     if (!stockCardForm.product || !stockCardForm.warehouse) { setStockCardError("اختر الصنف والمخزن أولاً."); return; }
     setStockCardBusy(true); setStockCardError("");
-    try { setStockCard(await stockApi.stockCard(Number(stockCardForm.product), Number(stockCardForm.warehouse), stockCardForm.date_from, stockCardForm.date_to)); }
+    try { setStockCard(await stockApi.stockCard(Number(stockCardForm.product), Number(stockCardForm.warehouse), stockCardForm.date_from, stockCardForm.date_to, page, 50)); }
     catch (reason) { setStockCard(null); setStockCardError(reason instanceof Error ? reason.message : "تعذر تحميل بطاقة الصنف."); }
     finally { setStockCardBusy(false); }
   };
@@ -156,42 +164,15 @@ const loadValuationIntegrity = async () => {
     const days = Math.ceil((new Date(row.expiry_date + "T00:00:00").getTime() - new Date().setHours(0, 0, 0, 0)) / 86400000);
     return { ...row, days };
   }).filter((row) => row.days <= 30).sort((a, b) => a.days - b.days);
-  // تحليل بطء الحركة يعتمد على آخر حركة مخزنية مرحلة لكل صنف ومخزن، وليس تاريخ تحديث السجل فقط.
-  const stockAgingRows = useMemo(() => {
-    const lastMovementByKey = new Map<string, string>();
-    for (const movement of movements) {
-      if (movement.status !== "posted") continue;
-      for (const line of movement.lines) {
-        for (const warehouseId of [movement.source_warehouse, movement.destination_warehouse]) {
-          if (!warehouseId) continue;
-          const key = `${warehouseId}:${line.product}`;
-          const previous = lastMovementByKey.get(key);
-          if (!previous || movement.movement_date > previous) lastMovementByKey.set(key, movement.movement_date);
-        }
-      }
-    }
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const grouped = new Map<string, { product: number; product_code: string; product_name: string; warehouse: number; warehouse_name: string; quantity: number; value: string; last_movement: string | null }>();
-    for (const balance of balances) {
-      const key = `${balance.warehouse}:${balance.product}`;
-      const row = grouped.get(key) ?? { product: balance.product, product_code: balance.product_code, product_name: balance.product_name, warehouse: balance.warehouse, warehouse_name: balance.warehouse_name, quantity: 0, value: "0", last_movement: lastMovementByKey.get(key) ?? null };
-      row.quantity += Number(balance.quantity);
-      row.value = sumDecimalToFixed([row.value, balance.inventory_value], 4);
-      grouped.set(key, row);
-    }
-    return [...grouped.values()].filter((row) => row.quantity > 0).map((row) => {
-      const ageDays = row.last_movement ? Math.max(0, Math.floor((today.getTime() - new Date(row.last_movement + "T00:00:00").getTime()) / 86400000)) : null;
-      const ageBand = ageDays === null ? "unknown" : ageDays <= 30 ? "active" : ageDays <= 90 ? "slow" : ageDays <= 180 ? "very_slow" : "stagnant";
-      return { ...row, ageDays, ageBand };
-    }).sort((a, b) => (b.ageDays ?? -1) - (a.ageDays ?? -1));
-  }, [balances, movements]);
-  const stockAgingCounts = useMemo(() => ({
-    active: stockAgingRows.filter((row) => row.ageBand === "active").length,
-    slow: stockAgingRows.filter((row) => row.ageBand === "slow").length,
-    very_slow: stockAgingRows.filter((row) => row.ageBand === "very_slow").length,
-    stagnant: stockAgingRows.filter((row) => row.ageBand === "stagnant").length,
-    unknown: stockAgingRows.filter((row) => row.ageBand === "unknown").length,
-  }), [stockAgingRows]);
+  const stockAgingRows = stockAging?.rows.map((row) => ({
+    product: row.product, product_code: row.product_code, product_name: row.product_name,
+    warehouse: row.warehouse, warehouse_name: row.warehouse_name,
+    quantity: Number(row.quantity), value: row.value, last_movement: row.last_movement,
+    ageDays: row.age_days, ageBand: row.age_band,
+  })) ?? [];
+  const stockAgingCounts = stockAging?.summary ?? {
+    active: 0, slow: 0, very_slow: 0, stagnant: 0, unknown: 0,
+  };
   const totalInventoryValue = sumDecimalToFixed(balances.map((row) => row.inventory_value), 4);
   const totalInventoryQuantity = balances.reduce((sum, row) => sum + Number(row.quantity), 0);
   // حفظ العملية الحالية في تبويب المخزون ثم إعادة تحميل البيانات المرتبطة.
@@ -201,7 +182,7 @@ const submit = async (event: React.FormEvent) => {
     try {
       if (tab === "products") {
         if (!form.unit) throw new Error("أضف وحدة قياس أولاً.");
-        await inventoryApi.createProduct({ company: companyId, code: form.code, name_ar: form.name_ar, barcode: form.barcode, unit: Number(form.unit), category: form.category ? Number(form.category) : null, product_type: form.product_type, purchase_price: form.purchase_price, sale_price: form.sale_price, min_stock: form.min_stock, costing_method: form.costing_method, track_expiry: form.track_expiry });
+        await inventoryApi.createProduct({ company: companyId, code: form.code, name_ar: form.name_ar, barcode: form.barcode, unit: Number(form.unit), category: form.category ? Number(form.category) : null, product_type: form.product_type, stock_class: form.product_type === "goods" ? form.stock_class : null, purchase_price: form.purchase_price, sale_price: form.sale_price, min_stock: form.min_stock, costing_method: form.costing_method, track_expiry: form.track_expiry });
         setForm((old) => ({ ...old, code: "", name_ar: "", barcode: "" }));
       } else if (tab === "categories") {
         await inventoryApi.createCategory({ company: companyId, ...categoryForm }); setCategoryForm({ code: "", name_ar: "" });
@@ -226,12 +207,20 @@ const submit = async (event: React.FormEvent) => {
         if (existing) await accountRoleApi.update(existing.id, payload);
         else await accountRoleApi.create(payload);
         setRoleForm((old) => ({ ...old, account: "" }));
+      } else if (tab === "counts") {
+        if (!countForm.warehouse) throw new Error("اختر المخزن لبدء الجرد.");
+        const created = await stockApi.createCount({
+          company: companyId, warehouse: Number(countForm.warehouse),
+          count_number: countForm.count_number, count_date: countForm.count_date, notes: countForm.notes,
+        });
+        setSelectedCountId(created.id);
+        setCountForm((old) => ({ ...old, count_number: "", notes: "" }));
       } else if (tab === "movements") {
         const type = stockForm.movement_type;
         const sourceId = type === "receipt" || (type === "adjustment" && stockForm.adjustment_direction === "in") ? null : Number(stockForm.source_warehouse);
         const destinationId = type === "issue" || (type === "adjustment" && stockForm.adjustment_direction === "out") ? null : Number(stockForm.destination_warehouse);
         if (!stockLines.length || stockLines.some((line) => !line.product || Number(line.quantity) <= 0)) throw new Error("أضف صنفاً واحداً على الأقل وتأكد من اختيار الصنف والكمية الصحيحة لكل سطر.");
-        await stockApi.createMovement({ company: companyId, movement_number: stockForm.movement_number, movement_type: type, movement_date: stockForm.movement_date, source_warehouse: sourceId, destination_warehouse: destinationId, notes: stockForm.notes, lines: stockLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_cost: line.unit_cost || "0", source_location: sourceId && stockForm.source_location ? Number(stockForm.source_location) : null, destination_location: destinationId && stockForm.destination_location ? Number(stockForm.destination_location) : null, expiry_date: line.expiry_date || null, adjustment_direction: type === "adjustment" ? stockForm.adjustment_direction : "" })) });
+        await stockApi.createMovement({ company: companyId, movement_number: stockForm.movement_number, movement_type: type, adjustment_reason: type === "adjustment" ? stockForm.adjustment_reason : "", movement_date: stockForm.movement_date, source_warehouse: sourceId, destination_warehouse: destinationId, notes: stockForm.notes, lines: stockLines.map((line) => ({ product: Number(line.product), quantity: line.quantity, unit_cost: line.unit_cost || "0", source_location: sourceId && stockForm.source_location ? Number(stockForm.source_location) : null, destination_location: destinationId && stockForm.destination_location ? Number(stockForm.destination_location) : null, expiry_date: line.expiry_date || null, adjustment_direction: type === "adjustment" ? stockForm.adjustment_direction : "" })) });
         setStockForm((old) => ({ ...old, movement_number: "", notes: "" }));
         setStockLines([{ product: String(products.find((item) => item.product_type === "goods" && item.is_active)?.id || ""), quantity: "1", unit_cost: "0", expiry_date: "" }]);
       }
@@ -245,11 +234,12 @@ const submit = async (event: React.FormEvent) => {
     { id: "units", label: "وحدات القياس", count: units.length },
     { id: "warehouses", label: "المخازن", count: warehouses.length },
     { id: "locations", label: "مواقع التخزين", count: locations.length },
-    { id: "movements", label: "حركات المخزون", count: movements.length },
+    { id: "movements", label: "آخر 100 حركة", count: movements.length },
+    { id: "counts", label: "الجرد الفعلي", count: counts.length },
     { id: "balances", label: "أرصدة المخزون", count: balances.length },
     { id: "reports", label: "تقارير المخزون", count: warehouseValuation.length + expiryAlerts.length + reorderAlerts.length },
     { id: "reorder", label: "حدود الطلب لكل مخزن", count: warehouseSettings.filter((item) => item.is_active).length },
-    { id: "stock-card", label: "بطاقة حركة الصنف", count: stockCard?.rows.length || 0 },
+    { id: "stock-card", label: "بطاقة حركة الصنف", count: stockCard?.pagination.total_rows || 0 },
     { id: "accounting", label: "ربط الحسابات", count: roleAssignments.length },
   ];
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض بيانات المخزون.</div></section>;
@@ -262,7 +252,8 @@ const submit = async (event: React.FormEvent) => {
         <label>كود الصنف<input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></label>
         <label>اسم الصنف<input required value={form.name_ar} onChange={(e) => setForm({ ...form, name_ar: e.target.value })} /></label>
         <label>الباركود<input value={form.barcode} onChange={(e) => setForm({ ...form, barcode: e.target.value })} /></label>
-        <label>نوع السجل<select value={form.product_type} onChange={(e) => setForm({ ...form, product_type: e.target.value })}><option value="goods">صنف مخزني</option><option value="service">خدمة</option></select></label>
+        <label>نوع السجل<select value={form.product_type} onChange={(e) => setForm({ ...form, product_type: e.target.value, stock_class: e.target.value === "goods" ? "finished_goods" : "" })}><option value="goods">صنف مخزني</option><option value="service">خدمة</option></select></label>
+        {form.product_type === "goods" && <label>تصنيف الصنف<select required value={form.stock_class} onChange={(e) => setForm({ ...form, stock_class: e.target.value })}><option value="raw_material">مواد خام</option><option value="finished_goods">منتجات تامة</option><option value="operating_supplies">مستلزمات تشغيل</option><option value="spare_parts">قطع غيار</option></select></label>}
         <label>وحدة القياس<select required value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}><option value="">اختر الوحدة</option>{units.map((u) => <option key={u.id} value={u.id}>{u.name_ar} ({u.code})</option>)}</select></label>
         <label>المجموعة<select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}><option value="">بدون مجموعة</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name_ar}</option>)}</select></label>
         <label>سعر الشراء<input type="number" min="0" step="0.0001" value={form.purchase_price} onChange={(e) => setForm({ ...form, purchase_price: e.target.value })} /></label>
@@ -282,6 +273,13 @@ const submit = async (event: React.FormEvent) => {
       {tab === "warehouses" && <><label>كود المخزن<input required value={warehouseForm.code} onChange={(e) => setWarehouseForm({ ...warehouseForm, code: e.target.value })} /></label><label>اسم المخزن<input required value={warehouseForm.name_ar} onChange={(e) => setWarehouseForm({ ...warehouseForm, name_ar: e.target.value })} /></label><label className="inventory-wide">العنوان<textarea value={warehouseForm.address} onChange={(e) => setWarehouseForm({ ...warehouseForm, address: e.target.value })} /></label></>}
       {tab === "locations" && <><label>المخزن<select required value={locationForm.warehouse} onChange={(e) => setLocationForm({ ...locationForm, warehouse: e.target.value, parent: "" })}><option value="">اختر المخزن</option>{warehouses.filter((w) => w.is_active).map((w) => <option key={w.id} value={w.id}>{w.name_ar}</option>)}</select></label><label>نوع الموقع<select value={locationForm.location_type} onChange={(e) => setLocationForm({ ...locationForm, location_type: e.target.value })}><option value="floor">دور</option><option value="area">منطقة</option><option value="rack">رف</option><option value="bin">خانة</option></select></label><label>الكود<input required value={locationForm.code} onChange={(e) => setLocationForm({ ...locationForm, code: e.target.value })} /></label><label>اسم الموقع<input required value={locationForm.name_ar} onChange={(e) => setLocationForm({ ...locationForm, name_ar: e.target.value })} /></label><label>الموقع الأب<select value={locationForm.parent} onChange={(e) => setLocationForm({ ...locationForm, parent: e.target.value })}><option value="">بدون موقع أب</option>{locations.filter((x) => String(x.warehouse) === locationForm.warehouse).map((x) => <option key={x.id} value={x.id}>{x.name_ar} ({x.code})</option>)}</select></label></>}
       {tab === "accounting" && <><label>الدور المحاسبي<select value={roleForm.role} onChange={(e) => { const next = e.target.value; const assigned = roleAssignments.find((item) => item.role === next); setRoleForm({ role: next, account: assigned ? String(assigned.account) : "" }); }}><option value="inventory">حساب المخزون</option><option value="goods_received_not_invoiced">بضاعة مستلمة غير مفوترة</option><option value="accounts_payable">حسابات الموردين</option><option value="accounts_receivable">حسابات العملاء</option><option value="sales">إيرادات المبيعات</option><option value="vat_input">ضريبة القيمة المضافة - مدخلات</option><option value="vat_output">ضريبة القيمة المضافة - مخرجات</option><option value="cash">الصندوق</option><option value="bank">البنوك</option><option value="cogs">تكلفة المبيعات</option><option value="inventory_adjustment_gain">أرباح تسوية المخزون</option><option value="inventory_adjustment_loss">خسائر تسوية المخزون</option><option value="inter_branch_clearing">تسوية بين الفروع</option></select></label><label>الحساب المرتبط<select required value={roleForm.account} onChange={(e) => setRoleForm({ ...roleForm, account: e.target.value })}><option value="">اختر حساباً</option>{accounts.filter((a) => a.is_active && !a.is_group && a.allow_posting).map((a) => <option key={a.id} value={a.id}>{a.code} - {a.name_ar}</option>)}</select></label><p className="inventory-wide">اربط الأدوار المطلوبة قبل الترحيل: الاستلام يحتاج المخزون والبضاعة المستلمة غير المفوترة، وفواتير الموردين تحتاج حساب الموردين وضريبة المدخلات، وفواتير المبيعات تحتاج العملاء وإيرادات المبيعات وضريبة المخرجات، والتحصيل والصرف يحتاج الصندوق أو البنك حسب الطريقة، والصرف يحتاج المخزون وتكلفة المبيعات، وتسويات الجرد تحتاج حسابي الزيادة والعجز، والتحويل بين الفروع يحتاج حساب التسوية.</p></>}
+      {tab === "counts" && <>
+        <label>رقم مستند الجرد<input required value={countForm.count_number} onChange={(e) => setCountForm({ ...countForm, count_number: e.target.value })} /></label>
+        <label>المخزن<select required value={countForm.warehouse} onChange={(e) => setCountForm({ ...countForm, warehouse: e.target.value })}><option value="">اختر المخزن</option>{warehouses.filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
+        <label>تاريخ الجرد<input type="date" required value={countForm.count_date} onChange={(e) => setCountForm({ ...countForm, count_date: e.target.value })} /></label>
+        <label className="inventory-wide">ملاحظات<textarea value={countForm.notes} onChange={(e) => setCountForm({ ...countForm, notes: e.target.value })} /></label>
+        <p className="inventory-wide">سيأخذ النظام لقطة من أرصدة المخزن الحالية. لن تُرحّل أي فروق قبل إدخال الكميات الفعلية واعتماد الجرد. إذا حدثت حركة مخزنية بعد بدء العد، سيطلب النظام إعادة الجرد لحماية دقة النتائج.</p>
+      </>}
       {tab === "movements" && <>
         <label>رقم الحركة<input required value={stockForm.movement_number} onChange={(e) => setStockForm({ ...stockForm, movement_number: e.target.value })} /></label>
         <label>نوع الحركة<select value={stockForm.movement_type} onChange={(e) => setStockForm({ ...stockForm, movement_type: e.target.value, source_location: "", destination_location: "" })}><option value="receipt">استلام</option><option value="issue">صرف</option><option value="transfer">تحويل بين مخازن</option><option value="adjustment">تسوية جرد</option></select></label>
@@ -291,6 +289,7 @@ const submit = async (event: React.FormEvent) => {
         {(stockForm.movement_type === "receipt" || stockForm.movement_type === "transfer" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <label>مخزن الوجهة<select required value={stockForm.destination_warehouse} onChange={(e) => setStockForm({ ...stockForm, destination_warehouse: e.target.value, destination_location: "" })}>{warehouses.map((w) => <option key={w.id} value={w.id}>{w.name_ar}</option>)}</select></label>}
         {(stockForm.movement_type === "receipt" || stockForm.movement_type === "transfer" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <label>موقع الاستلام<select value={stockForm.destination_location} onChange={(e) => setStockForm({ ...stockForm, destination_location: e.target.value })}><option value="">الموقع العام للمخزن</option>{locations.filter((x) => x.is_active && String(x.warehouse) === stockForm.destination_warehouse).map((x) => <option key={x.id} value={x.id}>{x.name_ar}</option>)}</select></label>}
         {stockForm.movement_type === "adjustment" && <label>اتجاه التسوية<select value={stockForm.adjustment_direction} onChange={(e) => setStockForm({ ...stockForm, adjustment_direction: e.target.value, source_location: "", destination_location: "" })}><option value="in">زيادة جرد</option><option value="out">عجز جرد</option></select></label>}
+        {stockForm.movement_type === "adjustment" && <label>سبب التسوية<select required value={stockForm.adjustment_reason} onChange={(e) => setStockForm({ ...stockForm, adjustment_reason: e.target.value })}><option value="count">جرد فعلي</option><option value="damage">تالف</option><option value="expired">منتهي الصلاحية</option><option value="write_off">شطب أو إعدام</option><option value="other">أخرى</option></select></label>}
         <div className="inventory-wide inventory-line-editor">
           <div className="inventory-line-heading"><strong>أصناف الحركة</strong><button type="button" className="add-line-button" onClick={() => setStockLines((rows) => [...rows, { product: "", quantity: "1", unit_cost: "0", expiry_date: "" }])}>＋ إضافة صنف</button></div>
           <div className="data-table-wrap"><table><thead><tr><th>#</th><th>الصنف</th><th>الكمية</th><th>الصلاحية</th>{(stockForm.movement_type === "receipt" || (stockForm.movement_type === "adjustment" && stockForm.adjustment_direction === "in")) && <th>تكلفة الوحدة</th>}<th>إجراء</th></tr></thead><tbody>
@@ -312,7 +311,7 @@ const submit = async (event: React.FormEvent) => {
     </form>}
     <div className="table-toolbar"><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث سريع…" /><span className="module-count">{busy ? "جارٍ التحديث…" : "تحديث"}</span><button className="subtle-button" onClick={() => void refresh()}>↻</button></div>
     <div className="data-table-wrap">
-      {tab === "products" && <table><thead><tr><th>الكود</th><th>الصنف</th><th>الباركود</th><th>النوع</th><th>الوحدة</th><th>سعر البيع</th><th>طريقة التقييم</th><th>الحالة</th></tr></thead><tbody>{filteredProducts.map((p) => <tr key={p.id}><td className="code-cell">{p.code}</td><td>{p.name_ar}</td><td>{p.barcode || "—"}</td><td>{p.product_type === "goods" ? "مخزني" : "خدمة"}</td><td>{p.unit_name}</td><td>{formatMoney(p.sale_price)}</td><td>{p.costing_method === "fifo" ? "FIFO" : "متوسط مرجح"}</td><td><span className={p.is_active ? "customer-status-active" : "customer-status-inactive"}>{p.is_active ? "نشط" : "موقوف"}</span></td></tr>)}</tbody></table>}
+      {tab === "products" && <table><thead><tr><th>الكود</th><th>الصنف</th><th>الباركود</th><th>النوع</th><th>تصنيف المخزون</th><th>الوحدة</th><th>سعر البيع</th><th>طريقة التقييم</th><th>الحالة</th></tr></thead><tbody>{filteredProducts.map((p) => <tr key={p.id}><td className="code-cell">{p.code}</td><td>{p.name_ar}</td><td>{p.barcode || "—"}</td><td>{p.product_type === "goods" ? "مخزني" : "خدمة"}</td><td>{p.stock_class === "raw_material" ? "مواد خام" : p.stock_class === "finished_goods" ? "منتجات تامة" : p.stock_class === "operating_supplies" ? "مستلزمات تشغيل" : p.stock_class === "spare_parts" ? "قطع غيار" : "—"}</td><td>{p.unit_name}</td><td>{formatMoney(p.sale_price)}</td><td>{p.costing_method === "fifo" ? "FIFO" : "متوسط مرجح"}</td><td><span className={p.is_active ? "customer-status-active" : "customer-status-inactive"}>{p.is_active ? "نشط" : "موقوف"}</span></td></tr>)}</tbody></table>}
       {tab === "categories" && <table><thead><tr><th>الكود</th><th>اسم المجموعة</th><th>الحالة</th></tr></thead><tbody>{categories.filter((x) => `${x.code} ${x.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((x) => <tr key={x.id}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table>}
       {tab === "units" && <table><thead><tr><th>الكود</th><th>اسم الوحدة</th><th>الرمز</th><th>الدقة</th><th>الحالة</th></tr></thead><tbody>{units.filter((x) => `${x.code} ${x.name_ar}`.toLowerCase().includes(search.toLowerCase())).map((x) => <tr key={x.id}><td className="code-cell">{x.code}</td><td>{x.name_ar}</td><td>{x.symbol || "—"}</td><td>{x.decimal_places}</td><td>{x.is_active ? "نشط" : "موقوف"}</td></tr>)}</tbody></table>}
       {tab === "reorder" && <table><thead><tr><th>الصنف</th><th>المخزن</th><th>الرصيد الحالي</th><th>حد إعادة الطلب</th><th>المصدر</th><th>الحالة</th></tr></thead><tbody>{warehouseSettings.filter((item) => item.is_active && `${item.product_code} ${item.product_name} ${item.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((item) => {
@@ -327,8 +326,104 @@ const submit = async (event: React.FormEvent) => {
           <button type="button" className={movementStatusFilter === "draft" ? "inventory-tab active" : "inventory-tab"} onClick={() => setMovementStatusFilter("draft")}>المعلقة <b>{movements.filter((m) => m.status === "draft").length}</b></button>
           <button type="button" className={movementStatusFilter === "posted" ? "inventory-tab active" : "inventory-tab"} onClick={() => setMovementStatusFilter("posted")}>المرحّلة <b>{movements.filter((m) => m.status === "posted").length}</b></button>
         </div>
-        <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>قيود اليومية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => (movementStatusFilter === "all" || m.status === movementStatusFilter) && `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{formatMoney(sumDecimalToFixed(m.lines.map((line) => line.cost_amount || "0"), 4))}</td><td>{m.journal_entries.length ? m.journal_entries.map((entry) => entry.entry_number).join("، ") : "—"}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>
+        <table><thead><tr><th>رقم الحركة</th><th>النوع</th><th>سبب التسوية</th><th>التاريخ</th><th>من</th><th>إلى</th><th>الأصناف</th><th>قيمة الحركة</th><th>قيود اليومية</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{movements.filter((m) => (movementStatusFilter === "all" || m.status === movementStatusFilter) && `${m.movement_number} ${m.notes}`.toLowerCase().includes(search.toLowerCase())).map((m) => <tr key={m.id}><td className="code-cell">{m.movement_number}</td><td>{{ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", sal_rev: "عكس مردود مبيعات", transfer: "تحويل", adjustment: "تسوية" }[m.movement_type]}</td><td>{m.movement_type === "adjustment" ? (({ count: "جرد فعلي", damage: "تالف", expired: "منتهي الصلاحية", write_off: "شطب أو إعدام", other: "أخرى" } as Record<string, string>)[m.adjustment_reason] || "—") : "—"}</td><td>{m.movement_date}</td><td>{m.source_warehouse_name || "—"}</td><td>{m.destination_warehouse_name || "—"}</td><td>{m.lines.length}</td><td>{formatMoney(sumDecimalToFixed(m.lines.map((line) => line.cost_amount || "0"), 4))}</td><td>{m.journal_entries.length ? m.journal_entries.map((entry) => entry.entry_number).join("، ") : "—"}</td><td>{m.status === "posted" ? "مرحّلة" : "مسودة"}</td><td>{m.status === "draft" ? <button className="subtle-button" disabled={busy} onClick={async () => { setBusy(true); setError(""); try { await stockApi.postMovement(m.id); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر ترحيل الحركة."); } finally { setBusy(false); } }}>ترحيل</button> : "—"}</td></tr>)}</tbody></table>
       </>}
+      {tab === "counts" && <div className="inventory-reports">
+        <section className="activity-panel inventory-report-section">
+          <div className="activity-title"><div><h3>مستندات الجرد الفعلي</h3><p>كل جرد يبدأ بلقطة رصيد ثابتة، ثم تُدخل الكميات المعدودة وتُرحّل الفروق بمستندات تسوية مرتبطة.</p></div></div>
+          <div className="data-table-wrap"><table><thead><tr><th>رقم الجرد</th><th>التاريخ</th><th>المخزن</th><th>عدد البنود</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>
+            {counts.filter((item) => `${item.count_number} ${item.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((item) => <tr key={item.id}>
+              <td className="code-cell">{item.count_number}</td><td>{item.count_date}</td><td>{item.warehouse_name}</td><td>{item.lines_count}</td>
+              <td><span className={`status-pill ${item.status === "posted" ? "posted" : item.status === "cancelled" ? "reversed" : "draft"}`}>{item.status === "posted" ? "مرحّل" : item.status === "cancelled" ? "ملغي" : "قيد العد"}</span></td>
+              <td><button type="button" className="subtle-button" onClick={() => setSelectedCountId(item.id)}>عرض البنود</button></td>
+            </tr>)}
+            {!counts.length && <tr><td colSpan={6}>لا توجد مستندات جرد. ابدأ جردًا جديدًا من زر إضافة جديد.</td></tr>}
+          </tbody></table></div>
+        </section>
+        {counts.find((item) => item.id === selectedCountId) && (() => {
+          const selected = counts.find((item) => item.id === selectedCountId)!;
+          const pendingLines = selected.lines.filter((line) => line.counted_quantity === null).length;
+          const varianceLines = selected.lines.filter((line) => line.counted_quantity !== null && Number(line.variance_quantity || "0") !== 0).length;
+          const selectedWarehouseLocations = locations.filter((item) => item.is_active && item.warehouse === selected.warehouse);
+          return <section className="activity-panel inventory-report-section">
+            <div className="activity-title"><div><h3>تفاصيل الجرد: {selected.count_number}</h3><p>{selected.warehouse_name} · لقطة الرصيد {new Date(selected.created_at).toLocaleString("ar-EG")}</p></div>
+              {selected.status === "draft" && <div className="inventory-actions">
+                <button type="button" className="primary-button" disabled={busy || pendingLines > 0} onClick={async () => {
+                  setBusy(true); setError("");
+                  try { await stockApi.postCount(selected.id); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر اعتماد الجرد."); }
+                  finally { setBusy(false); }
+                }}>ترحيل فروق الجرد ({varianceLines})</button>
+                <button type="button" className="subtle-button" disabled={busy} onClick={async () => {
+                  if (!window.confirm("هل تريد إلغاء مستند الجرد؟ لن يتم تعديل أرصدة المخزون.")) return;
+                  setBusy(true); setError("");
+                  try { await stockApi.cancelCount(selected.id); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إلغاء الجرد."); }
+                  finally { setBusy(false); }
+                }}>إلغاء الجرد</button>
+              </div>}
+            </div>
+            {selected.status === "draft" && <p className="inventory-report-note">أدخل صفرًا إذا لم يوجد الصنف فعليًا. لا يمكن اعتماد الجرد قبل إدخال الكمية لكل بند. أي حركة جديدة بعد لقطة الجرد تتطلب بدء جرد جديد.</p>}
+            <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>الموقع</th><th>الصلاحية</th><th>رصيد الدفاتر</th><th>الكمية الفعلية</th><th>الفرق</th><th>تكلفة الزيادة</th><th>الحالة</th><th>تم العد بواسطة</th></tr></thead><tbody>
+              {selected.lines.map((line) => <tr key={line.id}>
+                <td>{line.product_code} - {line.product_name}</td><td>{line.location_name || "عام"}</td><td>{line.expiry_date || "—"}</td>
+                <td>{Number(line.system_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td>
+                <td><input key={`counted-${line.id}-${line.updated_at}`} aria-label={`الكمية الفعلية ${line.product_code}`} type="number" min="0" step="0.0001" disabled={selected.status !== "draft"} defaultValue={line.counted_quantity ?? ""} onBlur={async (event) => {
+                  if (selected.status !== "draft" || event.target.value === (line.counted_quantity ?? "")) return;
+                  setBusy(true); setError("");
+                  try { await stockApi.updateCountLine(line.id, { counted_quantity: event.target.value }); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ الكمية المعدودة."); }
+                  finally { setBusy(false); }
+                }} /></td>
+                <td>{line.variance_quantity === null ? "—" : Number(line.variance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td>
+                <td>{selected.status === "draft" && Number(line.variance_quantity || "0") >= 0 ? <input key={`cost-${line.id}-${line.updated_at}`} aria-label={`تكلفة الزيادة ${line.product_code}`} type="number" min="0" step="0.0001" defaultValue={line.adjustment_unit_cost} onBlur={async (event) => {
+                  if (event.target.value === line.adjustment_unit_cost) return;
+                  setBusy(true); setError("");
+                  try { await stockApi.updateCountLine(line.id, { adjustment_unit_cost: event.target.value }); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ تكلفة الزيادة."); }
+                  finally { setBusy(false); }
+                }} /> : formatMoney(line.adjustment_unit_cost)}</td>
+                <td>{line.counted_quantity === null ? "لم يُعد" : Number(line.variance_quantity || "0") === 0 ? "مطابق" : Number(line.variance_quantity || "0") > 0 ? "زيادة" : "عجز"}</td>
+                <td>{line.counted_by_name || "—"}{selected.status === "draft" && Number(line.system_quantity) === 0 && <button type="button" className="remove-line-button" title="حذف البند الإضافي" disabled={busy} onClick={async () => {
+                  if (!window.confirm("حذف هذا الصنف الإضافي من الجرد؟")) return;
+                  setBusy(true); setError("");
+                  try { await stockApi.removeExtraCountLine(line.id); await refresh(); }
+                  catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حذف بند الجرد."); }
+                  finally { setBusy(false); }
+                }}>×</button>}</td>
+              </tr>)}
+              {!selected.lines.length && <tr><td colSpan={9}>لا توجد أرصدة عند بدء الجرد. أضف الأصناف التي تم العثور عليها فعليًا من النموذج أدناه.</td></tr>}
+            </tbody></table></div>
+            {selected.status === "draft" && <div className="inventory-form">
+              <h4 className="inventory-wide">إضافة صنف غير موجود في رصيد الدفاتر</h4>
+              <label>الصنف<select required value={countLineDraft.product} onChange={(e) => setCountLineDraft({ ...countLineDraft, product: e.target.value, expiry_date: "" })}><option value="">اختر الصنف</option>{products.filter((item) => item.product_type === "goods" && item.is_active).map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
+              <label>موقع التخزين<select value={countLineDraft.location} onChange={(e) => setCountLineDraft({ ...countLineDraft, location: e.target.value })}><option value="">الموقع العام</option>{selectedWarehouseLocations.map((item) => <option key={item.id} value={item.id}>{item.code} - {item.name_ar}</option>)}</select></label>
+              {products.find((item) => String(item.id) === countLineDraft.product)?.track_expiry && <label>تاريخ الصلاحية<input type="date" required value={countLineDraft.expiry_date} onChange={(e) => setCountLineDraft({ ...countLineDraft, expiry_date: e.target.value })} /></label>}
+              <label>الكمية الفعلية<input type="number" min="0.0001" step="0.0001" required value={countLineDraft.counted_quantity} onChange={(e) => setCountLineDraft({ ...countLineDraft, counted_quantity: e.target.value })} /></label>
+              <label>تكلفة الوحدة التقديرية<input type="number" min="0.0001" step="0.0001" required value={countLineDraft.adjustment_unit_cost} onChange={(e) => setCountLineDraft({ ...countLineDraft, adjustment_unit_cost: e.target.value })} /></label>
+              <label className="inventory-wide">ملاحظات<textarea value={countLineDraft.notes} onChange={(e) => setCountLineDraft({ ...countLineDraft, notes: e.target.value })} /></label>
+              <div className="inventory-actions inventory-wide"><button type="button" className="primary-button" disabled={busy || !countLineDraft.product || !countLineDraft.counted_quantity} onClick={async () => {
+                setBusy(true); setError("");
+                try {
+                  const selectedProduct = products.find((item) => String(item.id) === countLineDraft.product);
+                  await stockApi.createCountLine({
+                    count: selected.id, product: Number(countLineDraft.product),
+                    location: countLineDraft.location ? Number(countLineDraft.location) : null,
+                    expiry_date: selectedProduct?.track_expiry ? countLineDraft.expiry_date : null,
+                    counted_quantity: countLineDraft.counted_quantity,
+                    adjustment_unit_cost: countLineDraft.adjustment_unit_cost,
+                    notes: countLineDraft.notes,
+                  });
+                  setCountLineDraft({ product: "", location: "", expiry_date: "", counted_quantity: "", adjustment_unit_cost: "0", notes: "" });
+                  await refresh();
+                } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إضافة الصنف للجرد."); }
+                finally { setBusy(false); }
+              }}>إضافة بند الجرد</button></div>
+            </div>}
+            {selected.status === "posted" && <p className="inventory-report-note">تم ترحيل الجرد. مستند زيادة المخزون: {selected.gain_movement_number || "لا يوجد"} · مستند عجز المخزون: {selected.loss_movement_number || "لا يوجد"}.</p>}
+          </section>;
+        })()}
+      </div>}
       {tab === "accounting" && <table><thead><tr><th>الدور المحاسبي</th><th>الحساب</th><th>الحالة</th></tr></thead><tbody>{[{ role: "inventory", label: "حساب المخزون" }, { role: "goods_received_not_invoiced", label: "بضاعة مستلمة غير مفوترة" }, { role: "cogs", label: "تكلفة المبيعات" }, { role: "inventory_adjustment_gain", label: "أرباح تسوية المخزون" }, { role: "inventory_adjustment_loss", label: "خسائر تسوية المخزون" }, { role: "inter_branch_clearing", label: "تسوية بين الفروع" }].map((item) => { const assigned = roleAssignments.find((x) => x.role === item.role); const account = accounts.find((x) => x.id === assigned?.account); return <tr key={item.role}><td>{item.label}</td><td>{assigned ? `${account?.code || assigned.account_code} - ${account?.name_ar || ""}` : "غير مربوط"}</td><td>{assigned ? "مربوط" : "مطلوب"}</td></tr>; })}</tbody></table>}
       {tab === "balances" && <table><thead><tr><th>كود الصنف</th><th>الصنف</th><th>المخزن</th><th>موقع التخزين</th><th>الصلاحية</th><th>الرصيد</th><th>حالة الرصيد</th><th>متوسط التكلفة</th><th>قيمة المخزون</th></tr></thead><tbody>{balances.filter((b) => `${b.product_code} ${b.product_name} ${b.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((b) => { const product = products.find((item) => item.id === b.product); const setting = warehouseSettingIndex.get(`${b.warehouse}:${b.product}`); const totalQuantity = inventoryIndexes.byWarehouseProduct.get(`${b.warehouse}:${b.product}`)?.quantity ?? Number(b.quantity); const minStock = setting ? Number(setting.min_stock) : Number(product?.min_stock || 0); const stockState = totalQuantity <= 0 ? "نفد" : minStock > 0 && totalQuantity <= minStock ? "يحتاج شراء" : "متاح"; const stockClass = totalQuantity <= 0 ? "reversed" : minStock > 0 && totalQuantity <= minStock ? "draft" : "posted"; return <tr key={b.id}><td className="code-cell">{b.product_code}</td><td>{b.product_name}</td><td>{b.warehouse_name}</td><td>{b.location_name || "عام"}</td><td>{b.expiry_date || "—"}</td><td>{Number(b.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td><span className={`status-pill ${stockClass}`}>{stockState}</span></td><td>{formatMoney(b.average_cost)}</td><td>{formatMoney(b.inventory_value)}</td></tr>; })}</tbody></table>}
       {tab === "stock-card" && <div className="inventory-reports">
@@ -344,7 +439,14 @@ const submit = async (event: React.FormEvent) => {
           {stockCardError && <div className="error-banner">{stockCardError}</div>}
           {stockCard && <>
             <div className="stock-card-summary"><div><span>الصنف</span><strong>{stockCard.product_code} - {stockCard.product_name}</strong></div><div><span>المخزن</span><strong>{stockCard.warehouse_name}</strong></div><div><span>رصيد أول المدة</span><strong>{Number(stockCard.opening_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} / {formatMoney(stockCard.opening_value)}</strong></div><div><span>رصيد آخر المدة</span><strong>{Number(stockCard.closing_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} / {formatMoney(stockCard.closing_value)}</strong></div></div>
-            <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>رقم الحركة</th><th>نوع الحركة</th><th>وارد كمية</th><th>منصرف كمية</th><th>تكلفة الوحدة</th><th>وارد قيمة</th><th>منصرف قيمة</th><th>الرصيد الكمي</th><th>قيمة الرصيد</th></tr></thead><tbody>{stockCard.rows.map((row, index) => <tr key={`${row.movement_number}-${index}`}><td>{row.date}</td><td className="code-cell">{row.movement_number}</td><td>{({ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", transfer: "تحويل", adjustment: "تسوية" } as Record<string, string>)[row.movement_type] || row.movement_type}</td><td>{Number(row.quantity_in).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.quantity_out).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.unit_cost)}</td><td>{formatMoney(row.value_in)}</td><td>{formatMoney(row.value_out)}</td><td>{Number(row.balance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.balance_value)}</td></tr>)}{!stockCard.rows.length && <tr><td colSpan={10}>لا توجد حركات مرحلة خلال الفترة المحددة.</td></tr>}</tbody></table></div>
+            <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>وقت الترحيل</th><th>رقم الحركة</th><th>نوع الحركة</th><th>وارد كمية</th><th>منصرف كمية</th><th>تكلفة الوحدة</th><th>وارد قيمة</th><th>منصرف قيمة</th><th>الرصيد الكمي</th><th>قيمة الرصيد</th></tr></thead><tbody>{stockCard.rows.map((row, index) => <tr key={`${row.movement_number}-${index}`}><td>{row.date}</td><td>{row.posted_at ? new Date(row.posted_at).toLocaleString("ar-EG") : "—"}</td><td className="code-cell">{row.movement_number}</td><td>{({ receipt: "استلام", issue: "صرف", sup_return: "مرتجع مورد", sup_rev: "عكس مرتجع مورد", sal_rev: "عكس مردود مبيعات", transfer: "تحويل", adjustment: "تسوية" } as Record<string, string>)[row.movement_type] || row.movement_type}</td><td>{Number(row.quantity_in).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{Number(row.quantity_out).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.unit_cost)}</td><td>{formatMoney(row.value_in)}</td><td>{formatMoney(row.value_out)}</td><td>{Number(row.balance_quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.balance_value)}</td></tr>)}{!stockCard.rows.length && <tr><td colSpan={11}>لا توجد حركات مرحلة خلال الفترة المحددة.</td></tr>}</tbody></table></div>
+            <div className="activity-title" style={{ alignItems: "center", marginTop: 12 }}>
+              <p>عرض {stockCard.rows.length.toLocaleString("ar-EG")} من إجمالي {stockCard.pagination.total_rows.toLocaleString("ar-EG")} حركة — الصفحة {stockCard.pagination.page.toLocaleString("ar-EG")} من {stockCard.pagination.total_pages.toLocaleString("ar-EG")}. التصدير يشمل الصفحة المعروضة فقط.</p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="subtle-button" disabled={!stockCard.pagination.has_previous || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page - 1)}>السابق</button>
+                <button type="button" className="subtle-button" disabled={!stockCard.pagination.has_next || stockCardBusy} onClick={() => void loadStockCard(stockCard.pagination.page + 1)}>التالي</button>
+              </div>
+            </div>
           </>}
           {!stockCard && !stockCardError && <div className="table-empty">حدد الصنف والمخزن والفترة ثم اعرض بطاقة الحركة.</div>}
         </section>
@@ -371,7 +473,7 @@ const submit = async (event: React.FormEvent) => {
             <article className="metric-card"><div className="metric-top">راكد · أكثر من 180 يوم</div><strong className="metric-value">{stockAgingCounts.stagnant.toLocaleString("ar-EG")}</strong><small>صنف / مخزن</small></article>
           </div>
           <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن</th><th>الرصيد</th><th>القيمة</th><th>آخر حركة مرحلة</th><th>أيام دون حركة</th><th>التصنيف</th></tr></thead><tbody>{stockAgingRows.filter((row) => (stockAgeFilter === "all" || row.ageBand === stockAgeFilter) && `${row.product_code} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={`${row.product}-${row.warehouse}`}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}</td><td>{row.quantity.toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.value)}</td><td>{row.last_movement || "لا توجد حركة مسجلة"}</td><td>{row.ageDays === null ? "—" : row.ageDays.toLocaleString("ar-EG")}</td><td><span className={`status-pill ${row.ageBand === "stagnant" ? "reversed" : row.ageBand === "very_slow" ? "slow" : row.ageBand === "slow" ? "draft" : row.ageBand === "active" ? "posted" : "unknown"}`}>{row.ageBand === "active" ? "نشط" : row.ageBand === "slow" ? "بطيء" : row.ageBand === "very_slow" ? "بطيء جدًا" : row.ageBand === "stagnant" ? "راكد" : "غير محدد"}</span></td></tr>)}{!stockAgingRows.length && <tr><td colSpan={8}>لا توجد أرصدة موجبة لتحليلها.</td></tr>}</tbody></table></div>
-          {stockAgingCounts.unknown > 0 && <p className="inventory-report-note">يوجد {stockAgingCounts.unknown.toLocaleString("ar-EG")} صنف/مخزن بلا حركة مرحلة مسجلة في سجل الحركات المتاح؛ لم نفترض لها عمرًا أو نصنفها كراكد.</p>}
+          {stockAgingCounts.unknown > 0 && <p className="inventory-report-note">يوجد {stockAgingCounts.unknown.toLocaleString("ar-EG")} صنف/مخزن بلا حركة مرحلة مسجلة؛ لم نفترض لها عمرًا أو نصنفها كراكد.</p>}{stockAging?.truncated && <p className="inventory-report-note">تم عرض أول 5000 صنف/مخزن. إجماليات الشرائح تشمل جميع النتائج.</p>}
         </section>
         <section className="activity-panel inventory-report-section">
           <div className="activity-title"><div><h3>أعمار طبقات التكلفة وفق FIFO</h3><p>العمر محسوب من تاريخ الاستلام الأصلي المرتبط بطبقة التكلفة، وليس من آخر حركة مخزنية</p></div><button type="button" className="primary-button" disabled={costAgingBusy} onClick={() => void loadCostAging()}>{costAgingBusy ? "جارٍ التحميل…" : "تحديث تقرير أعمار التكلفة"}</button></div>
@@ -384,7 +486,7 @@ const submit = async (event: React.FormEvent) => {
               <article className="metric-card"><div className="metric-top">راكد · أكثر من 180 يوم</div><strong className="metric-value">{formatMoney(costAging.buckets.stagnant.value)}</strong><small>{Number(costAging.buckets.stagnant.quantity).toLocaleString("ar-EG", { maximumFractionDigits: 4 })} وحدة</small></article>
             </div>
             <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>الصنف</th><th>المخزن / الموقع</th><th>رقم الاستلام الأصلي</th><th>تاريخ الاستلام</th><th>العمر بالأيام</th><th>الكمية المتبقية</th><th>تكلفة الوحدة</th><th>قيمة الطبقة</th><th>الصلاحية</th></tr></thead><tbody>{costAging.rows.filter((row) => `${row.product_code} ${row.product_name} ${row.warehouse_name} ${row.source_movement_number}`.toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td className="code-cell">{row.product_code}</td><td>{row.product_name}</td><td>{row.warehouse_name}{row.location_name ? ` / ${row.location_name}` : ""}</td><td>{row.source_movement_number}</td><td>{row.receipt_date}</td><td>{row.age_days.toLocaleString("ar-EG")}</td><td>{Number(row.quantity_remaining).toLocaleString("ar-EG", { maximumFractionDigits: 4 })}</td><td>{formatMoney(row.unit_cost)}</td><td>{formatMoney(row.layer_value)}</td><td>{row.expiry_status === "expired" ? <span className="status-pill reversed">منتهي</span> : row.expiry_status === "expiring" ? <span className="status-pill draft">ينتهي خلال 30 يومًا</span> : row.expiry_status === "valid" ? <span className="status-pill posted">ساري</span> : "غير محدد"}</td></tr>)}{!costAging.rows.length && <tr><td colSpan={10}>لا توجد طبقات FIFO متبقية بتاريخ التقرير.</td></tr>}</tbody></table></div>
-            {costAging.truncated && <p className="inventory-report-note">تم عرض أول 500 طبقة فقط لتجنب تحميل مفرط؛ الإجماليات تشمل جميع الطبقات ضمن نطاق صلاحياتك.</p>}
+            {costAging.truncated && <p className="inventory-report-note">تم عرض أول 500 طبقة فقط لتجنب تحميل مفرط؛ الإجماليات تشمل جميع الطبقات ضمن نطاق صلاحياتك.</p>}{costAging.untraceable_legacy_layers_count > 0 && <p className="inventory-report-note">تنبيه: توجد {costAging.untraceable_legacy_layers_count.toLocaleString("ar-EG")} طبقة قديمة منقولة لا يمكن تتبع جذر استلامها بدقة؛ تم استبعادها من أعمار FIFO حتى لا نعرض عمرًا غير موثوق.</p>}
             <p className="inventory-report-note">{costAging.basis} {costAging.scope_note}</p>
           </>}
           {!costAging && !costAgingError && <p className="inventory-report-note">اضغط تحديث التقرير لعرض طبقات FIFO المتبقية. أصناف المتوسط المرجح مستبعدة من أعمار الطبقات لأن توزيعها لا يمثل طبقات تكلفة مستقلة.</p>}

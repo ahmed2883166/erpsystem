@@ -19,6 +19,7 @@ export default function DiscountApprovalsPanel({ companyId }: Props) {
   const [limit, setLimit] = useState("");
   const [invoiceAmountLimit, setInvoiceAmountLimit] = useState("");
   const [purchaseAmountLimit, setPurchaseAmountLimit] = useState("");
+  const [purchaseOrderAmountLimit, setPurchaseOrderAmountLimit] = useState("");
   const [paymentAmountLimit, setPaymentAmountLimit] = useState("");
   const [financialRequests, setFinancialRequests] = useState<FinancialApprovalRequest[]>([]);
   const [busy, setBusy] = useState(false);
@@ -41,11 +42,13 @@ const refresh = async () => {
         setLimit(current.max_discount_percent || "");
         setInvoiceAmountLimit(current.max_sales_invoice_amount || "");
         setPurchaseAmountLimit(current.max_purchase_invoice_amount || "");
+        setPurchaseOrderAmountLimit(current.max_purchase_order_amount || "");
         setPaymentAmountLimit(current.max_payment_amount || "");
       } else {
         setLimit("");
         setInvoiceAmountLimit("");
         setPurchaseAmountLimit("");
+        setPurchaseOrderAmountLimit("");
         setPaymentAmountLimit("");
       }
       setRequests(rows);
@@ -66,6 +69,7 @@ const savePolicy = async (event: FormEvent) => {
         max_discount_percent: limit.trim() || null,
         max_sales_invoice_amount: invoiceAmountLimit.trim() || null,
         max_purchase_invoice_amount: purchaseAmountLimit.trim() || null,
+        max_purchase_order_amount: purchaseOrderAmountLimit.trim() || null,
         max_payment_amount: paymentAmountLimit.trim() || null,
       };
       if (policy) await approvalsApi.updatePolicy(policy.id, payload);
@@ -124,13 +128,13 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر الشركة لعرض الموافقات.</div></section>;
   const pending = requests.filter(row => row.status === "pending").length + financialRequests.filter(row => row.status === "pending").length;
   const financialDocumentLabel: Record<FinancialApprovalRequest["document_type"], string> = {
-    purchase_invoice: "فاتورة مشتريات", supplier_payment: "سند صرف مورد", treasury_payment: "سند صرف خزينة",
+    purchase_invoice: "فاتورة مشتريات", purchase_order: "أمر شراء", supplier_payment: "سند صرف مورد", treasury_payment: "سند صرف خزينة",
     asset_purchase_invoice: "فاتورة شراء أصل ثابت", asset_supplier_payment: "سند سداد أصل ثابت",
   };
 
   return <section className="work-panel">
     <div className="work-panel-head">
-      <div><h2>الموافقات الإدارية والحدود المالية</h2><p>الخصم الأعلى من الحد أو إجمالي الفاتورة الذي يتجاوز السقف المحدد يتطلب اعتماد مدير الشركة قبل الترحيل.</p></div>
+      <div><h2>الموافقات الإدارية والحدود المالية</h2><p>الخصم أو الفواتير أو أوامر الشراء أو سندات الصرف التي تتجاوز الحدود المحددة تتطلب اعتماد مدير الشركة قبل التأكيد أو الترحيل.</p></div>
       <span className="coming-soon">{canManage ? "مدير الشركة" : "عرض فقط"} · طلبات معلقة: {pending.toLocaleString("ar-EG")}</span>
     </div>
     {error && <div className="error-banner">{error}</div>}
@@ -140,6 +144,7 @@ const decide = async (row: SalesInvoiceApproval, decision: "approve" | "reject")
       <label>أقصى خصم دون موافقة (%)<input type="number" min="0" max="100" step="0.0001" value={limit} onChange={e => setLimit(e.target.value)} placeholder="اتركه فارغًا لتعطيل الحد" /></label>
       <label>أقصى إجمالي فاتورة مبيعات دون موافقة<input type="number" min="0" step="0.0001" value={invoiceAmountLimit} onChange={e => setInvoiceAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
       <label>أقصى إجمالي فاتورة مشتريات دون موافقة<input type="number" min="0" step="0.0001" value={purchaseAmountLimit} onChange={e => setPurchaseAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
+      <label>أقصى إجمالي أمر شراء دون موافقة<input type="number" min="0" step="0.0001" value={purchaseOrderAmountLimit} onChange={e => setPurchaseOrderAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
       <label>أقصى قيمة سند صرف دون موافقة<input type="number" min="0" step="0.0001" value={paymentAmountLimit} onChange={e => setPaymentAmountLimit(e.target.value)} placeholder="اتركه فارغًا لإلغاء الحد" /></label>
       <div className="inventory-form-actions"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : policy ? "تحديث سياسة الموافقات" : "تفعيل سياسة الموافقات"}</button><button type="button" className="subtle-button" disabled={busy} onClick={() => void refresh()}>تحديث</button></div>
       <p className="inventory-report-note inventory-wide">{policy ? "الحدود الحالية محفوظة للشركة. تغييرها لا يغيّر الحدود المسجلة على الفواتير السابقة." : "لم يتم إعداد سياسة موافقات لهذه الشركة بعد."} يمكن ضبط أي حد أو أكثر، ولا يمكن ترك جميع الحدود فارغة معًا. جميع الحدود النقدية بعملة الشركة الأساسية. إعداد السياسة وتعديلها متاحان لمدير الشركة فقط.</p>

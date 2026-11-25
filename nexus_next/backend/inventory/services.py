@@ -6,11 +6,11 @@ from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from .models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine
+from .models import InventoryCount, Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementLine, Warehouse
 
 
 @transaction.atomic
-def post_stock_movement(movement_id, user):
+def post_stock_movement(movement_id, user, *, inventory_count_id=None):
     """ترحيل حركة المخزون وتحديث الأرصدة وطبقات التكلفة وأثرها المحاسبي."""
     # Lock only the movement row; nullable warehouse joins cannot be locked in PostgreSQL.
     movement = StockMovement.objects.select_for_update().get(pk=movement_id)
@@ -19,6 +19,124 @@ def post_stock_movement(movement_id, user):
     lines = list(movement.lines.select_related("product").order_by("product_id", "id"))
     if not lines:
         raise ValidationError("لا يمكن ترحيل حركة بدون أصناف.")
+
+    # Serialize posting per product, not merely per movement. Locking the product
+    # rows in a stable order also protects the get_or_create path for a balance
+    # row that does not exist yet (a row lock cannot protect a missing row).
+    product_ids = sorted({line.product_id for line in lines})
+    locked_products = list(
+        Product.objects.select_for_update().select_related("unit")
+        .filter(pk__in=product_ids).order_by("pk")
+    )
+    products_by_id = {product.pk: product for product in locked_products}
+    if len(products_by_id) != len(product_ids):
+        raise ValidationError("يوجد صنف غير موجود ضمن بنود الحركة.")
+
+    warehouse_ids = sorted({
+        warehouse_id for warehouse_id in (
+            movement.source_warehouse_id, movement.destination_warehouse_id,
+        ) if warehouse_id is not None
+    })
+    # Warehouse locks serialize postings with stock-count snapshots and with
+    # other movements that touch the same warehouse.
+    list(Warehouse.objects.select_for_update().filter(pk__in=warehouse_ids).order_by("pk"))
+    active_counts = InventoryCount.objects.filter(
+        warehouse_id__in=warehouse_ids,
+        status=InventoryCount.Status.DRAFT,
+    )
+    if inventory_count_id is not None:
+        active_counts = active_counts.exclude(pk=inventory_count_id)
+    if active_counts.exists():
+        raise ValidationError(
+            "لا يمكن ترحيل حركة أثناء وجود جرد فعلي مفتوح على المخزن. أكمل الجرد أو ألغِه أولاً."
+        )
+
+    movement_type = movement.movement_type
+    source_required = movement_type in (
+        StockMovement.MovementType.ISSUE,
+        StockMovement.MovementType.SUPPLIER_RETURN,
+        StockMovement.MovementType.SALES_RETURN_REVERSAL,
+    )
+    destination_required = movement_type in (
+        StockMovement.MovementType.RECEIPT,
+        StockMovement.MovementType.SUPPLIER_RETURN_REVERSAL,
+    )
+    if source_required and not movement.source_warehouse_id:
+        raise ValidationError("حدد مخزن المصدر لهذه الحركة.")
+    if destination_required and not movement.destination_warehouse_id:
+        raise ValidationError("حدد مخزن الوجهة لهذه الحركة.")
+    if movement_type == StockMovement.MovementType.TRANSFER:
+        if not movement.source_warehouse_id or not movement.destination_warehouse_id:
+            raise ValidationError("التحويل يتطلب مخزن مصدر ومخزن وجهة.")
+        if movement.source_warehouse_id == movement.destination_warehouse_id:
+            raise ValidationError("لا يمكن التحويل إلى نفس المخزن.")
+    if movement_type == StockMovement.MovementType.ADJUSTMENT:
+        if not movement.adjustment_reason:
+            raise ValidationError("حدد سبب التسوية قبل الترحيل.")
+        directions = {line.adjustment_direction for line in lines}
+        if len(directions) != 1 or "" in directions:
+            raise ValidationError("حدد اتجاهًا موحدًا لكل بنود التسوية.")
+        direction = next(iter(directions))
+        if (
+            movement.adjustment_reason in (
+                StockMovement.AdjustmentReason.DAMAGE,
+                StockMovement.AdjustmentReason.EXPIRED,
+                StockMovement.AdjustmentReason.WRITE_OFF,
+            )
+            and direction != StockMovementLine.AdjustmentDirection.OUT
+        ):
+            raise ValidationError("أسباب التلف والانتهاء والشطب يجب أن تكون تسوية عجز.")
+        if direction == StockMovementLine.AdjustmentDirection.IN:
+            if not movement.destination_warehouse_id or movement.source_warehouse_id:
+                raise ValidationError("زيادة الجرد تتطلب مخزن وجهة فقط.")
+        elif direction == StockMovementLine.AdjustmentDirection.OUT:
+            if not movement.source_warehouse_id or movement.destination_warehouse_id:
+                raise ValidationError("عجز الجرد يتطلب مخزن مصدر فقط.")
+        else:
+            raise ValidationError("اتجاه التسوية غير صحيح.")
+
+    for warehouse in (movement.source_warehouse, movement.destination_warehouse):
+        if warehouse and (warehouse.company_id != movement.company_id or not warehouse.is_active):
+            raise ValidationError("مخزن الحركة غير نشط أو لا يتبع الشركة.")
+
+    for line in lines:
+        line.product = products_by_id[line.product_id]
+        product = line.product
+        if not product.is_active:
+            raise ValidationError(f"الصنف {product.code} موقوف ولا يمكن ترحيل حركة عليه.")
+        if not product.unit.is_active:
+            raise ValidationError(f"وحدة قياس الصنف {product.code} موقوفة.")
+        quantity_quantum = Decimal("1").scaleb(-product.unit.decimal_places)
+        if line.quantity != line.quantity.quantize(quantity_quantum):
+            raise ValidationError(
+                f"كمية الصنف {product.code} تتجاوز دقة وحدة القياس "
+                f"({product.unit.decimal_places} منازل عشرية)."
+            )
+        if line.source_location_id and (
+            not movement.source_warehouse_id
+            or line.source_location.warehouse_id != movement.source_warehouse_id
+            or not line.source_location.is_active
+        ):
+            raise ValidationError(f"موقع المصدر للصنف {product.code} غير صالح.")
+        if line.destination_location_id and (
+            not movement.destination_warehouse_id
+            or line.destination_location.warehouse_id != movement.destination_warehouse_id
+            or not line.destination_location.is_active
+        ):
+            raise ValidationError(f"موقع الوجهة للصنف {product.code} غير صالح.")
+        if product.track_expiry and not line.expiry_date:
+            raise ValidationError(f"تاريخ الصلاحية مطلوب للصنف {product.code}.")
+        if not product.track_expiry and line.expiry_date:
+            raise ValidationError(f"الصنف {product.code} لا يتطلب تتبع الصلاحية.")
+        if (
+            product.track_expiry
+            and line.expiry_date
+            and line.expiry_date < movement.movement_date
+            and movement_type in (StockMovement.MovementType.ISSUE, StockMovement.MovementType.TRANSFER)
+        ):
+            raise ValidationError(f"لا يمكن صرف أو تحويل تشغيلة منتهية الصلاحية للصنف {product.code}.")
+        if movement_type != StockMovement.MovementType.ADJUSTMENT and line.adjustment_direction:
+            raise ValidationError("اتجاه التسوية لا يستخدم إلا في حركات التسوية.")
 
     for line in lines:
         product = line.product
@@ -81,6 +199,7 @@ def post_stock_movement(movement_id, user):
             layer_query = StockCostLayer.objects.select_for_update().filter(
                 product=product, warehouse=balance.warehouse, location=balance.location,
                 expiry_date=balance.expiry_date, quantity_remaining__gt=0,
+                source_line__movement__status=StockMovement.Status.POSTED,
             )
             if source_root_line_id is not None:
                 layer_query = layer_query.filter(root_source_line_id=source_root_line_id)
@@ -150,6 +269,11 @@ def post_stock_movement(movement_id, user):
                 for part_quantity, unit_cost, _source_layer in cost_parts
             )
             balance.quantity -= quantity
+            if amount > balance.inventory_value + Decimal("0.0001"):
+                raise ValidationError(
+                    f"قيمة طبقات التكلفة للصنف {product.code} تتجاوز قيمة رصيد المخزون؛ "
+                    "أوقفنا الصرف بدلًا من إخفاء فرق التقييم."
+                )
             balance.inventory_value = max(Decimal("0"), balance.inventory_value - amount)
             if balance.quantity == 0:
                 balance.inventory_value = Decimal("0")

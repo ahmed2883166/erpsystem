@@ -67,12 +67,13 @@ class StockPostingServiceTests(TestCase):
 
     def _movement(
         self, number, kind, *, source=None, destination=None, quantity="1", unit_cost="0",
-        direction="", source_location=None, destination_location=None, expiry_date=None,
+        direction="", source_location=None, destination_location=None, expiry_date=None, adjustment_reason="other",
     ):
         movement = StockMovement.objects.create(
             company=self.company, movement_number=number, movement_type=kind,
             movement_date=date(2026, 2, 1), source_warehouse=source,
-            destination_warehouse=destination, created_by=self.user,
+            destination_warehouse=destination, adjustment_reason=adjustment_reason if kind == StockMovement.MovementType.ADJUSTMENT else "",
+            created_by=self.user,
         )
         StockMovementLine.objects.create(
             movement=movement, product=self.product, quantity=Decimal(quantity),
@@ -109,6 +110,51 @@ class StockPostingServiceTests(TestCase):
             for movement in (receipt, issue)
             for link in movement.journal_links.select_related("journal_entry")
         ))
+
+    def test_issue_rolls_back_when_cost_layers_exceed_stock_balance_value(self):
+        self.product.costing_method = Product.CostingMethod.FIFO
+        self.product.save(update_fields=("costing_method",))
+        receipt = self._movement(
+            "FIFO-MISMATCH-SOURCE", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="5", unit_cost="3",
+        )
+        post_stock_movement(receipt.pk, self.user)
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        balance.inventory_value = Decimal("10")
+        balance.average_cost = Decimal("2")
+        balance.save(update_fields=("inventory_value", "average_cost"))
+
+        issue = self._movement(
+            "FIFO-MISMATCH-ISSUE", StockMovement.MovementType.ISSUE,
+            source=self.warehouse, quantity="5",
+        )
+        with self.assertRaises(ValidationError):
+            post_stock_movement(issue.pk, self.user)
+
+        issue.refresh_from_db()
+        balance.refresh_from_db()
+        self.assertEqual(issue.status, StockMovement.Status.DRAFT)
+        self.assertEqual(balance.quantity, Decimal("5"))
+        self.assertEqual(balance.inventory_value, Decimal("10"))
+        self.assertFalse(issue.journal_links.exists())
+
+    def test_posting_rejects_product_deactivated_after_draft_creation(self):
+        movement = self._movement(
+            "INACTIVE-PRODUCT", StockMovement.MovementType.RECEIPT,
+            destination=self.warehouse, quantity="2", unit_cost="5",
+        )
+        self.product.is_active = False
+        self.product.save(update_fields=("is_active",))
+
+        with self.assertRaises(ValidationError):
+            post_stock_movement(movement.pk, self.user)
+
+        movement.refresh_from_db()
+        self.assertEqual(movement.status, StockMovement.Status.DRAFT)
+        self.assertFalse(StockBalance.objects.filter(
+            product=self.product, warehouse=self.warehouse,
+        ).exists())
+        self.assertFalse(movement.journal_links.exists())
 
     def test_issue_cannot_create_negative_stock_and_rolls_back_balance(self):
         issue = self._movement(
