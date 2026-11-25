@@ -1,5 +1,6 @@
 import django.core.validators
 import django.db.models.deletion
+from decimal import Decimal
 from django.db import migrations, models
 
 
@@ -39,7 +40,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="salesinvoiceline",
             name="quantity",
-            field=models.DecimalField(decimal_places=4, default=1, max_digits=18, validators=[django.core.validators.MinValueValidator(0.0001)]),
+            field=models.DecimalField(decimal_places=4, default=1, max_digits=18, validators=[django.core.validators.MinValueValidator(Decimal("0.0001"))]),
         ),
         migrations.RunPython(backfill_invoice_line_product_and_quantity, migrations.RunPython.noop),
         migrations.AlterField(
