@@ -582,8 +582,8 @@ def post_supplier_payment(payment_id, user):
                 rate_date=payment.exchange_rate_date, document_date=payment.payment_date,
                 approved_rate=approved.rate,
             )
-        except (ValueError, TypeError) as exc:
-            raise ValidationError(str(exc)) from exc
+        except (ValueError, TypeError):
+            raise ValidationError("تعذر التحقق من سعر الصرف لسند سداد المورد.") from None
         if expected_amount != payment.amount:
             raise ValidationError("مبلغ السداد الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
         from accounting.fx_settlement import allocate_carrying_base_amount, calculate_realized_fx
