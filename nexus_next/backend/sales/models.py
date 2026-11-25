@@ -25,6 +25,7 @@ class SalesDelivery(models.Model):
     customer_reference = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
     quotation_snapshot = models.JSONField(default=dict, blank=True, editable=False)
+    order_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_deliveries")
     created_at = models.DateTimeField(auto_now_add=True)
 
