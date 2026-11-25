@@ -146,7 +146,7 @@ class SubledgerReconciliationView(APIView):
         # The warehouse branch is the source of truth for operational-document branch scope.
         sales_invoice_scope = Q(branch_id__in=branch_ids) | Q(delivery__warehouse__branch_id__in=branch_ids)
         receipt_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__delivery__warehouse__branch_id__in=branch_ids)
-        sales_return_scope = Q(warehouse__branch_id__in=branch_ids)
+        sales_return_scope = Q(branch_id__in=branch_ids) | Q(warehouse__branch_id__in=branch_ids)
         purchase_invoice_scope = Q(branch_id__in=branch_ids) | Q(receipt__warehouse__branch_id__in=branch_ids)
         supplier_payment_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__receipt__warehouse__branch_id__in=branch_ids)
         supplier_return_scope = (
