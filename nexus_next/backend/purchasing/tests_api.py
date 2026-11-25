@@ -1481,7 +1481,7 @@ class PurchasingWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(direct_invoice.status_code, 201, direct_invoice.data)
         posted_invoice = self.client.post(
-            "/api/purchasing/invoices/%s/post/" % direct_invoice.data["id"], {}, format="json,
+            "/api/purchasing/invoices/%s/post/" % direct_invoice.data["id"], {}, format="json",
         )
         self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
 
