@@ -1806,6 +1806,9 @@ class JournalEntryViewSet(AccountingViewSet):
             "journal_number": row.reversal_journal_entry.entry_number,
             "original_journal_number": row.journal_entry.entry_number,
         } for row in fx_reversals]
+        exchange_rate_effect_details.sort(
+            key=lambda item: (item["event_date"], item["account_code"], item["event_type"])
+        )
         net_increase_decrease_in_cash = net_change_in_cash + effect_of_exchange_rate_changes
         closing_cash_balance = opening_cash_balance + net_increase_decrease_in_cash
         closing_balance_difference = ledger_closing_cash_balance - closing_cash_balance
