@@ -1,85 +1,37 @@
 import { useEffect, useState } from "react";
-import { salesApi, type Company, type SalesInvoice, type SalesQuotation, type SalesDocumentTemplate } from "./api";
+import { salesApi, type Company, type SalesInvoice, type SalesQuotation, type SalesDocumentTemplate, type CustomerReceipt, type SalesReturn } from "./api";
 import { formatMoneyEnglish } from "./formatters";
-
-type Props = {
-  company:Company|null;
-  invoice?:SalesInvoice|null;
-  quotation?:SalesQuotation|null;
-  onClose:()=>void;
-};
-type PrintLine = {
-  product_code:string;product_name:string;quantity:string;unit_price:string;
-  discount_percent:string;discount_amount:string;tax_rate:string;tax_amount:string;total_amount:string;
-};
-const money=(value:string,currency:string="")=>formatMoneyEnglish(value)+(currency?" "+currency:"");
-
-export default function SalesDocumentPrint({company,invoice,quotation,onClose}:Props){
-  const doc=invoice||quotation;
-  const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
-  const isInvoice=Boolean(invoice);
-  const currencyCode=isInvoice&&invoice!.transaction_currency_code
-    ? invoice!.transaction_currency_code
-    : company?.base_currency_code||"";
-  useEffect(()=>{
-    if(!company?.id||(doc?.print_template_snapshot&&Object.keys(doc.print_template_snapshot).length>0))return;
-    let active=true;
-    void salesApi.documentTemplates(company.id).then(rows=>{
-      if(active)setDefaultTemplate(rows.find(row=>row.document_type===(isInvoice?"invoice":"quotation")&&row.is_active&&row.is_default)||null);
-    }).catch(()=>{if(active)setDefaultTemplate(null);});
-    return ()=>{active=false;};
-  },[company?.id,doc?.id,isInvoice,doc?.print_template_snapshot]);
-  if(!doc)return null;
-  const savedSnapshot=doc.print_template_snapshot&&Object.keys(doc.print_template_snapshot).length>0?doc.print_template_snapshot:null;
-  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=savedSnapshot||{
-    template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",
-    style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{},
-  };
-  const config=snapshot.config||{};
-  const language=config.language||"ar";
-  const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
-  const lines:PrintLine[]=isInvoice
-    ? invoice!.invoice_lines.map(line=>({product_code:line.product_code,product_name:line.product_name,quantity:line.quantity,
-        unit_price:invoice!.transaction_currency?line.transaction_unit_price||line.unit_price:line.unit_price,
-        discount_percent:line.discount_percent,
-        discount_amount:invoice!.transaction_currency?line.transaction_discount_amount||"0":line.discount_amount,
-        tax_rate:line.tax_rate,
-        tax_amount:invoice!.transaction_currency?line.transaction_tax_amount||line.tax_amount:line.tax_amount,
-        total_amount:invoice!.transaction_currency?line.transaction_total_amount||line.total_amount:line.total_amount}))
-    : quotation!.quotation_lines.map(line=>({product_code:line.product_code,product_name:line.product_name,quantity:line.quantity,unit_price:line.unit_price,discount_percent:line.discount_percent,discount_amount:line.discount_amount,tax_rate:line.tax_rate,tax_amount:line.tax_amount,total_amount:line.total_amount}));
-  const number=isInvoice?invoice!.invoice_number:quotation!.quotation_number;
-  const date=isInvoice?invoice!.invoice_date:quotation!.quotation_date;
-  const total=isInvoice?(invoice!.transaction_currency?invoice!.transaction_grand_total||invoice!.grand_total:invoice!.grand_total):quotation!.grand_total;
-  const net=isInvoice?(invoice!.transaction_currency?invoice!.transaction_net_total||invoice!.net_total:invoice!.net_total):quotation!.net_total;
-  const discount=isInvoice?(invoice!.transaction_currency?invoice!.transaction_discount_total||"0":invoice!.discount_total):quotation!.discount_total;
-  const tax=isInvoice?(invoice!.transaction_currency?invoice!.transaction_tax_total||invoice!.tax_total:invoice!.tax_total):quotation!.tax_total;
-  const customer=isInvoice?invoice!.customer_name:quotation!.customer_name;
-  return <div className="sales-print-overlay">
-    <div className="print-controls"><span>معاينة {isInvoice?"فاتورة المبيعات":"عرض السعر"} · {snapshot.name}</span><div><button type="button" className="subtle-button" onClick={onClose}>إغلاق</button><button type="button" className="primary-button" onClick={()=>window.print()}>طباعة / حفظ PDF</button></div></div>
-    <article className={`sales-print-sheet ${snapshot.style} font-${config.font_scale||"normal"}`} style={{borderTopColor:config.accent_color||"#1F4E79"}}>
-      <header className="sales-print-header">
-        <div><h1>{company?.name_ar||"اسم الشركة"} </h1>{company?.name_en&&<p>{company.name_en}</p>}
-          {company?.address&&<p>{company.address}</p>}{company?.phone&&<p>{label("هاتف","Phone")}: {company.phone}</p>}
-          {config.show_tax_number!==false&&company?.tax_registration_number&&<p>{label("رقم التسجيل الضريبي","Tax ID")}: {company.tax_registration_number}</p>}
-        </div>
-        <div className="sales-print-document-title"><strong>{label(isInvoice?"فاتورة مبيعات":"عرض سعر",isInvoice?"Sales Invoice":"Quotation")}</strong><span>{number}</span></div>
-      </header>
-      <section className="sales-print-meta"><div><span>{label("العميل","Customer")}</span><strong>{customer}</strong></div><div><span>{label("التاريخ","Date")}</span><strong>{date}</strong></div>
-        {!isInvoice&&<div><span>{label("صالح حتى","Valid until")}</span><strong>{quotation!.valid_until}</strong></div>}
-        {isInvoice&&<div><span>{label("الحالة","Status")}</span><strong>{invoice!.status==="posted"?label("مرحّلة","Posted"):label("مسودة","Draft")}</strong></div>}
-      </section>
-      <table className="sales-print-lines"><thead><tr><th>{label("الصنف","Item")}</th><th>{label("الكمية","Qty")}</th><th>{label("سعر الوحدة","Unit price")}</th>{config.show_discount!==false&&<th>{label("الخصم","Discount")}</th>}{config.show_tax!==false&&<th>{label("الضريبة","Tax")}</th>}<th>{label("الإجمالي","Total")}</th></tr></thead>
-        <tbody>{lines.map((line,index)=><tr key={index}><td><strong>{line.product_name}</strong><small>{line.product_code}</small></td><td>{line.quantity}</td><td>{money(line.unit_price,currencyCode)}</td>{config.show_discount!==false&&<td>{line.discount_percent}%<small>{money(line.discount_amount,currencyCode)}</small></td>}{config.show_tax!==false&&<td>{line.tax_rate}%<small>{money(line.tax_amount,currencyCode)}</small></td>}<td>{money(line.total_amount,currencyCode)}</td></tr>)}</tbody>
-      </table>
-      <section className="sales-print-totals">
-        <div><span>{label("الصافي","Net")}</span><strong>{money(net,currencyCode)}</strong></div>
-        {config.show_discount === false ? null : <div><span>{label("إجمالي الخصم","Discount total")}</span><strong>{money(discount,currencyCode)}</strong></div>}
-        {config.show_tax === false ? null : <div><span>{label("الضريبة","Tax")}</span><strong>{money(tax,currencyCode)}</strong></div>}
-        <div className="grand"><span>{label("الإجمالي النهائي","Grand total")}</span><strong>{money(total,currencyCode)}</strong></div>
-      </section>
-      {doc.notes&&<section className="sales-print-notes"><strong>{label("ملاحظات","Notes")}</strong><p>{doc.notes}</p></section>}
-      {config.show_bank_details&&config.bank_details&&<p className="sales-print-bank">{config.bank_details}</p>}
-      <footer>{config.footer_text||" "}</footer>
-    </article>
-  </div>;
+type Props={company:Company|null;invoice?:SalesInvoice|null;quotation?:SalesQuotation|null;receipt?:CustomerReceipt|null;salesReturn?:SalesReturn|null;onClose:()=>void};
+type PrintLine={product_code:string;product_name:string;quantity:string;unit_price:string;discount_percent:string;discount_amount:string;tax_rate:string;tax_amount:string;total_amount:string};
+const money=(value:string,currency="")=>formatMoneyEnglish(value)+(currency?" "+currency:"");
+export default function SalesDocumentPrint({company,invoice,quotation,receipt,salesReturn,onClose}:Props){
+ const doc=invoice||quotation||receipt||salesReturn;
+ const kind=invoice?"invoice":quotation?"quotation":receipt?"receipt":"return";
+ const isInvoice=kind==="invoice",isQuotation=kind==="quotation",isReceipt=kind==="receipt";
+ const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
+ useEffect(()=>{if(!company?.id)return;let active=true;const type=isQuotation?"quotation":isReceipt?"receipt":"invoice";void salesApi.documentTemplates(company.id).then(rows=>{if(active)setDefaultTemplate(rows.find(row=>row.document_type===type&&row.is_active&&row.is_default)||null);}).catch(()=>{if(active)setDefaultTemplate(null);});return()=>{active=false;};},[company?.id,kind]);
+ if(!doc)return null;
+ const saved=(invoice||quotation)?.print_template_snapshot;
+ const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=saved&&Object.keys(saved).length>0?saved:{template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{}};
+ const config=snapshot.config||{},language=config.language||"ar";
+ const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
+ const lines:PrintLine[]=isInvoice?invoice!.invoice_lines.map(l=>({product_code:l.product_code,product_name:l.product_name,quantity:l.quantity,unit_price:invoice!.transaction_currency?l.transaction_unit_price||l.unit_price:l.unit_price,discount_percent:l.discount_percent,discount_amount:invoice!.transaction_currency?l.transaction_discount_amount||"0":l.discount_amount,tax_rate:l.tax_rate,tax_amount:invoice!.transaction_currency?l.transaction_tax_amount||l.tax_amount:l.tax_amount,total_amount:invoice!.transaction_currency?l.transaction_total_amount||l.total_amount:l.total_amount}))
+ :isQuotation?quotation!.quotation_lines.map(l=>({product_code:l.product_code,product_name:l.product_name,quantity:l.quantity,unit_price:l.unit_price,discount_percent:l.discount_percent,discount_amount:l.discount_amount,tax_rate:l.tax_rate,tax_amount:l.tax_amount,total_amount:l.total_amount}))
+ :salesReturn?salesReturn.line_items.map(l=>({product_code:l.product_code,product_name:l.product_name,quantity:l.quantity,unit_price:"",discount_percent:"",discount_amount:"0",tax_rate:"",tax_amount:salesReturn.transaction_currency_code?l.transaction_tax_amount||l.tax_amount:l.tax_amount,total_amount:salesReturn.transaction_currency_code?l.transaction_total_amount||l.total_amount:l.total_amount})):[];
+ const number=isInvoice?invoice!.invoice_number:isQuotation?quotation!.quotation_number:isReceipt?receipt!.receipt_number:salesReturn!.return_number;
+ const date=isInvoice?invoice!.invoice_date:isQuotation?quotation!.quotation_date:isReceipt?receipt!.receipt_date:salesReturn!.return_date;
+ const currency=isInvoice?invoice!.transaction_currency_code||company?.base_currency_code||"":isReceipt?receipt!.transaction_currency_code||company?.base_currency_code||"":salesReturn?.transaction_currency_code||company?.base_currency_code||"";
+ const total=isInvoice?(invoice!.transaction_currency?invoice!.transaction_grand_total||invoice!.grand_total:invoice!.grand_total):isQuotation?quotation!.grand_total:isReceipt?(receipt!.transaction_currency_code?receipt!.transaction_amount||receipt!.amount:receipt!.amount):(salesReturn!.transaction_currency_code?salesReturn!.transaction_grand_total||salesReturn!.grand_total:salesReturn!.grand_total);
+ const net=isInvoice?(invoice!.transaction_currency?invoice!.transaction_net_total||invoice!.net_total:invoice!.net_total):isQuotation?quotation!.net_total:isReceipt?total:(salesReturn!.transaction_currency_code?salesReturn!.transaction_net_total||salesReturn!.net_total:salesReturn!.net_total);
+ const tax=isInvoice?(invoice!.transaction_currency?invoice!.transaction_tax_total||invoice!.tax_total:invoice!.tax_total):isQuotation?quotation!.tax_total:isReceipt?"0":(salesReturn!.transaction_currency_code?salesReturn!.transaction_tax_total||salesReturn!.tax_total:salesReturn!.tax_total);
+ const customer=isInvoice?invoice!.customer_name:isQuotation?quotation!.customer_name:isReceipt?receipt!.customer_name:salesReturn!.customer_name;
+ const title=isInvoice?label("فاتورة مبيعات","Sales Invoice"):isQuotation?label("عرض سعر","Quotation"):isReceipt?label("سند قبض","Customer Receipt"):label("مردود مبيعات","Sales Return");
+ return <div className="sales-print-overlay"><div className="print-controls"><span>معاينة {title} · {snapshot.name}</span><div><button type="button" className="subtle-button" onClick={onClose}>إغلاق</button><button type="button" className="primary-button" onClick={()=>window.print()}>طباعة / حفظ PDF</button></div></div>
+ <article className={`sales-print-sheet ${snapshot.style} font-${config.font_scale||"normal"}`} style={{borderTopColor:config.accent_color||"#1F4E79"}}>
+ <header className="sales-print-header"><div><h1>{company?.name_ar||"اسم الشركة"}</h1>{company?.name_en&&<p>{company.name_en}</p>}{company?.address&&<p>{company.address}</p>}{company?.phone&&<p>{label("هاتف","Phone")}: {company.phone}</p>}{config.show_tax_number!==false&&company?.tax_registration_number&&<p>{label("رقم التسجيل الضريبي","Tax ID")}: {company.tax_registration_number}</p>}</div><div className="sales-print-document-title"><strong>{title}</strong><span>{number}</span></div></header>
+ <section className="sales-print-meta"><div><span>{label("العميل","Customer")}</span><strong>{customer}</strong></div><div><span>{label("التاريخ","Date")}</span><strong>{date}</strong></div>{isQuotation&&<div><span>{label("صالح حتى","Valid until")}</span><strong>{quotation!.valid_until}</strong></div>}{isInvoice&&<div><span>{label("الحالة","Status")}</span><strong>{invoice!.status==="posted"?"مرحّلة":"مسودة"}</strong></div>}{isReceipt&&<><div><span>{label("الفاتورة","Invoice")}</span><strong>{receipt!.invoice_number}</strong></div><div><span>{label("طريقة التحصيل","Method")}</span><strong>{receipt!.method==="cash"?"نقدي":"بنكي"}</strong></div></>}{salesReturn&&<div><span>{label("الفاتورة الأصلية","Original invoice")}</span><strong>{salesReturn.invoice_number}</strong></div>}</section>
+ {isReceipt?<section className="sales-print-totals"><div><span>{label("المبلغ المحصل","Amount received")}</span><strong>{money(total,currency)}</strong></div>{receipt!.transaction_currency_code&&<div><span>{label("المقابل بالعملة الأساسية","Base equivalent")}</span><strong>{money(receipt!.amount,company?.base_currency_code||"")}</strong></div>}<div><span>{label("المرجع","Reference")}</span><strong>{receipt!.reference||"—"}</strong></div></section>:<>
+ {lines.length>0&&<table className="sales-print-lines"><thead><tr><th>{label("الصنف","Item")}</th><th>{label("الكمية","Qty")}</th>{!salesReturn&&<th>{label("سعر الوحدة","Unit price")}</th>}{config.show_discount!==false&&!salesReturn&&<th>{label("الخصم","Discount")}</th>}{config.show_tax!==false&&<th>{label("الضريبة","Tax")}</th>}<th>{label("الإجمالي","Total")}</th></tr></thead><tbody>{lines.map((l,i)=><tr key={i}><td><strong>{l.product_name}</strong><small>{l.product_code}</small></td><td>{l.quantity}</td>{!salesReturn&&<td>{money(l.unit_price,currency)}</td>}{config.show_discount!==false&&!salesReturn&&<td>{l.discount_percent}%<small>{money(l.discount_amount,currency)}</small></td>}{config.show_tax!==false&&<td>{l.tax_rate?l.tax_rate+"% ":""}{money(l.tax_amount,currency)}</td>}<td>{money(l.total_amount,currency)}</td></tr>)}</tbody></table>}
+ <section className="sales-print-totals"><div><span>{label("الصافي","Net")}</span><strong>{money(net,currency)}</strong></div>{!salesReturn&&config.show_discount!==false&&<div><span>{label("إجمالي الخصم","Discount total")}</span><strong>{money(isInvoice?(invoice!.transaction_currency?invoice!.transaction_discount_total||"0":invoice!.discount_total):quotation!.discount_total,currency)}</strong></div>}{config.show_tax!==false&&<div><span>{label("الضريبة","Tax")}</span><strong>{money(tax,currency)}</strong></div>}<div className="grand"><span>{label("الإجمالي النهائي","Grand total")}</span><strong>{money(total,currency)}</strong></div>{salesReturn?.transaction_currency_code&&<div><span>{label("المقابل بالعملة الأساسية","Base equivalent")}</span><strong>{money(salesReturn.grand_total,company?.base_currency_code||"")}</strong></div>}</section></>}
+ {doc.notes&&<section className="sales-print-notes"><strong>{label("ملاحظات","Notes")}</strong><p>{doc.notes}</p></section>}{config.show_bank_details&&config.bank_details&&<p className="sales-print-bank">{config.bank_details}</p>}<footer>{config.footer_text||" "}</footer></article></div>;
 }
