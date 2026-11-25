@@ -1893,3 +1893,62 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(reversed_return.data["status"], "reversed")
         self.assertIsNone(reversed_return.data["reversal_stock_movement"])
         self.assertEqual(StockMovement.objects.count(), movements_before)
+
+
+    def test_sales_order_draft_calculates_totals_and_confirmation_locks_changes(self):
+        movements_before = StockMovement.objects.count()
+        created = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk,
+            "order_number": "SO-001",
+            "order_date": "2026-03-15",
+            "requested_delivery_date": "2026-03-20",
+            "lines": [{
+                "product": self.product.pk, "quantity": "2",
+                "unit_price": "100", "tax_rate": "14", "discount_percent": "10",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["status"], "draft")
+        self.assertEqual(created.data["net_total"], "180.0000")
+        self.assertEqual(created.data["discount_total"], "20.0000")
+        self.assertEqual(created.data["tax_total"], "25.2000")
+        self.assertEqual(created.data["grand_total"], "205.2000")
+        self.assertEqual(len(created.data["order_lines"]), 1)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{created.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data["status"], "confirmed")
+
+        changed = self.client.patch(
+            f"/api/sales-documents/orders/{created.data['id']}/",
+            {"notes": "تعديل بعد الاعتماد"}, format="json",
+        )
+        self.assertEqual(changed.status_code, 400, changed.data)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+    def test_sales_order_rejects_services_and_invalid_delivery_date(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SO-SERVICE",
+            name_ar="خدمة غير مخزنية", product_type=Product.ProductType.SERVICE,
+            stock_class=None,
+        )
+        invalid_service = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-SERVICE",
+            "order_date": "2026-03-15",
+            "lines": [{"product": service.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(invalid_service.status_code, 400, invalid_service.data)
+
+        invalid_date = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk, "order_number": "SO-DATE",
+            "order_date": "2026-03-15", "requested_delivery_date": "2026-03-14",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(invalid_date.status_code, 400, invalid_date.data)
