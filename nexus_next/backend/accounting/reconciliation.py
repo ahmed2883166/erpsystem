@@ -158,9 +158,9 @@ class SubledgerReconciliationView(APIView):
             | Q(return_document__stock_movement__destination_warehouse__branch_id__in=branch_ids)
         )
         if include_unassigned_warehouses:
-            sales_invoice_scope |= Q(delivery__warehouse__branch__isnull=True)
-            receipt_scope |= Q(invoice__delivery__warehouse__branch__isnull=True)
-            sales_return_scope |= Q(warehouse__branch__isnull=True)
+            sales_invoice_scope |= Q(delivery__isnull=False, delivery__warehouse__branch__isnull=True)
+            receipt_scope |= Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True)
+            sales_return_scope |= Q(warehouse__isnull=False, warehouse__branch__isnull=True)
             purchase_invoice_scope |= Q(branch__isnull=True, receipt__warehouse__branch__isnull=True)
             supplier_payment_scope |= Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True)
             supplier_return_scope |= (Q(stock_movement__source_warehouse__branch__isnull=True, stock_movement__destination_warehouse__branch_id__in=branch_ids) | Q(stock_movement__destination_warehouse__branch__isnull=True, stock_movement__source_warehouse__branch_id__in=branch_ids) | Q(stock_movement__source_warehouse__branch__isnull=True, stock_movement__destination_warehouse__branch__isnull=True))
@@ -180,7 +180,7 @@ class SubledgerReconciliationView(APIView):
         ).filter(
             Q(sales_invoice__branch_id__in=branch_ids)
             | Q(sales_invoice__delivery__warehouse__branch_id__in=branch_ids)
-            | (Q(sales_invoice__delivery__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
+            | (Q(sales_invoice__delivery__isnull=False, sales_invoice__delivery__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
         )
 
         purchase_invoices = PurchaseInvoice.objects.filter(
