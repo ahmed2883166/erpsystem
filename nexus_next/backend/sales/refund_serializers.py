@@ -11,6 +11,7 @@ class CustomerRefundSerializer(serializers.ModelSerializer):
     branch_name = serializers.CharField(source="branch.name_ar", read_only=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     treasury_account_name = serializers.CharField(source="treasury_account.name_ar", read_only=True)
+    transaction_currency_code = serializers.CharField(source="transaction_currency.code", read_only=True, allow_null=True)
     source_return_number = serializers.CharField(source="source_return.return_number", read_only=True, allow_null=True)
     source_receipt_number = serializers.CharField(
         source="source_receipt_batch.receipt_number", read_only=True, allow_null=True,
@@ -35,7 +36,7 @@ class CustomerRefundSerializer(serializers.ModelSerializer):
             "id", "company", "customer", "customer_name", "branch", "branch_name",
             "refund_number", "refund_date", "source_return", "source_return_number",
             "source_receipt_batch", "source_receipt_number", "treasury_account",
-            "treasury_account_name", "amount", "transaction_currency",
+            "treasury_account_name", "amount", "transaction_currency", "transaction_currency_code",
             "transaction_amount", "exchange_rate", "exchange_rate_date",
             "reference", "status", "treasury_transaction", "treasury_document_number",
             "journal_number", "reversal_treasury_transaction", "reversal_journal_entry",
