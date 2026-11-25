@@ -74,17 +74,18 @@ class CompanySetupApiTests(APITestCase):
             username="update-multi-activity-owner", password="test-password"
         )
         PlatformOwner.objects.create(user=owner)
+        CompanyActivity.objects.create(company=self.company, activity="contracting")
         self.client.force_authenticate(owner)
         response = self.client.patch(
             f"/api/setup/companies/{self.company.pk}/",
-            {"activities": ["service", "transport", "contracting"]},
+            {"activities": ["service", "transport"]},
             format="json",
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["activity"], "service")
         self.assertEqual(
             set(response.data["activities"]),
-            {"service", "transport", "contracting"},
+            {"service", "transport"},
         )
         self.assertTrue(CompanyActivity.objects.get(company=self.company, activity="transport").is_active)
         self.assertFalse(CompanyActivity.objects.get(company=self.company, activity="contracting").is_active)
