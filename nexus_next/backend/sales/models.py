@@ -703,19 +703,10 @@ class CustomerReceiptBatch(models.Model):
         ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT,
         related_name="customer_receipt_batches",
     )
-    # amount is always the company-base-currency carrying amount.
-    # FX refunds also retain their nominal amount and approved rate.
     amount = models.DecimalField(
         max_digits=20, decimal_places=4,
         validators=[MinValueValidator(Decimal("0.0001"))],
     )
-    transaction_currency = models.ForeignKey(
-        Currency, null=True, blank=True, on_delete=models.PROTECT,
-        related_name="customer_refunds",
-    )
-    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
-    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
-    exchange_rate_date = models.DateField(null=True, blank=True)
     reference = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     journal_entry = models.OneToOneField(
@@ -876,10 +867,19 @@ class CustomerRefund(models.Model):
     )
     refund_number = models.CharField(max_length=40)
     refund_date = models.DateField()
+    # amount is always the company-base-currency carrying amount.
+    # FX refunds also retain their nominal amount and approved rate.
     amount = models.DecimalField(
         max_digits=20, decimal_places=4,
         validators=[MinValueValidator(Decimal("0.0001"))],
     )
+    transaction_currency = models.ForeignKey(
+        Currency, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refunds",
+    )
+    transaction_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
+    exchange_rate = models.DecimalField(max_digits=20, decimal_places=10, null=True, blank=True)
+    exchange_rate_date = models.DateField(null=True, blank=True)
     reference = models.CharField(max_length=120, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     reversal_journal_entry = models.OneToOneField(
