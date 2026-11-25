@@ -978,6 +978,11 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted.status_code, 200, posted.data)
         self.assertEqual(posted.data["status"], "posted")
         self.assertEqual(posted.data["grand_total"], "114.0000")
+        invoice_after_return = self.client.get(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/"
+        )
+        self.assertEqual(invoice_after_return.status_code, 200, invoice_after_return.data)
+        self.assertEqual(invoice_after_return.data["balance_due"], "114.0000")
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(balance.quantity, Decimal("4.0000"))
         self.assertEqual(balance.inventory_value, Decimal("160.0000"))
@@ -1009,6 +1014,11 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
         self.assertEqual(reversed_return.data["status"], "reversed")
+        invoice_after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/"
+        )
+        self.assertEqual(invoice_after_reversal.status_code, 200, invoice_after_reversal.data)
+        self.assertEqual(invoice_after_reversal.data["balance_due"], "228.0000")
         self.assertIsNotNone(reversed_return.data["reversal_journal_entry"])
         self.assertIsNotNone(reversed_return.data["reversal_stock_movement"])
         balance.refresh_from_db()
