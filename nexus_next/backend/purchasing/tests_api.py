@@ -1521,6 +1521,21 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(denied_post.status_code, 404, denied_post.data)
 
+        restricted_statement = self.client.get(
+            "/api/purchasing/invoices/supplier-statement/",
+            {"company": self.company.pk, "supplier": self.supplier.pk},
+        )
+        self.assertEqual(restricted_statement.status_code, 200, restricted_statement.data)
+        self.assertEqual(restricted_statement.data["closing_balance"], "0")
+        self.assertEqual(restricted_statement.data["rows"], [])
+
+        restricted_aging = self.client.get(
+            "/api/purchasing/invoices/supplier-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-25"},
+        )
+        self.assertEqual(restricted_aging.status_code, 200, restricted_aging.data)
+        self.assertEqual(restricted_aging.data["totals"]["total_due"], "0.0000")
+
         denied_create = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk,
             "supplier": self.supplier.pk,
