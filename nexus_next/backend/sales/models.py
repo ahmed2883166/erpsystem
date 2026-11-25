@@ -756,7 +756,10 @@ class CustomerReceiptBatch(models.Model):
 
     @property
     def unallocated_amount(self):
-        return max(self.amount - self.allocated_amount, Decimal("0"))
+        refunded = self.refunds.filter(status=CustomerRefund.Status.POSTED).aggregate(
+            total=models.Sum("amount")
+        )["total"] or Decimal("0")
+        return max(self.amount - self.allocated_amount - refunded, Decimal("0"))
 
     def clean(self):
         super().clean()
@@ -831,3 +834,114 @@ class CustomerReceiptBatchAllocation(models.Model):
             raise ValidationError("لا يمكن حذف تخصيص من سند قبض مرحّل.")
         return super().delete(*args, **kwargs)
 
+
+
+
+class CustomerRefund(models.Model):
+    """رد مبلغ للعميل مقابل مردود مبيعات أو دفعة مقدمة غير مخصصة."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="customer_refunds")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="refunds")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="customer_refunds")
+    source_return = models.ForeignKey(
+        SalesReturn, null=True, blank=True, on_delete=models.PROTECT, related_name="refunds",
+    )
+    source_receipt_batch = models.ForeignKey(
+        CustomerReceiptBatch, null=True, blank=True, on_delete=models.PROTECT, related_name="refunds",
+    )
+    treasury_account = models.ForeignKey(
+        "treasury.TreasuryAccount", on_delete=models.PROTECT, related_name="customer_refunds",
+    )
+    treasury_transaction = models.OneToOneField(
+        "treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refund",
+    )
+    refund_number = models.CharField(max_length=40)
+    refund_date = models.DateField()
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4,
+        validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    reference = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refund_reversal",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_customer_refunds",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_customer_refunds",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-refund_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "refund_number"), name="uq_sales_refund_company_no"),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(source_return__isnull=False, source_receipt_batch__isnull=True)
+                    | models.Q(source_return__isnull=True, source_receipt_batch__isnull=False)
+                ),
+                name="ck_sales_refund_one_source",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "refund_date"), name="sales_refund_co_stat_idx"),
+            models.Index(fields=("customer", "refund_date"), name="sales_refund_cust_date_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if bool(self.source_return_id) == bool(self.source_receipt_batch_id):
+            raise ValidationError("حدد مصدرًا واحدًا فقط: مردود مبيعات أو دفعة مقدمة.")
+        if self.source_return_id and (
+            self.source_return.company_id != self.company_id
+            or self.source_return.invoice.customer_id != self.customer_id
+        ):
+            raise ValidationError({"source_return": "مردود المبيعات لا يتبع العميل والشركة المحددين."})
+        if self.source_receipt_batch_id and (
+            self.source_receipt_batch.company_id != self.company_id
+            or self.source_receipt_batch.customer_id != self.customer_id
+        ):
+            raise ValidationError({"source_receipt_batch": "سند القبض لا يتبع العميل والشركة المحددين."})
+        if self.treasury_account_id and self.treasury_account.company_id != self.company_id:
+            raise ValidationError({"treasury_account": "حساب الخزينة لا يتبع الشركة المحددة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(
+            pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)
+        ).exists():
+            allowed = {
+                "status", "treasury_transaction", "reversal_journal_entry",
+                "reversal_date", "reversed_at", "reversed_by", "posted_at",
+            }
+            fields = set(kwargs.get("update_fields") or ())
+            if not fields or not fields.issubset(allowed):
+                raise ValidationError("مستند رد مبلغ العميل المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف رد مبلغ عميل مرحّل.")
+        return super().delete(*args, **kwargs)
