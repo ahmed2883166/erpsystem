@@ -869,7 +869,8 @@ export type CustomerRefund = {
   id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
   refund_number:string;refund_date:string;source_return:number|null;source_return_number:string|null;
   source_receipt_batch:number|null;source_receipt_number:string|null;treasury_account:number;
-  treasury_account_name:string;amount:string;reference:string;status:"draft"|"posted"|"reversed";
+  treasury_account_name:string;amount:string;transaction_currency:number|null;transaction_currency_code:string|null;
+  transaction_amount:string|null;exchange_rate:string|null;exchange_rate_date:string|null;reference:string;status:"draft"|"posted"|"reversed";
   treasury_transaction:number|null;treasury_document_number:string|null;journal_number:string|null;
   reversal_treasury_transaction:number|null;reversal_journal_entry:number|null;
   reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
