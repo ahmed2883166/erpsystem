@@ -250,7 +250,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"lines": "اربط كل صنف ببند صحيح من أمر البيع."})
             totals[order_line.pk] = totals.get(order_line.pk, Decimal("0")) + row["quantity"]
         locked_lines = {
-            line.pk: line for line in SalesOrderLine.objects.select_for_update().filter(
+            line.pk: line for line in SalesOrderLine.objects.filter(
                 pk__in=sorted(totals), order_id=order.pk
             )
         }
