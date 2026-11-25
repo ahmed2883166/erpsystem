@@ -247,6 +247,8 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             )
         return response.Response([{
             "id": row.pk,
+            "account": row.account_id,
+            "currency": account.currency_code,
             "revaluation_date": row.revaluation_date,
             "rate_date": row.rate_date,
             "rate": row.rate,
