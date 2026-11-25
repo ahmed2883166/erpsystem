@@ -75,9 +75,14 @@ class CustomerReceiptBatchSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"customer": "العميل موقوف."})
         if branch.company_id != company.pk:
             raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
-        if CustomerReceipt.objects.filter(
-            company=company, receipt_number=attrs.get("receipt_number"),
-        ).exists():
+        if (
+            CustomerReceipt.objects.filter(
+                company=company, receipt_number=attrs.get("receipt_number"),
+            ).exists()
+            or CustomerReceiptBatch.objects.filter(
+                company=company, receipt_number=attrs.get("receipt_number"),
+            ).exists()
+        ):
             raise serializers.ValidationError({"receipt_number": "رقم سند القبض مستخدم في سند آخر."})
 
         allocation_total = sum((row["amount"] for row in allocations), Decimal("0"))
