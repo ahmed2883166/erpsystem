@@ -147,8 +147,8 @@ class SubledgerReconciliationView(APIView):
         sales_invoice_scope = Q(delivery__warehouse__branch_id__in=branch_ids)
         receipt_scope = Q(invoice__delivery__warehouse__branch_id__in=branch_ids)
         sales_return_scope = Q(warehouse__branch_id__in=branch_ids)
-        purchase_invoice_scope = Q(receipt__warehouse__branch_id__in=branch_ids)
-        supplier_payment_scope = Q(invoice__receipt__warehouse__branch_id__in=branch_ids)
+        purchase_invoice_scope = Q(branch_id__in=branch_ids) | Q(receipt__warehouse__branch_id__in=branch_ids)
+        supplier_payment_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__receipt__warehouse__branch_id__in=branch_ids)
         supplier_return_scope = (
             Q(stock_movement__source_warehouse__branch_id__in=branch_ids)
             | Q(stock_movement__destination_warehouse__branch_id__in=branch_ids)
@@ -161,8 +161,8 @@ class SubledgerReconciliationView(APIView):
             sales_invoice_scope |= Q(delivery__warehouse__branch__isnull=True)
             receipt_scope |= Q(invoice__delivery__warehouse__branch__isnull=True)
             sales_return_scope |= Q(warehouse__branch__isnull=True)
-            purchase_invoice_scope |= Q(receipt__warehouse__branch__isnull=True)
-            supplier_payment_scope |= Q(invoice__receipt__warehouse__branch__isnull=True)
+            purchase_invoice_scope |= Q(branch__isnull=True, receipt__warehouse__branch__isnull=True)
+            supplier_payment_scope |= Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True)
             supplier_return_scope |= (Q(stock_movement__source_warehouse__branch__isnull=True, stock_movement__destination_warehouse__branch_id__in=branch_ids) | Q(stock_movement__destination_warehouse__branch__isnull=True, stock_movement__source_warehouse__branch_id__in=branch_ids) | Q(stock_movement__source_warehouse__branch__isnull=True, stock_movement__destination_warehouse__branch__isnull=True))
             supplier_refund_scope |= (Q(return_document__stock_movement__source_warehouse__branch__isnull=True, return_document__stock_movement__destination_warehouse__branch_id__in=branch_ids) | Q(return_document__stock_movement__destination_warehouse__branch__isnull=True, return_document__stock_movement__source_warehouse__branch_id__in=branch_ids) | Q(return_document__stock_movement__source_warehouse__branch__isnull=True, return_document__stock_movement__destination_warehouse__branch__isnull=True))
 
@@ -193,7 +193,11 @@ class SubledgerReconciliationView(APIView):
         ).filter(supplier_refund_scope)
         purchase_fx = FxSubledgerRevaluation.objects.filter(
             company_id=company_id, purchase_invoice__isnull=False, revaluation_date__lte=as_of
-        ).filter(Q(purchase_invoice__receipt__warehouse__branch_id__in=branch_ids) | (Q(purchase_invoice__receipt__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[])))
+        ).filter(
+            Q(purchase_invoice__branch_id__in=branch_ids)
+            | Q(purchase_invoice__receipt__warehouse__branch_id__in=branch_ids)
+            | (Q(purchase_invoice__branch__isnull=True, purchase_invoice__receipt__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
+        )
 
         # Direct fixed-asset vendor invoices and their payments also belong to AP.
         from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
