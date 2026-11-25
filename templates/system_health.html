@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}مركز سلامة النظام{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div><h2>مركز سلامة النظام</h2><p>فحوصات قراءة فقط للقيود والمستندات والمخزون. لا يتم تعديل البيانات تلقائيًا.</p></div>
+  <a class="button secondary" href="{{ url_for('audit_log') }}">فتح سجل التدقيق</a>
+</section>
+<div class="stats-grid">
+  <div class="stat-card"><span>عدد الفحوصات</span><strong>{{ summary.checks }}</strong></div>
+  <div class="stat-card"><span>ملاحظات حرجة / مهمة</span><strong>{{ summary.issues }}</strong></div>
+  <div class="stat-card"><span>عمليات مسجلة آخر 7 أيام</span><strong>{{ summary.audit_week }}</strong></div>
+</div>
+<section class="panel">
+  <h3>نتائج الفحص</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>الفحص</th><th>الحالة</th><th>عدد الحالات</th><th>التفاصيل</th><th>الإجراء</th></tr></thead>
+    <tbody>
+    {% for item in checks %}
+      <tr>
+        <td><strong>{{ item.title }}</strong></td>
+        <td><span class="status-badge {{ 'status-paid' if item.count == 0 else ('status-cancelled' if item.severity == 'critical' and item.count else 'status-partial') }}">{{ item.status }}</span></td>
+        <td>{{ item.count if item.count is not none else '—' }}</td>
+        <td>{{ item.detail }}</td>
+        <td>{% if item.href %}<a href="{{ item.href }}">فتح التفاصيل</a>{% else %}<span class="muted">لا توجد صلاحية لفتح التقرير</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+<p class="muted">مهم: نتائج الفحص مؤشرات للمراجعة وليست أوامر إصلاح. راجع المستند الأصلي قبل أي تعديل أو قيد عكسي.</p>
+{% endblock %}

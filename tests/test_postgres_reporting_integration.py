@@ -1,0 +1,384 @@
+import os
+import sqlite3
+import unittest
+import uuid
+from decimal import Decimal
+
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
+from accounting_core import register_decimal_aggregates
+from management_reports import build_inventory_ageing
+
+
+@unittest.skipUnless(
+    os.environ.get("NEXUS_TEST_POSTGRES_DSN") and psycopg,
+    "PostgreSQL integration DSN/driver is not configured",
+)
+class ManagementReportsPostgreSQLIntegrationTests(unittest.TestCase):
+    def test_bank_opening_balance_and_statement_match_are_sqlite_postgresql_equivalent(self):
+        from banking import bank_opening_ledger_balance, save_statement_line_match
+        from unittest.mock import patch
+
+        schema = "nexus_bank_parity_" + uuid.uuid4().hex[:12]
+        pg = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"], row_factory=psycopg.rows.dict_row
+        )
+        sqlite_conn = sqlite3.connect(":memory:")
+        sqlite_conn.row_factory = sqlite3.Row
+
+        def seed(connection):
+            connection.execute("""
+                CREATE TABLE journal_entries(id BIGINT PRIMARY KEY,entry_date TEXT,status TEXT)
+            """)
+            connection.execute("""
+                CREATE TABLE journal_lines(
+                    id BIGINT PRIMARY KEY,entry_id BIGINT,account_id BIGINT,
+                    debit NUMERIC(20,2),credit NUMERIC(20,2)
+                )
+            """)
+            connection.execute("""
+                CREATE TABLE bank_statement_lines(
+                    id BIGINT PRIMARY KEY,matched_transaction_id BIGINT,
+                    matched_journal_line_id BIGINT,matched_at TEXT,matched_by BIGINT
+                )
+            """)
+            connection.execute("INSERT INTO journal_entries VALUES(1,'2026-12-20','posted'),(2,'2026-12-29','posted'),(3,'2027-01-02','posted')")
+            connection.execute("INSERT INTO journal_lines VALUES(1,1,11,100.10,0),(2,2,11,0,20.05),(3,3,11,500,0)")
+            connection.execute("INSERT INTO bank_statement_lines VALUES(1,NULL,NULL,NULL,NULL)")
+
+        try:
+            seed(sqlite_conn)
+            with pg.transaction():
+                pg.execute(f'CREATE SCHEMA "{schema}"')
+                pg.execute(f'SET LOCAL search_path TO "{schema}"')
+                seed(pg)
+                with patch("management_dashboard._copied_opening_entry_ids", return_value=set()):
+                    sqlite_opening = bank_opening_ledger_balance(sqlite_conn, 11, "2027-01-01")
+                    pg_opening = bank_opening_ledger_balance(pg, 11, "2027-01-01")
+                self.assertEqual(pg_opening, sqlite_opening)
+                self.assertEqual(pg_opening, Decimal("80.05"))
+                save_statement_line_match(sqlite_conn, 1, 2, "2026-11-21T09:00:00", 7)
+                save_statement_line_match(pg, 1, 2, "2026-11-21T09:00:00", 7)
+                sqlite_match = tuple(sqlite_conn.execute(
+                    "SELECT matched_journal_line_id,matched_at,matched_by FROM bank_statement_lines WHERE id=1"
+                ).fetchone())
+                pg_match = tuple(pg.execute(
+                    "SELECT matched_journal_line_id,matched_at,matched_by FROM bank_statement_lines WHERE id=1"
+                ).fetchone().values())
+                self.assertEqual(pg_match, sqlite_match)
+                raise RuntimeError("rollback disposable schema")
+        except RuntimeError as exc:
+            self.assertEqual(str(exc), "rollback disposable schema")
+        finally:
+            sqlite_conn.close()
+            pg.close()
+
+    def test_inventory_ageing_uses_postgresql_date_expressions(self):
+        schema = "nexus_report_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE stock_products(
+                id BIGINT PRIMARY KEY, sku TEXT, name_ar TEXT
+            )""")
+            connection.execute("""CREATE TABLE stock_warehouses(
+                id BIGINT PRIMARY KEY, code TEXT, name_ar TEXT
+            )""")
+            connection.execute("""CREATE TABLE stock_movements(
+                id BIGINT PRIMARY KEY, product_id BIGINT,
+                source_warehouse_id BIGINT, target_warehouse_id BIGINT,
+                movement_date DATE
+            )""")
+            connection.execute("CREATE TABLE stock_lots(id BIGINT PRIMARY KEY, expiry_date DATE)")
+            connection.execute("""CREATE TABLE stock_valuation_layers(
+                id BIGINT PRIMARY KEY, product_id BIGINT, warehouse_id BIGINT,
+                source_movement_id BIGINT, lot_id BIGINT,
+                qty_remaining NUMERIC(20,4), unit_cost NUMERIC(20,4),
+                created_at TIMESTAMP
+            )""")
+            connection.execute("INSERT INTO stock_products VALUES(1,'SKU-1','صنف تجريبي')")
+            connection.execute("INSERT INTO stock_warehouses VALUES(1,'WH-1','المخزن الرئيسي')")
+            connection.execute("INSERT INTO stock_lots VALUES(1,'2026-12-01')")
+            connection.execute("INSERT INTO stock_movements VALUES(1,1,1,NULL,'2026-11-10')")
+            connection.execute("""INSERT INTO stock_valuation_layers
+                VALUES(1,1,1,1,1,2,15,'2026-11-01 08:00:00')""")
+            report = build_inventory_ageing(connection, "2026-11-15")
+            self.assertTrue(report["available"])
+            self.assertEqual(report["total_value"], 30)
+            self.assertEqual(report["rows"][0]["last_movement_date"], "2026-11-10")
+            self.assertEqual(report["expiry_totals"]["within_30"], 30)
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
+
+
+    def test_management_dashboard_ledger_aggregates_are_postgresql_compatible(self):
+        from management_dashboard import account_balances, dashboard_period_balances
+
+        schema = "nexus_dashboard_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE accounts(
+                id BIGINT PRIMARY KEY, code TEXT, name_ar TEXT,
+                account_type TEXT, is_group BOOLEAN DEFAULT FALSE
+            )""")
+            connection.execute("""CREATE TABLE journal_entries(
+                id BIGINT PRIMARY KEY, entry_date DATE, status TEXT,
+                entry_type TEXT DEFAULT 'general'
+            )""")
+            connection.execute("""CREATE TABLE journal_lines(
+                id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT,
+                debit NUMERIC(20,2), credit NUMERIC(20,2)
+            )""")
+            connection.execute("INSERT INTO accounts VALUES(1,'1110','Cash','asset',FALSE)")
+            connection.execute(
+                "INSERT INTO journal_entries VALUES"
+                "(1,'2026-01-05','posted','general'),"
+                "(2,'2026-02-05','posted','general'),"
+                "(3,'2026-02-06','posted','year_end_closing')"
+            )
+            connection.execute(
+                "INSERT INTO journal_lines VALUES"
+                "(1,1,1,100.10,0),(2,2,1,25.25,0),(3,3,1,50.00,0)"
+            )
+
+            balances = account_balances(
+                connection, "2026-02-01", "2026-02-28",
+                exclude_closing_entries=True,
+            )
+            self.assertEqual(balances[1]["debit"], Decimal("25.25"))
+
+            current, previous, as_of, opening = dashboard_period_balances(
+                connection, "2026-02-01", "2026-02-28",
+                "2026-01-01", "2026-01-31",
+                exclude_closing_entries=True,
+            )
+            self.assertEqual(current[1]["debit"], Decimal("25.25"))
+            self.assertEqual(previous[1]["debit"], Decimal("100.10"))
+            self.assertEqual(opening[1]["debit"], Decimal("100.10"))
+            self.assertEqual(as_of[1]["debit"], Decimal("175.35"))
+
+            sqlite_conn = sqlite3.connect(":memory:")
+            sqlite_conn.row_factory = sqlite3.Row
+            register_decimal_aggregates(sqlite_conn)
+            try:
+                sqlite_conn.executescript("""
+                    CREATE TABLE accounts(
+                        id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,
+                        account_type TEXT,is_group INTEGER DEFAULT 0
+                    );
+                    CREATE TABLE journal_entries(
+                        id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,
+                        entry_type TEXT DEFAULT 'general'
+                    );
+                    CREATE TABLE journal_lines(
+                        id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
+                        debit TEXT,credit TEXT
+                    );
+                    INSERT INTO accounts VALUES(1,'1110','Cash','asset',0);
+                    INSERT INTO journal_entries VALUES
+                        (1,'2026-01-05','posted','general'),
+                        (2,'2026-02-05','posted','general'),
+                        (3,'2026-02-06','posted','year_end_closing');
+                    INSERT INTO journal_lines VALUES
+                        (1,1,1,'100.10','0'),(2,2,1,'25.25','0'),(3,3,1,'50.00','0');
+                """)
+                sqlite_balances = account_balances(
+                    sqlite_conn,"2026-02-01","2026-02-28",exclude_closing_entries=True
+                )
+                self.assertEqual(sqlite_balances[1]["debit"], balances[1]["debit"])
+                sqlite_current,sqlite_previous,sqlite_as_of,sqlite_opening = dashboard_period_balances(
+                    sqlite_conn,"2026-02-01","2026-02-28","2026-01-01","2026-01-31",
+                    exclude_closing_entries=True,
+                )
+                self.assertEqual(sqlite_current,current)
+                self.assertEqual(sqlite_previous,previous)
+                self.assertEqual(sqlite_as_of,as_of)
+                self.assertEqual(sqlite_opening,opening)
+            finally:
+                sqlite_conn.close()
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
+    def test_stock_layer_value_expression_is_exact(self):
+        from accounting_core import decimal_layer_value_sum_expression
+
+        schema = "nexus_stock_value_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE stock_valuation_layers(
+                id BIGINT PRIMARY KEY, value_remaining TEXT,
+                qty_remaining TEXT, unit_cost TEXT
+            )""")
+            connection.execute(
+                "INSERT INTO stock_valuation_layers VALUES"
+                "(1,'30.10','2','15.05'),(2,NULL,'3','2.25')"
+            )
+            expression = decimal_layer_value_sum_expression(
+                connection, "value_remaining", "qty_remaining", "unit_cost"
+            )
+            total = connection.execute(
+                f"SELECT {expression} total FROM stock_valuation_layers"
+            ).fetchone()["total"]
+            self.assertEqual(Decimal(str(total)), Decimal("36.85"))
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
+    def test_unusual_journal_entries_uses_postgresql_queries(self):
+        from datetime import date
+        from management_dashboard import unusual_journal_entries
+
+        schema = "nexus_anomaly_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE accounts(
+                id BIGINT PRIMARY KEY, code TEXT, name_ar TEXT
+            )""")
+            connection.execute("""CREATE TABLE journal_entries(
+                id BIGINT PRIMARY KEY, entry_date DATE, status TEXT,
+                entry_type TEXT, reference TEXT, description TEXT
+            )""")
+            connection.execute("""CREATE TABLE journal_lines(
+                id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT,
+                debit NUMERIC(20,2), credit NUMERIC(20,2)
+            )""")
+            connection.execute("INSERT INTO accounts VALUES(1,'1110','Cash')")
+            connection.execute(
+                "INSERT INTO journal_entries VALUES"
+                "(1,'2026-11-01','posted','general','R-1','Opening'),"
+                "(2,'2026-11-17','posted','general','R-2','Large cash entry')"
+            )
+            connection.execute(
+                "INSERT INTO journal_lines VALUES"
+                "(1,1,1,10,0),(2,2,1,100,0),(3,2,1,0,100)"
+            )
+            rows = unusual_journal_entries(
+                connection, date(2026, 11, 1), date(2026, 11, 18)
+            )
+            self.assertTrue(any(row["id"] == 2 for row in rows))
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
+    def test_expense_analysis_uses_postgresql_numeric_and_month_queries(self):
+        from expense_analysis import build_expense_analysis
+
+        schema = "nexus_expense_" + uuid.uuid4().hex[:12]
+        connection = psycopg.connect(
+            os.environ["NEXUS_TEST_POSTGRES_DSN"],
+            row_factory=psycopg.rows.dict_row,
+        )
+        try:
+            connection.execute(f'CREATE SCHEMA "{schema}"')
+            connection.execute(f'SET search_path TO "{schema}"')
+            connection.execute("""CREATE TABLE accounts(
+                id BIGINT PRIMARY KEY, code TEXT, name_ar TEXT,
+                account_type TEXT, is_group BOOLEAN, active BOOLEAN
+            )""")
+            connection.execute("""CREATE TABLE journal_entries(
+                id BIGINT PRIMARY KEY, entry_date DATE, status TEXT, entry_type TEXT
+            )""")
+            connection.execute("""CREATE TABLE journal_lines(
+                id BIGINT PRIMARY KEY, entry_id BIGINT, account_id BIGINT,
+                debit NUMERIC(20,2), credit NUMERIC(20,2),
+                branch_id BIGINT, cost_center_id BIGINT, project_id BIGINT,
+                customer_id BIGINT, salesperson_id BIGINT, supplier_id BIGINT
+            )""")
+            for table, columns in (
+                ("branches", "code TEXT, name_ar TEXT"),
+                ("cost_centers", "code TEXT, name_ar TEXT"),
+                ("projects", "code TEXT, name_ar TEXT"),
+                ("customers", "code TEXT, name TEXT"),
+                ("salespersons", "code TEXT, name TEXT"),
+                ("suppliers", "code TEXT, name TEXT"),
+            ):
+                connection.execute(f'CREATE TABLE "{table}"(id BIGINT PRIMARY KEY,{columns})')
+            connection.execute("INSERT INTO accounts VALUES(1,'6100','Rent','expense',FALSE,TRUE)")
+            connection.execute("INSERT INTO journal_entries VALUES(1,'2026-11-05','posted','general')")
+            connection.execute(
+                "INSERT INTO journal_lines VALUES(1,1,1,55,5,NULL,NULL,NULL,NULL,NULL,NULL)"
+            )
+            report = build_expense_analysis(connection, "2026-11-01", "2026-11-30")
+            self.assertEqual(report["total"], Decimal("50"))
+            self.assertEqual(report["monthly_rows"][0]["month"], "2026-11")
+            self.assertEqual(report["monthly_rows"][0]["amount"], Decimal("50"))
+
+            sqlite_conn = sqlite3.connect(":memory:")
+            sqlite_conn.row_factory = sqlite3.Row
+            register_decimal_aggregates(sqlite_conn)
+            try:
+                sqlite_conn.executescript("""
+                    CREATE TABLE accounts(
+                        id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT,
+                        account_type TEXT,is_group INTEGER,active INTEGER
+                    );
+                    CREATE TABLE journal_entries(
+                        id INTEGER PRIMARY KEY,entry_date TEXT,status TEXT,entry_type TEXT
+                    );
+                    CREATE TABLE journal_lines(
+                        id INTEGER PRIMARY KEY,entry_id INTEGER,account_id INTEGER,
+                        debit TEXT,credit TEXT,branch_id INTEGER,cost_center_id INTEGER,
+                        project_id INTEGER,customer_id INTEGER,salesperson_id INTEGER,supplier_id INTEGER
+                    );
+                    CREATE TABLE branches(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                    CREATE TABLE cost_centers(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                    CREATE TABLE projects(id INTEGER PRIMARY KEY,code TEXT,name_ar TEXT);
+                    CREATE TABLE customers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                    CREATE TABLE salespersons(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                    CREATE TABLE suppliers(id INTEGER PRIMARY KEY,code TEXT,name TEXT);
+                    INSERT INTO accounts VALUES(1,'6100','Rent','expense',0,1);
+                    INSERT INTO journal_entries VALUES(1,'2026-11-05','posted','general');
+                    INSERT INTO journal_lines VALUES(1,1,1,'55','5',NULL,NULL,NULL,NULL,NULL,NULL);
+                """)
+                sqlite_report = build_expense_analysis(
+                    sqlite_conn, "2026-11-01", "2026-11-30"
+                )
+                self.assertEqual(report, sqlite_report)
+            finally:
+                sqlite_conn.close()
+        finally:
+            connection.rollback()
+            connection.execute("SET search_path TO public")
+            connection.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+            connection.commit()
+            connection.close()
+
+if __name__ == "__main__":
+    unittest.main()

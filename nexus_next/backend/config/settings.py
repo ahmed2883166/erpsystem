@@ -1,0 +1,153 @@
+"""إعدادات تشغيل Admrail ERP v2 مع اعتماد PostgreSQL وضوابط الجلسات والنشر المحلي."""
+
+from pathlib import Path
+import environ
+from django.core.exceptions import ImproperlyConfigured
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+env = environ.Env(DJANGO_DEBUG=(bool, False))
+environ.Env.read_env(BASE_DIR / ".env")
+
+# مفاتيح التشغيل تُقرأ من ملف البيئة ولا تُضمّن داخل المستودع.
+SECRET_KEY = env("DJANGO_SECRET_KEY")
+DEBUG = env("DJANGO_DEBUG")
+ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
+
+INSTALLED_APPS = [
+    "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
+    "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles",
+    "rest_framework", "django_filters", "corsheaders", "axes", "core", "accounts", "companies",
+    "accounting", "customers", "inventory", "suppliers", "purchasing", "sales",
+    "treasury", "assets", "audit", "approvals", "hr",
+]
+MIDDLEWARE = [
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "axes.middleware.AxesMiddleware",
+    "audit.middleware.AuditTrailMiddleware",
+    "core.performance.PerformanceMetricsMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+]
+ROOT_URLCONF = "config.urls"
+TEMPLATES = [{
+    "BACKEND": "django.template.backends.django.DjangoTemplates",
+    "DIRS": [],
+    "APP_DIRS": True,
+    "OPTIONS": {"context_processors": [
+        "django.template.context_processors.request",
+        "django.contrib.auth.context_processors.auth",
+        "django.contrib.messages.context_processors.messages",
+    ]},
+}]
+WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
+
+# قاعدة البيانات الوحيدة المدعومة في النسخة الجديدة هي PostgreSQL.
+DATABASES = {"default": {
+    "ENGINE": "django.db.backends.postgresql",
+    "NAME": env("POSTGRES_DB", default="nexus_dev"),
+    "USER": env("POSTGRES_USER", default="nexus_app"),
+    "PASSWORD": env("POSTGRES_PASSWORD"),
+    "HOST": env("POSTGRES_HOST", default="127.0.0.1"),
+    "PORT": env("POSTGRES_PORT", default="5432"),
+    # psycopg_pool يدير الاتصالات مركزياً داخل عملية التطبيق؛ لا نحتفظ باتصال مستقل لكل Thread.
+    # شغّل Waitress كعملية واحدة على Windows، واضبط عدد العمليات عند استخدام خادم متعدد العمليات.
+    "CONN_MAX_AGE": 0,
+    "CONN_HEALTH_CHECKS": True,
+    "OPTIONS": {
+        "connect_timeout": env.int("POSTGRES_CONNECT_TIMEOUT", default=5),
+        "pool": {
+            "min_size": env.int("POSTGRES_POOL_MIN_SIZE", default=2),
+            "max_size": env.int("POSTGRES_POOL_MAX_SIZE", default=32),
+            "timeout": env.float("POSTGRES_POOL_TIMEOUT", default=30.0),
+            "max_waiting": env.int("POSTGRES_POOL_MAX_WAITING", default=100),
+        },
+    },
+}}
+
+# Axes يراقب محاولات الدخول الفاشلة ويقفل الحساب وفق الحدود المحددة أدناه.
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = 1
+AXES_LOCKOUT_PARAMETERS = ["username", "ip_address"]
+AXES_RESET_ON_SUCCESS = True
+AXES_ENABLE_ACCESS_FAILURE_LOG = True
+AXES_SENSITIVE_PARAMETERS = ["password"]
+
+AUTH_USER_MODEL = "accounts.User"
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 12}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+# اللغة والتوقيت الافتراضيان مناسبان لواجهة عربية تعمل في مصر.
+LANGUAGE_CODE = "ar"
+TIME_ZONE = "Africa/Cairo"
+USE_I18N = True
+USE_TZ = True
+# ملفات React المبنية تُقدّم مع ملفات Django الثابتة في تشغيل الإنتاج.
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+WHITENOISE_ROOT = BASE_DIR.parent / "frontend" / "dist"
+WHITENOISE_INDEX_FILE = True
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Send security and audit failures to the process stderr captured by Waitress/service logs.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "audit.middleware": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=["http://localhost:5173"])
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+# وضع الإنتاج لا يعمل بإعدادات HTTP غير الآمنة؛ يلزم إنهاء TLS على الخادم أو Proxy موثوق.
+DJANGO_ENV = env.str("DJANGO_ENV", default="development").strip().lower()
+IS_PRODUCTION = DJANGO_ENV == "production"
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_AGE = 8 * 60 * 60
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=IS_PRODUCTION)
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = env.bool("CSRF_COOKIE_SECURE", default=IS_PRODUCTION)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=IS_PRODUCTION)
+SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=31536000 if IS_PRODUCTION else 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=False)
+SECURE_HSTS_PRELOAD = env.bool("SECURE_HSTS_PRELOAD", default=False)
+if IS_PRODUCTION and not all((SESSION_COOKIE_SECURE, CSRF_COOKIE_SECURE, SECURE_SSL_REDIRECT, SECURE_HSTS_SECONDS >= 31536000)):
+    raise ImproperlyConfigured("Production requires secure session/CSRF cookies, HTTPS redirect, and HSTS >= 1 year.")
+# لا نثق في X-Forwarded-Proto إلا عند تشغيل التطبيق خلف Proxy موثوق يزيل أي قيمة واردة من العميل ويضبطها بنفسه.
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if env.bool("DJANGO_HTTPS_TERMINATED_BY_PROXY", default=False) else None
+)
+# توحيد المصادقة والصلاحيات ومعالجة الأخطاء على مستوى واجهات API.
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "EXCEPTION_HANDLER": "config.exceptions.nexus_exception_handler",
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
+}

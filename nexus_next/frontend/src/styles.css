@@ -1,0 +1,988 @@
+/* الإعدادات العامة: الخطوط والألوان الأساسية والخلفية الافتراضية للبرنامج. */
+/* الخطوط محلية لتجنب طلب خطوط خارجية عند التشغيل على الشبكة الداخلية. */
+:root{font-family:'Segoe UI',Tahoma,Arial,sans-serif;color:#172033;background:#f5f7fb;font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto}
+*{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100vh;background:#f5f7fb}button{font:inherit;cursor:pointer}
+/* الهيكل الرئيسي للتطبيق: القائمة الجانبية، مساحة العمل، الشريط العلوي وتخطيط الصفحة. */
+.app-shell{min-height:100vh;display:flex;background:#f5f7fb}.sidebar{width:264px;background:#111c2e;color:#e8eef8;display:flex;flex-direction:column;padding:25px 17px 17px;flex-shrink:0;min-height:100vh;position:sticky;top:0;height:100vh;overflow:auto}
+.brand-lockup{display:flex;align-items:center;gap:11px;padding:0 8px 27px;border-bottom:1px solid #26344a}.brand-symbol{width:40px;height:40px;display:grid;place-items:center;border-radius:13px;background:linear-gradient(145deg,#3b82f6,#2356bd);font-size:23px;font-weight:800;color:white;box-shadow:0 7px 18px #1d4ed844}.brand-lockup strong{display:block;font-size:18px;letter-spacing:2px;color:#fff}.brand-lockup span{display:block;font-size:8px;letter-spacing:1.2px;color:#8192aa}.sidebar-close{display:none;margin-right:auto;background:none;border:0;color:#aab8cb;font-size:24px}
+.workspace{display:flex;align-items:center;gap:10px;padding:17px 9px;margin:15px 0 10px;background:#1a2940;border:1px solid #293b55;border-radius:12px}.workspace-avatar{width:34px;height:34px;border-radius:10px;background:#314e76;display:grid;place-items:center;font-size:11px;font-weight:800;color:#dceaff}.workspace strong,.workspace small{display:block}.workspace strong{font-size:11px}.workspace small{font-size:10px;color:#90a1b9;margin-top:3px}.chevron{margin-right:auto;color:#8fa1b8}
+.navigation{flex:1}.nav-group{margin-top:17px}.nav-group>p{font-size:10px;color:#72849e;padding:0 12px;margin:0 0 8px}.nav-item{width:100%;border:0;background:transparent;color:#a9b7ca;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:9px;text-align:right;font-size:12px;position:relative;margin:3px 0;transition:.18s}.nav-item:hover{background:#1a2a42;color:#fff}.nav-active{background:#1e3d67;color:#fff;font-weight:700}.nav-active i{position:absolute;right:0;width:3px;height:22px;background:#65a5ff;border-radius:3px 0 0 3px}.nav-icon{font-size:17px;width:19px;text-align:center;color:#91a9c8}.nav-active .nav-icon{color:#8fc0ff}
+.sidebar-bottom{padding-top:14px}.help-card{display:flex;align-items:center;gap:9px;padding:12px 10px;border-radius:10px;background:#1b2c44;margin-bottom:14px}.help-card>span{width:25px;height:25px;border-radius:8px;display:grid;place-items:center;background:#304a6b;color:#b7d5ff}.help-card strong,.help-card small{display:block}.help-card strong{font-size:10px}.help-card small{font-size:9px;color:#91a2b9;margin-top:2px}.help-card b{margin-right:auto;color:#9db2cc}.user-profile{display:flex;align-items:center;gap:9px;padding:14px 5px 0;border-top:1px solid #29384c}.user-avatar{width:31px;height:31px;display:grid;place-items:center;border-radius:50%;background:#d9e8ff;color:#28528c;font-weight:800;font-size:12px}.user-profile strong,.user-profile small{display:block}.user-profile strong{font-size:11px}.user-profile small{font-size:9px;color:#8ea0b8}.user-profile>span{margin-right:auto;color:#8ea0b8}
+.main-area{min-width:0;flex:1}.topbar{height:72px;background:#fff;border-bottom:1px solid #e8edf4;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(18px,3vw,42px);position:sticky;top:0;z-index:5}.topbar-start,.topbar-actions{display:flex;align-items:center;gap:17px}.breadcrumb{font-size:12px;color:#1d293b;font-weight:700}.breadcrumb span{color:#8b98aa;font-weight:500}.breadcrumb b{color:#c2cad5;margin:0 9px}.topbar-actions{gap:12px}.period-select{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid #e7ebf1;border-radius:8px;color:#4a586c;font-size:10px}.period-select>span:last-child{margin-right:8px;color:#9aa6b5}.period-dot{width:6px;height:6px;border-radius:50%;background:#39b980}.icon-button{width:34px;height:34px;border:1px solid #e8edf3;background:white;border-radius:9px;color:#617188;font-size:18px;position:relative}.notification i{position:absolute;top:6px;right:7px;width:5px;height:5px;border-radius:50%;background:#ef6c66}.top-user{display:flex;align-items:center;gap:8px;padding-right:12px;border-right:1px solid #edf0f4;font-size:10px;color:#526074}.top-user b{color:#9aa6b5}.menu-toggle{display:none;background:none;border:0;font-size:20px;color:#53657b}
+.page-content{max-width:1500px;margin:0 auto;padding:32px clamp(18px,3vw,42px) 20px}.welcome-row{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:30px}.eyebrow{font-size:10px;color:#8b98aa;margin:0 0 4px}.welcome-row h1{font-size:25px;line-height:1.4;color:#17243a;margin:0;font-weight:800}.welcome-copy{font-size:11px;color:#8793a4;margin:5px 0 0}.primary-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#2865c7;color:white;border:0;border-radius:9px;padding:10px 16px;font-size:11px;font-weight:700;box-shadow:0 5px 12px #2865c71c;transition:.18s}.primary-button:hover{background:#1e55ad;transform:translateY(-1px)}.primary-button span{font-size:17px;line-height:12px}.primary-button:disabled{opacity:.55;cursor:not-allowed}.section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.section-heading h2,.activity-title h2,.work-panel h2{font-size:14px;margin:0;color:#26354b}.section-heading p,.activity-title p{font-size:10px;color:#8a96a7;margin:3px 0 0}.subtle-button{border:1px solid #e5eaf1;background:white;color:#738196;border-radius:8px;padding:7px 10px;font-size:9px}.subtle-button span{font-size:14px;margin-right:5px}.metrics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.metric-card{background:white;border:1px solid #e9edf3;border-radius:12px;padding:17px 17px 15px;min-height:132px;box-shadow:0 3px 12px #233b5a05}.metric-top{display:flex;align-items:center;justify-content:space-between;color:#78869a;font-size:10px}.metric-icon{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-style:normal;font-size:15px}.metric-icon.blue{background:#eaf2ff;color:#3677d4}.metric-icon.orange{background:#fff1e8;color:#e28b4c}.metric-icon.green{background:#e7f8f0;color:#39a879}.metric-icon.purple{background:#f2edff;color:#9272d6}.metric-value{display:block;font-size:24px;color:#26354b;margin:9px 0 1px;letter-spacing:.5px}.metric-card>small{font-size:9px;color:#a0aaba}
+/* الصفحة الرئيسية: بطاقات المؤشرات، اختصارات الوحدات، آخر النشاط وتذييل الصفحة. */
+.module-heading{margin-top:30px}.module-count{font-size:9px;color:#8b98aa;background:#fff;border:1px solid #e8edf3;padding:6px 9px;border-radius:7px}.modules-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.module-card{display:flex;align-items:center;gap:12px;text-align:right;background:white;border:1px solid #e9edf3;border-radius:11px;padding:15px 14px;min-height:76px;transition:.18s;color:#25344a}.module-card:hover{border-color:#b7cbed;box-shadow:0 8px 20px #23466d0d;transform:translateY(-2px)}.module-icon{width:37px;height:37px;display:grid;place-items:center;border-radius:10px;font-size:17px;font-style:normal;flex-shrink:0}.module-icon.blue{background:#eaf2ff;color:#3677d4}.module-icon.violet{background:#f1edff;color:#8c70d4}.module-icon.cyan{background:#e7f8fa;color:#329eaa}.module-icon.amber{background:#fff5df;color:#d19b35}.module-icon.green{background:#e8f7ef;color:#3eaa7b}.module-icon.rose{background:#fff0f1;color:#d77b86}.module-card strong,.module-card small{display:block}.module-card strong{font-size:10px}.module-card small{font-size:9px;color:#8b98a8;margin-top:4px}.module-arrow{margin-right:auto;color:#9cabbc;font-size:15px}
+.activity-panel{margin-top:22px;background:white;border:1px solid #e9edf3;border-radius:12px;padding:17px 18px}.activity-title{display:flex;align-items:center;justify-content:space-between}.empty-indicator{font-size:9px;color:#9aa6b5}.empty-state{display:flex;align-items:center;flex-direction:column;padding:23px 10px 19px;text-align:center}.empty-graphic{width:42px;height:42px;display:grid;place-items:center;border-radius:50%;background:#f1f5fa;color:#8fa2ba;font-size:22px;margin-bottom:9px}.empty-state strong{font-size:11px;color:#536176}.empty-state p{font-size:9px;color:#9aa6b5;margin:5px 0 0}
+.work-panel{background:white;border:1px solid #e9edf3;border-radius:12px;padding:20px;min-height:450px}.work-panel-head{display:flex;justify-content:space-between;align-items:center;padding-bottom:18px;border-bottom:1px solid #edf0f5}.work-panel-head p{font-size:10px;color:#8a96a7}.coming-soon{font-size:9px;color:#b17a2e;background:#fff6e6;border-radius:7px;padding:6px 9px}.table-placeholder{margin-top:22px;border:1px solid #edf0f4;border-radius:9px;overflow:hidden}.table-toolbar{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;font-size:11px;font-weight:700}.small{padding:7px 10px;font-size:9px}.table-head{display:grid;grid-template-columns:1fr 1fr 2fr 1fr 1fr;background:#f7f9fc;padding:11px 14px;color:#7d899a;font-size:9px}.table-empty{text-align:center;padding:65px 15px;color:#9aa6b5;font-size:10px}.page-footer{display:flex;justify-content:space-between;gap:10px;border-top:1px solid #e8edf3;margin-top:27px;padding-top:14px;color:#9aa5b4;font-size:9px}.page-footer span:nth-child(2){display:flex;align-items:center;gap:6px}.page-footer i{width:6px;height:6px;border-radius:50%;background:#42b987}.mobile-scrim{display:none}
+/* استجابة الهيكل العام والقائمة الجانبية والتنقل على الهاتف. */
+@media(max-width:1100px){.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.modules-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة الهيكل العام والقائمة الجانبية والتنقل على الهاتف. */
+@media(max-width:760px){.sidebar{position:fixed;right:0;top:0;z-index:20;transform:translateX(105%);transition:transform .22s ease;width:275px}.sidebar-open{transform:translateX(0)}.sidebar-close{display:block}.mobile-scrim{display:block;position:fixed;inset:0;background:#0d1729a8;border:0;z-index:15}.menu-toggle{display:block}.topbar{height:62px;padding:0 15px}.topbar-actions{gap:7px}.period-select{font-size:0;padding:8px}.period-select span{font-size:10px}.top-user>span,.top-user>b{display:none}.top-user{padding-right:7px}.page-content{padding-top:24px}.welcome-row{align-items:flex-start;flex-direction:column}.welcome-row h1{font-size:22px}.primary-button{padding:9px 12px}.modules-grid{grid-template-columns:1fr}.page-footer{flex-wrap:wrap}.table-head{grid-template-columns:1fr 1fr 1.5fr}.table-head span:nth-child(4),.table-head span:nth-child(5){display:none}}
+/* استجابة الهيكل العام والقائمة الجانبية والتنقل على الهاتف. */
+@media(max-width:430px){.metrics-grid{grid-template-columns:1fr 1fr;gap:8px}.metric-card{padding:12px;min-height:120px}.metric-top{font-size:9px}.metric-value{font-size:20px}.section-heading h2{font-size:13px}.breadcrumb{font-size:10px}.topbar-start{gap:9px}}
+
+.workspace select{margin-right:auto;max-width:90px;background:#223650;color:#cbd8e8;border:1px solid #38506d;border-radius:6px;padding:5px;font:inherit;font-size:9px;min-width:0}
+.admin-link{display:block;text-decoration:none;color:#9dbbe1;font-size:10px;padding:10px 8px;border-radius:8px;margin-bottom:10px;background:#1b2c44}.admin-link:hover{background:#263d5c;color:white}
+.admin-shortcut{font-size:10px;color:#74849a;text-decoration:none;border:1px solid #e7ebf1;border-radius:7px;padding:7px 10px}
+.error-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#fff1f0;border:1px solid #ffd6d2;color:#9d4038;border-radius:10px;padding:12px 15px;margin-bottom:18px;font-size:10px}.error-banner strong{font-size:11px}.error-banner a{color:#245db2;margin-right:auto}
+/* الجداول العامة: شريط البحث، التمرير الأفقي، رؤوس الأعمدة وحالات القيود. */
+.table-toolbar input{font:inherit;font-size:10px;border:1px solid #e5eaf1;border-radius:8px;padding:9px 12px;min-width:min(320px,70%);outline:none;background:#fbfcfe;color:#26354b}.table-toolbar input:focus{border-color:#8bb4eb;box-shadow:0 0 0 3px #2865c714}
+.data-table-wrap{width:100%;overflow:auto;border:1px solid #edf0f4;border-radius:9px;margin-top:14px}
+.data-table-wrap table{width:100%;border-collapse:collapse;min-width:650px;text-align:right;font-size:10px}
+.data-table-wrap th{background:#f7f9fc;color:#7d899a;font-size:9px;font-weight:700;padding:12px 14px;white-space:nowrap}
+.data-table-wrap td{padding:12px 14px;border-top:1px solid #f0f2f6;color:#435168;white-space:nowrap}
+.data-table-wrap tbody tr:hover{background:#fafcff}
+.code-cell{font-weight:800;color:#2d5f9f!important;font-variant-numeric:tabular-nums}
+.status-pill{display:inline-flex;align-items:center;border-radius:20px;padding:4px 9px;font-size:9px;font-weight:700;background:#edf1f6;color:#738196}
+.status-pill.posted{background:#e7f7ef;color:#269567}.status-pill.draft{background:#fff5df;color:#b27c24}.status-pill.reversed{background:#fff0ef;color:#c45c56}
+/* قواعد تجاوب هذا الجزء مع عرض الشاشة، دون تغيير سلوك الوظائف. */
+@media(max-width:760px){.workspace select{max-width:82px}.admin-shortcut{display:none}.table-toolbar{gap:8px}.table-toolbar input{min-width:0;width:100%}.error-banner{align-items:flex-start;flex-direction:column}.error-banner a{margin-right:0}}
+
+
+/* تحسين التفاعل العام: حالات المرور والضغط، التركيز بلوحة المفاتيح، وتعطيل الأزرار. */
+:root{--nx-primary:#2865c7;--nx-primary-hover:#1e55ad;--nx-border:#e5eaf1;--nx-muted:#8290a3;--nx-radius:10px;--nx-focus:0 0 0 3px #2865c72b}
+button,a,input,select,textarea{ -webkit-tap-highlight-color:transparent }
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:0;box-shadow:var(--nx-focus)}
+button:disabled{opacity:.55;cursor:not-allowed;transform:none!important}
+.primary-button,.subtle-button,.icon-button,.admin-shortcut,.nav-item,.module-card{transition:background-color .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
+.subtle-button:hover,.icon-button:hover{border-color:#b8cbe5;background:#f7faff;color:#285da7}
+.subtle-button:active,.primary-button:active,.icon-button:active{transform:translateY(1px)}
+.data-table-wrap{scrollbar-width:thin;scrollbar-color:#c5d0df transparent}
+.data-table-wrap table{font-variant-numeric:tabular-nums}
+.data-table-wrap th{position:sticky;top:0;z-index:1}
+.data-table-wrap td:first-child,.data-table-wrap th:first-child{padding-right:17px}
+.data-table-wrap tbody tr{transition:background-color .12s ease}
+.table-toolbar{gap:12px;flex-wrap:wrap}
+.table-toolbar input::placeholder{color:#a0aaba}
+.work-panel{box-shadow:0 5px 20px #233b5a08}
+.metric-card,.module-card,.activity-panel{box-shadow:0 4px 16px #233b5a07}
+.status-pill{white-space:nowrap}
+/* قواعد تجاوب هذا الجزء مع عرض الشاشة، دون تغيير سلوك الوظائف. */
+@media(max-width:760px){
+ .work-panel{padding:14px;min-height:360px}
+ .work-panel-head{align-items:flex-start;gap:10px}
+ .work-panel-head h2{font-size:13px}
+ .data-table-wrap{border-radius:8px}
+ .data-table-wrap table{min-width:590px}
+ .table-toolbar input{font-size:12px;min-height:40px}
+ .primary-button,.subtle-button{min-height:38px}
+}
+/* إيقاف أو تقليل الحركة للمستخدمين الذين يفضلون تقليل المؤثرات. */
+@media(prefers-reduced-motion:reduce){
+ *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
+}
+
+/* القيود اليومية: النافذة المنبثقة ونموذج بيانات القيد وحقول الإدخال. */
+.modal-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(10,20,36,.58);backdrop-filter:blur(5px);display:grid;place-items:center;padding:20px;overflow:auto}
+.journal-modal{width:min(760px,100%);max-height:min(92vh,900px);overflow:auto;background:var(--surface,#fff);color:var(--text,#17243a);border:1px solid var(--nx-border,#e5eaf1);border-radius:18px;padding:24px;box-shadow:0 24px 80px #081a3340}
+.modal-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:22px}
+.modal-heading h2{margin:0 0 6px;font-size:20px}.modal-heading p{margin:0;color:var(--muted,#7b8798);font-size:13px}
+.journal-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.journal-form label{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:650;color:var(--text,#26364d);min-width:0}
+.journal-form input,.journal-form select{width:100%;min-height:43px;border:1px solid var(--nx-border,#dce3ed);border-radius:9px;padding:9px 12px;background:var(--input-bg,#fff);color:inherit;font:inherit;outline:none}
+.journal-form input:focus,.journal-form select:focus{border-color:var(--nx-primary,#2865c7);box-shadow:var(--nx-focus,0 0 0 3px #2865c72b)}
+.form-wide{grid-column:1/-1}.journal-lines-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--nx-border,#e5eaf1);padding:8px 0 10px}.journal-lines-head span{font-size:12px;color:var(--muted,#8290a3)}
+.balance-preview{display:flex;flex-direction:column;justify-content:center;gap:4px;border:1px dashed #b9cbe2;border-radius:10px;padding:10px 14px;background:#f6f9fd;color:#253c5d}.balance-preview span,.balance-preview small{font-size:11px;color:#6d7e95}.balance-preview strong{font-size:17px;font-variant-numeric:tabular-nums}
+.form-actions{display:flex;justify-content:flex-end;gap:10px;padding-top:8px}.form-actions button{min-width:110px}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
+@media(max-width:600px){.modal-backdrop{padding:8px;align-items:end}.journal-modal{max-height:94vh;border-radius:16px 16px 10px 10px;padding:17px}.journal-form{grid-template-columns:1fr;gap:12px}.form-wide{grid-column:auto}.balance-preview{min-height:76px}.form-actions{grid-column:auto}}
+/* محرر أطراف القيد: إضافة وحذف السطور، جدول الحسابات والمدين والدائن. */
+.journal-modal{width:min(1040px,100%);background:var(--surface,#fff);border:1px solid var(--nx-border,#e5eaf1);box-shadow:0 28px 90px #07172e45}
+.journal-form{grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.journal-form label{font-size:12px}.journal-form label:nth-child(5){grid-column:1/-1}
+.journal-lines-head{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px;border:0;padding:8px 0 2px}.journal-lines-head>div{display:flex;align-items:baseline;gap:8px}.journal-lines-head span{font-size:12px;color:var(--muted,#8190a3)}
+.add-line-button{border:1px solid #c8d8ef;background:#f2f7ff;color:#245ba7;border-radius:9px;padding:9px 13px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}.add-line-button:hover{background:#e6f0ff}
+.journal-lines-wrap{grid-column:1/-1;overflow:auto;border:1px solid var(--nx-border,#e2e8f0);border-radius:12px;background:var(--surface,#fff)}.journal-lines-table{width:100%;min-width:760px;border-collapse:separate;border-spacing:0;font-size:12px}.journal-lines-table th{background:#f4f7fb;color:#63738a;font-weight:700;text-align:right;padding:12px 10px;white-space:nowrap;border-bottom:1px solid #e4eaf2}.journal-lines-table td{padding:8px 9px;border-bottom:1px solid #edf1f6;vertical-align:middle}.journal-lines-table tr:last-child td{border-bottom:0}.journal-lines-table td:first-child{width:38px;color:#8290a3;text-align:center;font-variant-numeric:tabular-nums}.journal-lines-table select,.journal-lines-table input{width:100%;min-width:100px;min-height:38px;border:1px solid #e0e6ef;border-radius:8px;padding:7px 9px;background:var(--input-bg,#fff);color:inherit;font:inherit;font-size:12px;outline:none}.journal-lines-table td:nth-child(2){min-width:230px}.journal-lines-table td:nth-child(3){min-width:150px}.journal-lines-table td:nth-child(4),.journal-lines-table td:nth-child(5){min-width:125px}.journal-lines-table input[type=number]{text-align:left;direction:ltr;font-variant-numeric:tabular-nums}.journal-lines-table select:focus,.journal-lines-table input:focus{border-color:#4b83d1;box-shadow:0 0 0 3px #4b83d120}
+.remove-line-button{width:30px;height:30px;border:0;border-radius:8px;background:#fff0f0;color:#c44b54;font-size:19px;cursor:pointer}.remove-line-button:disabled{opacity:.25;cursor:not-allowed}
+.balance-preview.form-wide{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:14px;align-items:center;border:1px solid #dce7f5;background:linear-gradient(115deg,#f5f9ff,#f8fbff);color:#294261;padding:14px 16px}.balance-preview.form-wide>div{display:flex;flex-direction:column;gap:4px}.balance-preview.form-wide strong{font-size:18px}.balance-preview.form-wide .balance-ok small{color:#17845b;font-weight:700}.balance-preview.form-wide .balance-warn small{color:#c05a38;font-weight:700}.balance-preview.form-wide .balance-warn strong{color:#c05a38}.balance-preview.form-wide>small{font-size:11px;color:#7c8da5}
+.form-actions.form-wide{grid-column:1/-1}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
+@media(max-width:800px){.journal-form{grid-template-columns:repeat(2,minmax(0,1fr))}.balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
+@media(max-width:560px){.modal-backdrop{padding:7px;align-items:end}.journal-modal{max-height:96vh;padding:15px;border-radius:17px 17px 9px 9px}.journal-form{grid-template-columns:1fr;gap:12px}.journal-form label:nth-child(5),.journal-lines-head,.journal-lines-wrap,.balance-preview.form-wide,.form-actions.form-wide{grid-column:1}.journal-lines-head{align-items:flex-start}.journal-lines-head>div{display:block}.balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr))}.form-actions.form-wide{justify-content:stretch}.form-actions.form-wide button{flex:1}}
+/* مراجعة القيد قبل الحفظ: بيانات القيد، الإجماليات والتحقق من التوازن. */
+.journal-review{display:flex;flex-direction:column;gap:17px}.review-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.review-meta>div,.review-totals>div{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--nx-border,#e3e9f1);border-radius:10px;background:var(--surface-soft,#f8fafc);min-width:0}.review-meta span,.review-totals span{font-size:11px;color:var(--muted,#7b8798)}.review-meta strong{font-size:13px;overflow-wrap:anywhere}.review-description{grid-column:1/-1}.review-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.review-totals strong{font-size:17px;font-variant-numeric:tabular-nums}.review-totals small{font-size:11px;color:#16845c}.journal-review .form-actions{justify-content:space-between}.journal-review .form-actions button{min-height:42px}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
+@media(max-width:600px){.review-meta{grid-template-columns:repeat(2,minmax(0,1fr))}.review-description{grid-column:1/-1}.review-totals{grid-template-columns:1fr}.journal-review .form-actions{flex-direction:column-reverse}.journal-review .form-actions button{width:100%}}
+
+
+/* شاشة العملاء: أدوات البحث، نموذج بيانات العميل، الحالة وجدول العملاء. */
+.customers-panel .work-panel-head{gap:14px;flex-wrap:wrap}
+.customer-toolbar{display:flex;align-items:center;gap:10px;margin:16px 0;padding:12px;background:#f8fafd;border:1px solid #edf1f6;border-radius:9px}
+.customer-toolbar input{flex:1;min-width:180px;border:1px solid #e3e9f1;border-radius:8px;padding:9px 11px;background:white;color:#26354b;font:inherit;font-size:11px;outline:none}
+.customer-toolbar input:focus,.customer-form input:focus,.customer-form select:focus,.customer-form textarea:focus{border-color:#8bb4ed;box-shadow:0 0 0 3px #dceaff80}
+.customer-count{font-size:10px;color:#7e8ba0;white-space:nowrap}.customer-count strong{color:#26354b;margin-right:5px}
+.customer-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0;padding:16px;background:#f8fafd;border:1px solid #e8edf4;border-radius:10px}
+.customer-form label{display:flex;flex-direction:column;gap:6px;color:#66758a;font-size:10px;font-weight:600}
+.customer-form input,.customer-form select,.customer-form textarea{width:100%;border:1px solid #e1e7ef;border-radius:8px;background:#fff;padding:9px 10px;color:#25344a;font:inherit;font-size:11px;outline:none;min-width:0}
+.customer-form textarea{resize:vertical}
+.customer-form-wide{grid-column:1/-1}
+.customer-form-actions{display:flex;justify-content:flex-end;gap:8px}
+.customer-status-active,.customer-status-inactive{display:inline-flex;padding:4px 8px;border-radius:20px;font-size:9px;white-space:nowrap}
+.customer-status-active{background:#e8f7ef;color:#26865d}.customer-status-inactive{background:#f1f3f6;color:#7b8796}
+/* استجابة شاشة العملاء ونموذج بيانات العميل للشاشات الصغيرة. */
+@media(max-width:760px){.customer-form{grid-template-columns:repeat(2,minmax(0,1fr))}.customer-toolbar{flex-wrap:wrap}.customer-toolbar input{order:3;flex-basis:100%}}
+/* استجابة شاشة العملاء ونموذج بيانات العميل للشاشات الصغيرة. */
+@media(max-width:460px){.customer-form{grid-template-columns:1fr}.customer-form-wide{grid-column:auto}.customer-form-actions{grid-column:1/-1}}
+
+
+/* شاشة المخزون: التبويبات، نماذج الأصناف والمخازن وحركات المخزون. */
+.inventory-tabs{display:flex;gap:7px;overflow:auto;padding:14px 0 4px;border-bottom:1px solid #edf0f5}
+.inventory-tab{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;border:1px solid #e5eaf1;background:#fff;color:#718097;border-radius:8px;padding:9px 12px;font:inherit;font-size:11px;cursor:pointer}
+.inventory-tab b{font-size:9px;background:#f0f3f7;border-radius:20px;padding:3px 7px;color:#7d8ba0}
+.inventory-tab.active{background:#edf4ff;border-color:#b9d0f0;color:#245da9;font-weight:750}
+.inventory-tab.active b{background:#dceaff;color:#245da9}
+.inventory-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0;padding:16px;background:#f8fafd;border:1px solid #e8edf4;border-radius:10px}
+.inventory-form label{display:flex;flex-direction:column;gap:6px;color:#66758a;font-size:10px;font-weight:650;min-width:0}
+.inventory-form input,.inventory-form select,.inventory-form textarea{width:100%;min-height:39px;border:1px solid #e1e7ef;border-radius:8px;background:#fff;padding:8px 10px;color:#25344a;font:inherit;font-size:11px;outline:none}
+.inventory-form input:focus,.inventory-form select:focus,.inventory-form textarea:focus{border-color:#8bb4ed;box-shadow:0 0 0 3px #dceaff80}
+.inventory-form .inventory-check{flex-direction:row;align-items:center;gap:9px}
+.inventory-form .inventory-check input{width:17px;min-height:17px}
+.inventory-wide,.inventory-actions{grid-column:1/-1}
+.inventory-actions{display:flex;justify-content:flex-end;gap:8px}
+.inventory-form textarea{resize:vertical;min-height:70px}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:760px){.inventory-form{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-wide,.inventory-actions{grid-column:1/-1}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:460px){.inventory-form{grid-template-columns:1fr}.inventory-wide,.inventory-actions{grid-column:auto}.inventory-actions{flex-direction:column}.inventory-actions button{width:100%}}
+
+
+/* تفاصيل مستندات المخزون: محرر أصناف المستند وكميات وأسعار البنود. */
+.inventory-line-editor{min-width:0}.inventory-line-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;color:#33445c;font-size:12px}.inventory-line-editor .data-table-wrap{overflow-x:auto;border:1px solid #e5eaf1;border-radius:9px;background:#fff}.inventory-line-editor table{width:100%;min-width:650px;border-collapse:collapse}.inventory-line-editor th,.inventory-line-editor td{padding:8px 9px;border-bottom:1px solid #edf0f5;text-align:right;vertical-align:middle;font-size:11px}.inventory-line-editor th{background:#f4f7fb;color:#697990;font-weight:700}.inventory-line-editor td select,.inventory-line-editor td input{min-width:105px;min-height:35px}.inventory-line-editor td:first-child,.inventory-line-editor td:last-child{text-align:center}.inventory-line-editor>small{display:block;margin-top:8px;color:#7b899c;font-size:10px;line-height:1.7}
+
+
+/* تقارير المخزون: مؤشرات القيمة والكميات وملاحظات نتائج التقارير. */
+.inventory-reports{display:grid;gap:16px;padding-top:14px}.inventory-report-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.inventory-report-section{margin:0;min-width:0}.inventory-report-section .activity-title{padding:14px 16px}.inventory-report-section .activity-title h3{margin:0;font-size:13px;color:#304159}.inventory-report-section .activity-title p{margin:4px 0 0;font-size:10px;color:#8794a7}.inventory-report-note{margin:0;padding:11px 13px;border:1px solid #e6ebf2;border-radius:9px;color:#738197;background:#f8fafd;font-size:10px;line-height:1.8}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:900px){.inventory-report-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:460px){.inventory-report-metrics{grid-template-columns:1fr}}
+
+
+/* نتيجة المطابقة: عرض الأرصدة والفروق وحالة التطابق أو عدم التطابق. */
+.reconciliation-result{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:14px}.reconciliation-result>div:not(.reconciliation-status){display:flex;flex-direction:column;gap:6px;padding:11px;border:1px solid #e7edf4;border-radius:8px;background:#fafbfd;min-width:0}.reconciliation-result span{font-size:10px;color:#7a8799}.reconciliation-result strong{font-size:13px;color:#34465e;overflow-wrap:anywhere}.reconciliation-status{grid-column:1/-1;padding:11px 13px;border-radius:8px;font-size:11px;font-weight:750}.reconciliation-status.matched{background:#eaf7ef;color:#237747}.reconciliation-status.mismatch{background:#fff0ef;color:#b44949}
+/* استجابة نتائج المطابقة وعرض الفروق على الشاشات الصغيرة. */
+@media(max-width:760px){.reconciliation-result{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة نتائج المطابقة وعرض الفروق على الشاشات الصغيرة. */
+@media(max-width:460px){.reconciliation-result{grid-template-columns:1fr}}
+
+
+/* كارت الصنف: فلاتر الفترة والمخزن والصنف وملخص حركة ورصيد المخزون. */
+.stock-card-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:10px;padding:14px;align-items:end}.stock-card-filters label{display:flex;flex-direction:column;gap:6px;font-size:11px;color:#64748b}.stock-card-filters input,.stock-card-filters select{min-width:0;min-height:37px;padding:7px 9px;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#34465e}.stock-card-filters .primary-button{white-space:nowrap;min-height:37px}.stock-card-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:12px 14px}.stock-card-summary>div{display:flex;flex-direction:column;gap:5px;min-width:0;padding:10px;border:1px solid #e7edf4;border-radius:8px;background:#fafbfd}.stock-card-summary span{font-size:10px;color:#7a8799}.stock-card-summary strong{font-size:12px;color:#34465e;overflow-wrap:anywhere}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:1000px){.stock-card-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.stock-card-summary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:460px){.stock-card-filters,.stock-card-summary{grid-template-columns:1fr}}
+
+
+/* المشتريات: صف إدخال بنود الفاتورة أو مستند الشراء وأزرار إدارة البنود. */
+.inventory-form-row{grid-column:1/-1;display:grid;grid-template-columns:minmax(180px,2fr) repeat(2,minmax(120px,1fr)) auto;align-items:end;gap:10px;padding:12px;border:1px solid #e4eaf2;border-radius:9px;background:#fff}
+.inventory-form-row label{min-width:0}
+.inventory-form-row .subtle-button{min-height:38px;white-space:nowrap}
+.inventory-form-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:8px}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:760px){.inventory-form-row{grid-template-columns:repeat(2,minmax(0,1fr))}.inventory-form-row label:first-child{grid-column:1/-1}}
+/* استجابة شاشات المخزون وبطاقات الأصناف والتقارير. */
+@media(max-width:460px){.inventory-form-row{grid-template-columns:1fr}.inventory-form-row label:first-child{grid-column:auto}.inventory-form-actions{flex-direction:column}.inventory-form-actions button{width:100%}}
+
+/* العملاء والموردون: ملخص المديونيات وتقسيم أعمار الديون. */
+.receivables-payables-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:24px}
+.aging-metric-card{width:100%;text-align:right;cursor:pointer;transition:border-color .18s,box-shadow .18s,transform .18s}
+.aging-metric-card:hover{border-color:#8eb7e7;box-shadow:0 8px 22px #233b5a12;transform:translateY(-2px)}
+.aging-metric-card:focus-visible{outline:2px solid #438bd2;outline-offset:3px}
+.aging-buckets{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;border-top:1px solid #edf0f5;margin-top:12px;padding-top:10px;color:#8390a2;font-size:9px}
+/* استجابة ملخصات العملاء والموردين وأعمار الديون. */
+@media(max-width:680px){.receivables-payables-grid{grid-template-columns:1fr}.aging-buckets{font-size:10px}}
+
+/* الخزينة والبنوك: التبويبات والنماذج والحسابات وواجهة التسوية البنكية. */
+.treasury-panel .module-tabs{display:flex;gap:8px;margin:18px 0;flex-wrap:wrap}
+.treasury-panel .module-tabs button{border:1px solid #e4eaf2;background:#f7f9fc;color:#607086;border-radius:8px;padding:9px 14px;font-size:11px;cursor:pointer}
+.treasury-panel .module-tabs button.active{background:#eaf3ff;border-color:#a9c8ed;color:#2868ad}
+.treasury-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0 22px;padding:16px;background:#f8fafc;border:1px solid #e9eef5;border-radius:10px}
+.treasury-form label{display:flex;flex-direction:column;gap:6px;color:#64748b;font-size:10px}
+.treasury-form input,.treasury-form select{width:100%;min-width:0;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#26354b;padding:9px;font:inherit;font-size:11px}
+.treasury-form .form-wide{grid-column:1/-1}
+.treasury-form-actions{display:flex;align-items:end;justify-content:flex-start}
+/* استجابة شاشات الخزينة والبنوك والتسوية واستيراد كشف البنك. */
+@media(max-width:760px){.treasury-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشات الخزينة والبنوك والتسوية واستيراد كشف البنك. */
+@media(max-width:480px){.treasury-form{grid-template-columns:1fr}.treasury-form .form-wide{grid-column:auto}}
+
+.treasury-recon-select{max-width:520px;margin:12px 0 18px}
+.treasury-recon-select label{display:flex;flex-direction:column;gap:6px;color:#64748b;font-size:11px}
+.treasury-recon-select select,.treasury-panel td select{min-width:180px;border:1px solid #dfe6ef;border-radius:7px;background:#fff;color:#26354b;padding:8px;font:inherit;font-size:11px}
+.treasury-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 18px}
+.treasury-summary-grid>div{display:flex;flex-direction:column;gap:8px;padding:14px;border:1px solid #e6edf5;border-radius:10px;background:#f8fafc}
+.treasury-summary-grid small{color:#718096;font-size:10px}
+.treasury-summary-grid strong{color:#24364d;font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}
+.treasury-recon-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;color:#607086;font-size:11px}
+.treasury-recon-footer strong{color:#18865e}
+.treasury-panel h3{padding:14px 0 8px;color:#33465e;font-size:13px}
+/* استجابة شاشات الخزينة والبنوك والتسوية واستيراد كشف البنك. */
+@media(max-width:760px){.treasury-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.treasury-recon-footer{align-items:flex-start;flex-direction:column}}
+
+/* استيراد كشف البنك: اختيار ملف CSV وعرض تعليمات الاستيراد. */
+.treasury-csv-import{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:14px 0;padding:14px;border:1px dashed #8ca6c5;border-radius:10px;background:#f7faff}
+.treasury-csv-import>div{display:flex;flex-direction:column;gap:5px;min-width:220px}
+.treasury-csv-import strong{font-size:12px;color:#2b405a}
+.treasury-csv-import small{font-size:10px;color:#718096}
+.treasury-csv-import input[type=file]{max-width:260px;font-size:11px;color:#53657c}
+/* استجابة شاشات الخزينة والبنوك والتسوية واستيراد كشف البنك. */
+@media(max-width:600px){.treasury-csv-import{align-items:stretch;flex-direction:column}.treasury-csv-import input[type=file]{max-width:100%}}
+
+
+/* الأصول الثابتة: إضافة الأصل، بياناته، وجدول الإهلاك الدوري. */
+.assets-panel .asset-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:17px;background:#fff;border:1px solid #e8edf3;border-radius:12px;margin:18px 0 22px}
+.asset-form-heading{grid-column:1/-1;display:flex;align-items:baseline;gap:12px;border-bottom:1px solid #edf0f4;padding-bottom:10px}
+.asset-form-heading strong{font-size:12px;color:#2a3950}.asset-form-heading small{font-size:10px;color:#8a96a7}
+.asset-form label,.asset-depreciation-action label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#66758a}
+.asset-form input,.asset-form select,.asset-depreciation-action input{width:100%;min-width:0;border:1px solid #e1e7ef;border-radius:7px;background:#fbfcfe;padding:9px 10px;color:#29384d;font:inherit;font-size:11px;outline:none}
+.asset-form input:focus,.asset-form select:focus,.asset-depreciation-action input:focus{border-color:#80a9e5;box-shadow:0 0 0 3px #3b82f614}
+.asset-description{grid-column:1/-1}.asset-form-actions{grid-column:1/-1;display:flex;justify-content:flex-start;padding-top:5px}
+.asset-schedule{margin-top:20px;padding:17px;background:#fff;border:1px solid #e8edf3;border-radius:12px}
+.asset-depreciation-action{display:flex;align-items:end;gap:12px;margin:12px 0 16px}.asset-depreciation-action label{width:220px}
+/* استجابة شاشة الأصول الثابتة ونماذج الإهلاك والاستبعاد. */
+@media(max-width:900px){.assets-panel .asset-form{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة شاشة الأصول الثابتة ونماذج الإهلاك والاستبعاد. */
+@media(max-width:560px){.assets-panel .asset-form{grid-template-columns:1fr}.asset-form-heading{display:block}.asset-form-heading small{display:block;margin-top:5px}.asset-description{grid-column:auto}.asset-depreciation-action{align-items:stretch;flex-direction:column}.asset-depreciation-action label{width:100%}}
+
+/* استبعاد وبيع الأصل: نموذج بيانات الاستبعاد وتقارير الأصول. */
+.asset-disposal-form{margin-top:16px;padding:16px;border:1px solid #f0d8d8;border-radius:10px;background:#fffafa;display:flex;flex-direction:column;gap:12px}
+.asset-disposal-form>strong{font-size:12px;color:#783b3b}
+.asset-disposal-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.asset-disposal-fields label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:#66758a}
+.asset-disposal-fields input,.asset-disposal-fields select{width:100%;min-width:0;border:1px solid #e1e7ef;border-radius:7px;background:#fff;padding:9px 10px;color:#29384d;font:inherit;font-size:11px}
+.danger-button{align-self:flex-start;border:1px solid #e7b8b8;border-radius:7px;background:#fff0f0;color:#a33b3b;padding:9px 14px;font-size:11px;font-weight:700;cursor:pointer}
+.danger-button:disabled{opacity:.55;cursor:not-allowed}
+/* استجابة شاشة الأصول الثابتة ونماذج الإهلاك والاستبعاد. */
+@media(max-width:650px){.asset-disposal-fields{grid-template-columns:1fr}}
+.asset-reports{margin-top:24px;padding-top:18px;border-top:1px solid #e5eaf1}
+.asset-report-tabs{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}
+.asset-report-tabs button{border:1px solid #dce3ed;border-radius:7px;background:#f7f9fc;color:#536278;padding:8px 12px;font-size:11px;cursor:pointer}
+.asset-report-tabs button.active{background:#e8eef8;border-color:#aebed5;color:#253d60;font-weight:700}
+.asset-report-filters{display:flex;align-items:end;flex-wrap:wrap;gap:10px;margin:12px 0 16px}
+.asset-report-filters label{display:flex;flex-direction:column;gap:5px;min-width:150px;color:#66758a;font-size:10px}
+.asset-report-filters input,.asset-report-filters select{border:1px solid #dce3ed;border-radius:7px;background:#fff;padding:8px;color:#29384d;font:inherit;font-size:11px}
+.asset-cashflow-totals{display:flex;flex-wrap:wrap;gap:12px;padding:12px;background:#f6f8fb;border-radius:8px;margin-bottom:12px;font-size:11px}
+.asset-cashflow-totals span,.asset-cashflow-totals b{padding:5px 8px}
+.asset-report-note{color:#78869a;font-size:10px;margin:8px 0 12px}
+
+
+/* تفاصيل التقارير والقيود: الانتقال من إجمالي التقرير إلى السطور التفصيلية. */
+.report-drilldown,.journal-detail-inline{margin-top:18px;padding:16px;border:1px solid #dce4ee;border-radius:10px;background:#fbfcfe}
+.report-drilldown h3,.journal-detail-inline h3{margin:0 0 5px}
+.text-action-button{border:0;background:transparent;color:#2563a6;padding:4px 2px;font:inherit;font-size:11px;font-weight:700;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.text-action-button:disabled{opacity:.45;cursor:not-allowed}
+.report-drilldown .work-panel-head,.journal-detail-inline .work-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.report-drilldown .data-table-wrap,.journal-detail-inline .data-table-wrap{overflow-x:auto}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
+@media(max-width:650px){.report-drilldown,.journal-detail-inline{padding:10px}.report-drilldown .work-panel-head,.journal-detail-inline .work-panel-head{align-items:flex-start;flex-direction:column}}
+
+
+.report-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.report-actions button{white-space:nowrap}
+/* ضبط عرض التقارير وتفاصيلها والطباعة حسب حجم الشاشة. */
+@media(max-width:760px){.report-actions{width:100%;justify-content:flex-start}.report-actions button{flex:1 1 145px}}
+
+
+/* إعداد الطباعة: إظهار التقرير المحدد فقط وإخفاء أزرار التحكم وضبط الورق A4. */
+/* ضبط عرض التقارير وتفاصيلها والطباعة حسب حجم الشاشة. */
+@media print{
+  @page{size:A4 landscape;margin:12mm}
+  body *{visibility:hidden!important}
+  .print-active,.print-active *{visibility:visible!important}
+  .print-active{position:absolute!important;inset:0 auto auto 0!important;width:100%!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:#fff!important;color:#111!important;box-shadow:none!important}
+  .print-active .report-actions,.print-active button,.print-active .asset-report-filters{display:none!important}
+  .print-active .data-table-wrap{overflow:visible!important;max-width:none!important}
+  .print-active table{width:100%!important;border-collapse:collapse!important;font-size:9pt!important}
+  .print-active th,.print-active td{border:1px solid #bbb!important;color:#111!important;background:#fff!important;padding:5px!important}
+  .print-active tr{break-inside:avoid}
+  .print-active h2,.print-active h3{color:#111!important;break-after:avoid}
+  .print-active .asset-cashflow-totals{background:#f3f3f3!important;color:#111!important}
+}
+
+
+/* سجل التدقيق: فلاتر الأحداث وعدد النتائج وتنسيق التاريخ. */
+.audit-panel .audit-filters {
+  align-items: end;
+}
+.audit-panel .audit-count {
+  margin-inline-start: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--border-color, #334155);
+  border-radius: 10px;
+  color: var(--muted-text, #94a3b8);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.audit-panel .audit-time {
+  min-width: 150px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.audit-panel .data-table-wrap {
+  overflow-x: auto;
+}
+
+
+/* الصلاحيات والفروع: محرر نطاق الفروع وأزرار الإجراءات داخل الجداول. */
+.access-branch-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  min-width: 180px;
+}
+.access-branch-editor label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+
+/* الموافقات: تفاصيل لقطة الموافقة وعرض البيانات الفنية المرتبطة بها. */
+.approval-snapshot summary { cursor: pointer; color: var(--accent, #6ea8fe); font-weight: 600; white-space: nowrap; }
+.approval-snapshot[open] { min-width: 520px; }
+.approval-snapshot .data-table-wrap { margin-top: 10px; max-width: min(760px, 75vw); }
+.approval-snapshot table { font-size: 12px; }
+
+
+.work-panel-subsection {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border, #333);
+}
+.work-panel-subsection .work-panel-head h3 { margin: 0 0 6px; }
+.approval-snapshot pre {
+  max-width: min(680px, 75vw);
+  max-height: 280px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-muted, #171a20);
+  direction: ltr;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+
+/* إعداد الشركة لأول مرة: خطوات التهيئة وملخص بيانات الشركة والنماذج الفرعية. */
+.setup-intro {
+  margin: 18px 0;
+  padding: 18px 20px;
+  border: 1px solid var(--border-color, #293548);
+  border-radius: 14px;
+  background: var(--panel-soft, rgba(255,255,255,.025));
+}
+.setup-intro strong { display: block; margin-bottom: 6px; font-size: 1.05rem; }
+.setup-intro p { margin: 0; color: var(--muted, #9aa7b8); line-height: 1.8; }
+.setup-company-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 10px;
+  margin: 18px 0 24px;
+}
+.setup-company-summary > div {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color, #293548);
+  border-radius: 12px;
+  min-width: 0;
+}
+.setup-company-summary span, .setup-step-heading small { color: var(--muted, #9aa7b8); font-size: .82rem; }
+.setup-company-summary strong { overflow-wrap: anywhere; }
+.setup-step-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 26px 0 12px;
+}
+.setup-step-heading > span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 50%;
+  background: rgba(64, 130, 210, .16);
+  color: #8dbdff;
+  font-weight: 700;
+}
+.setup-step-heading > div { display: grid; gap: 3px; }
+.setup-subform { margin-top: 14px; padding: 16px; border: 1px solid var(--border-color, #293548); border-radius: 12px; }
+.setup-complete { margin-top: 18px; }
+.company-setup-panel textarea { width: 100%; resize: vertical; }
+.setup-section-title { display:flex; align-items:center; justify-content:space-between; gap:14px; margin:22px 0 12px; }
+.setup-section-title h3 { margin:0 0 5px; }
+.setup-section-title p { margin:0; color:var(--muted, #9aa7b8); line-height:1.7; }
+.company-profile-form { padding:16px; border:1px solid var(--border-color, #293548); border-radius:12px; }
+.company-status-field { display:flex; align-items:center; gap:9px; }
+.company-status-field input { width:18px; height:18px; }
+.branch-inline-edit { display:grid; grid-template-columns:repeat(3,minmax(120px,1fr)) auto auto; gap:8px; align-items:center; min-width:520px; }
+.branch-inline-edit input { min-width:0; width:100%; }
+.branch-inline-edit button, .table-actions button { white-space:nowrap; }
+.table-actions { display:flex; flex-wrap:wrap; gap:6px; }
+@media (max-width: 900px) { .branch-inline-edit { grid-template-columns:1fr 1fr; min-width:320px; } }
+/* قواعد تجاوب هذا الجزء مع عرض الشاشة، دون تغيير سلوك الوظائف. */
+@media (max-width: 680px) {
+  .setup-company-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setup-subform { padding: 12px; }
+}
+
+
+/* دليل الحسابات الشجري: رأس الصفحة والمؤشرات والبحث والفلاتر وشجرة الحسابات. */
+.accounts-premium-panel{padding:0;overflow:hidden;background:#f8fafd}
+.accounts-hero{position:relative;display:flex;align-items:center;justify-content:space-between;gap:20px;overflow:hidden;padding:30px 32px;background:linear-gradient(115deg,#14243b 0%,#1b385b 58%,#244d78 100%);color:#fff}
+.accounts-hero:before,.accounts-hero:after{content:"";position:absolute;border:1px solid #ffffff13;border-radius:50%;pointer-events:none}
+.accounts-hero:before{width:330px;height:330px;left:8%;top:-235px}
+.accounts-hero:after{width:250px;height:250px;left:22%;bottom:-205px}
+.accounts-hero-copy{position:relative;z-index:1}
+.accounts-eyebrow{font-size:9px;letter-spacing:2px;color:#9bb8da;font-weight:700}
+.accounts-hero h2{font-size:25px!important;color:#fff!important;margin:8px 0 6px!important;letter-spacing:-.4px}
+.accounts-hero p{font-size:11px;color:#c0d0e3;margin:0;line-height:1.8}
+.accounts-company-line{display:flex;align-items:center;gap:9px;margin-top:15px}
+.accounts-company-line strong{font-size:11px;color:#fff}
+.accounts-company-line span{border:1px solid #ffffff30;background:#ffffff12;border-radius:20px;padding:5px 10px;color:#d9e8f8;font-size:9px}
+.accounts-hero-mark{position:relative;z-index:1;width:88px;height:88px;flex:0 0 88px;border:1px solid #ffffff32;border-radius:26px;display:grid;place-items:center;background:linear-gradient(145deg,#ffffff20,#ffffff08);box-shadow:inset 0 1px #ffffff30,0 15px 30px #09172b30;transform:rotate(-7deg)}
+.accounts-hero-mark span{font-family:Georgia,serif;font-size:50px;color:#d8eaff}
+.accounts-hero-mark i{position:absolute;right:12px;top:8px;color:#9fc5f2;font-size:18px;font-style:normal}
+.accounts-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:18px 22px 4px}
+.accounts-stat-grid article{background:#fff;border:1px solid #e7edf5;border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:4px;box-shadow:0 5px 15px #233b5a06;min-width:0}
+.accounts-stat-grid article span{font-size:9px;color:#7d8ca1}
+.accounts-stat-grid article strong{font-size:22px;line-height:1.35;color:#233d5d;font-variant-numeric:tabular-nums}
+.accounts-stat-grid article small{font-size:9px;color:#a0aaba}
+.account-template-card{display:flex;align-items:center;gap:15px;margin:14px 22px 18px;padding:16px 18px;background:linear-gradient(110deg,#f1f6ff,#f8fbff);border:1px solid #dce8f8;border-radius:13px}
+.template-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:12px;background:#e1edff;color:#3973bb;font-size:23px}
+.template-copy{flex:1;min-width:0}
+.template-copy strong{display:block;color:#284466;font-size:12px}
+.template-copy p{font-size:10px;color:#5d7593;margin:4px 0}
+.template-copy small{font-size:9px;color:#8799ae;line-height:1.7}
+.template-apply-button{white-space:nowrap;min-width:155px}
+.accounts-premium-panel>.error-banner,.accounts-premium-panel>.success-banner{margin:0 22px 12px}
+.account-tree-toolbar{padding:18px 22px 12px;border-top:1px solid #e9eef5}
+.account-tree-toolbar-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.account-tree-toolbar-title h3{font-size:14px;color:#263b56;margin:0}
+.account-tree-toolbar-title p{font-size:10px;color:#91a0b3;margin:4px 0 0}
+.account-tree-toolbar-title>span,.account-roles-footer>span{font-size:9px;color:#52749d;background:#edf4fd;border:1px solid #e0ebf8;border-radius:20px;padding:6px 10px;white-space:nowrap}
+.account-tree-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
+.account-tree-search{display:flex;align-items:center;gap:8px;flex:1 1 230px;min-width:170px;height:38px;padding:0 11px;background:#fff;border:1px solid #e3eaf2;border-radius:9px;color:#91a1b5}
+.account-tree-search span{font-size:18px}
+.account-tree-search input{border:0;outline:0;box-shadow:none!important;background:transparent;width:100%;min-width:0;color:#33465f;font:inherit;font-size:10px}
+.account-tree-controls>select{height:38px;min-width:145px;padding:0 10px;border:1px solid #e3eaf2;border-radius:9px;background:#fff;color:#5c6f88;font:inherit;font-size:10px}
+.account-tree-inactive{display:flex;align-items:center;gap:6px;font-size:9px;color:#718198;white-space:nowrap}
+.account-tree-inactive input{accent-color:#3475c4}
+.account-tree-controls .subtle-button{height:36px}
+.account-tree-legend{display:flex;gap:14px;flex-wrap:wrap;padding:0 22px 12px;color:#7b8ba0;font-size:9px}
+.account-tree-legend span{display:flex;align-items:center;gap:6px}
+.nature-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.nature-dot.asset{background:#3b82c4}.nature-dot.liability{background:#d18a52}.nature-dot.equity{background:#8b75c7}.nature-dot.revenue{background:#2b9c7b}.nature-dot.expense{background:#c46f79}
+.account-tree-shell{margin:0 22px 18px;background:#fff;border:1px solid #e5ebf3;border-radius:12px;overflow:hidden;box-shadow:0 5px 18px #233b5a06}
+.account-tree-columns{display:grid;grid-template-columns:minmax(115px,.65fr) minmax(180px,2fr) 95px 65px;gap:10px;padding:11px 14px;background:#f2f6fb;border-bottom:1px solid #e5ebf3;color:#8190a4;font-size:9px;font-weight:700}
+.account-tree-root,.account-tree-children{list-style:none;margin:0;padding:0}
+.account-tree-node{border-bottom:1px solid #f0f3f7}
+.account-tree-node:last-child{border-bottom:0}
+.account-tree-children{position:relative;margin-right:19px;border-right:1px solid #e2eaf3}
+.account-tree-row{min-height:45px;display:grid;grid-template-columns:22px 22px minmax(78px,.55fr) minmax(140px,1.7fr) auto 75px 55px;align-items:center;gap:8px;padding:5px 12px 5px 12px;transition:background .14s ease}
+.account-tree-row:hover{background:#f7faff}
+.account-tree-toggle{width:21px;height:21px;border:0;border-radius:6px;background:transparent;color:#7890ad;font-size:18px;line-height:1}
+.account-tree-toggle:not(:disabled):hover{background:#eaf2fc;color:#2f6bb1}
+.account-tree-toggle:disabled{cursor:default;color:#b8c4d2}
+.account-tree-kind{width:21px;height:21px;display:grid;place-items:center;border-radius:6px;font-size:12px}
+.group-kind{background:#eaf2fd;color:#3978bc}.detail-kind{background:#f2f5f8;color:#8998aa}
+.account-tree-code{font-size:10px;font-weight:800;color:#47698f;font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.account-tree-name{font-size:10px;color:#354961;min-width:0;overflow-wrap:anywhere}
+.is-group>.account-tree-row .account-tree-name{font-weight:800;color:#253e5b}
+.account-role-chip{font-size:8px;color:#2865a9;background:#edf5ff;border:1px solid #dceafd;border-radius:20px;padding:4px 7px;white-space:nowrap}
+.account-tree-type,.account-tree-status{justify-self:start;font-size:8px;border-radius:20px;padding:4px 7px;white-space:nowrap}
+.group-type{color:#56769c;background:#edf3fa}.detail-type{color:#7c8999;background:#f4f6f8}
+.account-tree-status.active{color:#25835e;background:#eaf7f1}.account-tree-status.inactive{color:#a26e2d;background:#fff5e7}
+.account-tree-node.is-inactive>.account-tree-row{opacity:.62}
+.account-tree-empty{padding:48px 16px;text-align:center;color:#91a0b3}
+.account-tree-empty>span{font-size:26px;color:#b4c2d2}
+.account-tree-empty strong{display:block;font-size:12px;color:#5b6e85;margin-top:8px}
+.account-tree-empty p{font-size:10px;margin:5px 0}
+.account-roles-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 22px;padding:16px 0 10px;border-top:1px solid #e8edf4}
+.account-roles-footer strong{font-size:11px;color:#304761}
+.account-roles-footer p{font-size:9px;color:#8c9aae;margin:4px 0 0}
+.account-role-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:0 22px 20px}
+.account-role-item{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0;padding:9px 10px;border:1px solid #e8eef5;border-radius:9px;background:#fff}
+.account-role-item span{font-size:9px;color:#71839a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.account-role-item strong{font-size:9px;color:#3b6592;background:#f0f5fb;padding:4px 6px;border-radius:5px}
+/* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
+@media(max-width:1000px){.account-role-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.account-tree-row{grid-template-columns:22px 22px 75px minmax(120px,1.5fr) auto 68px 52px}.account-tree-columns{grid-template-columns:95px minmax(150px,2fr) 80px 55px}}
+/* توضيح قواعد التجاوب لهذا الجزء حسب عرض الشاشة. */
+@media(max-width:700px){
+ .accounts-hero{padding:23px 19px}.accounts-hero h2{font-size:21px!important}.accounts-hero-mark{width:65px;height:65px;flex-basis:65px;border-radius:20px}.accounts-hero-mark span{font-size:38px}
+ .accounts-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:13px 13px 3px;gap:8px}.accounts-stat-grid article{padding:11px}.accounts-stat-grid article strong{font-size:19px}
+ .account-template-card{margin:12px 13px 15px;align-items:flex-start;flex-wrap:wrap;padding:13px}.template-copy{flex:1 1 calc(100% - 60px)}.template-apply-button{width:100%}
+ .account-tree-toolbar{padding:15px 13px 10px}.account-tree-legend{padding:0 13px 10px;gap:9px}.account-tree-shell{margin:0 13px 15px;overflow-x:auto}
+ .account-tree-columns{min-width:590px}.account-tree-root{min-width:590px}.account-tree-row{grid-template-columns:22px 22px 78px minmax(145px,1fr) auto 65px 50px;gap:6px;padding-inline:8px}
+ .account-tree-children{margin-right:14px}.account-role-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:0 13px 16px}.account-roles-footer{margin:0 13px}
+ .accounts-premium-panel>.error-banner,.accounts-premium-panel>.success-banner{margin:0 13px 12px}
+ .account-tree-controls>select{flex:1;min-width:130px}.account-tree-inactive{margin-inline-start:auto}
+}
+/* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
+@media(max-width:390px){.accounts-hero-mark{display:none}.account-tree-toolbar-title{align-items:flex-start}.account-tree-controls .subtle-button{flex:1}.account-role-grid{grid-template-columns:1fr}}
+
+.account-role-chips{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
+.account-tree-columns{grid-template-columns:22px 22px 78px minmax(145px,1fr) minmax(75px,auto) 65px 50px}
+.account-tree-columns span:nth-child(1){grid-column:1 / span 3}
+.account-tree-columns span:nth-child(2){grid-column:4 / span 2}
+.account-tree-columns span:nth-child(3){grid-column:6}
+.account-tree-columns span:nth-child(4){grid-column:7}
+
+
+/* استيراد دليل الحسابات: اختيار ملف الاستيراد، ملخص المعاينة وجدول الصفوف. */
+.account-import-card{margin:18px 0;padding:20px;border:1px solid var(--line,#263449);border-radius:18px;background:linear-gradient(145deg,rgba(24,39,61,.72),rgba(13,24,39,.88));display:grid;gap:14px}
+.account-import-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.account-import-heading strong{font-size:16px;color:var(--text,#eef4ff)}
+.account-import-heading p{margin:5px 0 0;color:var(--muted,#9aabc1);font-size:13px}
+.account-import-heading>span{border:1px solid rgba(65,180,143,.35);border-radius:999px;padding:6px 11px;color:#8ce0bf;font-size:12px;white-space:nowrap}
+.account-import-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.account-import-controls input[type=file]{max-width:100%;flex:1;min-width:220px;padding:10px;border:1px dashed var(--line,#34445b);border-radius:10px;background:rgba(5,14,27,.45);color:var(--text,#eef4ff)}
+.account-import-card>small,.account-import-preview>small{color:var(--muted,#9aabc1);font-size:12px}
+.account-import-preview{display:grid;gap:12px;min-width:0}
+.account-import-summary{display:flex;gap:10px;flex-wrap:wrap}
+.account-import-summary span{padding:8px 11px;border-radius:9px;background:rgba(85,115,150,.13);color:var(--muted,#b5c3d5);font-size:12px}
+.account-import-summary b{color:var(--text,#fff);margin-inline-start:4px}
+.account-import-preview .data-table-wrap{max-height:360px;overflow:auto;border:1px solid var(--line,#263449);border-radius:12px}
+.account-import-preview table{min-width:680px}
+/* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
+@media(max-width:640px){.account-import-card{padding:14px}.account-import-heading{align-items:flex-start}.account-import-controls{align-items:stretch}.account-import-controls input[type=file]{min-width:100%}.account-import-controls button{flex:1}}
+
+.import-row-warning{display:block;color:#e5bd76;font-size:11px;margin-top:4px;line-height:1.5}
+
+
+/* إدارة أدوار الحسابات: ربط الأدوار المحاسبية بالحسابات المختارة. */
+.account-role-manager{margin:18px 0;padding:20px;border:1px solid var(--line,#263449);border-radius:18px;background:linear-gradient(145deg,rgba(21,37,58,.78),rgba(12,23,38,.92));display:grid;gap:15px}
+.account-role-manager-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.account-role-manager-heading h3{margin:0;color:var(--text,#eef4ff);font-size:16px}
+.account-role-manager-heading p{margin:6px 0 0;color:var(--muted,#9aabc1);font-size:12px;line-height:1.7}
+.account-role-manager-heading>span{white-space:nowrap;border:1px solid rgba(90,157,220,.28);border-radius:999px;padding:6px 10px;color:#9ccaf0;font-size:11px}
+.account-role-manager-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.account-role-manager-row{min-width:0;display:grid;grid-template-columns:minmax(110px,.8fr) minmax(150px,1.3fr) auto;align-items:center;gap:9px;padding:11px;border:1px solid rgba(117,145,179,.15);border-radius:12px;background:rgba(5,14,27,.32)}
+.account-role-manager-label{min-width:0;display:grid;gap:4px}
+.account-role-manager-label strong{font-size:12px;color:var(--text,#eaf1fb)}
+.account-role-manager-label small{font-size:10px;color:var(--muted,#8fa2bb)}
+.account-role-manager-row select{width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line,#34445b);border-radius:9px;background:#101e30;color:var(--text,#eef4ff);font:inherit;font-size:11px}
+.account-role-manager-row button{white-space:nowrap;padding:8px 10px;font-size:11px}
+.account-role-manager-row button:disabled{opacity:.4;cursor:not-allowed}
+.account-role-manager-footnote{font-size:11px;color:var(--muted,#94a6bd);line-height:1.6}
+/* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
+@media(max-width:900px){.account-role-manager-grid{grid-template-columns:1fr}}
+/* استجابة دليل الحسابات وأدوار الحسابات والاستيراد. */
+@media(max-width:560px){.account-role-manager{padding:13px}.account-role-manager-row{grid-template-columns:1fr;gap:8px}.account-role-manager-row button{width:100%}.account-role-manager-heading{flex-direction:column}}
+
+/* الموارد البشرية والمرتبات: رسائل النجاح والتبويبات والنماذج والجداول. */
+.hr-payroll-panel .success-banner{margin:12px 0;padding:10px 12px;border:1px solid #b8e2ca;background:#effaf3;color:#24744b;border-radius:9px;font-size:11px}
+.hr-payroll-panel .hr-tabs{border-bottom:1px solid #edf0f5;padding-bottom:12px}
+.hr-payroll-panel .section-heading{margin-bottom:12px}
+.hr-payroll-panel .journal-form{margin-top:16px}
+.hr-payroll-panel .data-table-wrap{margin-top:12px}
+.hr-payroll-panel .asset-report-note{margin-top:18px;padding:10px 12px;background:#f6f8fb;border-radius:8px;color:#7d899a;font-size:10px;line-height:1.8}
+.hr-payroll-panel .status-pill{white-space:nowrap}
+/* استجابة شاشة قيود اليومية ونموذج القيد للأجهزة اللوحية والهواتف. */
+@media(max-width:760px){.hr-payroll-panel{padding:14px}.hr-payroll-panel .journal-form{grid-template-columns:1fr}.hr-payroll-panel .form-wide{grid-column:1}.hr-payroll-panel .data-table-wrap{overflow-x:auto}.hr-payroll-panel table{min-width:720px}}
+
+
+/* لوحة المؤشرات المالية ومراقبة النظام: مؤشرات الأداء، أعمار الديون وسجل الطلبات. */
+.finance-dashboard{margin-bottom:18px}
+.dashboard-filters{align-items:end}
+.dashboard-filters .primary-button{min-height:40px}
+.finance-kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr));margin-top:14px}
+.finance-kpi{width:100%;text-align:right;cursor:pointer;transition:transform .16s ease,border-color .16s ease}
+.finance-kpi:hover{transform:translateY(-2px);border-color:rgba(104,160,220,.55)}
+.finance-kpi .metric-value{font-size:clamp(18px,2vw,26px);overflow-wrap:anywhere}
+.finance-balance-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}
+.finance-balance-strip>div{display:grid;gap:5px;padding:13px 15px;border:1px solid var(--line,#263449);border-radius:12px;background:rgba(9,20,34,.45)}
+.finance-balance-strip span{font-size:11px;color:var(--muted,#9aabc1)}
+.finance-balance-strip strong{font-size:17px;color:var(--text,#eef4ff);overflow-wrap:anywhere}
+.finance-aging-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+.finance-aging-grid .activity-panel{margin:0;min-width:0}
+.finance-aging-grid .aging-buckets{display:flex;flex-wrap:wrap;gap:8px;padding:12px 0 0}
+.finance-aging-grid .aging-buckets span{font-size:11px}
+.system-monitor .monitor-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line,#263449);padding-bottom:12px;margin-bottom:16px}
+.system-monitor .monitor-tabs button{padding:9px 14px;border:1px solid var(--line,#34445b);border-radius:9px;background:transparent;color:var(--muted,#9aabc1);font:inherit;cursor:pointer}
+.system-monitor .monitor-tabs button.active{background:rgba(71,133,194,.18);border-color:rgba(90,157,220,.55);color:var(--text,#eef4ff)}
+.monitor-kpis{grid-template-columns:repeat(3,minmax(0,1fr));margin:12px 0 16px}
+.system-monitor .data-table-wrap{max-height:520px;overflow:auto}
+.system-monitor table{min-width:760px}
+/* استجابة لوحة المؤشرات ومراقبة النظام للشاشات الأصغر. */
+@media(max-width:900px){.finance-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.monitor-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* استجابة لوحة المؤشرات ومراقبة النظام للشاشات الأصغر. */
+@media(max-width:640px){.finance-kpi-grid,.monitor-kpis{grid-template-columns:1fr 1fr}.finance-balance-strip,.finance-aging-grid{grid-template-columns:1fr}.dashboard-filters{display:grid;grid-template-columns:1fr 1fr}.dashboard-filters .primary-button{grid-column:1/-1}.system-monitor .monitor-tabs{overflow:auto}.system-monitor .monitor-tabs button{white-space:nowrap}}
+
+
+/* شاشة تسجيل الدخول: خلفية مستقلة وبطاقة دخول متجاوبة قبل فتح مساحة العمل. */
+.auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 12% 15%,#dce9ff 0,transparent 34%),linear-gradient(135deg,#f4f7fc,#e9eef7)}
+.auth-card{width:min(100%,420px);display:flex;flex-direction:column;gap:15px;padding:34px;background:#fff;border:1px solid #e1e8f2;border-radius:22px;box-shadow:0 22px 65px #152b4a18}
+.auth-brand-mark{width:48px;height:48px;display:grid;place-items:center;border-radius:15px;background:linear-gradient(145deg,#3b82f6,#2356bd);color:#fff;font-size:26px;font-weight:800}
+.auth-eyebrow{margin:2px 0 -12px;color:#3569b6;font-size:11px;font-weight:800;letter-spacing:2px}
+.auth-card h1{margin:0;color:#172033;font-size:26px}
+.auth-description{margin:0 0 8px;color:#738198;font-size:13px;line-height:1.8}
+.auth-card label{display:flex;flex-direction:column;gap:7px;color:#34445c;font-size:12px;font-weight:700}
+.auth-card input{width:100%;min-height:44px;padding:10px 12px;border:1px solid #dce4ef;border-radius:10px;background:#fbfcfe;color:#172033;font:inherit;outline:none}
+.auth-card input:focus{border-color:#4b83d4;box-shadow:0 0 0 3px #3b82f61a}
+.auth-submit{width:100%;min-height:46px;margin-top:5px}
+
+
+/* المظهر الشخصي: ألوان داكنة على مستوى مساحة المستخدم دون تعديل هوية الشركة أو زملائه. */
+.theme-preference{display:inline-flex;align-items:center;gap:6px;color:#748196;font-size:10px;white-space:nowrap}
+.theme-select{border:1px solid #e5eaf1;border-radius:8px;background:#fff;color:#435168;padding:7px 9px;font:inherit;font-size:10px;min-height:34px}
+[data-theme="dark"]{--surface:#172337;--surface-soft:#1d2d44;--text:#e6edf7;--muted:#a0aec1;--input-bg:#111d30;--nx-border:#34465f;--nx-primary:#6da4f5;color:var(--text);background:#0d1727}
+[data-theme="dark"].app-shell,[data-theme="dark"] .main-area,[data-theme="dark"] .page-content{background:#0d1727;color:var(--text)}
+[data-theme="dark"] .topbar,[data-theme="dark"] .work-panel,[data-theme="dark"] .metric-card,[data-theme="dark"] .module-card,[data-theme="dark"] .activity-panel,[data-theme="dark"] .period-select,[data-theme="dark"] .icon-button,[data-theme="dark"] .subtle-button,[data-theme="dark"] .admin-shortcut,[data-theme="dark"] .table-toolbar,[data-theme="dark"] .data-table-wrap,[data-theme="dark"] .journal-modal,[data-theme="dark"] .customer-form,[data-theme="dark"] .customer-toolbar,[data-theme="dark"] .asset-report-filters label,[data-theme="dark"] .module-count{background:#172337;border-color:#34465f;color:#dce6f4}
+[data-theme="dark"] .topbar{border-bottom-color:#293b54}
+[data-theme="dark"] .breadcrumb,[data-theme="dark"] .welcome-row h1,[data-theme="dark"] .section-heading h2,[data-theme="dark"] .activity-title h2,[data-theme="dark"] .work-panel h2,[data-theme="dark"] .metric-value,[data-theme="dark"] .module-card,[data-theme="dark"] .customer-count strong{color:#e6edf7}
+[data-theme="dark"] .welcome-copy,[data-theme="dark"] .eyebrow,[data-theme="dark"] .section-heading p,[data-theme="dark"] .activity-title p,[data-theme="dark"] .metric-top,[data-theme="dark"] .metric-card>small,[data-theme="dark"] .module-card small,[data-theme="dark"] .work-panel-head p,[data-theme="dark"] .page-footer,[data-theme="dark"] .customer-count{color:#9eacc0}
+[data-theme="dark"] .data-table-wrap th,[data-theme="dark"] .journal-lines-table th{background:#22334b;color:#bdcbe0}
+[data-theme="dark"] .data-table-wrap td,[data-theme="dark"] .journal-lines-table td{border-color:#2b3d56;color:#d2deed}
+[data-theme="dark"] .data-table-wrap tbody tr:hover,[data-theme="dark"] .journal-lines-table tbody tr:hover{background:#203149}
+[data-theme="dark"] input:not([type="checkbox"]),[data-theme="dark"] select,[data-theme="dark"] textarea{background:#111d30!important;border-color:#3a4d68!important;color:#e6edf7!important}
+[data-theme="dark"] input::placeholder,[data-theme="dark"] textarea::placeholder{color:#8293ab}
+[data-theme="dark"] .theme-select{background:#111d30;color:#e6edf7;border-color:#3a4d68}
+[data-theme="dark"] .balance-preview,[data-theme="dark"] .balance-preview.form-wide,[data-theme="dark"] .review-meta>div,[data-theme="dark"] .review-totals>div,[data-theme="dark"] .table-head{background:#1d2d44;border-color:#34465f;color:#dce6f4}
+[data-theme="dark"] .customer-form,[data-theme="dark"] .customer-toolbar{background:#1b2a40}
+[data-theme="dark"] .empty-state strong,[data-theme="dark"] .table-empty{color:#aab9cd}
+[data-theme="dark"] .page-footer{border-color:#293b54}
+[data-theme="dark"] .admin-shortcut:hover,[data-theme="dark"] .subtle-button:hover{background:#263b58;color:#fff}
+@media(max-width:760px){.theme-preference span{display:none}.theme-select{max-width:82px;padding:6px}}
+
+/* كشف حساب العميل داخل شاشة العملاء */
+.customer-statement{margin-top:18px;padding:18px;border:1px solid var(--nx-border);border-radius:14px;background:var(--surface,#fff);display:grid;gap:14px}
+.customer-statement-head,.customer-statement-filters,.customer-statement-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.customer-statement-head h3{margin:0 0 5px;color:var(--text,#263449);font-size:15px}
+.customer-statement-head p{margin:0;color:var(--muted,#718096);font-size:12px}
+.customer-statement-filters label{display:grid;gap:5px;color:var(--muted,#718096);font-size:11px}
+.customer-statement-filters input{min-width:145px}
+.customer-statement-summary>div{display:grid;gap:5px;min-width:130px;padding:12px 14px;border:1px solid var(--nx-border);border-radius:10px;background:var(--surface-soft,#f7f9fc)}
+.customer-statement-summary span{font-size:11px;color:var(--muted,#718096)}
+.customer-statement-summary strong{font-size:16px;color:var(--text,#263449);font-variant-numeric:tabular-nums}
+[data-theme="dark"] .customer-statement{background:#172337;border-color:#34465f}
+[data-theme="dark"] .customer-statement-head h3,[data-theme="dark"] .customer-statement-summary strong{color:#e6edf7}
+[data-theme="dark"] .customer-statement-summary>div{background:#1d2d44;border-color:#34465f}
+
+
+.expense-month-chart{display:flex;align-items:flex-end;gap:12px;min-height:190px;padding:16px;overflow-x:auto;border:1px solid var(--line,#ddd);border-radius:12px;margin:12px 0 22px}
+.expense-month{display:flex;flex:1 0 76px;min-width:76px;flex-direction:column;align-items:center;gap:6px;font-size:12px}
+.expense-month-track{height:112px;width:28px;display:flex;align-items:flex-end;justify-content:center;background:var(--surface-muted,#eee);border-radius:8px;overflow:hidden}
+.expense-month-track span{display:block;width:100%;min-height:2px;background:var(--accent,#3978c6);border-radius:7px 7px 0 0}
+.expense-month small{color:var(--muted,#777)}
+.expense-analysis-panel h3{margin:22px 0 10px}
+.expense-analysis-panel tfoot th{border-top:2px solid var(--line,#ddd);font-weight:700}
+@media print{.expense-analysis-panel .report-actions,.expense-analysis-panel .asset-report-filters{display:none!important}}
+
+
+/* ADMRAIL modern design system — approved: modern / side / balanced / mixed. */
+:root{--nx-primary:#2563eb;--nx-primary-hover:#1d4ed8;--nx-primary-soft:#eff6ff;--nx-border:#e2e8f0;--nx-muted:#64748b;--nx-text:#17243a;--nx-surface:#fff;--nx-surface-soft:#f8fafc;--nx-radius:12px;--nx-shadow:0 8px 24px rgba(15,35,65,.055)}
+body{background:#f4f7fb;color:var(--nx-text)}.app-shell{background:#f4f7fb}
+.sidebar{width:272px;background:linear-gradient(180deg,#14233a 0%,#101c30 100%);padding:22px 15px 16px;transition:width .2s ease,padding .2s ease}
+.brand-lockup{padding:0 8px 22px}.brand-symbol{border-radius:12px;box-shadow:0 7px 18px rgba(37,99,235,.25)}
+.nav-group{margin-top:19px}.nav-group>p{font-size:10px;letter-spacing:.2px;color:#8294ad}
+.nav-item{min-height:42px;padding:10px 12px;border-radius:10px;font-size:12px;gap:11px}.nav-item:hover{background:rgba(148,184,232,.12)}
+.nav-active{background:linear-gradient(90deg,rgba(59,130,246,.2),rgba(59,130,246,.34));box-shadow:inset 0 0 0 1px rgba(125,174,244,.13)}.nav-active i{height:24px;background:#78b0ff}
+.main-area{min-width:0}.topbar{height:68px;padding-inline:clamp(18px,2.7vw,38px);box-shadow:0 2px 10px rgba(18,38,68,.025)}
+.page-content{padding:28px clamp(18px,2.7vw,38px) 22px}.welcome-row{margin-bottom:24px}.welcome-row h1{font-size:24px;letter-spacing:-.25px}
+.work-panel,.activity-panel,.metric-card,.module-card{border-radius:var(--nx-radius);border-color:#e5ebf3;box-shadow:var(--nx-shadow)}
+.work-panel{padding:22px}.work-panel-head{padding-bottom:16px}.section-heading h2,.activity-title h2,.work-panel h2{font-size:15px;font-weight:750}
+.metric-card{padding:18px;min-height:126px}.module-card{min-height:82px;padding:16px}
+.primary-button{background:var(--nx-primary);border-radius:9px;padding:10px 15px;min-height:39px;font-size:11px;box-shadow:0 5px 13px rgba(37,99,235,.16)}.primary-button:hover{background:var(--nx-primary-hover)}
+.subtle-button{border:1px solid #dbe4ef;background:#fff;color:#53657d;border-radius:9px;padding:8px 11px;min-height:36px;font-size:10px;font-weight:650}.subtle-button:hover{background:#f5f8fd;border-color:#b8cbe5;color:#2458a7}
+.danger-button,.icon-button{border-radius:9px}
+.data-table-wrap{border-color:#e5ebf3;border-radius:11px;background:#fff}.data-table-wrap table{font-size:11px}
+.data-table-wrap th{background:#f5f8fc;color:#5e6f86;font-size:10px;font-weight:750;padding:13px 14px}
+.data-table-wrap td{padding:13px 14px;border-top-color:#edf1f6;color:#34445b}
+.data-table-wrap tbody tr:nth-child(even){background:#fbfcfe}.data-table-wrap tbody tr:hover{background:#f2f7ff}
+.table-toolbar{padding:12px 14px}.table-toolbar input{min-height:38px;border-radius:9px}
+.journal-form input,.journal-form select,.customer-form input,.customer-form select,.inventory-form input,.inventory-form select{border-radius:9px}
+.sidebar-collapse-toggle{display:grid;place-items:center;width:28px;height:28px;margin-inline-start:auto;border:1px solid rgba(173,195,225,.2);border-radius:8px;background:rgba(255,255,255,.06);color:#c7d6ea;font-size:17px;line-height:1}
+.sidebar-collapse-toggle:hover{background:rgba(255,255,255,.13);color:#fff}.sidebar-close{display:none}
+.sidebar-collapsed .sidebar{width:82px;padding-inline:11px}
+.sidebar-collapsed .brand-lockup{justify-content:center;padding-inline:0}
+.sidebar-collapsed .brand-lockup>div:last-of-type,.sidebar-collapsed .workspace>div:nth-child(2),.sidebar-collapsed .workspace select,.sidebar-collapsed .nav-group>p,.sidebar-collapsed .nav-item>span:not(.nav-icon),.sidebar-collapsed .sidebar-bottom .admin-link,.sidebar-collapsed .user-profile>div:not(.user-avatar){display:none}
+.sidebar-collapsed .sidebar-collapse-toggle{position:absolute;top:48px;right:50%;transform:translateX(50%);z-index:2}
+.sidebar-collapsed .workspace{justify-content:center;padding:10px 4px}.sidebar-collapsed .navigation{padding-top:22px}
+.sidebar-collapsed .nav-group{margin-top:10px}.sidebar-collapsed .nav-item{justify-content:center;padding:11px 5px}
+.sidebar-collapsed .nav-icon{font-size:18px;width:auto}.sidebar-collapsed .nav-active i{right:-11px}
+.sidebar-collapsed .user-profile{justify-content:center}.sidebar-collapsed .user-profile>span{display:none}
+@media(max-width:760px){
+.sidebar{width:275px;padding:22px 15px 16px}.sidebar-collapse-toggle{display:none}
+.sidebar-collapsed .sidebar{width:275px;padding:22px 15px 16px}
+.sidebar-collapsed .brand-lockup{justify-content:flex-start}
+.sidebar-collapsed .brand-lockup>div:last-of-type,.sidebar-collapsed .workspace>div:nth-child(2),.sidebar-collapsed .workspace select,.sidebar-collapsed .nav-group>p,.sidebar-collapsed .nav-item>span:not(.nav-icon),.sidebar-collapsed .sidebar-bottom .admin-link,.sidebar-collapsed .user-profile>div:not(.user-avatar){display:initial}
+.sidebar-collapsed .workspace{justify-content:flex-start;padding:17px 9px}.sidebar-collapsed .navigation{padding-top:0}
+.sidebar-collapsed .nav-group{margin-top:17px}.sidebar-collapsed .nav-item{justify-content:flex-start;padding:10px 12px}
+.sidebar-collapsed .nav-icon{width:19px}.sidebar-collapsed .user-profile{justify-content:flex-start}.sidebar-collapsed .user-profile>span{display:block}
+}
+@media(max-width:600px){.page-content{padding:20px 13px 18px}.work-panel{padding:15px}.data-table-wrap table{min-width:620px}}
+
+
+/* تحسين الشريط العلوي على الشاشات الصغيرة ومنع تزاحم أدوات الحساب. */
+@media(max-width:760px){
+  .topbar{gap:8px;min-width:0}
+  .topbar-start{min-width:0;flex:1}
+  .breadcrumb{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .topbar-actions{min-width:0;flex-shrink:0;gap:6px}
+  .theme-preference{gap:4px}
+  .theme-preference>span{display:none}
+  .theme-select{max-width:72px;min-width:0;padding:6px 4px;font-size:9px}
+  .topbar-actions>.subtle-button{padding:7px 8px;min-height:34px;font-size:9px;white-space:nowrap}
+  .icon-button{flex:0 0 34px}
+}
+@media(max-width:390px){
+  .topbar{padding-inline:10px}
+  .topbar-actions{gap:4px}
+  .theme-select{max-width:60px}
+  .topbar-actions>.subtle-button{padding-inline:6px}
+  .period-select{display:none}
+  .breadcrumb{font-size:9px}
+}
+
+
+/* توحيد النماذج التشغيلية والجداول في المبيعات والمشتريات والمخزون. */
+.inventory-form,.customer-form{gap:14px;padding:18px;border-radius:12px;background:#f8fafd;border-color:#e4eaf2}
+.inventory-form label,.customer-form label,.journal-form label{line-height:1.55}
+.inventory-form input,.inventory-form select,.inventory-form textarea,
+.customer-form input,.customer-form select,.customer-form textarea,
+.journal-form input,.journal-form select{min-height:42px;border-radius:9px;border-color:#d8e1ed;padding:9px 11px;font-size:12px;transition:border-color .15s ease,box-shadow .15s ease}
+.inventory-form input:focus,.inventory-form select:focus,.inventory-form textarea:focus,
+.customer-form input:focus,.customer-form select:focus,.customer-form textarea:focus,
+.journal-form input:focus,.journal-form select:focus{border-color:#6d9de4;box-shadow:0 0 0 3px rgba(59,130,246,.12)}
+.inventory-form-row{background:#fff;border-color:#e2e9f2;border-radius:11px;padding:14px}
+.inventory-form-actions,.customer-form-actions{align-items:center;flex-wrap:wrap}
+.customer-toolbar{border-color:#e3eaf3;background:#f7f9fc;border-radius:11px}
+.customer-toolbar input{min-height:40px}
+.asset-report-filters input,.asset-report-filters select{min-height:40px;border-radius:9px;border-color:#d8e1ed}
+.data-table-wrap{overscroll-behavior-x:contain}
+.data-table-wrap td button,.data-table-wrap td .subtle-button{white-space:nowrap}
+@media(max-width:760px){
+  .inventory-form,.customer-form{padding:14px;gap:11px}
+  .inventory-form-row{gap:9px;padding:11px}
+  .inventory-form-actions,.customer-form-actions{width:100%}
+}
+@media(max-width:460px){
+  .inventory-form,.customer-form{grid-template-columns:minmax(0,1fr)}
+  .inventory-form .inventory-wide,.customer-form .customer-form-wide{grid-column:1}
+  .inventory-form-actions,.customer-form-actions{flex-direction:column;align-items:stretch}
+  .inventory-form-actions button,.customer-form-actions button{width:100%}
+}
+/* إكمال دعم الوضع الداكن لكل النماذج التشغيلية. */
+[data-theme="dark"] .inventory-form,[data-theme="dark"] .customer-form,
+[data-theme="dark"] .customer-toolbar,[data-theme="dark"] .inventory-form-row,
+[data-theme="dark"] .customer-statement,[data-theme="dark"] .asset-report-filters label{background:#172337;border-color:#34465f;color:#dce6f4}
+[data-theme="dark"] .inventory-form-row{background:#1d2d44}
+[data-theme="dark"] .inventory-form label,[data-theme="dark"] .customer-form label,
+[data-theme="dark"] .customer-statement-filters label,[data-theme="dark"] .asset-report-filters label{color:#aebdd1}
+[data-theme="dark"] .inventory-form input,[data-theme="dark"] .inventory-form select,
+[data-theme="dark"] .inventory-form textarea,[data-theme="dark"] .customer-form input,
+[data-theme="dark"] .customer-form select,[data-theme="dark"] .customer-form textarea,
+[data-theme="dark"] .customer-toolbar input,[data-theme="dark"] .asset-report-filters input,
+[data-theme="dark"] .asset-report-filters select{background:#111d30!important;border-color:#3a4d68!important;color:#e6edf7!important}
+[data-theme="dark"] .inventory-line-editor .data-table-wrap{background:#172337;border-color:#34465f}
+[data-theme="dark"] .inventory-line-editor th{background:#22334b;color:#bdcbe0}
+[data-theme="dark"] .inventory-line-editor td{border-color:#2b3d56;color:#d2deed}
+
+
+/* تحسين قابلية قراءة دليل الحسابات وشاشات التقارير على المقاسات المختلفة. */
+.accounts-premium-panel{background:#fff}
+.accounts-hero{border-radius:0}
+.account-tree-shell{overflow:auto}
+.account-tree-row{min-width:650px}
+.account-tree-columns{min-width:650px}
+.account-tree-name{font-size:11px;line-height:1.6}
+.account-tree-code{font-size:11px}
+.account-tree-type,.account-tree-status{font-size:9px}
+.account-tree-controls select,.account-tree-search{min-height:40px}
+.account-tree-search input{min-height:34px}
+.account-tree-toolbar-title p{line-height:1.7}
+.account-role-manager-row select{min-height:40px}
+.asset-reports .work-panel-head{align-items:flex-start;gap:14px;flex-wrap:wrap}
+.asset-reports .report-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.asset-report-filters{padding:12px;background:#f7f9fc;border:1px solid #e5ebf3;border-radius:11px}
+.asset-report-filters label{min-width:min(160px,100%)}
+.asset-cashflow-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:14px 0}
+.asset-cashflow-totals>span,.asset-cashflow-totals>b{display:flex;align-items:center;min-height:54px;padding:12px;border:1px solid #e5ebf3;border-radius:10px;background:#fff;color:#465a73;font-size:11px;line-height:1.7}
+.asset-cashflow-totals>b{background:#f0f6ff;border-color:#d7e6fb;color:#1e579b}
+@media(max-width:600px){
+ .accounts-hero{padding:20px 16px}
+ .account-tree-shell{margin-inline:10px}
+ .asset-reports .report-actions{width:100%}
+ .asset-reports .report-actions button{flex:1 1 120px}
+ .asset-report-filters{display:grid;grid-template-columns:1fr}
+ .asset-report-filters label{min-width:0}
+}
+[data-theme="dark"] .accounts-premium-panel{background:#111d30}
+[data-theme="dark"] .asset-report-filters{background:#172337;border-color:#34465f}
+[data-theme="dark"] .asset-cashflow-totals>span{background:#172337;border-color:#34465f;color:#d2deed}
+[data-theme="dark"] .asset-cashflow-totals>b{background:#19365a;border-color:#315783;color:#c7e0ff}
+
+
+/* مساحة عمل قيود اليومية: إدخال واضح، مراجعة سريعة، وتفاصيل أكثر انسيابية. */
+.journal-register-panel{overflow:hidden}
+.journal-register-panel .work-panel-head{align-items:center;gap:14px}
+.journal-register-panel .table-toolbar{display:flex;align-items:center;gap:12px;margin:12px 0 14px;padding:12px 14px;border:1px solid #e7edf5;border-radius:12px;background:#f7f9fc}
+.journal-register-panel .table-toolbar input{flex:1;min-width:180px;max-width:420px;min-height:40px;border:1px solid #dce5f0;border-radius:9px;padding:9px 12px;background:#fff}
+.journal-register-panel .data-table-wrap{border-radius:13px}
+.journal-register-panel .data-table-wrap th{white-space:nowrap}
+.journal-register-panel .data-table-wrap tbody tr{transition:background .15s ease}
+.journal-register-panel .data-table-wrap td{vertical-align:middle}
+.journal-entry-workspace{position:relative;isolation:isolate;width:min(1120px,100%);padding:0;overflow:auto}
+.journal-entry-workspace:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,#1e5eb8,#65a7f2 55%,#9cc9fa);z-index:1}
+.journal-entry-workspace>.modal-heading{position:sticky;top:0;z-index:3;margin:0;padding:25px 28px 20px;background:rgba(255,255,255,.96);backdrop-filter:blur(12px);border-bottom:1px solid #e9eef5}
+.journal-entry-workspace>.modal-heading h2{font-size:20px;letter-spacing:-.3px}
+.journal-entry-workspace>.modal-heading p{margin-top:6px;line-height:1.7}
+.journal-entry-workspace>.error-banner{margin:16px 26px 0}
+.journal-entry-workspace>.journal-form,.journal-entry-workspace>.journal-review{padding:22px 28px 26px}
+.journal-entry-workspace .journal-form{gap:16px}
+.journal-entry-workspace .journal-form label{gap:8px;font-size:11px;color:#52647c}
+.journal-entry-workspace .journal-form input,.journal-entry-workspace .journal-form select{min-height:45px;border-radius:10px;background:#fbfcfe;border-color:#dfe7f1}
+.journal-entry-workspace .journal-lines-head{padding:8px 0 12px}
+.journal-entry-workspace .journal-lines-head strong{font-size:14px;color:#263c59}
+.journal-entry-workspace .journal-lines-head span{font-size:10px}
+.journal-entry-workspace .add-line-button{min-height:36px;border:1px solid #d5e4f7;border-radius:9px;padding:7px 12px;background:#eff6ff;color:#245c9f;font-size:11px;font-weight:700}
+.journal-entry-workspace .journal-lines-wrap{border-radius:12px;box-shadow:0 5px 18px rgba(26,55,91,.035)}
+.journal-entry-workspace .journal-lines-table th{padding:13px 12px;background:#f3f7fc}
+.journal-entry-workspace .journal-lines-table td{padding:9px 10px}
+.journal-entry-workspace .journal-lines-table select,.journal-entry-workspace .journal-lines-table input{min-height:41px;border-radius:9px;border-color:#dce5ef;background:#fff}
+.journal-entry-workspace .balance-preview{padding:14px;border:1px solid #e1e9f3;border-radius:13px;background:#f7f9fc}
+.journal-entry-workspace .balance-preview>div{padding:12px 14px;border:1px solid #e5ebf3;border-radius:10px;background:#fff}
+.journal-entry-workspace .balance-preview strong{font-size:19px;font-variant-numeric:tabular-nums}
+.journal-entry-workspace .form-actions{padding-top:14px;border-top:1px solid #edf1f6}
+.journal-entry-workspace .form-actions button{min-height:43px;min-width:125px;border-radius:10px}
+.journal-entry-workspace .review-meta>div{background:#f7f9fc}
+.journal-entry-workspace .review-totals>div{background:#f7f9fc}
+.journal-entry-workspace .review-totals strong{font-size:19px;font-variant-numeric:tabular-nums}
+[data-theme="dark"] .journal-register-panel .table-toolbar{background:#172337;border-color:#34465f}
+[data-theme="dark"] .journal-register-panel .table-toolbar input{background:#111d30;border-color:#3a4d68;color:#e6edf7}
+[data-theme="dark"] .journal-entry-workspace>.modal-heading{background:rgba(23,35,55,.96);border-color:#34465f}
+[data-theme="dark"] .journal-entry-workspace .journal-form label{color:#bdcbe0}
+[data-theme="dark"] .journal-entry-workspace .journal-form input,[data-theme="dark"] .journal-entry-workspace .journal-form select,
+[data-theme="dark"] .journal-entry-workspace .journal-lines-table select,[data-theme="dark"] .journal-entry-workspace .journal-lines-table input{background:#111d30;border-color:#3a4d68;color:#e6edf7}
+[data-theme="dark"] .journal-entry-workspace .journal-lines-head strong{color:#e6edf7}
+[data-theme="dark"] .journal-entry-workspace .journal-lines-wrap,[data-theme="dark"] .journal-entry-workspace .balance-preview,
+[data-theme="dark"] .journal-entry-workspace .balance-preview>div,[data-theme="dark"] .journal-entry-workspace .review-meta>div,
+[data-theme="dark"] .journal-entry-workspace .review-totals>div{background:#172337;border-color:#34465f}
+[data-theme="dark"] .journal-entry-workspace .form-actions{border-color:#34465f}
+@media(max-width:760px){
+ .journal-entry-workspace>.modal-heading{padding:20px 18px 16px}
+ .journal-entry-workspace>.journal-form,.journal-entry-workspace>.journal-review{padding:16px 18px 20px}
+ .journal-register-panel .table-toolbar{align-items:stretch;flex-direction:column}
+ .journal-register-panel .table-toolbar input{max-width:none;width:100%}
+}
+@media(max-width:600px){
+ .journal-entry-workspace{width:100%;max-height:96vh}
+ .journal-entry-workspace .journal-lines-wrap{overflow:visible;border:0;box-shadow:none;background:transparent}
+ .journal-entry-workspace .journal-lines-table{display:block;min-width:0;width:100%}
+ .journal-entry-workspace .journal-lines-table thead{display:none}
+ .journal-entry-workspace .journal-lines-table tbody{display:grid;gap:11px}
+ .journal-entry-workspace .journal-lines-table tbody tr{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:13px;border:1px solid #e2eaf3;border-radius:12px;background:#fff;box-shadow:0 4px 14px rgba(25,52,86,.04)}
+ .journal-entry-workspace .journal-lines-table tbody td{display:flex;flex-direction:column;gap:5px;width:auto;min-width:0;padding:0;border:0;text-align:right}
+ .journal-entry-workspace .journal-lines-table tbody td:first-child{display:none}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(2),.journal-entry-workspace .journal-lines-table tbody td:nth-child(3){grid-column:1/-1}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(2):before{content:"الحساب";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(3):before{content:"بيان السطر";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(4):before{content:"مدين";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(5):before{content:"دائن";font-size:10px;color:#7c8da3;font-weight:700}
+ .journal-entry-workspace .journal-lines-table tbody td:nth-child(6){position:absolute;top:9px;left:9px}
+ .journal-entry-workspace .journal-lines-table select,.journal-entry-workspace .journal-lines-table input{min-width:0;min-height:42px;width:100%}
+ .journal-entry-workspace .balance-preview.form-wide{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .journal-entry-workspace .balance-preview>div{padding:10px}
+ .journal-entry-workspace .balance-preview strong{font-size:16px}
+ .journal-entry-workspace .form-actions.form-wide{display:flex;flex-direction:column-reverse;align-items:stretch;gap:8px}
+ .journal-entry-workspace .form-actions.form-wide button{width:100%}
+ [data-theme="dark"] .journal-entry-workspace .journal-lines-table tbody tr{background:#172337;border-color:#34465f}
+ [data-theme="dark"] .journal-entry-workspace .journal-lines-table tbody td:before{color:#9fb0c7}
+}
+
+/* تنقل صفحات سجل التدقيق */
+.table-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:14px 0;padding:12px 14px;border:1px solid var(--border-color,#dce5ef);border-radius:12px;background:var(--surface-soft,#f7f9fc);color:var(--text-secondary,#64748b);font-size:13px}
+.table-pagination-actions{display:flex;align-items:center;gap:10px}
+.table-pagination-actions button{min-height:36px;padding:7px 14px}
+.table-pagination-actions button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:600px){.table-pagination{align-items:stretch;flex-direction:column}.table-pagination-actions{justify-content:space-between}}
+[data-theme="dark"] .table-pagination{background:#172337;border-color:#34465f;color:#b8c7da}
+
+.journal-pagination .toolbar-actions{display:flex;align-items:center;gap:8px}
+
+
+/* بطاقة تعريف المنتج وحقوق الملكية */
+.about-program-panel{display:grid;gap:18px}
+.about-program-panel .work-panel-head{align-items:flex-start}
+.about-info-grid{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.about-info-card{min-height:112px;padding:16px}
+.about-info-value{display:block;margin-top:13px;font-size:17px;line-height:1.5}
+.about-ownership-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.about-detail-card{padding:19px;border:1px solid #e4eaf2;border-radius:12px;background:#fbfcfe}
+.about-detail-kicker{display:block;margin-bottom:10px;color:#66809f;font-size:9px;font-weight:800;letter-spacing:.65px;direction:ltr;text-align:right}
+.about-detail-card h3{margin:0 0 10px;color:#273c59;font-size:14px}
+.about-detail-card strong{display:block;color:#1e579b;font-size:15px;line-height:1.7}
+.about-detail-card p{margin:9px 0 0;color:#687991;font-size:11px;line-height:1.9}
+.about-copyright{display:grid;gap:6px;padding:15px 17px;border:1px solid #dce7f5;border-radius:11px;background:#f2f7fd;color:#34506f;font-size:11px;line-height:1.8}
+.about-copyright span{color:#687991}
+.footer-about-link{border:0;background:transparent;color:inherit;font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+@media(max-width:650px){.about-ownership-grid{grid-template-columns:1fr}.about-info-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.about-info-value{font-size:14px}}
+[data-theme="dark"] .about-detail-card{background:#172337;border-color:#34465f}
+[data-theme="dark"] .about-detail-card h3{color:#e2eaf5}
+[data-theme="dark"] .about-detail-card p{color:#b4c3d7}
+[data-theme="dark"] .about-copyright{background:#172b43;border-color:#365273;color:#d7e7fa}
+[data-theme="dark"] .about-copyright span{color:#b4c3d7}
+
+
+.document-template-preview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+.document-template-preview{min-height:190px;padding:18px;border:1px solid var(--border-color,#d8dee8);border-top:5px solid #1F4E79;border-radius:12px;background:var(--panel-bg,#fff);display:flex;flex-direction:column;gap:12px;box-shadow:0 4px 14px rgba(20,35,55,.06)}
+.document-template-preview-company{font-size:18px;font-weight:800}
+.document-template-preview-line{font-size:13px;color:var(--muted-text,#65748b)}
+.document-template-preview-table{padding:12px 8px;border-block:1px solid var(--border-color,#d8dee8);font-size:12px}
+.document-template-preview-total{font-weight:800;text-align:left;margin-top:auto}
+.document-template-preview small{color:var(--muted-text,#65748b);border-top:1px solid var(--border-color,#d8dee8);padding-top:8px}
+.document-template-preview.modern{border-radius:4px;background:linear-gradient(180deg,rgba(31,78,121,.06),transparent 42%)}
+.document-template-preview.modern .document-template-preview-company{padding:10px;background:rgba(31,78,121,.09);border-radius:6px}
+.document-template-preview.compact{min-height:150px;padding:10px;gap:7px;border-radius:4px;font-size:12px}
+.document-template-preview.compact .document-template-preview-company{font-size:14px}
+.document-template-preview.compact .document-template-preview-table{padding:6px}
+@media(max-width:850px){.document-template-preview-grid{grid-template-columns:1fr}}
+
+
+.sales-print-overlay{position:fixed;inset:0;z-index:1000;background:rgba(12,22,36,.72);overflow:auto;padding:20px;display:flex;flex-direction:column;align-items:center;gap:14px}
+.print-controls{width:min(900px,100%);display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;background:var(--panel-bg,#fff);border-radius:10px}
+.print-controls>div{display:flex;gap:8px}
+.sales-print-sheet{width:min(900px,100%);min-height:900px;background:#fff;color:#172334;padding:42px;border-top:8px solid #1F4E79;box-shadow:0 14px 40px rgba(0,0,0,.2);font-size:14px}
+.sales-print-sheet.font-small{font-size:12px}.sales-print-sheet.font-large{font-size:16px}
+.sales-print-header{display:flex;justify-content:space-between;gap:20px;padding-bottom:22px;border-bottom:1px solid #dce2e9}
+.sales-print-header h1{font-size:24px;margin:0 0 8px}.sales-print-header p{margin:4px 0;color:#536276}
+.sales-print-document-title{display:flex;flex-direction:column;align-items:flex-end;gap:8px}.sales-print-document-title strong{font-size:22px}.sales-print-document-title span{font-size:16px;font-weight:700}
+.sales-print-meta{display:flex;flex-wrap:wrap;gap:28px;padding:20px 0}
+.sales-print-meta div,.sales-print-totals div{display:flex;flex-direction:column;gap:5px}.sales-print-meta span,.sales-print-totals span{color:#66758a;font-size:.9em}
+.sales-print-lines{width:100%;border-collapse:collapse;margin:12px 0 24px}.sales-print-lines th,.sales-print-lines td{padding:12px 9px;border:1px solid #dce2e9;text-align:right}.sales-print-lines th{background:#f1f4f8}.sales-print-lines td small{display:block;color:#718096;margin-top:3px}
+.sales-print-sheet.modern .sales-print-header{background:#f0f5fa;margin:-42px -42px 0;padding:32px 42px;border-bottom:3px solid #1F4E79}
+.sales-print-sheet.modern .sales-print-lines th{background:#e9f1f8}
+.sales-print-sheet.compact{padding:22px;min-height:650px;font-size:12px}.sales-print-sheet.compact .sales-print-header{padding-bottom:12px}.sales-print-sheet.compact .sales-print-lines th,.sales-print-sheet.compact .sales-print-lines td{padding:6px}
+.sales-print-sheet.compact .sales-print-header h1{font-size:18px}
+.sales-print-totals{margin-inline-start:auto;width:min(340px,100%);display:grid;gap:10px}.sales-print-totals .grand{border-top:2px solid #23384f;padding-top:12px;font-size:1.15em}
+.sales-print-notes{margin-top:24px;padding:12px;background:#f6f8fa;border-radius:6px}.sales-print-notes p{white-space:pre-wrap}
+.sales-print-bank{margin-top:16px;color:#526176}.sales-print-sheet footer{margin-top:40px;padding-top:12px;border-top:1px solid #dce2e9;text-align:center;color:#64748b}
+@media print{
+  @page{size:A4;margin:12mm}
+  body *{visibility:hidden!important}
+  .sales-print-overlay,.sales-print-overlay *{visibility:visible!important}
+  .sales-print-overlay{position:absolute!important;inset:0!important;padding:0!important;background:#fff!important;overflow:visible!important}
+  .print-controls{display:none!important}
+  .sales-print-sheet{width:100%!important;min-height:0!important;box-shadow:none!important;padding:0!important;border-top-width:5px!important}
+  .sales-print-sheet.modern .sales-print-header{margin:0!important;padding:18px!important}
+}
+
+/* ألوان موحدة لحالات المستندات والمخزون: تشغيلية فقط ولا تغير حالة المستند الفعلية. */
+.status-pill.slow{background:#fff0df;color:#bd762b}.status-pill.stagnant{background:#fff0ef;color:#c45c56}.status-pill.unknown{background:#edf1f6;color:#738196}.status-pill.accepted{background:#e7f7ef;color:#269567}.status-pill.sent{background:#eaf2ff;color:#3677d4}.status-pill.rejected{background:#fff0ef;color:#c45c56}.status-pill.expired{background:#f2edff;color:#8264c6}.status-pill.partial{background:#fff5df;color:#a97820}.status-pill.cancelled{background:#f1f3f6;color:#7b8796}
+
+/* عناصر فلترة التقارير متناسقة وتلتف بشكل مريح على الشاشات الصغيرة. */
+.inventory-report-section .activity-title select{min-width:145px;max-width:220px;padding:8px 10px;border:1px solid #e5eaf1;border-radius:8px;background:#fff;color:#526074;font:inherit;font-size:10px}.inventory-report-section .activity-title select:focus{outline:0;border-color:#8bb4eb;box-shadow:0 0 0 3px #2865c714}
+@media(max-width:760px){.inventory-report-section .activity-title{align-items:flex-start;gap:10px;flex-wrap:wrap}.inventory-report-section .activity-title select{width:100%;max-width:none}}

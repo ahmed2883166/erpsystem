@@ -1,0 +1,849 @@
+"""Decimal-safe management dashboard built from posted general-ledger entries."""
+from datetime import date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
+from collections import OrderedDict
+from copy import deepcopy
+from threading import RLock
+from accounting_core import register_decimal_aggregates, decimal_sum_expression
+from income_statement import build_income_statement
+from db_compat import table_exists, table_columns, database_dialect, begin_write_transaction, transactional_migration
+from db_sql import execute_compat
+
+CENT = Decimal("0.01")
+
+# Small per-process cache. Database triggers increment the version whenever a
+# journal or dashboard mapping/settings row changes, so cached values cannot
+# survive a financial mutation. A bounded cache prevents unbounded growth.
+_SNAPSHOT_CACHE = OrderedDict()
+_SNAPSHOT_CACHE_LOCK = RLock()
+_SNAPSHOT_CACHE_LIMIT = 64
+
+# Account roles are defined beside the activity-specific chart templates.
+from chart_templates import ACTIVITY_ACCOUNT_ROLES as ACTIVITY_ACCOUNTS
+
+
+def _decimal(value):
+    return Decimal(str(value or "0"))
+
+
+def _rounded(value):
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _ratio(numerator, denominator):
+    # Ratios with zero or negative bases are not meaningful for management
+    # analysis (for example, negative total assets caused by a credit balance
+    # in an asset account). Keep the underlying balances visible for review.
+    return _rounded(numerator / denominator) if denominator > 0 else None
+
+
+def _percent(numerator, denominator):
+    return _rounded(numerator * Decimal("100") / denominator) if denominator > 0 else None
+
+
+def _change(current, previous):
+    if not previous:
+        return None
+    return _rounded((current - previous) * Decimal("100") / abs(previous))
+
+
+def account_balances(conn, date_from=None, date_to=None, dimensions=None, exclude_closing_entries=False):
+    """Return exact posted debit/credit totals; optionally omit year-end closing journals."""
+    conditions = ["je.status='posted'"]
+    params = []
+    if exclude_closing_entries:
+        entry_columns = table_columns(conn, "journal_entries")
+        if "entry_type" in entry_columns:
+            conditions.append("COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')")
+        else:
+            history_exists = table_exists(conn, "financial_year_journal_history")
+            if history_exists:
+                conditions.append("""je.id NOT IN (
+                    SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
+                ) AND je.id NOT IN (
+                    SELECT related_entry_id FROM financial_year_journal_history
+                    WHERE entry_kind='closing' AND action='reversed' AND related_entry_id IS NOT NULL
+                )""")
+    if date_from:
+        conditions.append("je.entry_date>=?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("je.entry_date<=?")
+        params.append(date_to)
+    dimensions = dimensions or {}
+    available_columns = table_columns(conn, "journal_lines")
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
+        value = dimensions.get(key)
+        if value not in (None, ""):
+            if key not in available_columns:
+                raise ValueError("مخطط الأبعاد التحليلية غير محدث. أعد تشغيل البرنامج لإكمال التحديث.")
+            conditions.append(f"jl.{key}=?")
+            params.append(int(value))
+    # Aggregate monetary TEXT values inside SQLite with exact Decimal aggregates.
+    # This avoids transferring every journal line to Python as the ledger grows.
+    register_decimal_aggregates(conn)
+    rows = execute_compat(conn, f"""
+        SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
+               {decimal_sum_expression(conn, "jl.debit")} debit,
+               {decimal_sum_expression(conn, "jl.credit")} credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE {' AND '.join(conditions)}
+        GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
+    """, params).fetchall()
+    return {
+        row["id"]: {
+            "id": row["id"], "code": row["code"], "name": row["name_ar"], "type": row["account_type"],
+            "is_group": bool(row["is_group"]), "debit": _decimal(row["debit"]),
+            "credit": _decimal(row["credit"]),
+        }
+        for row in rows
+    }
+
+
+
+def _closing_entry_condition(conn):
+    columns = table_columns(conn, "journal_entries")
+    if "entry_type" in columns:
+        return "COALESCE(je.entry_type,'general') NOT IN ('year_end_closing','year_end_closing_reversal')"
+    history_exists = table_exists(conn, "financial_year_journal_history")
+    if history_exists:
+        return """je.id NOT IN (
+            SELECT entry_id FROM financial_year_journal_history WHERE entry_kind='closing'
+        ) AND je.id NOT IN (
+            SELECT related_entry_id FROM financial_year_journal_history
+            WHERE entry_kind='closing' AND action='reversed' AND related_entry_id IS NOT NULL
+        )"""
+    return "1=1"
+
+
+def _copied_opening_entry_ids(conn, as_of):
+    """Return only opening entries explicitly marked as copied at creation time."""
+    if not all(table_exists(conn, table) for table in (
+        "financial_years", "financial_year_journal_history"
+    )):
+        return set()
+    if "ledger_history_copied" not in table_columns(conn, "financial_year_journal_history"):
+        return set()
+    rows = execute_compat(conn, """
+        SELECT h.entry_id FROM financial_year_journal_history h
+        JOIN financial_years fy ON fy.id=h.financial_year_id
+        WHERE h.entry_kind='opening' AND h.action='created'
+          AND h.ledger_history_copied=1 AND fy.start_date<=?
+    """, (as_of,)).fetchall()
+    excluded = {int(row["entry_id"]) for row in rows}
+    if table_exists(conn, "financial_year_opening_reviews"):
+        reviewed=execute_compat(conn,"""
+            SELECT r.entry_id FROM financial_year_opening_reviews r
+            JOIN financial_years fy ON fy.id=r.financial_year_id
+            WHERE r.classification='copied_history' AND fy.start_date<=?
+        """,(as_of,)).fetchall()
+        excluded.update(int(row["entry_id"]) for row in reviewed)
+    if excluded:
+        marks = ",".join("?" for _ in excluded)
+        reversals = execute_compat(
+            conn,
+            f"""SELECT entry_id FROM financial_year_journal_history
+                WHERE entry_kind='opening' AND action='reversed'
+                  AND related_entry_id IN ({marks})""",
+            tuple(sorted(excluded)),
+        ).fetchall()
+        excluded.update(int(row["entry_id"]) for row in reversals)
+    return excluded
+
+
+def dashboard_period_balances(conn, current_start, current_end, previous_start, previous_end,
+                               dimensions=None, exclude_closing_entries=False):
+    """Fetch current, previous and as-of balances in one exact grouped ledger scan.
+
+    Closing entries are excluded from current/comparison P&L movements only
+    when requested. Opening and as-of balance-sheet balances always include
+    posted closing entries so retained earnings and opening equity stay correct.
+    """
+    dimensions = dimensions or {}
+    available_columns = table_columns(conn, "journal_lines")
+    dimension_conditions, dimension_params = [], []
+    for key in ("branch_id", "cost_center_id", "project_id", "customer_id", "salesperson_id"):
+        value = dimensions.get(key)
+        if value not in (None, ""):
+            if key not in available_columns:
+                raise ValueError("مخطط الأبعاد التحليلية غير محدث. أعد تشغيل البرنامج لإكمال التحديث.")
+            dimension_conditions.append(f"jl.{key}=?")
+            dimension_params.append(int(value))
+    closing_filter = _closing_entry_condition(conn) if exclude_closing_entries else "1=1"
+    # Match the official balance-sheet treatment of copied opening entries.
+    opening_cutoff = (date.fromisoformat(current_start) - timedelta(days=1)).isoformat()
+    opening_excluded = sorted(_copied_opening_entry_ids(conn, opening_cutoff))
+    asof_excluded = sorted(_copied_opening_entry_ids(conn, current_end))
+    opening_exclusion_sql = (
+        " AND je.id NOT IN (" + ",".join("?" for _ in opening_excluded) + ")"
+        if opening_excluded else ""
+    )
+    asof_exclusion_sql = (
+        "je.id NOT IN (" + ",".join("?" for _ in asof_excluded) + ")"
+        if asof_excluded else "1=1"
+    )
+    register_decimal_aggregates(conn)
+    rows = execute_compat(conn, f"""
+        SELECT a.id,a.code,a.name_ar,a.account_type,a.is_group,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.debit ELSE '0' END")} current_debit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.credit ELSE '0' END")} current_credit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.debit ELSE '0' END")} previous_debit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date BETWEEN ? AND ? AND (" + closing_filter + ") THEN jl.credit ELSE '0' END")} previous_credit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date < ?" + opening_exclusion_sql + " THEN jl.debit ELSE '0' END")} opening_debit,
+          {decimal_sum_expression(conn, "CASE WHEN je.entry_date < ?" + opening_exclusion_sql + " THEN jl.credit ELSE '0' END")} opening_credit,
+          {decimal_sum_expression(conn, "CASE WHEN " + asof_exclusion_sql + " THEN jl.debit ELSE '0' END")} asof_debit,
+          {decimal_sum_expression(conn, "CASE WHEN " + asof_exclusion_sql + " THEN jl.credit ELSE '0' END")} asof_credit
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date<=?
+          {'AND ' + ' AND '.join(dimension_conditions) if dimension_conditions else ''}
+        GROUP BY a.id,a.code,a.name_ar,a.account_type,a.is_group
+    """, (
+        current_start,current_end,current_start,current_end,
+        previous_start,previous_end,previous_start,previous_end,
+        current_start,*opening_excluded,current_start,*opening_excluded,
+        *asof_excluded,*asof_excluded,current_end,*dimension_params,
+    )).fetchall()
+
+    def make_balances(debit_key, credit_key):
+        return {row["id"]: {
+            "id":row["id"],"code":row["code"],"name":row["name_ar"],
+            "type":row["account_type"],"is_group":bool(row["is_group"]),
+            "debit":_decimal(row[debit_key]),"credit":_decimal(row[credit_key]),
+        } for row in rows}
+    return (make_balances("current_debit","current_credit"),
+            make_balances("previous_debit","previous_credit"),
+            make_balances("asof_debit","asof_credit"),
+            make_balances("opening_debit","opening_credit"))
+
+def income_figures(balances, direct_cost_codes=None, direct_cost_ids=None,
+                   disposal_loss_ids=None):
+    disposal_loss_ids = set(disposal_loss_ids or ())
+    revenue = sum((b["credit"] - b["debit"] for account_id, b in balances.items()
+                   if b["type"] == "revenue" and account_id not in disposal_loss_ids
+                   and not b["is_group"]), Decimal("0"))
+    expenses = sum((b["debit"] - b["credit"] for account_id, b in balances.items()
+                    if (b["type"] == "expense" or account_id in disposal_loss_ids)
+                    and not b["is_group"]), Decimal("0"))
+    direct_cost = sum((b["debit"] - b["credit"] for account_id, b in balances.items()
+                       if ((direct_cost_ids is not None and account_id in direct_cost_ids) or (direct_cost_ids is None and direct_cost_codes is not None and b["code"] in direct_cost_codes)) and not b["is_group"]), Decimal("0"))
+    return {
+        "revenue": revenue, "expenses": expenses, "cogs": direct_cost,
+        "net_profit": revenue - expenses,
+    }
+
+
+def _leaf_sum(balances, account_type, codes=None, prefix=None, account_ids=None):
+    total = Decimal("0")
+    for item in balances.values():
+        if item["is_group"] or item["type"] != account_type:
+            continue
+        if codes is not None and item["code"] not in codes:
+            continue
+        if prefix is not None and not item["code"].startswith(prefix):
+            continue
+        if account_ids is not None and item["id"] not in account_ids:
+            continue
+        if account_type == "asset":
+            total += item["debit"] - item["credit"]
+        else:
+            total += item["credit"] - item["debit"]
+    return total
+
+
+MANAGEMENT_ROLES = {
+    "cash": ("النقدية والبنوك", {"asset"}),
+    "receivables": ("العملاء والمدينون", {"asset"}),
+    "payables": ("الموردون والدائنون", {"liability"}),
+    "inventory": ("المخزون", {"asset"}),
+    "quick_assets": ("الأصول السريعة", {"asset"}),
+    "current_assets": ("الأصول المتداولة", {"asset"}),
+    "current_liabilities": ("الالتزامات المتداولة", {"liability"}),
+    "direct_cost": ("التكاليف المباشرة", {"expense"}),
+}
+
+
+@transactional_migration
+def initialize_management_dashboard_schema(conn, activity):
+    """Create dashboard support schema and seed defaults once during app initialization."""
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_status_date ON journal_entries(status,entry_date,id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_lines_entry_account ON journal_lines(entry_id,account_id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry ON journal_lines(account_id,entry_id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_lines_account_entry_id ON journal_lines(account_id,entry_id,id)")
+    execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_entry_date ON journal_entries(entry_date,id)")
+    journal_columns = table_columns(conn, "journal_entries")
+    if "reference" in journal_columns:
+        execute_compat(conn, "CREATE INDEX IF NOT EXISTS idx_journal_entries_reference ON journal_entries(reference)")
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_dashboard_data_version(
+        id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL DEFAULT 0)""")
+    execute_compat(conn, "INSERT INTO management_dashboard_data_version(id,version) VALUES(1,0) ON CONFLICT(id) DO NOTHING")
+    trigger_tables = ["journal_entries", "journal_lines", "accounts"]
+    # Forecast balances depend on open sales and supplier invoices as well as the GL.
+    # These tables are initialized before this schema in app.initialize_database().
+    trigger_tables.extend(table for table in ("sales_invoices", "supplier_bills")
+                          if table_exists(conn, table))
+    if database_dialect(conn) == "postgresql":
+        execute_compat(conn, """
+            CREATE OR REPLACE FUNCTION nexus_bump_management_dashboard_version()
+            RETURNS trigger LANGUAGE plpgsql AS $nexus_dashboard$
+            BEGIN
+                UPDATE management_dashboard_data_version
+                   SET version=version+1 WHERE id=1;
+                IF TG_OP = 'DELETE' THEN
+                    RETURN OLD;
+                END IF;
+                RETURN NEW;
+            END;
+            $nexus_dashboard$
+        """)
+        for table in trigger_tables:
+            for event in ("INSERT", "UPDATE", "DELETE"):
+                trigger = "trg_dashboard_version_" + table + "_" + event.lower()
+                execute_compat(conn, f"DROP TRIGGER IF EXISTS {trigger} ON {table}")
+                execute_compat(conn, f"""CREATE TRIGGER {trigger} AFTER {event} ON {table}
+                    FOR EACH ROW EXECUTE FUNCTION nexus_bump_management_dashboard_version()""")
+    else:
+        for table in trigger_tables:
+            for event in ("INSERT", "UPDATE", "DELETE"):
+                trigger = "trg_dashboard_version_" + table + "_" + event.lower()
+                execute_compat(conn, f"""CREATE TRIGGER IF NOT EXISTS {trigger} AFTER {event} ON {table}
+                    BEGIN UPDATE management_dashboard_data_version SET version=version+1 WHERE id=1; END""")
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_account_roles(
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, PRIMARY KEY(account_id,role))""")
+    execute_compat(conn, """CREATE TABLE IF NOT EXISTS management_dashboard_meta(
+        meta_key TEXT PRIMARY KEY, meta_value TEXT NOT NULL)""")
+    meta = {row["meta_key"]: row["meta_value"] for row in execute_compat(conn, "SELECT meta_key,meta_value FROM management_dashboard_meta")}
+    customized = meta.get("roles_customized") == "1"
+    previous_activity = meta.get("seed_activity")
+    needs_seed = meta.get("roles_initialized") != "1"
+    activity_changed = previous_activity != activity
+    # Only an explicit customization marker protects role assignments.
+    # Legacy auto-seeded rows without metadata must be rebuilt for the current
+    # activity; otherwise a commercial mapping can misclassify industrial 1120/1130.
+    if (needs_seed or activity_changed) and not customized:
+        execute_compat(conn, "DELETE FROM management_account_roles")
+        defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
+        for role, codes in defaults.items():
+            for code in codes:
+                execute_compat(conn, """INSERT INTO management_account_roles(account_id,role)
+                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1 ON CONFLICT(account_id,role) DO NOTHING""", (role, code))
+        execute_compat(conn, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('roles_initialized','1')
+            ON CONFLICT(meta_key) DO UPDATE SET meta_value='1'""")
+        execute_compat(conn, """INSERT INTO management_dashboard_meta(meta_key,meta_value) VALUES('seed_activity',?)
+            ON CONFLICT(meta_key) DO UPDATE SET meta_value=excluded.meta_value""", (activity,))
+    # Add newly introduced chart roles for untouched default mappings without
+    # overwriting user-customized role assignments on existing installations.
+    if not customized:
+        defaults = ACTIVITY_ACCOUNTS.get(activity, ACTIVITY_ACCOUNTS["commercial"])
+        for role, codes in defaults.items():
+            for code in codes:
+                execute_compat(conn, """INSERT INTO management_account_roles(account_id,role)
+                    SELECT id,? FROM accounts WHERE code=? AND is_group=0 AND active=1 ON CONFLICT(account_id,role) DO NOTHING""", (role, code))
+    conn.commit()
+
+
+def load_management_account_roles(conn):
+    """Read configured account-role mappings only; never create schema or seed data."""
+    result = {role: set() for role in MANAGEMENT_ROLES}
+    for row in execute_compat(conn, "SELECT account_id,role FROM management_account_roles"):
+        if row["role"] in result:
+            result[row["role"]].add(row["account_id"])
+    # Use profile defaults only when no explicit management mapping exists.
+    from activity_profiles import get_active_activity_profile, active_account_role_ids
+    profile = get_active_activity_profile(conn)
+    profile_roles = active_account_role_ids(conn)
+    is_custom_profile = profile["code"] != profile["base_activity"]
+    customization_row = execute_compat(conn, 
+        "SELECT meta_value FROM management_dashboard_meta WHERE meta_key='roles_customized'"
+    ).fetchone() if table_exists(conn, "management_dashboard_meta") else None
+    management_roles_customized = bool(
+        customization_row and customization_row["meta_value"] == "1"
+    )
+    for role, account_ids in profile_roles.items():
+        if role not in result:
+            continue
+        if is_custom_profile:
+            # A selected custom profile owns its activity defaults. Built-in
+            # profiles retain any explicit management-account configuration.
+            result[role] = set(account_ids)
+        elif not result[role] and not management_roles_customized:
+            # An intentionally cleared mapping is different from an unconfigured
+            # legacy installation: do not silently repopulate it from defaults.
+            result[role].update(account_ids)
+    return result
+
+
+def _top_accounts(balances, account_type, value_key, include_ids=None, exclude_ids=None):
+    include_ids = set(include_ids or ())
+    exclude_ids = set(exclude_ids or ())
+    rows = []
+    for account_id, item in balances.items():
+        effective_type = "expense" if account_id in include_ids else item["type"]
+        if item["is_group"] or effective_type != account_type or account_id in exclude_ids:
+            continue
+        value = item["credit"] - item["debit"] if value_key == "credit" else item["debit"] - item["credit"]
+        if value:
+            rows.append({"id": account_id, "code": item["code"], "name": item["name"], "value": value})
+    rows.sort(key=lambda x: abs(x["value"]), reverse=True)
+    maximum = max((abs(x["value"]) for x in rows), default=Decimal("0"))
+    for row in rows:
+        row["width"] = float((abs(row["value"]) * Decimal("100") / maximum).quantize(Decimal("0.1"))) if maximum else 0
+    return rows
+
+
+def _management_cache_database_identity(conn):
+    """Return a stable database/tenant identity shared by request-scoped connections."""
+    dialect = database_dialect(conn)
+    if dialect == "sqlite":
+        rows = execute_compat(conn, "PRAGMA database_list").fetchall()
+        main = next((row for row in rows if row["name"] == "main"), None)
+        filename = str(main["file"] or "") if main else ""
+        # Independent in-memory databases must never share a cache entry.
+        return ("sqlite-file", filename) if filename else ("sqlite-memory", id(conn))
+    info = getattr(conn, "info", None)
+    server_identity = (
+        getattr(info, "host", None), getattr(info, "port", None),
+        getattr(info, "user", None), getattr(info, "dbname", None),
+    )
+    tenant = execute_compat(
+        conn, "SELECT current_database() AS database_name, current_schema() AS schema_name"
+    ).fetchone()
+    return ("postgresql", server_identity, tenant["database_name"], tenant["schema_name"])
+
+
+def cached_management_snapshot(conn, start, end, dimensions=None):
+    """Return a cached Decimal-safe snapshot, invalidated by DB-level triggers."""
+    dimensions = dimensions or {}
+    started_transaction = begin_write_transaction(conn)
+    try:
+        version_row = execute_compat(conn, 
+            "SELECT version FROM management_dashboard_data_version WHERE id=1"
+        ).fetchone()
+        version = int(version_row["version"]) if version_row else 0
+        role_fingerprint = tuple(
+            (role, tuple(sorted(ids)))
+            for role, ids in sorted(load_management_account_roles(conn).items())
+        )
+        settings_fingerprint = tuple(
+            (row["setting_key"], row["setting_value"])
+            for row in execute_compat(conn, "SELECT setting_key,setting_value FROM company_settings ORDER BY setting_key")
+        ) if table_exists(conn, "company_settings") else ()
+        dashboard_today = date.today()
+        # Use a stable database/tenant identity so request-scoped connections
+        # reuse production cache entries. In-memory SQLite remains isolated by
+        # connection identity because each connection owns a different database.
+        database_identity = _management_cache_database_identity(conn)
+        key = (
+            database_identity, version, start.isoformat(), end.isoformat(), dashboard_today.isoformat(),
+            tuple(sorted((str(k), str(v)) for k, v in dimensions.items())),
+            role_fingerprint, settings_fingerprint,
+        )
+        with _SNAPSHOT_CACHE_LOCK:
+            cached = _SNAPSHOT_CACHE.get(key)
+            if cached is not None:
+                _SNAPSHOT_CACHE.move_to_end(key)
+                if started_transaction:
+                    conn.commit()
+                return deepcopy(cached)
+        snapshot = build_management_snapshot(conn, start, end, dimensions)
+        # Cache the expensive dashboard sections too, not only the headline KPIs.
+        # Data-version triggers cover GL mutations and open-invoice changes.
+        snapshot["cash_forecast"] = cash_forecast(conn, dashboard_today, 8)
+        snapshot["unusual_entries"] = unusual_journal_entries(conn, start, end)
+        if started_transaction:
+            conn.commit()
+        with _SNAPSHOT_CACHE_LOCK:
+            _SNAPSHOT_CACHE[key] = deepcopy(snapshot)
+            _SNAPSHOT_CACHE.move_to_end(key)
+            while len(_SNAPSHOT_CACHE) > _SNAPSHOT_CACHE_LIMIT:
+                _SNAPSHOT_CACHE.popitem(last=False)
+        return snapshot
+    except Exception:
+        if started_transaction:
+            conn.rollback()
+        raise
+
+
+def build_management_snapshot(conn, start, end, dimensions=None):
+    """Build a Decimal-safe management snapshot for inclusive dates."""
+    if end < start:
+        raise ValueError("تاريخ النهاية لازم يكون بعد تاريخ البداية.")
+    dimensions = dimensions or {}
+    settings = {}
+    if table_exists(conn, "company_settings"):
+        settings = {row["setting_key"]: row["setting_value"] for row in execute_compat(conn, 
+            "SELECT setting_key,setting_value FROM company_settings WHERE setting_key IN ('activity','base_currency','company_name')"
+        )}
+    activity = settings.get("activity", "commercial")
+    roles = load_management_account_roles(conn)
+    period_days = (end - start).days
+    previous_end = start - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_days)
+    current_balances, previous_balances, as_of, opening_balances = dashboard_period_balances(
+        conn, start.isoformat(), end.isoformat(),
+        previous_start.isoformat(), previous_end.isoformat(),
+        dimensions=dimensions, exclude_closing_entries=True,
+    )
+    account_columns = table_columns(conn, "accounts")
+    direct_cost_ids = set(roles["direct_cost"])
+    if "statement_section" in account_columns:
+        direct_cost_ids.update(row["id"] for row in execute_compat(conn, 
+            "SELECT id FROM accounts WHERE is_group=0 AND statement_section='direct_costs'"
+        ).fetchall())
+
+    def disposal_loss_ids(date_from, date_to):
+        if not table_exists(conn, "asset_disposals"):
+            return set()
+        columns = table_columns(conn, "asset_disposals")
+        if not {"gain_loss_account_id", "gain_loss_amount", "disposal_date"}.issubset(columns):
+            return set()
+        return {
+            row["gain_loss_account_id"] for row in execute_compat(conn, 
+                """SELECT DISTINCT gain_loss_account_id FROM asset_disposals
+                   WHERE disposal_date>=? AND disposal_date<=?
+                     AND CAST(gain_loss_amount AS NUMERIC)<0
+                     AND gain_loss_account_id IS NOT NULL""",
+                (date_from, date_to),
+            ).fetchall()
+        }
+
+    cumulative_disposal_losses = disposal_loss_ids("0001-01-01", end.isoformat())
+    # Use the exact same statement builder as the official income statement.
+    # It splits linked asset-disposal journal lines from ordinary postings to
+    # shared gain/loss accounts; account-wide reclassification here would
+    # incorrectly move unrelated revenue/expense lines.
+    current_statement = build_income_statement(
+        conn, start.isoformat(), end.isoformat(), dimensions=dimensions
+    )
+    previous_statement = build_income_statement(
+        conn, previous_start.isoformat(), previous_end.isoformat(), dimensions=dimensions
+    )
+    current = {
+        "revenue": current_statement["revenue_total"],
+        "cogs": current_statement["cogs_total"],
+        "expenses": current_statement["cogs_total"] + current_statement["operating_expense_total"],
+        "net_profit": current_statement["net_profit"],
+    }
+    previous = {
+        "revenue": previous_statement["revenue_total"],
+        "cogs": previous_statement["cogs_total"],
+        "expenses": previous_statement["cogs_total"] + previous_statement["operating_expense_total"],
+        "net_profit": previous_statement["net_profit"],
+    }
+    cumulative = income_figures(as_of, direct_cost_ids=direct_cost_ids,
+                                disposal_loss_ids=cumulative_disposal_losses)
+    assets = _leaf_sum(as_of, "asset")
+    liabilities = _leaf_sum(as_of, "liability")
+    equity = _leaf_sum(as_of, "equity")
+    balance_ok = (assets == liabilities + equity + cumulative["net_profit"]) if not any(dimensions.values()) else None
+    current_assets = _leaf_sum(as_of, "asset", account_ids=roles["current_assets"])
+    current_liabilities = _leaf_sum(as_of, "liability", account_ids=roles["current_liabilities"])
+    gross_profit = current["revenue"] - current["cogs"]
+    period_days = Decimal(max(1, (end-start).days+1))
+    opening_assets = _leaf_sum(opening_balances, "asset")
+    opening_equity = _leaf_sum(opening_balances, "equity")
+    average_assets = (opening_assets + assets) / Decimal("2")
+    average_equity = (opening_equity + equity) / Decimal("2")
+    average_inventory = (_leaf_sum(opening_balances, "asset", account_ids=roles["inventory"]) + _leaf_sum(as_of, "asset", account_ids=roles["inventory"])) / Decimal("2")
+    average_receivables = (_leaf_sum(opening_balances, "asset", account_ids=roles["receivables"]) + _leaf_sum(as_of, "asset", account_ids=roles["receivables"])) / Decimal("2")
+    average_payables = (_leaf_sum(opening_balances, "liability", account_ids=roles["payables"]) + _leaf_sum(as_of, "liability", account_ids=roles["payables"])) / Decimal("2")
+    quick_assets = _leaf_sum(as_of, "asset", account_ids=roles["quick_assets"])
+    ratios = {
+        "gross_margin": _percent(gross_profit, current["revenue"]),
+        "net_profit_margin": _percent(current["net_profit"], current["revenue"]),
+        "return_on_assets": _percent(current["net_profit"], average_assets),
+        "return_on_equity": _percent(current["net_profit"], average_equity),
+        "current_ratio": _ratio(current_assets, current_liabilities),
+        "quick_ratio": _ratio(quick_assets, current_liabilities),
+        "cash_ratio": _ratio(_leaf_sum(as_of, "asset", account_ids=roles["cash"]), current_liabilities),
+        "debt_ratio": _percent(liabilities, assets),
+        "debt_to_equity": _ratio(liabilities, equity),
+        "equity_ratio": _percent(equity, assets),
+        "asset_turnover": _ratio(current["revenue"], average_assets),
+        "inventory_turnover": _ratio(current["cogs"], average_inventory),
+        "inventory_days": _ratio(period_days * average_inventory, current["cogs"]) if average_inventory and current["cogs"] else None,
+        "receivables_turnover": _ratio(current["revenue"], average_receivables),
+        "collection_days": _ratio(period_days * average_receivables, current["revenue"]) if average_receivables and current["revenue"] else None,
+        "payables_turnover": _ratio(current["cogs"], average_payables),
+        "payment_days": _ratio(period_days * average_payables, current["cogs"]) if average_payables and current["cogs"] else None,
+    }
+    ratios["cash_conversion_cycle"] = (
+        ratios["inventory_days"] + ratios["collection_days"] - ratios["payment_days"]
+        if all(ratios[key] is not None for key in ("inventory_days","collection_days","payment_days")) else None
+    )
+    negative_asset_accounts = []
+    for account_id, item in as_of.items():
+        if item["type"] == "asset" and not item["is_group"]:
+            balance = item["debit"] - item["credit"]
+            if balance < 0:
+                negative_asset_accounts.append({
+                    "id": account_id, "code": item["code"], "name": item["name"],
+                    "balance": balance,
+                })
+    negative_asset_accounts.sort(key=lambda item: item["balance"])
+
+    details = []
+    for role in ("cash", "receivables", "payables", "inventory"):
+        for account_id in sorted(roles[role]):
+            item = as_of.get(account_id)
+            if not item:
+                continue
+            value = item["debit"] - item["credit"] if item["type"] == "asset" else item["credit"] - item["debit"]
+            details.append({"role": role, "id": account_id, "code": item["code"], "name": item["name"], "balance": value})
+    def statement_chart_rows(rows):
+        chart = []
+        for item in rows:
+            # Synthetic disposal rows have no standalone ledger account id;
+            # keep chart drill-down links restricted to real ledger accounts.
+            if not isinstance(item["id"], int) or not item["balance"]:
+                continue
+            chart.append({
+                "id": item["id"], "code": item["code"],
+                "name": item.get("name_ar", item.get("name", "")),
+                "value": item["balance"],
+            })
+        chart.sort(key=lambda item: abs(item["value"]), reverse=True)
+        maximum = max((abs(item["value"]) for item in chart), default=Decimal("0"))
+        for item in chart:
+            item["width"] = float(
+                (abs(item["value"]) * Decimal("100") / maximum).quantize(Decimal("0.1"))
+            ) if maximum else 0
+        return chart
+
+    return {
+        "activity": activity,
+        "selected_dimensions": dimensions,
+        "company_name": settings.get("company_name", "NEXUS ERP"),
+        "base_currency": settings.get("base_currency", "EGP"),
+        "start": start, "end": end, "prev_start": previous_start, "prev_end": previous_end,
+        "current": current, "previous": previous,
+        "changes": {
+            "revenue": _change(current["revenue"], previous["revenue"]),
+            "expenses": _change(current["expenses"], previous["expenses"]),
+            "net_profit": _change(current["net_profit"], previous["net_profit"]),
+        },
+        "gross_margin": _percent(gross_profit, current["revenue"]),
+        "ratios": ratios,
+        "cash": _leaf_sum(as_of, "asset", account_ids=roles["cash"]),
+        "receivables": _leaf_sum(as_of, "asset", account_ids=roles["receivables"]),
+        "payables": _leaf_sum(as_of, "liability", account_ids=roles["payables"]),
+        "inventory": _leaf_sum(as_of, "asset", account_ids=roles["inventory"]),
+        "working_capital": current_assets - current_liabilities,
+        "current_ratio": _ratio(current_assets, current_liabilities),
+        "quick_ratio": _ratio(_leaf_sum(as_of, "asset", account_ids=roles["quick_assets"]), current_liabilities),
+        "balance_ok": balance_ok,
+        "total_assets": assets,
+        "total_liabilities": liabilities,
+        "total_equity": equity,
+        "total_equity_after_profit": equity + cumulative["net_profit"],
+        "negative_asset_accounts": negative_asset_accounts,
+         "revenue_accounts": statement_chart_rows(current_statement["revenue_rows"]),
+        "expense_accounts": statement_chart_rows(
+            current_statement["cogs_rows"] + current_statement["operating_expense_rows"]
+        ),
+        "account_details": details,
+        "account_roles": roles,
+        "ratio_notes": {
+            "return_on_assets": "العائد محسوب على نتيجة الفترة الحالية ومتوسط الأصول، وغير مُسنَّن.",
+            "return_on_equity": "العائد محسوب على نتيجة الفترة الحالية ومتوسط حقوق الملكية، وغير مُسنَّن.",
+            "receivables_turnover": "مؤشر تقريبي يستخدم إجمالي الإيرادات بدل المبيعات الآجلة لعدم توافر فصل موثوق لها في دفتر الأستاذ.",
+            "payables_turnover": "مؤشر تقريبي يستخدم تكلفة المبيعات بدل المشتريات الآجلة لعدم توافر فصل موثوق لها في دفتر الأستاذ.",
+            "cash_conversion_cycle": "دورة التحويل النقدي تقديرية وتعتمد على مؤشري التحصيل والسداد التقريبيين.",
+        },
+    }
+
+
+def cash_forecast(conn, today=None, weeks=8):
+    """Build an eight-week cash view from the shared documented forecast sources."""
+    from management_reports import build_cash_forecast
+
+    today = today or date.today()
+    weeks = max(1, min(int(weeks), 52))
+    horizon_days = weeks * 7
+    roles = load_management_account_roles(conn)
+    balances = account_balances(conn, date_to=today.isoformat())
+    opening = _leaf_sum(balances, "asset", account_ids=roles["cash"])
+
+    periods = []
+    for index in range(weeks):
+        start = today + timedelta(days=index * 7)
+        end = start + timedelta(days=6)
+        periods.append({
+            "label": start.strftime("%d/%m") + " - " + end.strftime("%d/%m"),
+            "receipts": Decimal("0"), "payments": Decimal("0"),
+        })
+
+    source = build_cash_forecast(conn, today.isoformat(), horizon_days)
+    totals = {
+        "payroll_due": Decimal("0"),
+        "grants_due": Decimal("0"),
+        "other_commitments_due": Decimal("0"),
+    }
+    for item in source.get("items", []):
+        if "error" in item:
+            continue
+        due_date = date.fromisoformat(item["due_date"])
+        forecast_date = max(due_date, today)
+        bucket = (forecast_date - today).days // 7
+        if not 0 <= bucket < weeks:
+            continue
+        amount = _decimal(item.get("balance"))
+        kind = item.get("kind")
+        if kind == "customers":
+            periods[bucket]["receipts"] += amount
+        else:
+            periods[bucket]["payments"] += amount
+        if kind == "payroll":
+            totals["payroll_due"] += amount
+        elif kind == "employee_grants":
+            totals["grants_due"] += amount
+        elif kind == "cash_commitment":
+            totals["other_commitments_due"] += amount
+
+    running = opening
+    result = []
+    for period in periods:
+        receipts = period["receipts"]
+        payments = period["payments"]
+        net = receipts - payments
+        start_balance = running
+        running += net
+        result.append({
+            "label": period["label"], "opening": _rounded(start_balance),
+            "receipts": _rounded(receipts), "payments": _rounded(payments),
+            "net": _rounded(net), "closing": _rounded(running),
+        })
+
+    threshold_row = execute_compat(conn, 
+        "SELECT setting_value FROM company_settings WHERE setting_key='minimum_cash_balance'"
+    ).fetchone() if table_exists(conn, "company_settings") else None
+    threshold = _decimal(threshold_row["setting_value"]) if threshold_row else Decimal("0")
+    return {
+        "opening": _rounded(opening), "weeks": result, "minimum": threshold,
+        "warning": any(item["closing"] < threshold for item in result) if threshold > 0 else False,
+        **{key: _rounded(value) for key, value in totals.items()},
+        "errors": source.get("errors", []),
+    }
+
+
+def unusual_journal_entries(conn, period_start, period_end, multiplier=Decimal("3")):
+    """Find unusual posted entries without per-entry or per-line SQL queries.
+
+    Historical averages are calculated with Decimal prefix sums in Python.
+    The database work is bounded to three data queries regardless of the
+    number of candidate entries.
+    """
+    from bisect import bisect_left
+
+    period_start = period_start if isinstance(period_start, date) else date.fromisoformat(str(period_start))
+    period_end = period_end if isinstance(period_end, date) else date.fromisoformat(str(period_end))
+    register_decimal_aggregates(conn)
+    columns = set(table_columns(conn, "journal_entries"))
+    ref_expr = "je.reference" if "reference" in columns else "''"
+    desc_expr = "je.description" if "description" in columns else "''"
+    closing_filter = _closing_entry_condition(conn)
+    entries = execute_compat(conn, f"""SELECT je.id,je.entry_date,{ref_expr} reference,{desc_expr} description,
+        {decimal_sum_expression(conn, "jl.debit")} debit,
+        {decimal_sum_expression(conn, "jl.credit")} credit
+        FROM journal_entries je JOIN journal_lines jl ON jl.entry_id=je.id
+        WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
+          AND ({closing_filter})
+        GROUP BY je.id,je.entry_date,{ref_expr},{desc_expr}
+        ORDER BY je.entry_date DESC,je.id DESC""",
+        (period_start.isoformat(),period_end.isoformat())).fetchall()
+    if not entries:
+        return []
+
+    candidate_lines = execute_compat(conn, f"""SELECT jl.id line_id,jl.entry_id,jl.account_id,
+        jl.debit,jl.credit,a.code,a.name_ar
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id=jl.entry_id
+        JOIN accounts a ON a.id=jl.account_id
+        WHERE je.status='posted' AND je.entry_date BETWEEN ? AND ?
+          AND ({closing_filter})
+        ORDER BY jl.entry_id,jl.id""",
+        (period_start.isoformat(),period_end.isoformat())).fetchall()
+    account_ids = sorted({row["account_id"] for row in candidate_lines})
+    history_by_account = {}
+    if account_ids:
+        placeholders = ",".join("?" for _ in account_ids)
+        history_start = period_start - timedelta(days=90)
+        history_end = period_end + timedelta(days=1)
+        history_rows = execute_compat(conn, f"""SELECT h.account_id,e.entry_date,h.debit,h.credit
+            FROM journal_lines h
+            JOIN journal_entries e ON e.id=h.entry_id
+            WHERE e.status='posted' AND h.account_id IN ({placeholders})
+              AND e.entry_date>=? AND e.entry_date<?
+              AND ({closing_filter.replace("je.", "e.")})
+            ORDER BY h.account_id,e.entry_date,h.id""",
+            (*account_ids, history_start.isoformat(), history_end.isoformat())).fetchall()
+        for row in history_rows:
+            bucket = history_by_account.setdefault(row["account_id"], {"dates": [], "prefix": [Decimal("0")]})
+            amount = max(_decimal(row["debit"]), _decimal(row["credit"]))
+            history_date = row["entry_date"] if isinstance(row["entry_date"], date) else date.fromisoformat(str(row["entry_date"]))
+            bucket["dates"].append(history_date)
+            bucket["prefix"].append(bucket["prefix"][-1] + amount)
+
+    lines_by_entry = {}
+    for line in candidate_lines:
+        lines_by_entry.setdefault(line["entry_id"], []).append(line)
+
+    threshold = Decimal(str(multiplier))
+    seen_signatures = {}
+    duplicate_entries = {}
+    # Entries are returned newest-first; scan oldest-first so the newer copy
+    # is consistently identified as the duplicate.
+    for candidate in reversed(entries):
+        candidate_lines = lines_by_entry.get(candidate["id"], ())
+        signature = (
+            candidate["entry_date"],
+            tuple(sorted((
+                int(line["account_id"]),
+                str(_decimal(line["debit"])),
+                str(_decimal(line["credit"])),
+            ) for line in candidate_lines)),
+        )
+        if signature in seen_signatures:
+            duplicate_entries[candidate["id"]] = seen_signatures[signature]
+        else:
+            seen_signatures[signature] = candidate["id"]
+
+    result = []
+    for entry in entries:
+        entry_date = entry["entry_date"] if isinstance(entry["entry_date"], date) else date.fromisoformat(str(entry["entry_date"]))
+        reasons = []
+        entry_lines = lines_by_entry.get(entry["id"], ())
+        duplicate_of = duplicate_entries.get(entry["id"])
+        if duplicate_of is not None:
+            reasons.append("قيد مطابق تمامًا لقيد مرحل آخر رقم " + str(duplicate_of) + " — يحتاج مراجعة")
+        if abs(_decimal(entry["debit"]) - _decimal(entry["credit"])) > Decimal("0.01"):
+            reasons.append("القيد غير متوازن بين المدين والدائن")
+        if entry_date >= period_end - timedelta(days=1):
+            reasons.append("قيد في آخر يومين من الفترة")
+        lower_date = entry_date - timedelta(days=90)
+        current_date = entry_date
+        for line in entry_lines:
+            history = history_by_account.get(line["account_id"])
+            if not history:
+                continue
+            dates = history["dates"]
+            prefix = history["prefix"]
+            lower = bisect_left(dates, lower_date)
+            upper = bisect_left(dates, current_date)
+            count = upper - lower
+            if count <= 0:
+                continue
+            historical_total = prefix[upper] - prefix[lower]
+            average = historical_total / Decimal(count)
+            amount = max(_decimal(line["debit"]), _decimal(line["credit"]))
+            if average > 0 and amount >= average * threshold:
+                reasons.append("مبلغ مرتفع عن متوسط حساب "+line["code"]+" — "+line["name_ar"])
+        if reasons:
+            result.append({"id":entry["id"],"date":entry_date.isoformat(),"reference":entry["reference"] or "",
+                "description":entry["description"] or "","debit":_decimal(entry["debit"]),
+                "credit":_decimal(entry["credit"]),"reasons":reasons})
+    return result

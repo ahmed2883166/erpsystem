@@ -1,0 +1,221 @@
+name: NEXUS ERP tests
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - feature/company-setup-currency-tax-activity
+      - draft/postgresql-stock-compat
+      - work/phase6-industry-packs
+      - work/phase7-bootstrap-ux
+      - work/postgresql-native-rebuild
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: nexus_test
+          POSTGRES_PASSWORD: nexus_test
+          POSTGRES_DB: nexus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nexus_test -d nexus_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NEXUS_TEST_POSTGRES_DSN: postgresql://nexus_test:nexus_test@localhost:5432/nexus_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies and PostgreSQL client tools
+        run: |
+          docker info >/dev/null
+          tool_dir="$RUNNER_TEMP/postgres16-tools"
+          mkdir -p "$tool_dir"
+          for tool in pg_dump pg_restore; do
+            cat > "$tool_dir/$tool" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          tool="$(basename "$0")"
+          exec docker run --rm --network host \
+            -e PGHOST -e PGPORT -e PGUSER -e PGPASSWORD -e PGDATABASE \
+            -e PGSSLMODE -e PGSSLROOTCERT -e PGSSLCERT -e PGSSLKEY \
+            -e PGCONNECT_TIMEOUT -e PGAPPNAME -e PGOPTIONS \
+            -v /tmp:/tmp \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            -w "$GITHUB_WORKSPACE" postgres:16 "$tool" "$@"
+          EOF
+            chmod +x "$tool_dir/$tool"
+          done
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          "$tool_dir/pg_dump" --version
+          "$tool_dir/pg_restore" --version
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+      - name: Enable PostgreSQL warning statement diagnostics
+        run: |
+          container_id="$(docker ps --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n 1)"
+          test -n "$container_id"
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_min_error_statement = 'warning'"
+          # CI-only SQL tracing makes any non-fatal transaction warning attributable
+          # to the exact PostgreSQL backend process and preceding statement sequence.
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_statement = 'all'"
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET log_line_prefix = '%m [%p] %a %u@%d '"
+          docker exec "$container_id" psql -U nexus_test -d nexus_test -v ON_ERROR_STOP=1 -c "SELECT pg_reload_conf()"
+      - name: Compile Python files
+        run: python -m compileall -q .
+      - name: Static analysis (unused imports and variables)
+        run: ruff check app.py postgres_backup.py postgres_backup_scheduler.py accounting_core.py stock.py sales.py purchases.py party_reports.py report_exports.py license_server.py financial_planning.py tests --select F401,F841 --output-format=github
+      - name: Run unit and integration tests on supported SQLite runtime
+        run: python run_tests.py
+      - name: Build isolated full PostgreSQL baseline
+        run: python scripts/build_postgres_baseline.py --output-dir "$RUNNER_TEMP/nexus-postgres-baseline"
+      - name: Exercise full Flask initialization and real PostgreSQL workflows
+        run: python scripts/smoke_postgres_full_runtime.py --baseline "$RUNNER_TEMP/nexus-postgres-baseline/nexus_full_schema.sql"
+      - name: Collect PostgreSQL transaction warning diagnostics
+        if: always()
+        run: |
+          container_id="$(docker ps -a --filter "ancestor=postgres:16" --format '{{.ID}}' | head -n 1)"
+          if [ -n "$container_id" ]; then
+            logs="$(docker logs "$container_id" 2>&1)"
+            warning_pids="$(printf '%s\n' "$logs" | sed -nE 's/.*\[([0-9]+)\] WARNING:  there is already a transaction in progress.*/\1/p' | sort -u)"
+            if [ -n "$warning_pids" ]; then
+              while IFS= read -r pid; do
+                [ -n "$pid" ] || continue
+                echo "PostgreSQL transaction-warning backend PID: $pid"
+                printf '%s\n' "$logs" | grep -F "[$pid]" | tail -n 250 || true
+              done <<< "$warning_pids"
+            else
+              printf '%s\n' "$logs" | grep -E 'WARNING:|STATEMENT:' | tail -n 300 || true
+            fi
+          fi
+  windows-smoke:
+    name: Windows local runtime and backup/restore smoke tests
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install application dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run read-only Windows readiness check in isolated directories
+        shell: pwsh
+        run: |
+          $env:NEXUS_DATA_DIR = Join-Path $env:RUNNER_TEMP "admrail-windows-smoke-data"
+          $env:NEXUS_BACKUP_DIR = Join-Path $env:RUNNER_TEMP "admrail-windows-smoke-backups"
+          New-Item -ItemType Directory -Force -Path $env:NEXUS_DATA_DIR, $env:NEXUS_BACKUP_DIR | Out-Null
+          python scripts/check_runtime_readiness.py
+      - name: Run full isolated unit and integration suite on Windows
+        shell: pwsh
+        run: |
+          python -m compileall -q .
+          python run_tests.py
+
+  windows-preview-package:
+    name: Build verified Windows internal preview ZIP
+    needs: [unit-tests, windows-smoke]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@v4
+      - name: Assemble clean source package
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:RUNNER_TEMP "NEXUS_ERP_Windows_Internal_Preview"
+          $zip = Join-Path $env:RUNNER_TEMP "NEXUS_ERP_Windows_Internal_Preview.zip"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $trackedFiles = git ls-files
+          foreach ($relativePath in $trackedFiles) {
+            $sourcePath = Join-Path $PWD $relativePath
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+              throw "Tracked package file is missing: $relativePath"
+            }
+            $destinationPath = Join-Path $stage $relativePath
+            $destinationDirectory = Split-Path -Parent $destinationPath
+            New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+            Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+          }
+
+          @'
+          NEXUS ERP - Windows Internal Preview
+
+          This ZIP is an INTERNAL LOCAL TEST PACKAGE, not a production/customer release.
+
+          INSTALL:
+          1. Extract the complete ZIP to a normal local folder (not a network share).
+          2. Install Python 3.11 or newer and enable the Python launcher.
+          3. Run setup_windows.bat and wait for the read-only readiness check to pass.
+          4. Run run_local.bat to start the internal demo on this PC at http://127.0.0.1:5055.
+          5. On first start, the application creates a fresh local database under test_data and generates
+             a one-time admin password in test_data/.nexus_initial_admin_password.
+          6. Read that password locally, sign in as admin, and change it immediately.
+
+          IMPORTANT SAFETY LIMITS:
+          - run_local.bat enables the development demo/license bypass. It is strictly for local
+            internal evaluation on this computer. Do not distribute it to customers.
+          - This package binds to 127.0.0.1 only. It is NOT the LAN/mobile deployment package.
+          - Do not enter real financial/company data. Use disposable test data only.
+          - Do not put the SQLite database on a shared/network folder.
+          - PostgreSQL runtime is not enabled for the application; PostgreSQL bootstrap tests
+            do not make it a supported runtime backend.
+          - No existing company database, backups, .env files, secrets, or license keys are included.
+          - LAN use requires a separate secured deployment with a valid license, HTTPS reverse proxy,
+            private firewall rules, and concurrency/acceptance tests.
+
+          Source branch: work/phase7-bootstrap-ux
+          '@ | Set-Content -LiteralPath (Join-Path $stage "PACKAGE_README_AR.txt") -Encoding UTF8
+
+          if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+          $items = Get-ChildItem -LiteralPath $stage -Force | ForEach-Object { $_.FullName }
+          Compress-Archive -LiteralPath $items -DestinationPath $zip -CompressionLevel Optimal
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            if ($archive.Entries.Count -lt 10) { throw "ZIP validation failed: too few entries." }
+            if ($archive.Entries.FullName -contains "data/nexus.db") {
+              throw "ZIP validation failed: company database must not be packaged."
+            }
+            if ($archive.Entries.FullName -notcontains "PACKAGE_README_AR.txt") {
+              throw "ZIP validation failed: package instructions are missing."
+            }
+          }
+          finally {
+            $archive.Dispose()
+          }
+          Get-Item -LiteralPath $zip | Format-List FullName,Length
+
+      - name: Upload Windows internal preview ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: NEXUS-ERP-Windows-Internal-Preview
+          path: ${{ runner.temp }}/NEXUS_ERP_Windows_Internal_Preview.zip
+          if-no-files-found: error
+          retention-days: 14

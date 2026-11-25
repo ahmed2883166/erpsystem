@@ -1,0 +1,856 @@
+"""Configurable country-specific payroll tax and social insurance rules.
+
+Rates are deliberately data-driven: the application does not embed statutory
+rates that may become obsolete. Rule sets are effective-dated and snapshotted
+onto payroll lines when a run is created.
+"""
+from app_paths import DB_PATH
+from database import connect_database
+from db_compat import DB_ERROR, execute_script, table_columns, table_exists, begin_write_transaction, insert_and_get_id, transactional_connection_initializer, database_dialect
+from db_sql import execute_compat, executemany_compat
+from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from functools import wraps
+
+from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from accounting_core import post_journal
+
+payroll_compliance_bp = Blueprint("payroll_compliance", __name__)
+
+CENT = Decimal("0.01")
+
+
+def _execute(conn, sql, params=()):
+    """Run qmark SQL through the active SQLite/PostgreSQL adapter."""
+    return execute_compat(conn, sql, params)
+
+
+def _executemany(conn, sql, rows):
+    """Run a qmark SQL batch through the active database adapter."""
+    return executemany_compat(conn, sql, rows)
+
+
+def _d(value):
+    try:
+        result = Decimal(str(value or "0"))
+        if not result.is_finite():
+            raise InvalidOperation()
+        return result
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError("قيمة قواعد الرواتب غير صحيحة.")
+
+
+def _m(value):
+    return _d(value).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _db():
+    return connect_database(DB_PATH, timeout=20, isolation_level=None)
+
+
+@transactional_connection_initializer(lambda: _db())
+def initialize_payroll_compliance_schema(conn):
+    execute_script(conn, """
+    CREATE TABLE IF NOT EXISTS payroll_rule_sets(
+      id INTEGER PRIMARY KEY,
+      country_code TEXT NOT NULL,
+      category_code TEXT NOT NULL,
+      effective_from TEXT NOT NULL,
+      effective_to TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('draft','approved','active','expired')),
+      personal_exemption_annual TEXT NOT NULL DEFAULT '0',
+      taxable_rounding_unit TEXT NOT NULL DEFAULT '1',
+      insurance_floor TEXT NOT NULL DEFAULT '0',
+      insurance_ceiling TEXT NOT NULL DEFAULT '0',
+      employee_insurance_rate TEXT NOT NULL DEFAULT '0',
+      employer_insurance_rate TEXT NOT NULL DEFAULT '0',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(country_code,category_code,effective_from)
+    );
+    CREATE TABLE IF NOT EXISTS payroll_tax_brackets(
+      id INTEGER PRIMARY KEY,
+      rule_set_id INTEGER NOT NULL REFERENCES payroll_rule_sets(id) ON DELETE CASCADE,
+      lower_bound TEXT NOT NULL,
+      upper_bound TEXT,
+      rate TEXT NOT NULL,
+      UNIQUE(rule_set_id,lower_bound)
+    );
+    CREATE TABLE IF NOT EXISTS payroll_tax_tier_brackets(
+      id INTEGER PRIMARY KEY,
+      rule_set_id INTEGER NOT NULL REFERENCES payroll_rule_sets(id) ON DELETE CASCADE,
+      income_max TEXT,
+      lower_bound TEXT NOT NULL,
+      upper_bound TEXT,
+      rate TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_payroll_rules_effective
+      ON payroll_rule_sets(country_code,category_code,effective_from,enabled);
+    CREATE TABLE IF NOT EXISTS payroll_statutory_payments(
+      id INTEGER PRIMARY KEY,
+      period TEXT NOT NULL,
+      payment_type TEXT NOT NULL CHECK(payment_type IN ('salary_tax','social_insurance')),
+      payment_date TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      liability_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      cash_account_id INTEGER NOT NULL REFERENCES accounts(id),
+      journal_entry_id INTEGER NOT NULL UNIQUE,
+      reference TEXT NOT NULL DEFAULT '',
+      created_by INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_payroll_statutory_payment_period
+      ON payroll_statutory_payments(period,payment_type);
+    """)
+    rule_cols = table_columns(conn, "payroll_rule_sets")
+    if "effective_to" not in rule_cols:
+        _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN effective_to TEXT")
+    if "status" not in rule_cols:
+        _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+    if "taxable_rounding_unit" not in rule_cols:
+        _execute(conn, "ALTER TABLE payroll_rule_sets ADD COLUMN taxable_rounding_unit TEXT NOT NULL DEFAULT '1'")
+    employee_cols = table_columns(conn, "employees")
+    for name, definition in {
+        "legal_category": "TEXT NOT NULL DEFAULT 'local'",
+        "insurance_number": "TEXT NOT NULL DEFAULT ''",
+        "insured_wage": "TEXT NOT NULL DEFAULT '0'",
+        "insurance_enabled": "INTEGER NOT NULL DEFAULT 1",
+    }.items():
+        if name not in employee_cols:
+            _execute(conn, "ALTER TABLE employees ADD COLUMN " + name + " " + definition)
+    line_cols = table_columns(conn, "payroll_lines")
+    for name, definition in {
+        "rule_set_id": "INTEGER REFERENCES payroll_rule_sets(id)",
+        "taxable_annual": "TEXT NOT NULL DEFAULT '0'",
+        "insured_wage": "TEXT NOT NULL DEFAULT '0'",
+    }.items():
+        if name not in line_cols:
+            _execute(conn, "ALTER TABLE payroll_lines ADD COLUMN " + name + " " + definition)
+    # Add the natural-key uniqueness guard to legacy installations when safe.
+    # If historical duplicates already exist, preserve them and do not destroy data.
+    duplicate_rule_key = _execute(conn, """
+        SELECT 1 FROM payroll_rule_sets
+        GROUP BY country_code,category_code,effective_from
+        HAVING COUNT(*) > 1 LIMIT 1
+    """).fetchone()
+    if not duplicate_rule_key:
+        _execute(conn, """CREATE UNIQUE INDEX IF NOT EXISTS uq_payroll_rule_sets_natural_key
+            ON payroll_rule_sets(country_code,category_code,effective_from)""")
+    # Seed the Egypt baseline once on existing and new installations. Never
+    # overwrite a rule set that an accountant has already reviewed or edited.
+    if current_tax_country(conn) == "EG":
+        existing_egypt = _execute(conn, 
+            "SELECT 1 FROM payroll_rule_sets WHERE country_code='EG' "
+            "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
+        ).fetchone()
+        if not existing_egypt:
+            seed_egypt_2026(conn)
+
+
+def current_tax_country(conn):
+    row = _execute(conn, 
+        "SELECT setting_value FROM company_settings WHERE setting_key='tax_country'"
+    ).fetchone()
+    return (row["setting_value"] if row else "EG").upper()
+
+
+def _active_rule(conn, country_code, category_code, period):
+    period_date = date.fromisoformat(period + "-01").isoformat()
+    return _execute(conn, """
+        SELECT * FROM payroll_rule_sets
+        WHERE country_code=? AND category_code=? AND enabled=1
+          AND status='active' AND effective_from<=?
+          AND (effective_to IS NULL OR effective_to>=?)
+        ORDER BY effective_from DESC,id DESC LIMIT 1
+    """, (country_code, category_code, period_date, period_date)).fetchone()
+
+
+def _validate_rule_period(effective_from, effective_to):
+    start = date.fromisoformat(effective_from).isoformat()
+    end = date.fromisoformat(effective_to).isoformat() if effective_to else None
+    if end and end < start:
+        raise ValueError("تاريخ نهاية السريان يجب ألا يسبق تاريخ البداية.")
+    return start, end
+
+
+def activate_payroll_rule(conn, rule_id):
+    # Serialize activations for the same country/category before checking for
+    # overlapping effective periods. SQLite uses BEGIN IMMEDIATE; PostgreSQL
+    # uses a transaction-scoped advisory lock so different target rows cannot race.
+    begin_write_transaction(conn)
+    rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+    if not rule:
+        raise ValueError("مجموعة القواعد غير موجودة.")
+    if database_dialect(conn) == "postgresql":
+        lock_key = str(rule["country_code"]).upper() + ":" + str(rule["category_code"]).lower()
+        _execute(conn, "SELECT pg_advisory_xact_lock(?, hashtext(?))",
+                 (0x50415952, lock_key))
+        rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=? FOR UPDATE",
+                        (rule_id,)).fetchone()
+        if not rule:
+            raise ValueError("مجموعة القواعد غير موجودة.")
+    if rule["status"] not in {"approved", "active"}:
+        raise ValueError("يجب اعتماد مجموعة القواعد أولًا قبل تفعيلها.")
+    start, end = _validate_rule_period(rule["effective_from"], rule["effective_to"])
+    overlap = _execute(conn, """
+        SELECT id FROM payroll_rule_sets
+        WHERE country_code=? AND category_code=? AND enabled=1 AND status='active' AND id<>?
+          AND effective_from<=COALESCE(?, '9999-12-31')
+          AND COALESCE(effective_to,'9999-12-31')>=?
+        LIMIT 1
+    """, (rule["country_code"], rule["category_code"], rule_id, end, start)).fetchone()
+    if overlap:
+        raise ValueError("فترة السريان تتداخل مع إصدار نشط آخر. حدد نهاية الإصدار السابق أو عدّل تاريخ الإصدار الجديد.")
+    _execute(conn, "UPDATE payroll_rule_sets SET status='active',enabled=1 WHERE id=?", (rule_id,))
+
+
+def approve_payroll_rule(conn, rule_id):
+    rule = _execute(conn, "SELECT * FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+    if not rule:
+        raise ValueError("مجموعة القواعد غير موجودة.")
+    if rule["status"] == "active":
+        raise ValueError("مجموعة القواعد نشطة بالفعل.")
+    if rule["status"] not in {"draft", "approved"}:
+        raise ValueError("لا يمكن اعتماد هذه الحالة.")
+    _validate_rule_period(rule["effective_from"], rule["effective_to"])
+    has_brackets = _execute(conn, """
+        SELECT 1 FROM payroll_tax_brackets WHERE rule_set_id=?
+        UNION ALL SELECT 1 FROM payroll_tax_tier_brackets WHERE rule_set_id=? LIMIT 1
+    """, (rule_id, rule_id)).fetchone()
+    if not has_brackets:
+        raise ValueError("لا يمكن اعتماد القواعد قبل إضافة شرائح ضريبة الدخل.")
+    _execute(conn, "UPDATE payroll_rule_sets SET status='approved' WHERE id=?", (rule_id,))
+
+
+def ensure_default_payroll_rules(conn):
+    """Ensure the built-in Egypt baseline exists without overwriting user edits."""
+    country = current_tax_country(conn)
+    if country == "EG":
+        exists = _execute(conn, 
+            "SELECT 1 FROM payroll_rule_sets WHERE country_code='EG' "
+            "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
+        ).fetchone()
+        if not exists:
+            seed_egypt_2026(conn)
+    return country
+
+
+def missing_payroll_rule_categories(conn, employees, period):
+    country = current_tax_country(conn)
+    missing = set()
+    period_start = date.fromisoformat(period + "-01").isoformat()
+    for employee in employees:
+        category = (employee["legal_category"] or "local").strip().lower()
+        rule = _execute(conn, """
+            SELECT 1 FROM payroll_rule_sets
+            WHERE country_code=? AND category_code=? AND enabled=1
+              AND status='active' AND effective_from<=?
+              AND (effective_to IS NULL OR effective_to>=?)
+            ORDER BY effective_from DESC,id DESC LIMIT 1
+        """, (country, category, period_start, period_start)).fetchone()
+        if not rule:
+            missing.add(category)
+    return sorted(missing)
+
+
+def calculate_payroll_deductions(conn, employee, gross_monthly, period, taxable_gross_monthly=None):
+    """Return automatic monthly deductions, or None when no effective rule is configured."""
+    country = current_tax_country(conn)
+    category = (employee["legal_category"] or "local").strip().lower()
+    rule = _active_rule(conn, country, category, period)
+    if not rule:
+        return None
+    gross = _m(gross_monthly)
+    taxable_gross = _m(gross_monthly if taxable_gross_monthly is None else taxable_gross_monthly)
+    insurance_enabled = int(employee["insurance_enabled"]) if "insurance_enabled" in employee.keys() else 1
+    floor = _d(rule["insurance_floor"])
+    ceiling = _d(rule["insurance_ceiling"])
+    if ceiling > 0 and ceiling < floor:
+        raise ValueError("الحد الأقصى لأجر التأمين أقل من الحد الأدنى في إعدادات القواعد.")
+    if insurance_enabled:
+        insured_wage = _d(employee["insured_wage"])
+        if insured_wage <= 0:
+            insured_wage = gross
+        insured_wage = max(insured_wage, floor)
+        if ceiling > 0:
+            insured_wage = min(insured_wage, ceiling)
+    else:
+        insured_wage = Decimal("0")
+    employee_rate = _d(rule["employee_insurance_rate"])
+    employer_rate = _d(rule["employer_insurance_rate"])
+    if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
+        raise ValueError("نسبة التأمينات يجب أن تكون بين صفر و100.")
+    employee_insurance = _m(insured_wage * employee_rate / Decimal("100"))
+    employer_insurance = _m(insured_wage * employer_rate / Decimal("100"))
+    exemption = _d(rule["personal_exemption_annual"])
+    # Employee social insurance is deductible from the annual salary-tax base.
+    annual_taxable = max(Decimal("0"), taxable_gross * Decimal("12") -
+                         employee_insurance * Decimal("12") - exemption)
+    rounding_unit = _d(rule["taxable_rounding_unit"] if "taxable_rounding_unit" in rule.keys() else "1")
+    if rounding_unit > 0:
+        annual_taxable = (annual_taxable // rounding_unit) * rounding_unit
+    tier_rows = _execute(conn, """
+        SELECT income_max,lower_bound,upper_bound,rate FROM payroll_tax_tier_brackets
+        WHERE rule_set_id=? ORDER BY CASE WHEN income_max IS NULL THEN 1 ELSE 0 END,
+          CAST(income_max AS NUMERIC),CAST(lower_bound AS NUMERIC),id
+    """, (rule["id"],)).fetchall()
+    brackets = []
+    if tier_rows:
+        tiers = {}
+        for row in tier_rows:
+            tiers.setdefault(row["income_max"], []).append(row)
+        chosen_max = None
+        for tier_max in sorted((x for x in tiers if x is not None), key=lambda x: _d(x)):
+            if annual_taxable <= _d(tier_max):
+                chosen_max = tier_max
+                break
+        if chosen_max is None:
+            if None not in tiers:
+                raise ValueError("شرائح الضريبة لا تغطي مستوى الدخل السنوي.")
+            chosen_max = None
+        brackets = tiers[chosen_max]
+    else:
+        brackets = _execute(conn, """
+            SELECT lower_bound,upper_bound,rate FROM payroll_tax_brackets
+            WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC),id
+        """, (rule["id"],)).fetchall()
+    annual_tax = Decimal("0")
+    if not brackets:
+        raise ValueError("مجموعة قواعد الرواتب مفعّلة لكن لا توجد شرائح ضريبية. أضف الشرائح قبل إنشاء المسير.")
+    if brackets:
+        expected_lower = Decimal("0")
+        for band in brackets:
+            lower = _d(band["lower_bound"])
+            upper = _d(band["upper_bound"]) if band["upper_bound"] not in (None, "") else None
+            rate = _d(band["rate"])
+            if lower != expected_lower or rate < 0 or rate > 100 or (upper is not None and upper <= lower):
+                raise ValueError("شرائح ضريبة المرتبات غير متصلة أو تحتوي على نسبة/حد غير صحيح. راجع إعدادات قواعد الرواتب.")
+            ceiling = upper if upper is not None else annual_taxable
+            portion = max(Decimal("0"), min(annual_taxable, ceiling) - lower)
+            annual_tax += portion * rate / Decimal("100")
+            if upper is None:
+                expected_lower = annual_taxable
+                break
+            expected_lower = upper
+        if annual_taxable > expected_lower and (not brackets or brackets[-1]["upper_bound"] not in (None, "")):
+            raise ValueError("شرائح ضريبة المرتبات لا تغطي كامل الدخل السنوي الخاضع للضريبة.")
+    return {
+        "rule_set_id": rule["id"],
+        "tax": _m(annual_tax / Decimal("12")),
+        "employee_insurance": employee_insurance,
+        "employer_insurance": employer_insurance,
+        "taxable_annual": _m(annual_taxable),
+        "insured_wage": _m(insured_wage),
+        "country_code": country,
+        "category_code": category,
+    }
+
+
+def seed_egypt_2026(conn):
+    """Insert a reviewable Egypt 2026 baseline only when it does not already exist."""
+    existing = _execute(conn, 
+        "SELECT id FROM payroll_rule_sets WHERE country_code='EG' "
+        "AND category_code='local' AND effective_from='2026-01-01' LIMIT 1"
+    ).fetchone()
+    if existing:
+        raise ValueError("إعداد مصر 2026 موجود بالفعل؛ لن يتم استبدال أي تعديلات أو شرائح محفوظة. أنشئ مجموعة جديدة بتاريخ سريان جديد إذا أردت تحديثها.")
+    inserted = _execute(conn, """
+        INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,
+          personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
+          employee_insurance_rate,employer_insurance_rate,notes)
+        VALUES('EG','local','2026-01-01','20000','10','2700','16700','11','18.75',
+          'إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد')
+        ON CONFLICT DO NOTHING
+    """)
+    # Another worker may have inserted the same preset after our initial read.
+    # Never use the conflict row as permission to overwrite its rules or brackets.
+    if inserted.rowcount != 1:
+        raise ValueError("تم إنشاء إعداد مصر 2026 بواسطة عملية أخرى؛ لم يتم تعديل أي قواعد محفوظة.")
+    rule = _execute(conn, """
+        SELECT id FROM payroll_rule_sets
+        WHERE country_code='EG' AND category_code='local' AND effective_from='2026-01-01'
+    """).fetchone()
+    if not rule:
+        raise ValueError("تعذر إنشاء مجموعة قواعد مصر 2026.")
+    rule_id = rule["id"]
+    tiers = [
+        ("600000", [("0","40000","0"),("40000","55000","10"),("55000","70000","15"),
+                    ("70000","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("700000", [("0","55000","10"),("55000","70000","15"),("70000","200000","20"),
+                    ("200000","400000","22.5"),("400000",None,"25")]),
+        ("800000", [("0","70000","15"),("70000","200000","20"),("200000","400000","22.5"),
+                    ("400000",None,"25")]),
+        ("900000", [("0","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("1200000", [("0","400000","22.5"),("400000",None,"25")]),
+        (None, [("0","1200000","25"),("1200000",None,"27.5")]),
+    ]
+    _executemany(conn, """
+        INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+        VALUES(?,?,?,?,?)
+    """, [(rule_id, income_max, lower, upper, rate)
+          for income_max, bands in tiers for lower, upper, rate in bands])
+    return rule_id
+
+
+def _tier_rows_signature(rows):
+    return tuple(
+        (
+            None if row["income_max"] in (None, "") else _d(row["income_max"]),
+            _d(row["lower_bound"]),
+            None if row["upper_bound"] in (None, "") else _d(row["upper_bound"]),
+            _d(row["rate"]),
+        )
+        for row in rows
+    )
+
+
+def _tier_list_signature(tiers):
+    return tuple(
+        (
+            None if income_max is None else _d(income_max),
+            _d(lower),
+            None if upper is None else _d(upper),
+            _d(rate),
+        )
+        for income_max, bands in tiers
+        for lower, upper, rate in bands
+    )
+
+
+def upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(conn):
+    """Upgrade only the untouched legacy preset; recalculate automatic draft lines only."""
+    rule = _execute(conn, """
+        SELECT * FROM payroll_rule_sets
+        WHERE country_code='EG' AND category_code='local'
+          AND effective_from='2026-01-01'
+        ORDER BY id DESC LIMIT 1
+    """).fetchone()
+    if not rule:
+        return {"tier_status": "missing", "draft_lines_recalculated": 0,
+                "posted_lines_review_required": 0}
+
+    baseline_metadata = (
+        _d(rule["personal_exemption_annual"]) == Decimal("20000")
+        and _d(rule["taxable_rounding_unit"]) == Decimal("10")
+        and _d(rule["insurance_floor"]) == Decimal("2700")
+        and _d(rule["insurance_ceiling"]) == Decimal("16700")
+        and _d(rule["employee_insurance_rate"]) == Decimal("11")
+        and _d(rule["employer_insurance_rate"]) == Decimal("18.75")
+        and str(rule["notes"] or "") == "إعداد مبدئي لمصر 2026؛ راجع المعاملة القانونية قبل الاعتماد"
+    )
+    if not baseline_metadata:
+        return {"tier_status": "custom", "draft_lines_recalculated": 0,
+                "posted_lines_review_required": 0}
+
+    canonical = [
+        ("600000", [("0","40000","0"),("40000","55000","10"),("55000","70000","15"),
+                    ("70000","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("700000", [("0","55000","10"),("55000","70000","15"),("70000","200000","20"),
+                    ("200000","400000","22.5"),("400000",None,"25")]),
+        ("800000", [("0","70000","15"),("70000","200000","20"),("200000","400000","22.5"),
+                    ("400000",None,"25")]),
+        ("900000", [("0","200000","20"),("200000","400000","22.5"),("400000",None,"25")]),
+        ("1200000", [("0","400000","22.5"),("400000",None,"25")]),
+        (None, [("0","1200000","25"),("1200000",None,"27.5")]),
+    ]
+    legacy = canonical[:-1] + [(None, [("0",None,"27.5")])]
+    current_rows = _execute(conn, """
+        SELECT income_max,lower_bound,upper_bound,rate
+        FROM payroll_tax_tier_brackets WHERE rule_set_id=?
+        ORDER BY CASE WHEN income_max IS NULL THEN 1 ELSE 0 END,
+          CAST(income_max AS NUMERIC),CAST(lower_bound AS NUMERIC),id
+    """, (rule["id"],)).fetchall()
+    current_signature = _tier_rows_signature(current_rows)
+    if current_signature == _tier_list_signature(canonical):
+        tier_status = "already_current"
+    elif current_signature == _tier_list_signature(legacy):
+        _execute(conn, "DELETE FROM payroll_tax_tier_brackets WHERE rule_set_id=?", (rule["id"],))
+        _executemany(conn, """
+            INSERT INTO payroll_tax_tier_brackets(rule_set_id,income_max,lower_bound,upper_bound,rate)
+            VALUES(?,?,?,?,?)
+        """, [
+            (rule["id"], income_max, lower, upper, rate)
+            for income_max, bands in canonical for lower, upper, rate in bands
+        ])
+        tier_status = "updated"
+    else:
+        return {"tier_status": "custom", "draft_lines_recalculated": 0,
+                "posted_lines_review_required": 0}
+
+    posted = _execute(conn, """
+        SELECT COUNT(*) AS row_count
+        FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
+        WHERE r.status='posted' AND r.period>='2026-01'
+          AND l.rule_set_id=?
+    """, (rule["id"],)).fetchone()
+    draft_rows = _execute(conn, """
+        SELECT l.id,l.gross_pay,l.absence_deduction,l.stamp_duty,
+               l.advance_deduction,l.other_deductions,l.penalty_deduction,
+               l.insured_wage,r.period,e.legal_category,e.insurance_enabled
+        FROM payroll_lines l
+        JOIN payroll_runs r ON r.id=l.run_id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE r.status='draft' AND r.period>='2026-01'
+          AND l.rule_set_id=? AND e.legal_category='local'
+        ORDER BY r.period,l.id
+    """, (rule["id"],)).fetchall()
+    recalculated = 0
+    for line in draft_rows:
+        employee = {
+            "legal_category": line["legal_category"],
+            "insurance_enabled": line["insurance_enabled"],
+            "insured_wage": line["insured_wage"],
+        }
+        gross = _m(line["gross_pay"])
+        absence = _m(line["absence_deduction"])
+        automatic = calculate_payroll_deductions(
+            conn, employee, gross, line["period"],
+            taxable_gross_monthly=max(Decimal("0"), gross - absence),
+        )
+        if automatic is None:
+            raise ValueError("تعذر إعادة حساب مسودة المرتبات: لا توجد قاعدة ضريبية سارية.")
+        if automatic["rule_set_id"] != rule["id"]:
+            continue
+        stamp = _m(line["stamp_duty"])
+        advance = _m(line["advance_deduction"])
+        other = _m(line["other_deductions"])
+        penalty = _m(line["penalty_deduction"])
+        employer_insurance = automatic["employer_insurance"]
+        employee_insurance = automatic["employee_insurance"]
+        tax = automatic["tax"]
+        total_entitlements = _m(gross + employer_insurance)
+        total_deductions = _m(
+            employer_insurance + employee_insurance + tax + stamp
+            + advance + other + absence + penalty
+        )
+        net_pay = _m(total_entitlements - total_deductions)
+        _execute(conn, """
+            UPDATE payroll_lines SET taxable_income_tax=?,employee_insurance=?,
+                employer_insurance=?,rule_set_id=?,taxable_annual=?,insured_wage=?,
+                total_entitlements=?,total_deductions=?,net_pay=?
+            WHERE id=?
+        """, (
+            str(tax), str(employee_insurance), str(employer_insurance),
+            automatic["rule_set_id"], str(automatic["taxable_annual"]),
+            str(automatic["insured_wage"]), str(total_entitlements),
+            str(total_deductions), str(net_pay), line["id"],
+        ))
+        if table_exists(conn, "payroll_line_items"):
+            for item_name, amount in (
+                ("ضريبة المرتبات", tax),
+                ("حصة الموظف في التأمينات", employee_insurance),
+                ("حصة الشركة في التأمينات", employer_insurance),
+            ):
+                _execute(conn, """UPDATE payroll_line_items SET amount=?
+                    WHERE payroll_line_id=? AND source_type='payroll_compliance' AND item_name=?""",
+                    (str(amount), line["id"], item_name))
+        recalculated += 1
+    return {
+        "tier_status": tier_status,
+        "draft_lines_recalculated": recalculated,
+        "posted_lines_review_required": int(posted["row_count"] or 0),
+    }
+
+
+
+def _authorized(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        permissions = set(session.get("permissions", []))
+        required = "workforce.manage" if request.method == "POST" else "workforce.view"
+        fallback = {"admin", "accountant"} if required == "workforce.manage" else {"admin", "accountant", "viewer"}
+        if required not in permissions and session.get("role") not in fallback:
+            flash("لا تملك صلاحية عرض أو إدارة قواعد الرواتب.", "error")
+            return redirect(url_for("dashboard"))
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+@payroll_compliance_bp.route("/hr/payroll-rules", methods=["GET", "POST"])
+@_authorized
+def rules():
+    conn = _db()
+    try:
+        if request.method == "POST":
+            action = request.form.get("action")
+            if action == "seed_egypt_2026":
+                rule_id = seed_egypt_2026(conn)
+                _audit(conn, "payroll_rule_preset_loaded", "EG/local/2026-01-01 id=" + str(rule_id))
+                conn.commit()
+                flash("تم تحميل إعداد مصر 2026 للفئة local. راجع القواعد والشرائح قبل تشغيل أول مسير.", "success")
+            elif action == "upgrade_egypt_2026_tiers":
+                if session.get("role") != "admin":
+                    raise ValueError("تحديث بيانات شرائح مصر 2026 متاح لمدير النظام فقط.")
+                begin_write_transaction(conn)
+                upgrade_result = upgrade_egypt_2026_tax_tiers_and_recalculate_drafts(conn)
+                if upgrade_result["tier_status"] in {"updated", "already_current"}:
+                    _audit(conn, "egypt_2026_payroll_tiers_reconciled",
+                           "status=" + upgrade_result["tier_status"]
+                           + " draft_lines=" + str(upgrade_result["draft_lines_recalculated"])
+                           + " posted_lines_review=" + str(upgrade_result["posted_lines_review_required"]))
+                    conn.commit()
+                    flash("تمت مراجعة شرائح مصر 2026 وإعادة حساب " + str(upgrade_result["draft_lines_recalculated"])
+                          + " سطرًا في المسيرات غير المرحلة. المسيرات المرحلة التي تحتاج مراجعة: "
+                          + str(upgrade_result["posted_lines_review_required"]) + ".", "success")
+                else:
+                    conn.rollback()
+                    flash("لم يتم تغيير أي بيانات: الإعداد غير موجود أو يحتوي على تعديلات مخصصة تحتاج مراجعة يدوية.", "warning")
+            elif action == "approve_rule":
+                if session.get("role") != "admin":
+                    raise ValueError("اعتماد قواعد الضرائب والتأمينات متاح لمدير النظام فقط.")
+                rule_id = int(request.form.get("rule_set_id"))
+                approve_payroll_rule(conn, rule_id)
+                _audit(conn, "payroll_rule_approved", "id=" + str(rule_id))
+                conn.commit()
+                flash("تم اعتماد مجموعة القواعد. يلزم تفعيلها لتطبيقها على المرتبات الجديدة.", "success")
+            elif action == "activate_rule":
+                if session.get("role") != "admin":
+                    raise ValueError("تفعيل قواعد الضرائب والتأمينات متاح لمدير النظام فقط.")
+                rule_id = int(request.form.get("rule_set_id"))
+                activate_payroll_rule(conn, rule_id)
+                _audit(conn, "payroll_rule_activated", "id=" + str(rule_id))
+                conn.commit()
+                flash("تم تفعيل إصدار القواعد دون تعديل أي مسيرات مرحلة.", "success")
+            elif action == "create_rule":
+                country = request.form.get("country_code", "").strip().upper()
+                category = request.form.get("category_code", "").strip().lower()
+                effective, effective_to = _validate_rule_period(request.form.get("effective_from", ""), request.form.get("effective_to", "").strip() or None)
+                exemption = _m(request.form.get("personal_exemption_annual"))
+                rounding_unit = _m(request.form.get("taxable_rounding_unit", "1"))
+                floor = _m(request.form.get("insurance_floor"))
+                ceiling = _m(request.form.get("insurance_ceiling"))
+                employee_rate = _d(request.form.get("employee_insurance_rate"))
+                employer_rate = _d(request.form.get("employer_insurance_rate"))
+                if country not in {"EG", "SA"} or not category or min(exemption, floor, ceiling) < 0 or rounding_unit <= 0:
+                    raise ValueError("الدول المدعومة في إعدادات ضرائب المرتبات هي مصر (EG) والسعودية (SA) فقط، مع إدخال فئة الموظف وحدود صحيحة ووحدة تقريب أكبر من صفر.")
+                if min(employee_rate, employer_rate) < 0 or max(employee_rate, employer_rate) > 100:
+                    raise ValueError("نسب التأمينات يجب أن تكون بين صفر و100.")
+                if ceiling and ceiling < floor:
+                    raise ValueError("الحد الأقصى لأجر التأمين يجب ألا يقل عن الحد الأدنى.")
+                rule_id = insert_and_get_id(conn, """
+                    INSERT INTO payroll_rule_sets(country_code,category_code,effective_from,effective_to,status,
+                      personal_exemption_annual,taxable_rounding_unit,insurance_floor,insurance_ceiling,
+                      employee_insurance_rate,employer_insurance_rate,notes)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (country,category,effective,effective_to,"draft",str(exemption),str(rounding_unit),str(floor),str(ceiling),
+                      str(employee_rate),str(employer_rate),request.form.get("notes","").strip()))
+                _audit(conn, "payroll_rule_created", country + "/" + category + " id=" + str(rule_id))
+                conn.commit()
+                flash("تم إنشاء مجموعة القواعد. أضف شرائح ضريبة الدخل السنوية لها.", "success")
+            elif action == "add_bracket":
+                rule_id = int(request.form.get("rule_set_id"))
+                editable = _execute(conn, "SELECT status FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+                if not editable or editable["status"] != "draft":
+                    raise ValueError("لا يمكن تعديل الشرائح إلا لمجموعة قواعد في حالة مسودة. أنشئ إصدارًا جديدًا للتعديلات.")
+                lower = _m(request.form.get("lower_bound"))
+                upper_raw = request.form.get("upper_bound", "").strip()
+                upper = _m(upper_raw) if upper_raw else None
+                rate = _d(request.form.get("rate"))
+                if lower < 0 or (upper is not None and upper <= lower) or rate < 0 or rate > 100:
+                    raise ValueError("راجع بداية/نهاية الشريحة ونسبة الضريبة.")
+                rule = _execute(conn, "SELECT id FROM payroll_rule_sets WHERE id=?", (rule_id,)).fetchone()
+                if not rule:
+                    raise ValueError("مجموعة القواعد غير موجودة.")
+                existing = _execute(conn, "SELECT lower_bound,upper_bound FROM payroll_tax_brackets WHERE rule_set_id=? ORDER BY CAST(lower_bound AS NUMERIC)", (rule_id,)).fetchall()
+                expected = _d(existing[-1]["upper_bound"]) if existing and existing[-1]["upper_bound"] else (Decimal("0") if not existing else None)
+                if expected is None or lower != expected:
+                    raise ValueError("ابدأ أول شريحة من صفر، واجعل بداية كل شريحة مساوية لنهاية الشريحة السابقة.")
+                if existing and existing[-1]["upper_bound"] in (None, ""):
+                    raise ValueError("لا يمكن إضافة شريحة بعد شريحة مفتوحة النهاية.")
+                _execute(conn, "INSERT INTO payroll_tax_brackets(rule_set_id,lower_bound,upper_bound,rate) VALUES(?,?,?,?)",
+                             (rule_id,str(lower),str(upper) if upper is not None else None,str(rate)))
+                _audit(conn, "payroll_tax_bracket_created", "rule=" + str(rule_id) + " from=" + str(lower))
+                conn.commit()
+                flash("تم حفظ الشريحة الضريبية.", "success")
+            else:
+                raise ValueError("نوع العملية غير معروف.")
+    except (ValueError, KeyError) + DB_ERROR as exc:
+        conn.rollback()
+        flash(str(exc) or "تعذر حفظ قواعد الرواتب.", "error")
+    country = current_tax_country(conn)
+    rule_sets = _execute(conn, """
+        SELECT r.*,
+          (SELECT COUNT(*) FROM payroll_tax_brackets b WHERE b.rule_set_id=r.id) +
+          (SELECT COUNT(*) FROM payroll_tax_tier_brackets t WHERE t.rule_set_id=r.id) bracket_count
+        FROM payroll_rule_sets r ORDER BY country_code,category_code,effective_from DESC
+    """).fetchall()
+    # SQLite compound SELECTs only allow ORDER BY output columns/aliases.
+    # Put the UNION in a subquery so numeric sorting is legal and deterministic.
+    brackets = _execute(conn, """
+        SELECT * FROM (
+            SELECT b.id,b.rule_set_id,b.lower_bound,b.upper_bound,b.rate,
+                   r.country_code,r.category_code,NULL AS income_max,'standard' AS bracket_kind
+            FROM payroll_tax_brackets b JOIN payroll_rule_sets r ON r.id=b.rule_set_id
+            UNION ALL
+            SELECT t.id,t.rule_set_id,t.lower_bound,t.upper_bound,t.rate,
+                   r.country_code,r.category_code,t.income_max,'tier' AS bracket_kind
+            FROM payroll_tax_tier_brackets t JOIN payroll_rule_sets r ON r.id=t.rule_set_id
+        ) AS all_brackets
+        ORDER BY country_code,category_code,bracket_kind,
+                 CAST(lower_bound AS NUMERIC),id
+    """).fetchall()
+    conn.close()
+    return render_template("payroll_rules.html", rule_sets=rule_sets, brackets=brackets,
+                           current_country=country, today=date.today().isoformat())
+
+
+def _audit(conn, action, details):
+    if table_exists(conn, "audit_log"):
+        _execute(conn, "INSERT INTO audit_log(user_id,action,details,created_at) VALUES(?,?,?,CURRENT_TIMESTAMP)",
+                     (session.get("user_id"), action, details))
+
+
+@payroll_compliance_bp.route("/hr/payroll-compliance")
+@_authorized
+def report():
+    period = request.args.get("period", date.today().strftime("%Y-%m"))
+    try:
+        date.fromisoformat(period + "-01")
+    except ValueError:
+        period = date.today().strftime("%Y-%m")
+    conn = _db()
+    rows = _execute(conn, """
+        SELECT l.*,e.employee_code,e.full_name,e.legal_category,r.status
+        FROM payroll_lines l
+        JOIN payroll_runs r ON r.id=l.run_id
+        JOIN employees e ON e.id=l.employee_id
+        WHERE r.period=? AND r.status='posted'
+        ORDER BY e.employee_code
+    """, (period,)).fetchall()
+    totals = {
+        "gross": sum((_d(x["gross_pay"]) for x in rows), Decimal("0")),
+        "net": sum((_d(x["net_pay"]) for x in rows), Decimal("0")),
+        "tax": sum((_d(x["taxable_income_tax"]) for x in rows), Decimal("0")),
+        "employee_insurance": sum((_d(x["employee_insurance"]) for x in rows), Decimal("0")),
+        "employer_insurance": sum((_d(x["employer_insurance"]) for x in rows), Decimal("0")),
+    }
+    obligations = _payroll_obligations(conn, period)
+    conn.close()
+    return render_template(
+        "payroll_compliance_report.html", period=period, rows=rows,
+        totals=totals, obligations=obligations,
+    )
+
+
+def _lock_posted_payroll_period(conn, period):
+    """Serialize statutory payments against every posted run in the period."""
+    lock_clause = " FOR UPDATE" if database_dialect(conn) == "postgresql" else ""
+    _execute(conn, "SELECT id FROM payroll_runs WHERE period=? AND status='posted' "
+             "ORDER BY id" + lock_clause, (period,)).fetchall()
+
+
+def _payroll_obligations(conn, period):
+    rows = _execute(conn, """
+        SELECT l.taxable_income_tax,l.employee_insurance,l.employer_insurance
+        FROM payroll_lines l JOIN payroll_runs r ON r.id=l.run_id
+        WHERE r.period=? AND r.status='posted'
+    """, (period,)).fetchall()
+    due = {
+        "salary_tax": sum((_d(row["taxable_income_tax"]) for row in rows), Decimal("0")),
+        "social_insurance": sum((_d(row["employee_insurance"]) + _d(row["employer_insurance"])
+                                for row in rows), Decimal("0")),
+    }
+    paid_rows = _execute(conn, """
+        SELECT payment_type,amount FROM payroll_statutory_payments WHERE period=?
+    """, (period,)).fetchall()
+    paid = {"salary_tax": Decimal("0"), "social_insurance": Decimal("0")}
+    for row in paid_rows:
+        paid[row["payment_type"]] += _d(row["amount"])
+    return {
+        key: {"due": _m(value), "paid": _m(paid[key]), "remaining": _m(value - paid[key])}
+        for key, value in due.items()
+    }
+
+
+@payroll_compliance_bp.route("/hr/payroll-compliance/payments", methods=["GET", "POST"])
+@_authorized
+def payments():
+    period = request.values.get("period", date.today().strftime("%Y-%m"))
+    try:
+        date.fromisoformat(period + "-01")
+    except ValueError:
+        period = date.today().strftime("%Y-%m")
+    conn = _db()
+    if request.method == "POST":
+        try:
+            period = request.form.get("period", period)
+            date.fromisoformat(period + "-01")
+            payment_type = request.form.get("payment_type", "")
+            if payment_type not in {"salary_tax", "social_insurance"}:
+                raise ValueError("نوع السداد يجب أن يكون ضريبة مرتبات أو تأمينات اجتماعية.")
+            payment_date = date.fromisoformat(request.form.get("payment_date", "")).isoformat()
+            amount = _m(request.form.get("amount"))
+            liability_id = int(request.form.get("liability_account_id"))
+            cash_id = int(request.form.get("cash_account_id"))
+            if amount <= 0:
+                raise ValueError("قيمة السداد يجب أن تكون أكبر من صفر.")
+            liability = _execute(conn, 
+                "SELECT id,account_type,is_group,active FROM accounts WHERE id=?", (liability_id,)
+            ).fetchone()
+            cash = _execute(conn, 
+                "SELECT id,code,name_ar,account_type,is_group,active FROM accounts WHERE id=?", (cash_id,)
+            ).fetchone()
+            if not liability or liability["account_type"] != "liability" or liability["is_group"] or not liability["active"]:
+                raise ValueError("اختر حساب التزام تفصيليًا ونشطًا للضريبة أو التأمينات.")
+            cash_name = (cash["name_ar"] or "").lower() if cash else ""
+            cash_codes = {"1000","1110","1120","1121","1122"}
+            cash_words = ("صندوق","بنك","بنوك","مصرف","نقد","cash","bank")
+            if (not cash or cash["account_type"] != "asset" or cash["is_group"] or not cash["active"]
+                or (cash["code"] not in cash_codes and not any(word in cash_name for word in cash_words))):
+                raise ValueError("اختر حساب صندوق أو بنك تفصيليًا ونشطًا.")
+            begin_write_transaction(conn)
+            _lock_posted_payroll_period(conn, period)
+            obligation = _payroll_obligations(conn, period)[payment_type]
+            if amount > obligation["remaining"]:
+                raise ValueError("قيمة السداد تتجاوز الرصيد المستحق للمسير. المتبقي: " + str(obligation["remaining"]))
+            stamp = date.today().strftime("%Y%m%d") + "-" + str(datetime_now_stamp())
+            prefix = "PAYTAX-" if payment_type == "salary_tax" else "PAYINS-"
+            reference = (request.form.get("reference", "").strip() or prefix + period + "-" + stamp)
+            if len(reference) > 100:
+                raise ValueError("مرجع السداد لا يجب أن يتجاوز 100 حرف.")
+            if _execute(conn, "SELECT 1 FROM payroll_statutory_payments WHERE reference=?", (reference,)).fetchone():
+                raise ValueError("مرجع السداد مستخدم بالفعل.")
+            description = "سداد ضريبة مرتبات عن " + period if payment_type == "salary_tax" else "سداد تأمينات اجتماعية عن " + period
+            journal_id = post_journal(
+                conn, payment_date, reference, description,
+                [(liability_id, amount, 0, "تسوية الالتزام المستحق"),
+                 (cash_id, 0, amount, "سداد نقدي/بنكي للجهة المختصة")],
+                session.get("user_id"),
+            )
+            _execute(conn, """
+                INSERT INTO payroll_statutory_payments(period,payment_type,payment_date,amount,
+                    liability_account_id,cash_account_id,journal_entry_id,reference,created_by)
+                VALUES(?,?,?,?,?,?,?,?,?)
+            """, (period,payment_type,payment_date,str(amount),liability_id,cash_id,journal_id,
+                  reference,session.get("user_id")))
+            _audit(conn, "payroll_statutory_payment", reference + " amount=" + str(amount))
+            conn.commit()
+            flash("تم تسجيل السداد وترحيل قيده المحاسبي.", "success")
+        except (ValueError, KeyError, TypeError) + DB_ERROR as exc:
+            conn.rollback()
+            flash(str(exc) or "تعذر تسجيل السداد.", "error")
+    obligations = _payroll_obligations(conn, period)
+    accounts = _execute(conn, """
+        SELECT id,code,name_ar,account_type FROM accounts
+        WHERE active=1 AND is_group=0 AND account_type IN ('asset','liability')
+        ORDER BY code
+    """).fetchall()
+    payment_rows = _execute(conn, """
+        SELECT p.*,a.code liability_code,a.name_ar liability_name,c.code cash_code,c.name_ar cash_name
+        FROM payroll_statutory_payments p
+        JOIN accounts a ON a.id=p.liability_account_id
+        JOIN accounts c ON c.id=p.cash_account_id
+        WHERE p.period=? ORDER BY p.id DESC
+    """, (period,)).fetchall()
+    conn.close()
+    return render_template("payroll_statutory_payments.html", period=period,
+                           obligations=obligations, accounts=accounts, payments=payment_rows,
+                           today=date.today().isoformat())
+
+
+def datetime_now_stamp():
+    from datetime import datetime
+    return datetime.now().strftime("%H%M%S%f")

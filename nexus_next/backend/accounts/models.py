@@ -1,0 +1,21 @@
+"""نموذج المستخدم المخصص وحقول العرض واللغة المفضلة في Admrail ERP v2."""
+
+from django.contrib.auth.models import AbstractUser
+from django.db import models
+
+class User(AbstractUser):
+    """يمثل مستخدم النظام؛ وتُدار الصلاحيات عبر مجموعات Django وأذوناتها."""
+    display_name = models.CharField(max_length=160, blank=True)
+    preferred_language = models.CharField(max_length=8, default="ar")
+    theme_preference = models.CharField(
+        max_length=10,
+        choices=[("light", "فاتح"), ("dark", "داكن"), ("system", "حسب الجهاز")],
+        default="system",
+    )
+
+    class Meta:
+        verbose_name = "مستخدم"
+        verbose_name_plural = "المستخدمون"
+
+    def __str__(self):
+        return self.display_name or self.username
