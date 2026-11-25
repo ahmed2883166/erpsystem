@@ -287,7 +287,7 @@ def post_treasury_transaction(transaction_id, user=None):
                 **(
                     fx_snapshot
                     if foreign and (
-                        doc.kind == TreasuryTransaction.Kind.RECEIPT
+                        (doc.kind == TreasuryTransaction.Kind.RECEIPT and account.pk == source.account_id)
                         or (doc.kind == TreasuryTransaction.Kind.PAYMENT and account.pk == doc.counter_account_id)
                     )
                     else {}
@@ -299,7 +299,7 @@ def post_treasury_transaction(transaction_id, user=None):
             JournalLine(
                 entry=entry, account=account, debit=0, credit=amount,
                 description=description,
-                **(fx_snapshot if foreign and doc.kind == TreasuryTransaction.Kind.RECEIPT else {}),
+                **(fx_snapshot if foreign and doc.kind == TreasuryTransaction.Kind.RECEIPT and account.pk == doc.counter_account_id else {}),
             )
             for account, amount in credit_lines if amount > 0
         ],
