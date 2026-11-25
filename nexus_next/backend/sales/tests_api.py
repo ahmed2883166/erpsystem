@@ -2479,4 +2479,75 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(invoice_templates.status_code, 200, invoice_templates.data)
         self.assertEqual(len(invoice_templates.data), 0)
 
+    def test_sales_performance_report_compares_sales_returns_and_gross_profit(self):
+        delivery_id, delivery_line_id = self._create_delivery("REPORT-DEL-001")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "REPORT-INV-001",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": delivery_line_id,
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "REPORT-RET-001",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        report = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-10&date_to=2026-03-12"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["totals"]["invoice_count"], 1)
+        self.assertEqual(report.data["totals"]["return_count"], 1)
+        self.assertEqual(report.data["totals"]["sales_net"], "200.0000")
+        self.assertEqual(report.data["totals"]["sales_tax"], "28.0000")
+        self.assertEqual(report.data["totals"]["return_net"], "100.0000")
+        self.assertEqual(report.data["totals"]["return_tax"], "14.0000")
+        self.assertEqual(report.data["totals"]["net_sales"], "100.0000")
+        self.assertEqual(report.data["totals"]["net_cost"], "40.0000")
+        self.assertEqual(report.data["totals"]["gross_profit"], "60.0000")
+
+        customer_row = report.data["by_customer"][0]
+        self.assertEqual(customer_row["customer"], self.customer.pk)
+        self.assertEqual(customer_row["sales_net"], "200.0000")
+        self.assertEqual(customer_row["return_net"], "100.0000")
+        self.assertEqual(customer_row["gross_profit"], "60.0000")
+
+        product_row = report.data["by_product"][0]
+        self.assertEqual(product_row["product"], self.product.pk)
+        self.assertEqual(product_row["quantity_sold"], "2.0000")
+        self.assertEqual(product_row["quantity_returned"], "1.0000")
+        self.assertEqual(product_row["net_sales"], "100.0000")
+        self.assertEqual(product_row["gross_profit"], "60.0000")
+
+        invalid_period = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-13&date_to=2026-03-12"
+        )
+        self.assertEqual(invalid_period.status_code, 400, invalid_period.data)
+
+
 
