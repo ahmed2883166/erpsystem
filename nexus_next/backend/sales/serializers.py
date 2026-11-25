@@ -516,8 +516,14 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 product = line.get("product")
                 if not product or product.product_type != Product.ProductType.SERVICE or product.company_id != company.pk or not product.is_active:
                     raise serializers.ValidationError({"lines": "فاتورة الخدمة تقبل خدمات تابعة للشركة فقط، دون بنود مخزنية."})
-                if not line.get("quantity"):
+                quantity = line.get("quantity")
+                if not quantity:
                     raise serializers.ValidationError({"lines": "الكمية مطلوبة لكل خدمة."})
+                quantum = Decimal("1").scaleb(-product.unit.decimal_places)
+                if quantity != quantity.quantize(quantum):
+                    raise serializers.ValidationError({
+                        "lines": f"كمية الخدمة {product.code} تتجاوز دقة وحدة القياس ({product.unit.decimal_places} منازل عشرية)."
+                    })
         for line in lines:
             if transaction_currency and line.get("transaction_unit_price") is None:
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
