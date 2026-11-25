@@ -87,6 +87,8 @@ def post_customer_receipt_batch(batch_id, user):
     ).get(pk=batch_id)
     if batch.status != CustomerReceiptBatch.Status.DRAFT:
         raise ValidationError("سند القبض المجمع مرحّل بالفعل.")
+    if not batch.customer.is_active:
+        raise ValidationError("لا يمكن ترحيل سند قبض لعميل موقوف.")
     if not batch.branch_id or not batch.branch.is_active:
         raise ValidationError("يجب اختيار فرع نشط لسند القبض.")
     year = FiscalYear.objects.filter(
