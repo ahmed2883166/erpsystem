@@ -401,7 +401,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
     @transaction.atomic
     def perform_destroy(self, instance):
         """حذف فاتورة مسودة بلا تحصيل أو اعتماد أو مردود أو أثر إعادة تقييم."""
-        invoice = SalesInvoice.objects.select_for_update().select_related(
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related(
             "company", "delivery__warehouse", "branch"
         ).get(pk=instance.pk)
         self._check_write(invoice.company_id)
@@ -823,7 +823,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             "invoice", "invoice__delivery__warehouse", "invoice__branch", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(receipt.company_id)
-        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse", "branch").get(pk=receipt.invoice_id)
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related("delivery__warehouse", "branch").get(pk=receipt.invoice_id)
         if invoice.delivery_id:
             accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
         else:
