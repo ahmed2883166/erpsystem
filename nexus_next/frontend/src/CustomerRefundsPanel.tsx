@@ -64,6 +64,24 @@ export default function CustomerRefundsPanel({
     : [];
   const selectedExchangeRate = ratesForRefund.find(row => row.id === Number(exchangeRateId)) || ratesForRefund[0];
   const refundTreasuryAccounts = treasuryAccounts.filter(row => row.is_active && row.currency_code === refundCurrencyCode);
+  const refundedNominalByReturn = useMemo(() => {
+    const totals = new Map<number, number>();
+    for (const row of rows) {
+      if (row.source_return !== null && row.status === "posted" && row.transaction_amount) {
+        totals.set(row.source_return, (totals.get(row.source_return) || 0) + Number(row.transaction_amount));
+      }
+    }
+    return totals;
+  }, [rows]);
+  const selectedReturnNominalAvailable = selectedReturn?.transaction_grand_total
+    ? Math.max(Number(selectedReturn.transaction_grand_total) - (refundedNominalByReturn.get(selectedReturn.id) || 0), 0)
+    : 0;
+
+  useEffect(() => {
+    setTreasuryAccount("");
+    setAmount("");
+    setExchangeRateId("");
+  }, [refundCurrencyId, sourceKind]);
   const selectedReturnAvailable = selectedReturn
     ? Math.max(Number(selectedReturn.grand_total) - (refundedByReturn.get(selectedReturn.id) || 0), 0)
     : 0;
@@ -147,7 +165,7 @@ export default function CustomerRefundsPanel({
         <select required value={sourceReturn} onChange={e => setSourceReturn(e.target.value)}>
           <option value="">اختر مردودًا مرحّلًا</option>
           {availableReturns.map(row => <option key={row.id} value={row.id}>
-            {row.return_number} · {row.customer_name} · المتبقي من قيمة المردود {money(String(Math.max(Number(row.grand_total) - (refundedByReturn.get(row.id) || 0), 0)))}
+            {row.return_number} · {row.customer_name} · المتبقي {row.transaction_currency_code && row.transaction_grand_total ? `${money(String(Math.max(Number(row.transaction_grand_total) - (refundedNominalByReturn.get(row.id) || 0), 0)))} ${row.transaction_currency_code}` : money(String(Math.max(Number(row.grand_total) - (refundedByReturn.get(row.id) || 0), 0)))}
           </option>)}
         </select>
       </label> : <label>الدفعة المقدمة
@@ -194,7 +212,7 @@ export default function CustomerRefundsPanel({
           {busy ? "جارٍ الحفظ…" : "إنشاء مسودة رد"}
         </button>
       </div>
-      {selectedReturn && <p className="inventory-report-note inventory-wide">العميل: {selectedReturn.customer_name} · المتبقي بالعملة الأساسية: {money(String(selectedReturnAvailable))}. {refundCurrencyId ? "سيتم الصرف من خزينة بنفس عملة الفاتورة وبسعر صرف معتمد في تاريخ الرد أو قبله." : "الصرف بالعملة الأساسية."} الصرف يقتصر على الرصيد الدائن الصافي للعميل.</p>}
+      {selectedReturn && <p className="inventory-report-note inventory-wide">العميل: {selectedReturn.customer_name} · المتبقي بالعملة الأساسية: {money(String(selectedReturnAvailable))}. {refundCurrencyId ? `المتبقي الاسمي: ${money(String(selectedReturnNominalAvailable))} ${refundCurrencyCode}. سيتم الصرف من خزينة بنفس العملة وبسعر صرف معتمد.` : "الصرف بالعملة الأساسية."} الصرف يقتصر على الرصيد الدائن الصافي للعميل.</p>}
       {selectedBatch && <p className="inventory-report-note inventory-wide">العميل: {selectedBatch.customer_name} · المتاح غير المخصص حاليًا: {money(selectedBatch.unallocated_amount)}.</p>}
     </form>
     <div className="data-table-wrap">
