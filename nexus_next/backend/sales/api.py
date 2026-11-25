@@ -771,6 +771,7 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         return qs.filter(
             Q(invoice__delivery__warehouse__branch__in=branches)
             | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(invoice__branch__in=branches)
         )
 
     def create(self, request, *args, **kwargs):
@@ -785,8 +786,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        warehouse = data["invoice"].delivery.warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
+        invoice = data["invoice"]
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(self.request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
@@ -800,8 +805,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
-        warehouse = receipt.invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
+        invoice = receipt.invoice
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         receipt = post_customer_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
@@ -811,12 +820,15 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
     def reverse(self, request, pk=None):
         """عكس آخر سند قبض مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
         receipt = CustomerReceipt.objects.select_for_update(of=("self",)).select_related(
-            "invoice", "invoice__delivery__warehouse", "journal_entry"
+            "invoice", "invoice__delivery__warehouse", "invoice__branch", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(receipt.company_id)
-        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse").get(pk=receipt.invoice_id)
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
+        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse", "branch").get(pk=receipt.invoice_id)
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         if receipt.status != CustomerReceipt.Status.POSTED or not receipt.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند قبض غير مرحّل.")
