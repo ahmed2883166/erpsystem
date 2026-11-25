@@ -373,9 +373,11 @@ class SubledgerReconciliationView(APIView):
         )
 
         sales_journal_ids = _with_reversals(_collect_ids(
-            [sales_invoices, customer_receipts, sales_returns, sales_fx, customer_receipt_batches],
+            [sales_invoices, customer_receipts, sales_returns, sales_fx, customer_receipt_batches, customer_refunds],
             [("journal_entry_id",), ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"),
-             ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id")],
+             ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"),
+             ("treasury_transaction__journal_entry_id", "reversal_treasury_transaction__journal_entry_id",
+              "reversal_journal_entry_id")],
         ))
         purchase_journal_ids = _with_reversals(_collect_ids(
             [purchase_invoices, supplier_payments, supplier_returns, supplier_refunds, purchase_fx,
@@ -522,6 +524,7 @@ class SubledgerReconciliationView(APIView):
         pending = {
             "sales": SalesInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=SalesInvoice.Status.DRAFT).filter(sales_invoice_scope).count()
             + CustomerReceipt.objects.filter(company_id=company_id, receipt_date__lte=as_of, status=CustomerReceipt.Status.DRAFT).filter(receipt_scope).count()
+            + CustomerRefund.objects.filter(company_id=company_id, refund_date__lte=as_of, status=CustomerRefund.Status.DRAFT, branch_id__in=branch_ids).count()
             + CustomerReceiptBatch.objects.filter(company_id=company_id, branch_id__in=branch_ids, receipt_date__lte=as_of, status=CustomerReceiptBatch.Status.DRAFT).count()
             + SalesReturn.objects.filter(company_id=company_id, return_date__lte=as_of, status=SalesReturn.Status.DRAFT).filter(sales_return_scope).count(),
             "purchasing": PurchaseInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=PurchaseInvoice.Status.DRAFT).filter(purchase_invoice_scope).count()
