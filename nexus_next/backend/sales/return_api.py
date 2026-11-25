@@ -16,7 +16,7 @@ class SalesReturnViewSet(SalesBaseViewSet):
     serializer_class = SalesReturnSerializer
     queryset = SalesReturn.objects.select_related(
         "company", "invoice", "invoice__customer", "invoice__delivery", "invoice__branch",
-        "warehouse", "stock_movement", "journal_entry", "cost_journal_entry",
+        "warehouse", "branch", "stock_movement", "journal_entry", "cost_journal_entry",
         "reversal_stock_movement", "reversal_journal_entry", "reversed_by",
     ).prefetch_related("lines__invoice_line__delivery_line__product", "lines__invoice_line__product")
     filterset_fields = ("company", "invoice", "status", "return_date")
