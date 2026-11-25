@@ -41,6 +41,27 @@ def _branch_and_year(receipt, entry_date):
     return branch, year
 
 
+def _branch_and_year_for_invoice(invoice, entry_date):
+    """Resolve branch and open fiscal year for either inventory or direct-expense invoices."""
+    if invoice.branch_id:
+        branch = invoice.branch
+    elif invoice.receipt_id:
+        branch = resolve_warehouse_branch(invoice.company, invoice.receipt.warehouse)
+    else:
+        branch = None
+    if branch and (branch.company_id != invoice.company_id or not branch.is_active):
+        raise ValidationError("فرع فاتورة المشتريات غير نشط أو لا يتبع الشركة.")
+    if not branch:
+        raise ValidationError("يجب تحديد فرع نشط قبل ترحيل مستند المورد.")
+    year = FiscalYear.objects.filter(
+        company=invoice.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=entry_date, end_date__gte=entry_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ مستند المشتريات.")
+    return branch, year
+
+
 def _branch_for_stock_warehouse(company, warehouse):
     """تحديد الفرع الذي يحمل قيمة المخزون أو تكلفة الصرف."""
     branch = resolve_warehouse_branch(company, warehouse)
@@ -772,8 +793,7 @@ def post_supplier_payment(payment_id, user):
         unrealized_adjustment = Decimal("0")
         realized_gain = realized_loss = Decimal("0")
 
-    receipt = invoice.receipt
-    branch, year = _branch_and_year(receipt, payment.payment_date)
+    branch, year = _branch_and_year_for_invoice(invoice, payment.payment_date)
     payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
     payment_account = payment.payment_account or _account(payment.company, cash_role)
