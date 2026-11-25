@@ -861,8 +861,8 @@ export type CustomerStatement = {
 };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
-  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
-  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
+  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string };
+  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string;
     invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; balance_due: string }[] }[];
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
