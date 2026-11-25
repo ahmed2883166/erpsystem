@@ -1975,6 +1975,8 @@ class SalesWorkflowTests(APITestCase):
             "lines": [{"product": self.product.pk, "quantity": "2", "order_line": order_line_id}],
         }, format="json")
         self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["order_snapshot"]["lines"][0]["order_line_id"], order_line_id)
+        self.assertEqual(first.data["order_snapshot"]["lines"][0]["unit_price"], "100.0000")
 
         over_delivery = self.client.post("/api/sales-documents/deliveries/", {
             "company": self.company.pk, "customer": self.customer.pk,
