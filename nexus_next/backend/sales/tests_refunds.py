@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.models import AccountRole, JournalLine
 from treasury.models import TreasuryAccount, TreasuryTransaction
 
 
