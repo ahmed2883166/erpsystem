@@ -299,8 +299,8 @@ class DirectCashFlowApiTests(TestCase):
         )
         opening_entry = JournalEntry.objects.create(
             company=company, branch=branch, fiscal_year=year,
-            entry_number="DIRECT-CF-OPENING", entry_date=date(2026, 1, 5),
-            description="رصيد نقدية قبل بداية فترة القائمة",
+            entry_number="DIRECT-CF-OPENING", entry_date=date(2026, 1, 1),
+            description="رصيد نقدية افتتاحي", source_type=JournalEntry.Source.OPENING,
         )
         JournalLine.objects.create(entry=opening_entry, account=cash, debit=Decimal("500.0000"))
         JournalLine.objects.create(entry=opening_entry, account=capital, credit=Decimal("500.0000"))
@@ -353,7 +353,7 @@ class DirectCashFlowApiTests(TestCase):
         client.force_authenticate(user=user)
         result = client.get(
             f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
-            "&date_from=2026-01-15&date_to=2026-01-31"
+            "&date_from=2026-01-01&date_to=2026-01-31"
         )
 
         self.assertEqual(result.status_code, 200, result.data)
