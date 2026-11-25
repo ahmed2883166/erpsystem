@@ -2372,3 +2372,120 @@ class PurchasingWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(over_reserved.status_code, 400, over_reserved.data)
         self.assertFalse(PurchaseInvoice.objects.filter(invoice_number="INV-DRAFT-RESERVE-003").exists())
+
+    def test_purchase_order_to_receipt_invoice_payment_return_and_refund_ties_together(self):
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-E2E-001", "order_date": "2026-03-01", "expected_date": "2026-03-20",
+            "lines": [{
+                "product": self.product.pk, "quantity": "2", "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(
+            f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order.data["id"], "receipt_number": "GR-E2E-001",
+            "receipt_date": "2026-03-05",
+            "lines": [{
+                "product": self.product.pk, "quantity": "2", "unit_cost": "100",
+                "purchase_order_line": order.data["line_items"][0]["id"],
+            }],
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(
+            f"/api/purchasing/receipts/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).inventory_value,
+            Decimal("200.0000"),
+        )
+
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt.data["id"],
+            "invoice_number": "INV-E2E-001", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt.data["line_items"][0]["id"],
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        self.assertEqual(posted_invoice.data["grand_total"], "228.0000")
+
+        bank = ChartOfAccount.objects.create(
+            company=self.company, code="1112", name_ar="بنك دورة المشتريات",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-E2E",
+            name_ar="بنك دورة المشتريات", currency_code="EGP",
+            opening_balance=Decimal("500"),
+        )
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "payment_number": "PAY-E2E-001", "payment_date": "2026-03-11",
+            "method": "bank", "payment_account": bank.pk, "amount": "228",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted_payment = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+        self.assertEqual(
+            self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data["balance_due"],
+            "0.0000",
+        )
+
+        returned = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-E2E-001", "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["grand_total"], "114.0000")
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("1.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+
+        refund = self.client.post("/api/purchasing/refunds/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "return_document": posted_return.data["id"], "refund_number": "REF-E2E-001",
+            "refund_date": "2026-03-13", "method": "bank", "payment_account": bank.pk,
+            "amount": "50", "reference": "BANK-E2E-REFUND",
+        }, format="json")
+        self.assertEqual(refund.status_code, 201, refund.data)
+        posted_refund = self.client.post(
+            f"/api/purchasing/refunds/{refund.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+        self.assertEqual(posted_refund.data["status"], "posted")
+        self.assertTrue(JournalLine.objects.filter(
+            entry_id=posted_refund.data["journal_entry"], account=bank,
+            debit=Decimal("50.0000"),
+        ).exists())
+        self.assertEqual(
+            supplier_credit_balance(self.company.pk, self.supplier.pk, date(2026, 3, 13)),
+            Decimal("64.0000"),
+        )
+        statement = self.client.get(
+            f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["rows"][-1]["document_type"], "supplier_refund")
+        self.assertEqual(statement.data["closing_balance"], "-64.0000")
