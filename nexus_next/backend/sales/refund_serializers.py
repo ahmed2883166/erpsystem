@@ -2,7 +2,6 @@ from rest_framework import serializers
 
 from companies.access import resolve_warehouse_branch
 from sales.models import CustomerRefund, CustomerReceiptBatch, SalesReturn
-from treasury.models import TreasuryAccount
 
 
 class CustomerRefundSerializer(serializers.ModelSerializer):
