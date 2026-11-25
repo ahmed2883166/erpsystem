@@ -199,3 +199,27 @@ class CustomerReceiptBatchTests(APITestCase):
             self.client.get(f"/api/sales-documents/invoices/{invoice_id}/").data["balance_due"],
             "200.0000",
         )
+    def test_advance_allocation_rejects_non_finite_and_excess_precision(self):
+        invoice_id = self._create_posted_invoice("BATCH-INV-PRECISION")
+        advance = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "receipt_number": "BATCH-ADV-PRECISION",
+            "receipt_date": "2026-03-12",
+            "method": "cash",
+            "amount": "10",
+            "allocations": [],
+        }, format="json")
+        self.assertEqual(advance.status_code, 201, advance.data)
+        posted = self.client.post(
+            f"/api/sales-documents/receipt-batches/{advance.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        for amount in ("NaN", "Infinity", "0.00001"):
+            response = self.client.post(
+                f"/api/sales-documents/receipt-batches/{advance.data['id']}/allocate/",
+                {"invoice": invoice_id, "amount": amount, "allocation_date": "2026-03-13"},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 400, response.data)
