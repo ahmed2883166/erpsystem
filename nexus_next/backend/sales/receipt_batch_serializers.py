@@ -72,10 +72,14 @@ class CustomerReceiptBatchSerializer(serializers.ModelSerializer):
         amount = attrs.get("amount")
         allocations = attrs.get("allocations", [])
 
+        if customer.company_id != company.pk:
+            raise serializers.ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
         if not customer.is_active:
             raise serializers.ValidationError({"customer": "العميل موقوف."})
         if branch.company_id != company.pk:
             raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if not branch.is_active:
+            raise serializers.ValidationError({"branch": "لا يمكن إنشاء سند قبض على فرع موقوف."})
         if (
             CustomerReceipt.objects.filter(
                 company=company, receipt_number=attrs.get("receipt_number"),
