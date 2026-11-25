@@ -5,9 +5,9 @@ type Props={company:Company|null;invoice?:SalesInvoice|null;quotation?:SalesQuot
 type PrintLine={product_code:string;product_name:string;quantity:string;unit_price:string;discount_percent:string;discount_amount:string;tax_rate:string;tax_amount:string;total_amount:string};
 const money=(value:string,currency="")=>formatMoneyEnglish(value)+(currency?" "+currency:"");
 export default function SalesDocumentPrint({company,invoice,quotation,receipt,receiptBatch,salesReturn,onClose}:Props){
- const doc=invoice||quotation||receipt||salesReturn;
- const kind=invoice?"invoice":quotation?"quotation":receipt?"receipt":"return";
- const isInvoice=kind==="invoice",isQuotation=kind==="quotation",isReceipt=kind==="receipt",isReturn=kind==="return";
+ const doc=invoice||quotation||receipt||salesReturn||receiptBatch;
+ const kind=invoice?"invoice":quotation?"quotation":receipt?"receipt":salesReturn?"return":"receipt_batch";
+ const isInvoice=kind==="invoice",isQuotation=kind==="quotation",isReceipt=kind==="receipt"||kind==="receipt_batch",isBatchReceipt=kind==="receipt_batch",isReturn=kind==="return";
  const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
  useEffect(()=>{if(!company?.id)return;let active=true;const type=isQuotation?"quotation":isReceipt?"receipt":isReturn?"return":"invoice";void salesApi.documentTemplates(company.id).then(rows=>{if(active)setDefaultTemplate(rows.find(row=>row.document_type===type&&row.is_active&&row.is_default)||null);}).catch(()=>{if(active)setDefaultTemplate(null);});return()=>{active=false;};},[company?.id,kind]);
  if(!doc)return null;
