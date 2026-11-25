@@ -952,7 +952,7 @@ export const salesApi = {
   // ترحيل سند القبض المجمع إلى الخزينة وحساب العملاء.
   postReceiptBatch: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/post/`, {method:"POST"}); },
   // تخصيص جزء من دفعة مقدمة إلى فاتورة دون حركة نقدية إضافية.
-  allocateReceiptBatch: async (id:number,invoice:number,amount:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/allocate/`, {method:"POST",body:JSON.stringify({invoice,amount})}); },
+  allocateReceiptBatch: async (id:number,invoice:number,amount:string,allocation_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/allocate/`, {method:"POST",body:JSON.stringify({invoice,amount,allocation_date})}); },
   // عكس سند قبض مجمع وقيد التحصيل المرتبط به.
   reverseReceiptBatch: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
 };
