@@ -38,7 +38,7 @@ class SalesReturnViewSet(SalesBaseViewSet):
                 default_company_ids.append(company_id)
         return qs.filter(
             Q(warehouse__branch__in=branches)
-            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(warehouse__isnull=False, warehouse__branch__isnull=True, company_id__in=default_company_ids)
             | Q(branch__in=branches)
         )
 
