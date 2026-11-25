@@ -311,11 +311,11 @@ function Reset-AppPassword {
 function Get-LoginRoles {
     $config = Read-Config
     $appRole = $config.POSTGRES_USER.Replace("'","''")
-    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND rolname !~ '^pg_' AND rolname <> '$appRole' ORDER BY rolname;"
+    $raw = Invoke-Psql "SELECT rolname FROM pg_roles WHERE rolcanlogin AND NOT rolsuper AND NOT rolreplication AND NOT rolbypassrls AND NOT rolcreatedb AND NOT rolcreaterole AND rolname !~ '^pg_' AND rolname <> '$appRole' ORDER BY rolname;"
     return @($raw -split "\r?\n" | Where-Object { $_ })
 }
 function Show-LoginRoles {
-    $sql = "SELECT rolname || ' | ' || CASE WHEN rolsuper THEN 'مسؤول كامل' ELSE 'مستخدم عادي' END || ' | ' || CASE WHEN rolcanlogin THEN 'دخول مفعّل' ELSE 'دخول موقوف' END FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;"
+    $sql = "SELECT rolname || ' | ' || CASE WHEN rolsuper OR rolreplication OR rolbypassrls OR rolcreatedb OR rolcreaterole THEN 'صلاحيات مرتفعة' ELSE 'مستخدم عادي' END || ' | ' || CASE WHEN rolcanlogin THEN 'دخول مفعّل' ELSE 'دخول موقوف' END FROM pg_roles WHERE rolname !~ '^pg_' ORDER BY rolname;"
     $raw = Invoke-Psql $sql
     Write-Host "حسابات PostgreSQL وصلاحياتها:" -ForegroundColor Cyan
     if (-not $raw) { Write-Host "لا توجد حسابات."; return }
@@ -396,8 +396,8 @@ function Remove-LoginRole {
     $name = Select-LoginRole
     if (-not $name) { return }
     $escaped = $name.Replace("'","''")
-    $info = (Invoke-Psql "SELECT json_build_object('superuser',rolsuper,'replication',rolreplication,'bypassrls',rolbypassrls)::text FROM pg_roles WHERE rolname='$escaped';") | ConvertFrom-Json
-    if (-not $info -or $info.superuser -or $info.replication -or $info.bypassrls) { throw "رفض الحذف: هذا الحساب يمتلك صلاحيات مرتفعة." }
+    $info = (Invoke-Psql "SELECT json_build_object('superuser',rolsuper,'replication',rolreplication,'bypassrls',rolbypassrls,'createdb',rolcreatedb,'createrole',rolcreaterole)::text FROM pg_roles WHERE rolname='$escaped';") | ConvertFrom-Json
+    if (-not $info -or $info.superuser -or $info.replication -or $info.bypassrls -or $info.createdb -or $info.createrole) { throw "رفض الحذف: هذا الحساب يمتلك صلاحيات مرتفعة." }
     $config = Read-Config
     if ($name -eq $config.POSTGRES_USER) { throw "رفض الحذف: هذا هو مستخدم اتصال Admrail الحالي." }
     $owned = [int](Invoke-Psql "SELECT count(*) FROM pg_database WHERE datdba=(SELECT oid FROM pg_roles WHERE rolname='$escaped');")
