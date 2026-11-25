@@ -359,7 +359,7 @@ function DirectCashFlowStatementPanel({ companyId }: { companyId: number | null 
       </section>)}
       <h3>أثر تغير أسعار صرف العملات الأجنبية على النقدية</h3>
       <div className="data-table-wrap"><table><thead><tr><th>نوع الحدث</th><th>تاريخ الحدث</th><th>حساب الخزينة</th><th>العملة</th><th>المبلغ الأجنبي</th><th>سعر الصرف</th><th>أثر الصرف</th><th>رقم القيد</th></tr></thead><tbody>
-        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.event_type}-${row.event_date}-${row.journal_number}`}><td>{row.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"}</td><td>{row.event_date}{row.event_type==="reversal"?<small> أصل التقييم: {row.original_revaluation_date}</small>:null}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}</td></tr>)}
+        {report.exchange_rate_effect_details.map(row=><tr key={`${row.account_id}-${row.event_type}-${row.event_date}-${row.journal_number}`}><td>{row.event_type==="reversal"?"عكس إعادة تقييم":"إعادة تقييم"}</td><td>{row.event_date}{row.event_type==="reversal"?<small> أصل التقييم: {row.original_revaluation_date}</small>:null}</td><td>{row.account_code} — {row.account_name}</td><td>{row.currency}</td><td>{money(row.foreign_amount)}</td><td>{row.rate}</td><td>{money(row.difference)}</td><td>{row.journal_number}{row.event_type==="reversal"?<small> أصل: {row.original_journal_number}</small>:null}</td></tr>)}
         {!report.exchange_rate_effect_details.length&&<tr><td colSpan={8}>لا يوجد أثر لإعادة تقييم العملات الأجنبية على النقدية خلال الفترة.</td></tr>}
       </tbody></table></div>
       <h3>الإفصاح عن الاستثمارات غير النقدية</h3>
