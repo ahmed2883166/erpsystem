@@ -19,6 +19,7 @@ class SalesDelivery(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_deliveries")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_deliveries")
     stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_delivery")
+    order = models.ForeignKey("sales.SalesOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="deliveries")
     delivery_number = models.CharField(max_length=40)
     delivery_date = models.DateField()
     customer_reference = models.CharField(max_length=100, blank=True)
@@ -54,6 +55,29 @@ class SalesDelivery(models.Model):
             raise ValidationError({"stock_movement": "حركة الصرف لا تطابق إذن التسليم."})
 
 
+
+
+
+class SalesDeliveryAllocation(models.Model):
+    """ربط بند إذن التسليم ببند أمر البيع لمنع تجاوز الكمية المتفق عليها."""
+    delivery = models.ForeignKey(SalesDelivery, on_delete=models.PROTECT, related_name="order_allocations")
+    order_line = models.ForeignKey(SalesOrderLine, on_delete=models.PROTECT, related_name="delivery_allocations")
+    movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_order_allocation")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("delivery", "order_line"), name="uq_delivery_order_line"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.delivery.order_id != self.order_line.order_id:
+            raise ValidationError("بند أمر البيع لا يتبع أمر التسليم المحدد.")
+        if self.movement_line.product_id != self.order_line.product_id:
+            raise ValidationError("الصنف في إذن التسليم لا يطابق بند أمر البيع.")
+        if self.movement_line.quantity != self.quantity:
+            raise ValidationError("كمية الربط لا تطابق كمية حركة المخزون.")
 
 
 class SalesQuotation(models.Model):
