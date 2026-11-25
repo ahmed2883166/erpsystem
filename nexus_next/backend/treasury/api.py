@@ -179,6 +179,12 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "difference": result.difference,
             "journal_entry": result.journal_entry_id,
             "journal_number": result.journal_entry.entry_number if result.journal_entry_id else "",
+            "status": "posted" if result.journal_entry_id else "no_difference",
+            "can_reverse": can_reverse_treasury_fx_revaluation(result),
+            "reversal_journal_entry": result.reversal_journal_entry_id,
+            "reversal_journal_number": "",
+            "reversed_at": result.reversed_at,
+            "reversed_by_name": "",
         }, status=status.HTTP_201_CREATED)
 
     @decorators.action(detail=True, methods=("post",), url_path="reverse-revaluation")
