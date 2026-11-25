@@ -536,6 +536,43 @@ class DirectCashFlowApiTests(TestCase):
         )
         self.assertEqual(branch_february.data["reconciliation_difference"], Decimal("0.0000"))
 
+        january_indirect = client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(january_indirect.status_code, 200, january_indirect.data)
+        self.assertEqual(january_indirect.data["operating_cash_flow"], Decimal("6000.0000"))
+        self.assertEqual(
+            january_indirect.data["effect_of_exchange_rate_changes"],
+            Decimal("400.0000"),
+        )
+        self.assertEqual(
+            january_indirect.data["net_increase_decrease_in_cash"],
+            Decimal("6400.0000"),
+        )
+        self.assertEqual(january_indirect.data["closing_cash_balance"], Decimal("6400.0000"))
+        self.assertEqual(
+            january_indirect.data["ledger_closing_cash_balance"],
+            Decimal("6400.0000"),
+        )
+        self.assertEqual(january_indirect.data["reconciliation_difference"], Decimal("0.0000"))
+
+        february_indirect = client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?company={company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+        self.assertEqual(february_indirect.status_code, 200, february_indirect.data)
+        self.assertEqual(february_indirect.data["operating_cash_flow"], Decimal("0.0000"))
+        self.assertEqual(february_indirect.data["effect_of_exchange_rate_changes"], Decimal("-200.0000"))
+        self.assertEqual(february_indirect.data["net_increase_decrease_in_cash"], Decimal("-200.0000"))
+        self.assertEqual(february_indirect.data["opening_cash_balance"], Decimal("6400.0000"))
+        self.assertEqual(february_indirect.data["closing_cash_balance"], Decimal("6200.0000"))
+        self.assertEqual(
+            february_indirect.data["ledger_closing_cash_balance"],
+            Decimal("6200.0000"),
+        )
+        self.assertEqual(february_indirect.data["reconciliation_difference"], Decimal("0.0000"))
+
 
 class AccountingApiTests(TestCase):
     def setUp(self):
