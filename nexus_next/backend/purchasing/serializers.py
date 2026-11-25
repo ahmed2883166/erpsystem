@@ -466,30 +466,45 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         lines = validated_data.pop("lines", None)
         invoice = super().update(invoice, validated_data)
         if lines is not None:
-            existing = {line.receipt_line_id: line for line in invoice.lines.select_for_update()}
-            supplied_ids = set()
-            for data in lines:
-                receipt_line = data["receipt_line"]
-                supplied_ids.add(receipt_line.pk)
-                line = existing.get(receipt_line.pk)
-                if line is None:
-                    line = PurchaseInvoiceLine(
-                        invoice=invoice, receipt_line=receipt_line,
-                        billed_quantity=data["billed_quantity"],
+            if invoice.invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+                for old_line in invoice.lines.select_for_update():
+                    old_line.delete()
+                for data in lines:
+                    PurchaseInvoiceLine.objects.create(
+                        invoice=invoice, receipt_line=None,
+                        description=data.get("description", ""),
+                        expense_account=data.get("expense_account"),
+                        cost_center=data.get("cost_center"),
+                        billed_quantity=data.get("billed_quantity", Decimal("1")),
                         unit_price=data.get("unit_price", Decimal("0")),
                         transaction_unit_price=data.get("transaction_unit_price"),
                         tax_rate=data["tax_rate"], tax_code=data.get("tax_code"),
                     )
-                else:
-                    line.billed_quantity = data["billed_quantity"]
-                    line.unit_price = data.get("unit_price", line.unit_price)
-                    line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
-                    line.tax_rate = data.get("tax_rate", line.tax_rate)
-                    line.tax_code = data.get("tax_code", line.tax_code)
-                line.save()
-            for receipt_line_id, old_line in existing.items():
-                if receipt_line_id not in supplied_ids:
-                    old_line.delete()
+            else:
+                existing = {line.receipt_line_id: line for line in invoice.lines.select_for_update()}
+                supplied_ids = set()
+                for data in lines:
+                    receipt_line = data["receipt_line"]
+                    supplied_ids.add(receipt_line.pk)
+                    line = existing.get(receipt_line.pk)
+                    if line is None:
+                        line = PurchaseInvoiceLine(
+                            invoice=invoice, receipt_line=receipt_line,
+                            billed_quantity=data["billed_quantity"],
+                            unit_price=data.get("unit_price", Decimal("0")),
+                            transaction_unit_price=data.get("transaction_unit_price"),
+                            tax_rate=data["tax_rate"], tax_code=data.get("tax_code"),
+                        )
+                    else:
+                        line.billed_quantity = data["billed_quantity"]
+                        line.unit_price = data.get("unit_price", line.unit_price)
+                        line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
+                        line.tax_rate = data.get("tax_rate", line.tax_rate)
+                        line.tax_code = data.get("tax_code", line.tax_code)
+                    line.save()
+                for receipt_line_id, old_line in existing.items():
+                    if receipt_line_id not in supplied_ids:
+                        old_line.delete()
 
             invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
             invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
