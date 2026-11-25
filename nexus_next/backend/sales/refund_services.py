@@ -9,6 +9,8 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from accounting.models import AccountRole, FiscalYear, FxSubledgerRevaluation, JournalEntry
+from companies.models import ExchangeRate
+from core.money import round_currency_amount
 from accounting.services import get_account_for_role
 from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
@@ -122,6 +124,20 @@ def post_customer_refund(refund_id, user):
         if latest_invoice_refund_date and refund.refund_date < latest_invoice_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق على نفس الفاتورة.")
         return_refunded = posted_refunds.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        if source.invoice.transaction_currency_id:
+            if refund.transaction_currency_id != source.invoice.transaction_currency_id:
+                raise ValidationError("عملة الرد يجب أن تطابق عملة الفاتورة الأصلية.")
+            refunded_nominal = posted_refunds.filter(
+                transaction_currency_id=source.invoice.transaction_currency_id,
+            ).aggregate(total=Sum("transaction_amount"))["total"] or Decimal("0")
+            available_nominal = max(
+                (source.transaction_grand_total or Decimal("0")) - refunded_nominal,
+                Decimal("0"),
+            )
+            if refund.transaction_amount is None or refund.transaction_amount > available_nominal:
+                raise ValidationError(f"مبلغ الرد الأجنبي يتجاوز المتبقي من إشعار المردود ({available_nominal}).")
+        elif refund.transaction_currency_id or refund.transaction_amount is not None:
+            raise ValidationError("لا يجوز رد مبلغ أجنبي عن مردود بالعملة الأساسية.")
         # قفل مستندات العميل التي تكوّن رصيده حتى لا يتزامن الرد مع
         # عكس تحصيل أو ترحيل دفعة/فاتورة تغير الرصيد أثناء الحساب.
         list(CustomerReceiptBatch.objects.select_for_update(of=("self",)).filter(
@@ -172,8 +188,25 @@ def post_customer_refund(refund_id, user):
     ).get(pk=refund.treasury_account_id)
     if account.company_id != refund.company_id or not account.is_active:
         raise ValidationError("اختر حساب خزينة/بنك نشطًا تابعًا للشركة.")
-    if account.currency_code != refund.company.base_currency.code:
-        raise ValidationError("رد المبلغ متاح حاليًا من حساب خزينة/بنك بالعملة الأساسية للشركة.")
+    if refund.transaction_currency_id:
+        if (
+            not refund.source_return_id
+            or refund.transaction_currency_id != refund.source_return.invoice.transaction_currency_id
+            or account.currency_code != refund.transaction_currency.code
+        ):
+            raise ValidationError("حساب الخزينة يجب أن يطابق عملة مردود المبيعات الأجنبية.")
+        expected_base = round_currency_amount(
+            refund.transaction_amount * refund.exchange_rate, refund.company.base_currency,
+        )
+        if refund.amount != expected_base:
+            raise ValidationError("القيمة الأساسية للرد لا تطابق المبلغ الأجنبي وسعر الصرف المعتمد.")
+        if not ExchangeRate.objects.filter(
+            company=refund.company, currency=refund.transaction_currency,
+            rate_date=refund.exchange_rate_date, rate=refund.exchange_rate,
+        ).exists():
+            raise ValidationError("سعر صرف الرد لم يعد مطابقًا لسجل أسعار الصرف المعتمدة.")
+    elif account.currency_code != refund.company.base_currency.code:
+        raise ValidationError("اختر حساب خزينة بالعملة الأساسية أو أدخل بيانات رد أجنبي مكتملة.")
     if account.branch_id and account.branch_id != refund.branch_id:
         raise ValidationError("حساب الخزينة لا يتبع فرع رد المبلغ.")
     if account.kind not in (TreasuryAccount.Kind.CASH, TreasuryAccount.Kind.BANK):
@@ -200,6 +233,10 @@ def post_customer_refund(refund_id, user):
         document_number=f"SALE-REF-{refund.pk}",
         transaction_date=refund.refund_date,
         amount=refund.amount,
+        transaction_currency=refund.transaction_currency,
+        transaction_amount=refund.transaction_amount,
+        exchange_rate=refund.exchange_rate,
+        exchange_rate_date=refund.exchange_rate_date,
         description=f"رد مبلغ للعميل {refund.customer.name_ar} مقابل {source_label}"[:500],
         reference=refund.reference,
         created_by=user,
@@ -278,6 +315,10 @@ def reverse_customer_refund(refund_id, user, entry_date):
         document_number=f"SALE-REF-REV-{refund.pk}",
         transaction_date=entry_date,
         amount=refund.amount,
+        transaction_currency=refund.transaction_currency,
+        transaction_amount=refund.transaction_amount,
+        exchange_rate=refund.exchange_rate,
+        exchange_rate_date=refund.exchange_rate_date,
         description=f"عكس رد مبلغ العميل {refund.customer.name_ar} رقم {refund.refund_number}"[:500],
         reference=refund.reference,
         created_by=user,
