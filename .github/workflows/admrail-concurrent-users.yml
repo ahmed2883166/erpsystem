@@ -25,9 +25,6 @@ on:
       - "nexus_next/backend/inventory/tests*.py"
       - ".github/workflows/admrail-concurrent-users.yml"
   workflow_dispatch:
-concurrency:
-  group: admrail-concurrent-users-${{ matrix.profile }}
-  cancel-in-progress: true
 jobs:
   concurrent-users:
     name: concurrent-users (${{ matrix.profile }})
@@ -41,6 +38,9 @@ jobs:
           - profile: candidate-16mb-1worker
             work_mem: 16MB
             parallel_workers: "1"
+    concurrency:
+      group: admrail-concurrent-users-${{ matrix.profile }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 90
     services:
