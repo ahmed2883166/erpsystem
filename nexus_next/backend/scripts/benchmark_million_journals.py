@@ -40,7 +40,7 @@ def main():
     with connection.cursor() as cursor:
         cursor.execute("SELECT current_database()")
         db_name = cursor.fetchone()[0]
-    if not (db_name.endswith("benchmark") or db_name.endswith("nexus_test") or os.getenv("ALLOW_BENCHMARK_DATABASE") == "1"):
+    if not (db_name.endswith("benchmark") or db_name.endswith("nexus_test")):
         raise SystemExit(f"Refusing to write synthetic data to database {db_name!r}.")
     metrics = {"database": db_name, "target_journal_entries": args.entries, "lines_per_entry": 2,
                "batch_size": args.batch_size, "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}

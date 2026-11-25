@@ -34,7 +34,6 @@ def require_isolated_benchmark_database():
     if not (
         database_name.endswith("benchmark")
         or database_name.endswith("nexus_test")
-        or os.getenv("ALLOW_BENCHMARK_DATABASE") == "1"
     ):
         raise SystemExit(
             f"Refusing benchmark writes to database {database_name!r}; "
