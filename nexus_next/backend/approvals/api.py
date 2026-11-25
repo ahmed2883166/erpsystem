@@ -146,7 +146,7 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
             company__in=accessible_companies(self.request.user)
         ).select_related(
             "company", "requested_by", "decided_by", "purchase_invoice",
-            "purchase_invoice__supplier", "purchase_order", "purchase_order__supplier",
+            "purchase_invoice__supplier", "purchase_invoice__branch", "purchase_invoice__receipt__warehouse", "purchase_order", "purchase_order__supplier",
             "purchase_order__warehouse", "purchase_order__warehouse__branch", "supplier_payment", "supplier_payment__supplier",
             "treasury_transaction", "treasury_transaction__source_account",
             "treasury_transaction__counter_account", "asset_purchase_invoice",
@@ -168,17 +168,21 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
                     default_company_ids.append(company_id)
             qs = qs.filter(
                 Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
-                  purchase_invoice__receipt__warehouse__branch__in=branches)
+                  purchase_invoice__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
-                    purchase_invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+                    purchase_invoice__receipt__warehouse__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE,
+                    purchase_invoice__branch__isnull=True, purchase_invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_ORDER,
                     purchase_order__warehouse__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.PURCHASE_ORDER,
                     purchase_order__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
+                    supplier_payment__invoice__branch__in=branches)
+                | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
                     supplier_payment__invoice__receipt__warehouse__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.SUPPLIER_PAYMENT,
-                    supplier_payment__invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+                    supplier_payment__invoice__branch__isnull=True, supplier_payment__invoice__receipt__warehouse__branch__isnull=True, company_id__in=default_company_ids)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
                     treasury_transaction__branch__in=branches)
                 | Q(document_type=FinancialApprovalRequest.DocumentType.ASSET_PURCHASE_INVOICE,
@@ -199,8 +203,8 @@ class FinancialApprovalRequestViewSet(viewsets.ReadOnlyModelViewSet):
         if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE:
             from purchasing.models import PurchaseInvoice
             return PurchaseInvoice.objects.select_for_update().select_related(
-                "supplier", "receipt"
-            ).prefetch_related("lines__receipt_line__product", "lines__tax_code").get(pk=approval.purchase_invoice_id)
+                "supplier", "branch", "receipt"
+            ).prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__cost_center", "lines__tax_code").get(pk=approval.purchase_invoice_id)
         if approval.document_type == FinancialApprovalRequest.DocumentType.PURCHASE_ORDER:
             from purchasing.models import PurchaseOrder
             return PurchaseOrder.objects.select_for_update(of=("self",)).select_related(
