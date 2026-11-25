@@ -119,10 +119,10 @@ def post_sales_return(return_id, user):
             line.cost_amount = line.movement_line.cost_amount
             SalesReturnLine.objects.filter(pk=line.pk).update(cost_amount=line.cost_amount)
     cost = sum((line.cost_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
-    grni = _return_account(sales_return.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
-    cogs = _return_account(sales_return.company, AccountRole.Role.COGS)
     cost_entry = None
     if cost > 0:
+        grni = _return_account(sales_return.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
+        cogs = _return_account(sales_return.company, AccountRole.Role.COGS)
         if grni.pk == cogs.pk:
             raise ValidationError("حساب البضاعة المستلمة غير المفوترة يجب أن يختلف عن حساب تكلفة المبيعات.")
         cost_entry = JournalEntry.objects.create(
