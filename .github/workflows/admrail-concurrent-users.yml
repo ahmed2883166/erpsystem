@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - work/nexus-django-react-rebuild
+      - work/admrail-report-profile-comparison-2026-11-25
       - fix/audit-performance-and-owner-toolkit-2026-11
     paths:
       - "nexus_next/backend/scripts/benchmark_concurrent_users.py"
@@ -25,10 +26,21 @@ on:
       - ".github/workflows/admrail-concurrent-users.yml"
   workflow_dispatch:
 concurrency:
-  group: admrail-concurrent-users-benchmark
+  group: admrail-concurrent-users-${{ matrix.profile }}
   cancel-in-progress: true
 jobs:
   concurrent-users:
+    name: concurrent-users (${{ matrix.profile }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: default-32mb-0worker
+            work_mem: 32MB
+            parallel_workers: "0"
+          - profile: candidate-16mb-1worker
+            work_mem: 16MB
+            parallel_workers: "1"
     runs-on: ubuntu-latest
     timeout-minutes: 90
     services:
@@ -59,10 +71,9 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 5432
       ALLOW_BENCHMARK_DATABASE: "1"
-      # Isolated candidate profile: 16MB plus one parallel worker.
-      # The application default remains 32MB / zero workers unless explicitly configured.
-      ADMRAIL_REPORT_WORK_MEM: "16MB"
-      ADMRAIL_REPORT_PARALLEL_WORKERS: "1"
+      # Compare the production default with the isolated candidate profile.
+      ADMRAIL_REPORT_WORK_MEM: "${{ matrix.work_mem }}"
+      ADMRAIL_REPORT_PARALLEL_WORKERS: "${{ matrix.parallel_workers }}"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -99,7 +110,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Admrail-Concurrent-Users-Benchmark
+          name: Admrail-Concurrent-Users-Benchmark-${{ matrix.profile }}
           path: |
             nexus_next/backend/concurrent-load-test.json
             nexus_next/backend/concurrent-posting-load-test.json
