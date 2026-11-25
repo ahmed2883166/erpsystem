@@ -70,7 +70,7 @@ class SalesBaseViewSet(viewsets.ModelViewSet):
 class SalesOrderViewSet(SalesBaseViewSet):
     """إدارة أوامر البيع واعتمادها قبل بدء التسليم."""
     serializer_class = SalesOrderSerializer
-    queryset = SalesOrder.objects.select_related("company", "customer", "warehouse").prefetch_related("lines__product", "lines__tax_code")
+    queryset = SalesOrder.objects.select_related("company", "customer", "warehouse").prefetch_related("lines__product", "lines__tax_code", "lines__delivery_allocations")
     filterset_fields = ("company", "customer", "warehouse", "status", "order_date")
     search_fields = ("order_number", "customer__name_ar")
     ordering_fields = ("order_date", "order_number", "created_at", "grand_total")
