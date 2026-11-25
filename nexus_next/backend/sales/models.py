@@ -394,8 +394,9 @@ class SalesReturn(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_returns")
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="returns")
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_returns")
-    stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_return")
+    warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_returns")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_returns")
+    stock_movement = models.OneToOneField(StockMovement, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return")
     return_number = models.CharField(max_length=37)
     return_date = models.DateField()
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
@@ -453,17 +454,22 @@ class SalesReturn(models.Model):
             or self.invoice.status != SalesInvoice.Status.POSTED
         ):
             raise ValidationError({"invoice": "يجب اختيار فاتورة مبيعات مرحلة تابعة للشركة."})
-        if self.warehouse_id and (
-            self.warehouse.company_id != self.company_id
-            or (self.invoice_id and self.invoice.delivery.warehouse_id != self.warehouse_id)
-        ):
-            raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+        if self.invoice_id and self.invoice.delivery_id:
+            if not self.warehouse_id or self.warehouse.company_id != self.company_id or self.invoice.delivery.warehouse_id != self.warehouse_id:
+                raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+            if self.branch_id and self.warehouse.branch_id and self.branch_id != self.warehouse.branch_id:
+                raise ValidationError({"branch": "فرع المردود لا يطابق فرع المخزن."})
+        elif self.invoice_id:
+            if self.warehouse_id or not self.branch_id or self.branch.company_id != self.company_id or self.branch_id != self.invoice.branch_id:
+                raise ValidationError({"branch": "مردود الخدمة يجب أن يتبع فرع فاتورة الخدمة دون حركة مخزنية."})
         if self.stock_movement_id and (
-            self.stock_movement.company_id != self.company_id
+            not self.warehouse_id or self.stock_movement.company_id != self.company_id
             or self.stock_movement.destination_warehouse_id != self.warehouse_id
             or self.stock_movement.movement_type != StockMovement.MovementType.RECEIPT
         ):
             raise ValidationError({"stock_movement": "حركة الاستلام لا تطابق مردود المبيعات."})
+        if self.invoice_id and not self.invoice.delivery_id and self.stock_movement_id:
+            raise ValidationError({"stock_movement": "مردود الخدمة لا ينشئ حركة مخزنية."})
         if self.invoice_id and self.return_date and self.return_date < self.invoice.invoice_date:
             raise ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
 
@@ -472,7 +478,7 @@ class SalesReturnLine(models.Model):
     """بند مردود يحتفظ بلقطة السعر والضريبة والتكلفة من الفاتورة الأصلية."""
     sales_return = models.ForeignKey(SalesReturn, on_delete=models.PROTECT, related_name="lines")
     invoice_line = models.ForeignKey(SalesInvoiceLine, on_delete=models.PROTECT, related_name="return_lines")
-    movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_return_line")
+    movement_line = models.OneToOneField(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_line")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
