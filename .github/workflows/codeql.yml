@@ -3,10 +3,12 @@ name: CodeQL Security Analysis
 on:
   push:
     branches:
+      - main
       - work/nexus-django-react-rebuild
       - feature/purchasing-completion
   pull_request:
     branches:
+      - main
       - work/nexus-django-react-rebuild
       - feature/inventory-completion
   schedule:
