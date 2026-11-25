@@ -70,6 +70,16 @@ class CustomerReceiptBatchTests(APITestCase):
         batch_events = [row for row in statement.data["rows"] if row["document_type"] == "receipt_batch"]
         self.assertEqual(len(batch_events), 1)
         self.assertEqual(batch_events[0]["credit"], "150.0000")
+        open_ended_statement = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-10"
+        )
+        self.assertEqual(open_ended_statement.status_code, 200, open_ended_statement.data)
+        open_ended_batch = next(
+            row for row in open_ended_statement.data["rows"]
+            if row["document_type"] == "receipt_batch"
+        )
+        self.assertIn("BATCH-INV-001", open_ended_batch["description"])
         aging_after_batch = self.client.get(
             f"/api/sales-documents/invoices/customer-aging/?company={self.company.pk}&as_of=2026-03-11"
         )
