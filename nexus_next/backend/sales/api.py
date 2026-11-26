@@ -1005,10 +1005,14 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             accessible_invoices = accessible_invoices.filter(lines__product_id=product_id).distinct()
 
         invoices = accessible_invoices.filter(invoice_date__range=(date_from, date_to))
+        # A later reversal must not rewrite a report whose period ended before
+        # that reversal. Treat returns reversed after date_to as active at cutoff.
         returns = SalesReturn.objects.filter(
             invoice__in=accessible_invoices,
-            status=SalesReturn.Status.POSTED,
             return_date__range=(date_from, date_to),
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=date_to)
         )
         if product_id is not None:
             returns = returns.filter(lines__invoice_line__product_id=product_id).distinct()
