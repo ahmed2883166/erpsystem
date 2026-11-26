@@ -8,11 +8,32 @@ export default function SalesDocumentPrint({company,invoice,quotation,receipt,re
  const doc=invoice||quotation||receipt||salesReturn||receiptBatch;
  const kind=invoice?"invoice":quotation?"quotation":receipt?"receipt":salesReturn?"return":"receipt_batch";
  const isInvoice=kind==="invoice",isQuotation=kind==="quotation",isReceipt=kind==="receipt"||kind==="receipt_batch",isBatchReceipt=kind==="receipt_batch",isReturn=kind==="return";
- const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
- useEffect(()=>{if(!company?.id)return;let active=true;const type=isQuotation?"quotation":isReceipt?"receipt":isReturn?"return":"invoice";void salesApi.documentTemplates(company.id).then(rows=>{if(active)setDefaultTemplate(rows.find(row=>row.document_type===type&&row.is_active&&row.is_default)||null);}).catch(()=>{if(active)setDefaultTemplate(null);});return()=>{active=false;};},[company?.id,kind]);
- if(!doc)return null;
+ const [templates,setTemplates]=useState<SalesDocumentTemplate[]>([]);
+ const [selectedTemplateId,setSelectedTemplateId]=useState("");
  const saved=(invoice||quotation)?.print_template_snapshot;
- const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=saved&&Object.keys(saved).length>0?saved:{template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{}};
+ useEffect(()=>{
+  if(!company?.id){setTemplates([]);setSelectedTemplateId("");return;}
+  let active=true;
+  const type=isQuotation?"quotation":isReceipt?"receipt":isReturn?"return":"invoice";
+  void salesApi.documentTemplates(company.id).then(rows=>{
+   if(!active)return;
+   const available=rows.filter(row=>row.document_type===type&&row.is_active);
+   setTemplates(available);
+   const savedId=saved?.template_id;
+   const savedTemplate=savedId?available.find(row=>row.id===savedId):null;
+   const preferred=saved
+    ?savedId?savedTemplate:null
+    :available.find(row=>row.is_default)||available[0];
+   setSelectedTemplateId(preferred?String(preferred.id):(saved?"snapshot":""));
+  }).catch(()=>{if(active){setTemplates([]);setSelectedTemplateId(saved?"snapshot":"");}});
+  return()=>{active=false;};
+ },[company?.id,kind,invoice?.id,quotation?.id]);
+ if(!doc)return null;
+ const selectedTemplate=templates.find(row=>String(row.id)===selectedTemplateId)||null;
+ const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=selectedTemplate
+  ?{template_id:selectedTemplate.id,name:selectedTemplate.name,style:selectedTemplate.style,config:selectedTemplate.config}
+  :saved&&Object.keys(saved).length>0?saved
+  :{template_id:null,name:"Classic",style:"classic",config:{}};
  const config=snapshot.config||{},language=config.language||"ar";
  const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
  const lines:PrintLine[]=isInvoice?invoice!.invoice_lines.map(l=>({product_code:l.product_code,product_name:l.product_name,quantity:l.quantity,unit_price:invoice!.transaction_currency?l.transaction_unit_price||l.unit_price:l.unit_price,discount_percent:l.discount_percent,discount_amount:invoice!.transaction_currency?l.transaction_discount_amount||"0":l.discount_amount,tax_rate:l.tax_rate,tax_amount:invoice!.transaction_currency?l.transaction_tax_amount||l.tax_amount:l.tax_amount,total_amount:invoice!.transaction_currency?l.transaction_total_amount||l.total_amount:l.total_amount}))
@@ -27,7 +48,7 @@ export default function SalesDocumentPrint({company,invoice,quotation,receipt,re
  const customer=isInvoice?invoice!.customer_name:isQuotation?quotation!.customer_name:isBatchReceipt?receiptBatch!.customer_name:isReceipt?receipt!.customer_name:salesReturn!.customer_name;
  const title=isInvoice?label("فاتورة مبيعات","Sales Invoice"):isQuotation?label("عرض سعر","Quotation"):isBatchReceipt?label("سند قبض مجمع / دفعة مقدمة","Consolidated Customer Receipt"):isReceipt?label("سند قبض","Customer Receipt"):label("مردود مبيعات","Sales Return");
  const notes=isInvoice?invoice!.notes:isQuotation?quotation!.notes:isBatchReceipt?receiptBatch!.reference:salesReturn?.notes||"";
- return <div className="sales-print-overlay"><div className="print-controls"><span>معاينة {title} · {snapshot.name}</span><div><button type="button" className="subtle-button" onClick={onClose}>إغلاق</button><button type="button" className="primary-button" onClick={()=>window.print()}>طباعة / حفظ PDF</button></div></div>
+ return <div className="sales-print-overlay"><div className="print-controls"><span>معاينة {title} · {snapshot.name}</span><div className="table-actions"><label>القالب<select aria-label="اختيار قالب الطباعة" value={selectedTemplateId} onChange={event=>setSelectedTemplateId(event.target.value)}>{saved&&<option value="snapshot">التصميم المحفوظ مع المستند</option>}{templates.map(row=><option key={row.id} value={String(row.id)}>{row.name}{row.is_default?" — افتراضي":""}</option>)}</select></label><button type="button" className="subtle-button" onClick={onClose}>إغلاق</button><button type="button" className="primary-button" onClick={()=>window.print()}>طباعة / حفظ PDF</button></div></div>
  <article className={`sales-print-sheet ${snapshot.style} font-${config.font_scale||"normal"}`} style={{borderTopColor:config.accent_color||"#1F4E79"}}>
  <header className="sales-print-header"><div><h1>{company?.name_ar||"اسم الشركة"}</h1>{company?.name_en&&<p>{company.name_en}</p>}{company?.address&&<p>{company.address}</p>}{company?.phone&&<p>{label("هاتف","Phone")}: {company.phone}</p>}{config.show_tax_number!==false&&company?.tax_registration_number&&<p>{label("رقم التسجيل الضريبي","Tax ID")}: {company.tax_registration_number}</p>}</div><div className="sales-print-document-title"><strong>{title}</strong><span>{number}</span></div></header>
  <section className="sales-print-meta"><div><span>{label("العميل","Customer")}</span><strong>{customer}</strong></div><div><span>{label("التاريخ","Date")}</span><strong>{date}</strong></div>{isQuotation&&<div><span>{label("صالح حتى","Valid until")}</span><strong>{quotation!.valid_until}</strong></div>}{isInvoice&&<div><span>{label("الحالة","Status")}</span><strong>{invoice!.status==="posted"?"مرحّلة":"مسودة"}</strong></div>}{isReceipt&&!isBatchReceipt&&<><div><span>{label("الفاتورة","Invoice")}</span><strong>{receipt!.invoice_number}</strong></div><div><span>{label("طريقة التحصيل","Method")}</span><strong>{receipt!.method==="cash"?"نقدي":"بنكي"}</strong></div></>}{isBatchReceipt&&<><div><span>{label("الفرع","Branch")}</span><strong>{receiptBatch!.branch_name}</strong></div><div><span>{label("طريقة التحصيل","Method")}</span><strong>{receiptBatch!.method==="cash"?"نقدي":"بنكي"}</strong></div></>}{salesReturn&&<div><span>{label("الفاتورة الأصلية","Original invoice")}</span><strong>{salesReturn.invoice_number}</strong></div>}</section>

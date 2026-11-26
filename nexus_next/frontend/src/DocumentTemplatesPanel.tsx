@@ -2,11 +2,11 @@ import { useEffect, useState, type FormEvent } from "react";
 import { salesApi, type SalesDocumentTemplate } from "./api";
 
 type Props = { companyId:number|null };
-type DocumentType = "quotation" | "invoice" | "return";
+type DocumentType = "quotation" | "invoice" | "receipt" | "return";
 type Style = SalesDocumentTemplate["style"];
 
 const documentLabels:Record<DocumentType,string> = {
-  quotation:"عروض الأسعار", invoice:"فواتير المبيعات", return:"مردودات المبيعات",
+  quotation:"عروض الأسعار", invoice:"فواتير المبيعات", receipt:"سندات القبض", return:"مردودات المبيعات",
 };
 
 export default function DocumentTemplatesPanel({companyId}:Props) {
@@ -36,7 +36,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
     setForm({name:"",style:"classic",accent_color:"#1F4E79",show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,bank_details:"",language:"ar",font_scale:"normal",footer_text:"شكراً لتعاملكم معنا",is_default:false});
   };
   const edit=(row:SalesDocumentTemplate)=>{
-    if(row.document_type!=="invoice"&&row.document_type!=="quotation"&&row.document_type!=="return")return;
+    if(row.document_type!=="invoice"&&row.document_type!=="quotation"&&row.document_type!=="receipt"&&row.document_type!=="return")return;
     setEditingId(row.id);setDocumentType(row.document_type);
     setForm({
       name:row.name,style:row.style,accent_color:row.config.accent_color||"#1F4E79",
@@ -75,7 +75,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
   const visible=rows.filter(row=>row.document_type===documentType);
 
   return <section className="work-panel">
-    <div className="work-panel-head"><div><h2>قوالب الطباعة</h2><p>كل شركة تختار شكلًا مستقلًا لعروض الأسعار والفواتير ومردودات المبيعات.</p></div></div>
+    <div className="work-panel-head"><div><h2>قوالب الطباعة</h2><p>يمكن لكل شركة حفظ عدة قوالب لكل نوع مستند، واختيار القالب الافتراضي أو التبديل عند الطباعة.</p></div></div>
     {error&&<div className="error-banner">{error}</div>}
     {!companyId&&<div className="table-empty">اختر شركة لإدارة قوالبها.</div>}
     {companyId&&<>
