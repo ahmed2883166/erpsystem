@@ -411,6 +411,9 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError({"service_acceptance": "لا يمكن ربط الفاتورة إلا بمحضر إنجاز خدمة معتمد."})
                 if acceptance.company_id != company.pk or acceptance.supplier_id != supplier.pk:
                     raise serializers.ValidationError({"service_acceptance": "محضر الإنجاز لا يتبع نفس الشركة والمورد."})
+                acceptance_branch = resolve_warehouse_branch(company, acceptance.order.warehouse)
+                if acceptance_branch and acceptance_branch.pk != branch.pk:
+                    raise serializers.ValidationError({"branch": "يجب أن تستخدم فاتورة الخدمة نفس فرع أمر الشراء ومحضر الإنجاز."})
                 if acceptance.acceptance_date > invoice_date:
                     raise serializers.ValidationError({"service_acceptance": "تاريخ الفاتورة لا يسبق تاريخ اعتماد إنجاز الخدمة."})
             elif attrs.get("service_acceptance") is not None:
