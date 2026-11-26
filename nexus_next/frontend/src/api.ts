@@ -1126,7 +1126,7 @@ export const fixedAssetsApi = {
     return request<{id:number;status:"posted";journal_entry:number;amount:string}>(`/api/assets/fixed-assets/${id}/post-supplier-payment/`, {method:"POST",body:JSON.stringify({payment})});
   },
   // احتساب وترحيل إهلاك الأصل عن الفترة والسنة المالية.
-  depreciate: async (id: number, periodDate: string, fiscalYear: number, unitsProduced?:number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear,units_produced:unitsProduced})}); },
+  depreciate: async (id: number, periodDate: string, fiscalYear: number, unitsProduced?:number, unitsProducedByComponent?:Record<string,number>) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear,units_produced:unitsProduced,units_produced_by_component:unitsProducedByComponent})}); },
   // جلب جدول الإهلاك والانخفاض والقيمة الدفترية للأصل.
   schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
   // إثبات خسارة انخفاض القيمة بعد تحديد القيمة القابلة للاسترداد وحسابات القيد.
@@ -1140,7 +1140,7 @@ export const fixedAssetsApi = {
     return request<{id:number;asset_id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model"}>(`/api/assets/fixed-assets/${id}/reverse-impairment/`, {method:"POST",body:JSON.stringify(payload)});
   },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
-  dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number, unitsProduced?:number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear,units_produced:unitsProduced})}); },
+  dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number, unitsProduced?:number, unitsProducedByComponent?:Record<string,number>) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear,units_produced:unitsProduced,units_produced_by_component:unitsProducedByComponent})}); },
 };
 
 
