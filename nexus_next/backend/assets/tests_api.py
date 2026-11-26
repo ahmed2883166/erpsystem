@@ -871,7 +871,7 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(count.data["counted_by"], self.user.pk)
 
     def test_component_depreciation_posts_component_rates_and_reconciles_parent_ledger(self):
-        from assets.models import AssetComponent, AssetComponentDepreciation
+        from assets.models import AssetComponent, AssetComponentDepreciation, AssetDepreciation
 
         created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
         self.assertEqual(created.status_code, 201, created.data)
