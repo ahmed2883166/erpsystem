@@ -2956,16 +2956,35 @@ class PurchasingWorkflowTests(APITestCase):
             "invoice_date": date.today().isoformat(),
             "lines": [{
                 "description": "تنفيذ خدمة الصيانة المعتمدة", "expense_account": expense.pk,
-                "billed_quantity": "2", "unit_price": "750", "tax_rate": "0",
+                "billed_quantity": "2", "unit_price": "800", "tax_rate": "0",
             }],
         }, format="json")
         self.assertEqual(linked_invoice.status_code, 201, linked_invoice.data)
         self.assertEqual(linked_invoice.data["service_acceptance"], acceptance.data["id"])
         self.assertEqual(linked_invoice.data["service_acceptance_number"], "SA-SVC-002")
+        overvalued_post = self.client.post(
+            f"/api/purchasing/invoices/{linked_invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(overvalued_post.status_code, 400, overvalued_post.data)
+        self.assertIn("لا يطابق", str(overvalued_post.data))
+        self.assertEqual(
+            PurchaseInvoice.objects.get(pk=linked_invoice.data["id"]).status,
+            PurchaseInvoice.Status.DRAFT,
+        )
+        corrected_invoice = self.client.patch(
+            f"/api/purchasing/invoices/{linked_invoice.data['id']}/",
+            {"lines": [{
+                "description": "تنفيذ خدمة الصيانة المعتمدة", "expense_account": expense.pk,
+                "billed_quantity": "2", "unit_price": "750", "tax_rate": "14",
+            }]},
+            format="json",
+        )
+        self.assertEqual(corrected_invoice.status_code, 200, corrected_invoice.data)
         posted_linked_invoice = self.client.post(
             f"/api/purchasing/invoices/{linked_invoice.data['id']}/post/", {}, format="json",
         )
         self.assertEqual(posted_linked_invoice.status_code, 200, posted_linked_invoice.data)
+        self.assertEqual(posted_linked_invoice.data["grand_total"], "1710.0000")
         self.assertEqual(PurchaseInvoice.objects.get(pk=linked_invoice.data["id"]).service_acceptance_id, acceptance.data["id"])
 
         over_acceptance = self.client.post("/api/purchasing/service-acceptances/", {
