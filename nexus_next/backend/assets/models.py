@@ -82,7 +82,6 @@ class FixedAsset(models.Model):
             raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
         if self.custodian_employee_id and (self.custodian_employee.company_id != self.company_id or self.custodian_employee.branch_id != self.branch_id):
             raise ValidationError({"custodian_employee": "الموظف المسؤول يجب أن يتبع نفس الشركة والفرع."})
-        if self.custodian_employee_id and (self.custodian_employee.company_id != self.company_id or self.custodian_employee.branch_id != self.branch_id):
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية لا يمكن أن تتجاوز التكلفة."})
         if self.nonrecoverable_tax_amount < 0 or self.recoverable_tax_amount < 0:
