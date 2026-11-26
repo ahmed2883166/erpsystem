@@ -1490,6 +1490,7 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
 
 class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
     serializer_class = PurchaseServiceAcceptanceSerializer
+    filterset_fields = ("company", "order", "supplier", "status", "acceptance_date")
     queryset = PurchaseServiceAcceptance.objects.select_related(
         "company", "order", "order__warehouse", "supplier", "accepted_by",
     ).prefetch_related("lines__order_line__product")
