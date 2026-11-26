@@ -14,15 +14,16 @@ from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, ExchangeRate, FiscalYear
+from core.money import round_currency_amount
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
 from inventory.services import post_stock_movement
 
 from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
-def _account(company, role):
-    """استخراج الحساب التفصيلي المرتبط بدور المشتريات المطلوب."""
-    return get_account_for_role(company, role)
+def _account(company, role, activity=None):
+    """استخراج الحساب التفصيلي المرتبط بدور المشتريات والنشاط المحدد."""
+    return get_account_for_role(company, role, activity=activity)
 
 
 def _branch_and_year(receipt, entry_date):
@@ -34,6 +35,27 @@ def _branch_and_year(receipt, entry_date):
         raise ValidationError("يجب إنشاء فرع نشط قبل ترحيل المشتريات.")
     year = FiscalYear.objects.filter(
         company=receipt.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=entry_date, end_date__gte=entry_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ مستند المشتريات.")
+    return branch, year
+
+
+def _branch_and_year_for_invoice(invoice, entry_date):
+    """Resolve branch and open fiscal year for either inventory or direct-expense invoices."""
+    if invoice.invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE and invoice.branch_id:
+        branch = invoice.branch
+    elif invoice.receipt_id:
+        branch = resolve_warehouse_branch(invoice.company, invoice.receipt.warehouse)
+    else:
+        branch = None
+    if branch and (branch.company_id != invoice.company_id or not branch.is_active):
+        raise ValidationError("فرع فاتورة المشتريات غير نشط أو لا يتبع الشركة.")
+    if not branch:
+        raise ValidationError("يجب تحديد فرع نشط قبل ترحيل مستند المورد.")
+    year = FiscalYear.objects.filter(
+        company=invoice.company, status=FiscalYear.Status.OPEN,
         start_date__lte=entry_date, end_date__gte=entry_date,
     ).order_by("-start_date").first()
     if not year:
@@ -255,6 +277,181 @@ def post_purchase_receipt(receipt_id, user):
     return PurchaseReceipt.objects.select_related("stock_movement", "journal_entry").get(pk=receipt.pk)
 
 
+def _validate_service_acceptance_invoice_amounts(invoice, lines):
+    """Match a linked service invoice to the accepted quantities and PO value."""
+    acceptance = invoice.service_acceptance
+    if not acceptance:
+        return
+    acceptance = type(acceptance).objects.select_for_update().get(pk=acceptance.pk)
+    if acceptance.status != "accepted":
+        raise ValidationError("لا يمكن ترحيل فاتورة مرتبطة بمحضر خدمة غير معتمد.")
+    acceptance_lines = list(
+        acceptance.lines.select_related("order_line", "order_line__product")
+        .select_for_update()
+        .order_by("pk")
+    )
+    if not acceptance_lines:
+        raise ValidationError("محضر إنجاز الخدمة المرتبط لا يحتوي على بنود معتمدة.")
+    expected_net = Decimal("0")
+    expected_tax = Decimal("0")
+    for accepted_line in acceptance_lines:
+        order_line = accepted_line.order_line
+        if order_line.product.product_type != Product.ProductType.SERVICE:
+            raise ValidationError("محضر الإنجاز يحتوي على بند غير خدمي.")
+        if order_line.unit_price <= 0:
+            raise ValidationError(
+                "يجب تحديد سعر موجب لبنود الخدمة في أمر الشراء قبل مطابقة فاتورة المورد."
+            )
+        line_net = (accepted_line.quantity * order_line.unit_price).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP,
+        )
+        expected_net += line_net
+        expected_tax += round_currency_amount(
+            line_net * order_line.tax_rate / Decimal("100"),
+            invoice.company.base_currency,
+        )
+    actual_net = sum((line.net_amount for line in lines), Decimal("0"))
+    actual_tax = sum((line.tax_amount for line in lines), Decimal("0"))
+    tolerance = Decimal("0.0002") * max(len(lines), len(acceptance_lines), 1)
+    if abs(actual_net - expected_net) > tolerance:
+        raise ValidationError(
+            f"صافي فاتورة الخدمة ({actual_net}) لا يطابق قيمة الكميات المعتمدة بأمر الشراء ({expected_net})."
+        )
+    if abs(actual_tax - expected_tax) > tolerance:
+        raise ValidationError(
+            f"ضريبة فاتورة الخدمة ({actual_tax}) لا تطابق ضريبة بنود أمر الشراء المعتمدة ({expected_tax})."
+        )
+
+
+def _post_direct_expense_purchase_invoice(invoice, user):
+    """Post a non-stock supplier invoice to expense accounts, input VAT and AP."""
+    branch = invoice.branch
+    if not branch or branch.company_id != invoice.company_id or not branch.is_active:
+        raise ValidationError("حدد فرعًا نشطًا تابعًا للشركة قبل ترحيل الفاتورة.")
+    year = FiscalYear.objects.filter(
+        company=invoice.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=invoice.invoice_date, end_date__gte=invoice.invoice_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ فاتورة المورد.")
+
+    lines = list(invoice.lines.select_for_update(of=("self",)).select_related(
+        "expense_account", "cost_center", "tax_code",
+    ).order_by("pk"))
+    if not lines:
+        raise ValidationError("لا يمكن ترحيل فاتورة مورد بلا بنود.")
+    net_amount = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
+    tax_amount = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
+    recoverable_tax = sum(
+        (line.tax_amount for line in lines if not line.tax_code_id or line.tax_code.input_tax_recoverable),
+        Decimal("0"),
+    ).quantize(Decimal("0.0001"))
+    _validate_service_acceptance_invoice_amounts(invoice, lines)
+    if net_amount <= 0 or tax_amount < 0:
+        raise ValidationError("يجب أن تكون قيمة الفاتورة موجبة والضريبة غير سالبة.")
+
+    for line in lines:
+        account = line.expense_account
+        if (not account or account.company_id != invoice.company_id
+                or account.nature != ChartOfAccount.Nature.EXPENSE
+                or not account.is_active or account.is_group or not account.allow_posting):
+            raise ValidationError("يوجد حساب مصروف غير صالح في أحد بنود الفاتورة.")
+        if line.cost_center_id and (
+            line.cost_center.company_id != invoice.company_id or not line.cost_center.is_active
+        ):
+            raise ValidationError("يوجد مركز تكلفة غير صالح في أحد بنود الفاتورة.")
+
+    if invoice.transaction_currency_id:
+        from accounting.fx_arap import validate_snapshot
+        approved = ExchangeRate.objects.filter(
+            company=invoice.company, currency=invoice.transaction_currency,
+            rate_date=invoice.exchange_rate_date, rate=invoice.exchange_rate,
+        ).first()
+        if not approved:
+            raise ValidationError("سعر الصرف لا يطابق سعرًا معتمدًا بتاريخ فاتورة المورد.")
+        foreign_net = sum((line.transaction_net_amount or Decimal("0") for line in lines), Decimal("0"))
+        foreign_tax = sum((line.transaction_tax_amount or Decimal("0") for line in lines), Decimal("0"))
+        foreign_total = foreign_net + foreign_tax
+        try:
+            expected_base = validate_snapshot(
+                base_currency_code=invoice.company.base_currency.code,
+                currency_code=invoice.transaction_currency.code,
+                foreign_amount=foreign_total, rate=invoice.exchange_rate,
+                rate_date=invoice.exchange_rate_date, document_date=invoice.invoice_date,
+                approved_rate=approved.rate,
+            )
+        except ValueError:
+            raise ValidationError("تعذر التحقق من سعر الصرف لفاتورة المورد.") from None
+        if abs(expected_base - (net_amount + tax_amount)) > Decimal("0.0002") * max(len(lines), 1):
+            raise ValidationError("إجمالي الفاتورة الأجنبية لا يطابق القيمة بالعملة الأساسية.")
+        invoice.transaction_net_total = foreign_net
+        invoice.transaction_tax_total = foreign_tax
+        invoice.transaction_grand_total = foreign_total
+    elif any(line.transaction_unit_price is not None for line in lines):
+        raise ValidationError("توجد أسعار أجنبية دون تحديد عملة الفاتورة.")
+
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT, invoice.activity) if recoverable_tax else None
+    journal_lines = []
+    for line in lines:
+        nonrecoverable_line_tax = (
+            line.tax_amount
+            if line.tax_code_id and not line.tax_code.input_tax_recoverable
+            else Decimal("0")
+        )
+        debit_amount = (line.net_amount + nonrecoverable_line_tax).quantize(Decimal("0.0001"))
+        if debit_amount:
+            journal_lines.append(JournalLine(
+                account=line.expense_account,
+                description=line.description[:300],
+                debit=debit_amount, credit=0, cost_center=line.cost_center,
+            ))
+    if recoverable_tax:
+        if vat_input.pk == payable.pk:
+            raise ValidationError("يجب فصل حساب ضريبة المدخلات عن حساب الموردين.")
+        journal_lines.append(JournalLine(
+            account=vat_input, description="ضريبة مدخلات قابلة للاسترداد",
+            debit=recoverable_tax, credit=0,
+        ))
+    journal_lines.append(JournalLine(
+        account=payable,
+        description=f"إثبات مستحقات المورد {invoice.supplier.name_ar}",
+        debit=0, credit=net_amount + tax_amount,
+    ))
+    if sum((line.debit for line in journal_lines), Decimal("0")) != sum(
+        (line.credit for line in journal_lines), Decimal("0")
+    ):
+        raise ValidationError("قيد فاتورة المصروفات غير متوازن؛ راجع توزيع الضريبة.")
+
+    entry = JournalEntry.objects.create(
+        company=invoice.company, branch=branch, fiscal_year=year,
+        entry_number=f"PUR-INV-{invoice.pk}", entry_date=invoice.invoice_date,
+        description=f"فاتورة خدمات ومصروفات المورد {invoice.supplier.name_ar} رقم {invoice.invoice_number}"[:500],
+        source_type=JournalEntry.Source.PURCHASES, created_by=user,
+    )
+    for line in journal_lines:
+        line.entry = entry
+    JournalLine.objects.bulk_create(journal_lines)
+    try:
+        posted_entry = post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+    invoice.net_total = net_amount
+    invoice.tax_total = tax_amount
+    invoice.grand_total = net_amount + tax_amount
+    invoice.journal_entry = posted_entry
+    invoice.status = PurchaseInvoice.Status.POSTED
+    invoice.posted_at = timezone.now()
+    invoice.save(update_fields=(
+        "net_total", "tax_total", "grand_total", "transaction_net_total",
+        "transaction_tax_total", "transaction_grand_total",
+        "journal_entry", "status", "posted_at",
+    ))
+    return invoice
+
+
 @transaction.atomic
 def post_purchase_invoice(invoice_id, user):
     """ترحيل فاتورة المورد وتسوية GRNI والضريبة القابلة للاسترداد ورسملة الضريبة غير القابلة للخصم."""
@@ -269,6 +466,9 @@ def post_purchase_invoice(invoice_id, user):
         require_financial_approval(FinancialApprovalRequest.DocumentType.PURCHASE_INVOICE, invoice)
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+    if invoice.invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+        return _post_direct_expense_purchase_invoice(invoice, user)
+
     # Serialize postings per receipt. This prevents two concurrent invoices from
     # consuming the same remaining receipt quantity.
     receipt = PurchaseReceipt.objects.select_for_update().select_related(
@@ -384,8 +584,8 @@ def post_purchase_invoice(invoice_id, user):
                 rate_date=invoice.exchange_rate_date, document_date=invoice.invoice_date,
                 approved_rate=approved.rate,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر التحقق من سعر الصرف لفاتورة المورد؛ راجع بيانات العملة والسعر المعتمد.") from None
         if abs(expected_base - (net_amount + tax_amount)) > Decimal("0.0002") * max(len(lines), 1):
             raise ValidationError("قيمة فاتورة المورد بالعملة الأساسية لا تطابق إجماليها الأجنبي وسعر الصرف.")
         invoice.transaction_net_total = foreign_net
@@ -428,10 +628,10 @@ def post_purchase_invoice(invoice_id, user):
                     for category, amount in amounts.items():
                         allocations_by_branch[branch_id][category] += amount
 
-    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
-    grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_tax > 0 else None
-    clearing = _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING) if nonrecoverable_tax > 0 else None
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
+    grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, invoice.activity)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT, invoice.activity) if recoverable_tax > 0 else None
+    clearing = _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING, invoice.activity) if nonrecoverable_tax > 0 else None
     account_list = [payable, grni]
     account_list.extend(account for account in (vat_input, clearing) if account)
     if len({account.pk for account in account_list}) != len(account_list):
@@ -443,11 +643,11 @@ def post_purchase_invoice(invoice_id, user):
     }
     allocation_accounts = {}
     if allocation_totals["inventory"]:
-        allocation_accounts["inventory"] = _account(invoice.company, AccountRole.Role.INVENTORY)
+        allocation_accounts["inventory"] = _account(invoice.company, AccountRole.Role.INVENTORY, invoice.activity)
     if allocation_totals["cogs"]:
-        allocation_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS)
+        allocation_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS, invoice.activity)
     if allocation_totals["loss"]:
-        allocation_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS)
+        allocation_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, invoice.activity)
     if allocation_accounts:
         used = {account.pk for account in [*account_list, *allocation_accounts.values()]}
         if len(used) != len(account_list) + len(allocation_accounts):
@@ -582,8 +782,8 @@ def post_supplier_payment(payment_id, user):
                 rate_date=payment.exchange_rate_date, document_date=payment.payment_date,
                 approved_rate=approved.rate,
             )
-        except (ValueError, TypeError) as exc:
-            raise ValidationError(str(exc)) from exc
+        except (ValueError, TypeError):
+            raise ValidationError("تعذر التحقق من سعر الصرف لسند سداد المورد.") from None
         if expected_amount != payment.amount:
             raise ValidationError("مبلغ السداد الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
         from accounting.fx_settlement import allocate_carrying_base_amount, calculate_realized_fx
@@ -594,9 +794,6 @@ def post_supplier_payment(payment_id, user):
             payment_date__gt=payment.payment_date,
         ).exists() or FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__gte=payment.payment_date,
-        ).filter(
-            Q(journal_entry__isnull=True)
-            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
         ).exists() or SupplierReturn.objects.filter(
             invoice=invoice,
             status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),
@@ -619,8 +816,8 @@ def post_supplier_payment(payment_id, user):
             realized_gain, realized_loss = calculate_realized_fx(
                 "payable", historical_carrying, settlement.settlement_base_amount,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر احتساب تسوية العملة لسداد المورد.") from None
         carrying_amount = settlement.carrying_base_amount
         unrealized_adjustment = carrying_amount - historical_carrying
     else:
@@ -643,11 +840,10 @@ def post_supplier_payment(payment_id, user):
         unrealized_adjustment = Decimal("0")
         realized_gain = realized_loss = Decimal("0")
 
-    receipt = invoice.receipt
-    branch, year = _branch_and_year(receipt, payment.payment_date)
-    payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    branch, year = _branch_and_year_for_invoice(invoice, payment.payment_date)
+    payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
-    payment_account = payment.payment_account or _account(payment.company, cash_role)
+    payment_account = payment.payment_account or _account(payment.company, cash_role, invoice.activity)
     if payment_account.company_id != payment.company_id or payment_account.nature != "asset" or not payment_account.is_active or payment_account.is_group or not payment_account.allow_posting:
         raise ValidationError("حساب الصرف يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
     if payment.payment_account_id:
@@ -660,68 +856,14 @@ def post_supplier_payment(payment_id, user):
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
-    # Serialize supplier payments with treasury transactions on the same
-    # TreasuryAccount row; a ChartOfAccount-only lock would not prevent a
-    # concurrent treasury withdrawal from spending the same available balance.
-    from treasury.models import TreasuryAccount
-    treasury_account = TreasuryAccount.objects.select_for_update().filter(
-        company_id=payment.company_id, account_id=payment_account.pk,
-    ).first()
-    if treasury_account:
-        opening_balance = (
-            Decimal("0") if treasury_account.opening_journal_entry_id
-            else treasury_account.opening_balance
-        )
-    else:
-        # Legacy/default role accounts may not have a TreasuryAccount record.
-        # Lock the GL account to serialize payments that use this fallback.
-        ChartOfAccount.objects.select_for_update().get(pk=payment_account.pk)
-        opening_balance = Decimal("0")
-
-    balance_movements = JournalLine.objects.filter(
-        account_id=payment_account.pk,
-        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-    ).values(
-        "entry_id", "entry__entry_date",
-    ).annotate(
-        debit=Sum("debit"), credit=Sum("credit"),
-    ).order_by("entry__entry_date", "entry_id")
-
-    # Existing entries dated on the payment date are already posted before
-    # this payment. Check the balance immediately after this payment, then
-    # after every later posted entry so a backdated payment cannot make a
-    # subsequent withdrawal overdraw the account.
-    cash_balance = opening_balance
-    later_movements = []
-    for movement in balance_movements:
-        change = (
-            (movement["debit"] or Decimal("0"))
-            - (movement["credit"] or Decimal("0"))
-        )
-        if movement["entry__entry_date"] <= payment.payment_date:
-            cash_balance += change
-        else:
-            later_movements.append(change)
-
-    if cash_balance < payment.amount:
-        raise ValidationError(
-            f"لا يمكن ترحيل السداد: الرصيد المتاح بعد احتساب الحركات حتى تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
-        )
-    for change in later_movements:
-        cash_balance += change
-        if cash_balance < payment.amount:
-            raise ValidationError(
-                "لا يمكن ترحيل السداد بأثر رجعي؛ سيؤدي إلى رصيد نقدية/بنك سالب بعد حركة لاحقة مسجلة."
-            )
-
     journal_lines = [
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
     ]
-    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN) if realized_gain else None
-    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS) if realized_loss else None
-    unrealized_gain = _account(payment.company, AccountRole.Role.UNREALIZED_FX_GAIN) if unrealized_adjustment < 0 else None
-    unrealized_loss = _account(payment.company, AccountRole.Role.UNREALIZED_FX_LOSS) if unrealized_adjustment > 0 else None
+    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN, invoice.activity) if realized_gain else None
+    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS, invoice.activity) if realized_loss else None
+    unrealized_gain = _account(payment.company, AccountRole.Role.UNREALIZED_FX_GAIN, invoice.activity) if unrealized_adjustment < 0 else None
+    unrealized_loss = _account(payment.company, AccountRole.Role.UNREALIZED_FX_LOSS, invoice.activity) if unrealized_adjustment > 0 else None
     used_ids = {payable.pk, payment_account.pk}
     for account in (gain, loss, unrealized_gain, unrealized_loss):
         if account and account.pk in used_ids:
@@ -845,7 +987,7 @@ def post_supplier_refund(refund_id, user):
         raise ValidationError(
             f"قيمة الاسترداد تتجاوز الرصيد الدائن المتاح للمورد ({available_credit})."
         )
-    payable = _account(document.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    payable = _account(document.company, AccountRole.Role.ACCOUNTS_PAYABLE, return_document.invoice.activity)
     if document.payment_account_id == payable.pk:
         raise ValidationError("حساب الاسترداد يجب أن يختلف عن حساب الموردين.")
     from treasury.models import TreasuryAccount
@@ -981,6 +1123,7 @@ def reverse_supplier_refund(refund_id, user, entry_date):
     return document
 
 
+@transaction.atomic
 def post_supplier_return(return_id, user):
     """ترحيل مرتجع المورد من مصدر الاستلام الأصلي مع تسوية المورد والضريبة والمخزون."""
     document = SupplierReturn.objects.select_for_update(of=("self",)).select_related(
@@ -988,7 +1131,7 @@ def post_supplier_return(return_id, user):
     ).get(pk=return_id)
     if document.status != SupplierReturn.Status.DRAFT:
         raise ValidationError("مرتجع المورد مرحّل بالفعل.")
-    invoice = PurchaseInvoice.objects.select_for_update().select_related(
+    invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
         "company", "supplier", "receipt", "receipt__warehouse",
     ).get(pk=document.invoice_id)
     if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
@@ -1099,9 +1242,9 @@ def post_supplier_return(return_id, user):
     if abs(inventory_credit - expected_inventory_credit) > Decimal("0.0001"):
         raise ValidationError("قيمة تكلفة المخزون المرتجع لا تتطابق مع صافي المرتجع والضريبة غير القابلة للخصم ضمن هامش التقريب.")
 
-    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
-    inventory = _account(invoice.company, AccountRole.Role.INVENTORY)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_total else None
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
+    inventory = _account(invoice.company, AccountRole.Role.INVENTORY, invoice.activity)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT, invoice.activity) if recoverable_total else None
     if len({account.pk for account in (payable, inventory, *([vat_input] if vat_input else []))}) != (3 if vat_input else 2):
         raise ValidationError("يجب فصل حساب الموردين والمخزون وضريبة المدخلات.")
 
