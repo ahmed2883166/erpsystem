@@ -925,140 +925,6 @@ class PurchasingWorkflowTests(APITestCase):
             totals = entry.lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             self.assertEqual(totals["debit"], totals["credit"], entry.entry_number)
 
-        # Add separate cash and bank accounts, then settle both subledgers.
-        # The internal transfer must move value between the two GL accounts
-        # without changing total cash flow.
-        from accounting.services import post_journal
-        from treasury.services import post_treasury_transaction
-
-        cash_gl = ChartOfAccount.objects.get(company=self.company, code="1005")
-        bank_gl = ChartOfAccount.objects.get(company=self.company, code="1100")
-        receivable = ChartOfAccount.objects.get(company=self.company, code="1200")
-        payable = ChartOfAccount.objects.get(company=self.company, code="2200")
-        capital = ChartOfAccount.objects.create(
-            company=self.company, code="3000", name_ar="رأس المال",
-            nature=ChartOfAccount.Nature.EQUITY,
-        )
-        opening = JournalEntry.objects.create(
-            company=self.company, branch=self.branch, fiscal_year=self.year,
-            entry_number="CYCLE-CASH-OPEN-001", entry_date=date(2026, 1, 1),
-            description="رصيد افتتاحي للبنك", source_type=JournalEntry.Source.OPENING,
-        )
-        JournalLine.objects.create(entry=opening, account=bank_gl, debit=Decimal("228"))
-        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("228"))
-        post_journal(opening.pk)
-
-        cash_treasury = TreasuryAccount.objects.create(
-            company=self.company, branch=self.branch, account=cash_gl,
-            kind=TreasuryAccount.Kind.CASH, code="CYCLE-CASH",
-            name_ar="خزينة اختبار المطابقة", currency_code="EGP",
-        )
-        bank_treasury = TreasuryAccount.objects.create(
-            company=self.company, branch=self.branch, account=bank_gl,
-            kind=TreasuryAccount.Kind.BANK, code="CYCLE-BANK",
-            name_ar="بنك اختبار المطابقة", currency_code="EGP",
-        )
-
-        customer_receipt = TreasuryTransaction.objects.create(
-            company=self.company, branch=self.branch, fiscal_year=self.year,
-            source_account=cash_treasury, counter_account=receivable,
-            kind=TreasuryTransaction.Kind.RECEIPT,
-            document_number="CYCLE-CASH-REC-001",
-            transaction_date=date(2026, 3, 13), amount=Decimal("171"),
-            description="تحصيل فاتورة العميل", 
-            cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
-        )
-        post_treasury_transaction(customer_receipt.pk, user=self.user)
-
-        supplier_payment = TreasuryTransaction.objects.create(
-            company=self.company, branch=self.branch, fiscal_year=self.year,
-            source_account=bank_treasury, counter_account=payable,
-            kind=TreasuryTransaction.Kind.PAYMENT,
-            document_number="CYCLE-BANK-PAY-001",
-            transaction_date=date(2026, 3, 14), amount=Decimal("228"),
-            description="سداد فاتورة المورد",
-            cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
-        )
-        post_treasury_transaction(supplier_payment.pk, user=self.user)
-
-        internal_transfer = TreasuryTransaction.objects.create(
-            company=self.company, branch=self.branch, fiscal_year=self.year,
-            source_account=cash_treasury, destination_account=bank_treasury,
-            kind=TreasuryTransaction.Kind.TRANSFER,
-            document_number="CYCLE-CASH-TRF-001",
-            transaction_date=date(2026, 3, 15), amount=Decimal("50"),
-            description="تحويل داخلي من الخزينة إلى البنك",
-        )
-        post_treasury_transaction(internal_transfer.pk, user=self.user)
-
-        # A balanced but unposted journal must not leak into any financial report.
-        draft = JournalEntry.objects.create(
-            company=self.company, branch=self.branch, fiscal_year=self.year,
-            entry_number="CYCLE-DRAFT-ONLY", entry_date=date(2026, 3, 31),
-            description="قيد مسودة لا يدخل التقارير",
-        )
-        JournalLine.objects.create(entry=draft, account=cash_gl, debit=Decimal("999"))
-        JournalLine.objects.create(entry=draft, account=receivable, credit=Decimal("999"))
-
-        query = f"company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
-        trial = self.client.get(f"/api/accounting/journal-entries/trial-balance/?{query}")
-        self.assertEqual(trial.status_code, 200, trial.data)
-        self.assertEqual(trial.data["difference"], Decimal("0.0000"))
-        trial_rows = {row["account_id"]: row for row in trial.data["accounts"]}
-
-        income = self.client.get(f"/api/accounting/journal-entries/income-statement/?{query}")
-        self.assertEqual(income.status_code, 200, income.data)
-        self.assertEqual(income.data["revenue_total"], Decimal("150.0000"))
-        self.assertEqual(income.data["cost_of_sales_total"], Decimal("100.0000"))
-        self.assertEqual(income.data["net_profit"], Decimal("50.0000"))
-
-        inventory_reconciliation = self.client.get(
-            f"/api/inventory/balances/reconciliation/?company={self.company.pk}"
-        )
-        self.assertEqual(inventory_reconciliation.status_code, 200, inventory_reconciliation.data)
-        self.assertEqual(Decimal(inventory_reconciliation.data["stock_value"]), Decimal("100.0000"))
-        self.assertEqual(Decimal(inventory_reconciliation.data["gl_balance"]), Decimal("100.0000"))
-        self.assertEqual(Decimal(inventory_reconciliation.data["difference"]), Decimal("0.0000"))
-
-        for account in (cash_gl, bank_gl, inventory):
-            ledger = self.client.get(
-                f"/api/accounting/journal-entries/general-ledger/?company={self.company.pk}"
-                f"&account={account.pk}&date_from=2026-03-01&date_to=2026-03-31"
-            )
-            self.assertEqual(ledger.status_code, 200, ledger.data)
-            self.assertEqual(
-                ledger.data["closing_balance"],
-                trial_rows[account.pk]["closing_balance"],
-                f"الأستاذ العام لا يطابق ميزان المراجعة للحساب {account.code}",
-            )
-
-        # Cash and bank remain independently reconcilable, while the indirect
-        # cash-flow statement reconciles to their combined closing balance.
-        self.assertEqual(trial_rows[cash_gl.pk]["closing_balance"], Decimal("121.0000"))
-        self.assertEqual(trial_rows[bank_gl.pk]["closing_balance"], Decimal("50.0000"))
-        cash_flow = self.client.get(
-            f"/api/accounting/journal-entries/indirect-cash-flow/?{query}"
-        )
-        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
-        self.assertEqual(cash_flow.data["net_profit"], income.data["net_profit"])
-        self.assertEqual(cash_flow.data["opening_cash_balance"], Decimal("228.0000"))
-        self.assertEqual(cash_flow.data["net_increase_decrease_in_cash"], Decimal("-57.0000"))
-        self.assertEqual(cash_flow.data["closing_cash_balance"], Decimal("171.0000"))
-        self.assertEqual(cash_flow.data["ledger_closing_cash_balance"], Decimal("171.0000"))
-        self.assertEqual(cash_flow.data["closing_balance_difference"], Decimal("0.0000"))
-        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
-        self.assertEqual(
-            trial_rows[cash_gl.pk]["closing_balance"] + trial_rows[bank_gl.pk]["closing_balance"],
-            cash_flow.data["closing_cash_balance"],
-        )
-
-        balance_sheet = self.client.get(
-            f"/api/accounting/journal-entries/balance-sheet/?company={self.company.pk}&as_of=2026-03-31"
-        )
-        self.assertEqual(balance_sheet.status_code, 200, balance_sheet.data)
-        self.assertEqual(balance_sheet.data["difference"], Decimal("0.0000"))
-        self.assertEqual(balance_sheet.data["current_year_profit"], Decimal("50.0000"))
-
         statement = self.client.get(
             f"/api/purchasing/invoices/supplier-statement/?company={self.company.pk}&supplier={self.supplier.pk}"
         )
@@ -3401,6 +3267,141 @@ class PurchasingWorkflowTests(APITestCase):
         ):
             totals = entry.lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
             self.assertEqual(totals["debit"], totals["credit"], entry.entry_number)
+        # Add separate cash and bank accounts, then settle both subledgers.
+        # The internal transfer must move value between the two GL accounts
+        # without changing total cash flow.
+        from accounting.services import post_journal
+        from treasury.services import post_treasury_transaction
+
+        cash_gl = ChartOfAccount.objects.get(company=self.company, code="1005")
+        bank_gl = ChartOfAccount.objects.get(company=self.company, code="1100")
+        receivable = ChartOfAccount.objects.get(company=self.company, code="1200")
+        payable = ChartOfAccount.objects.get(company=self.company, code="2200")
+        capital = ChartOfAccount.objects.create(
+            company=self.company, code="3000", name_ar="رأس المال",
+            nature=ChartOfAccount.Nature.EQUITY,
+        )
+        opening = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CYCLE-CASH-OPEN-001", entry_date=date(2026, 1, 1),
+            description="رصيد افتتاحي للبنك", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening, account=bank_gl, debit=Decimal("228"))
+        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("228"))
+        post_journal(opening.pk)
+
+        cash_treasury = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_gl,
+            kind=TreasuryAccount.Kind.CASH, code="CYCLE-CASH",
+            name_ar="خزينة اختبار المطابقة", currency_code="EGP",
+        )
+        bank_treasury = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind=TreasuryAccount.Kind.BANK, code="CYCLE-BANK",
+            name_ar="بنك اختبار المطابقة", currency_code="EGP",
+        )
+
+        customer_receipt = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=cash_treasury, counter_account=receivable,
+            kind=TreasuryTransaction.Kind.RECEIPT,
+            document_number="CYCLE-CASH-REC-001",
+            transaction_date=date(2026, 3, 13), amount=Decimal("171"),
+            description="تحصيل فاتورة العميل", 
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
+        )
+        post_treasury_transaction(customer_receipt.pk, user=self.user)
+
+        supplier_payment = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=bank_treasury, counter_account=payable,
+            kind=TreasuryTransaction.Kind.PAYMENT,
+            document_number="CYCLE-BANK-PAY-001",
+            transaction_date=date(2026, 3, 14), amount=Decimal("228"),
+            description="سداد فاتورة المورد",
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
+        )
+        post_treasury_transaction(supplier_payment.pk, user=self.user)
+
+        internal_transfer = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=cash_treasury, destination_account=bank_treasury,
+            kind=TreasuryTransaction.Kind.TRANSFER,
+            document_number="CYCLE-CASH-TRF-001",
+            transaction_date=date(2026, 3, 15), amount=Decimal("50"),
+            description="تحويل داخلي من الخزينة إلى البنك",
+        )
+        post_treasury_transaction(internal_transfer.pk, user=self.user)
+
+        # A balanced but unposted journal must not leak into any financial report.
+        draft = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CYCLE-DRAFT-ONLY", entry_date=date(2026, 3, 31),
+            description="قيد مسودة لا يدخل التقارير",
+        )
+        JournalLine.objects.create(entry=draft, account=cash_gl, debit=Decimal("999"))
+        JournalLine.objects.create(entry=draft, account=receivable, credit=Decimal("999"))
+
+        query = f"company={self.company.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        trial = self.client.get(f"/api/accounting/journal-entries/trial-balance/?{query}")
+        self.assertEqual(trial.status_code, 200, trial.data)
+        self.assertEqual(trial.data["difference"], Decimal("0.0000"))
+        trial_rows = {row["account_id"]: row for row in trial.data["accounts"]}
+
+        income = self.client.get(f"/api/accounting/journal-entries/income-statement/?{query}")
+        self.assertEqual(income.status_code, 200, income.data)
+        self.assertEqual(income.data["revenue_total"], Decimal("150.0000"))
+        self.assertEqual(income.data["cost_of_sales_total"], Decimal("100.0000"))
+        self.assertEqual(income.data["net_profit"], Decimal("50.0000"))
+
+        inventory_reconciliation = self.client.get(
+            f"/api/inventory/balances/reconciliation/?company={self.company.pk}"
+        )
+        self.assertEqual(inventory_reconciliation.status_code, 200, inventory_reconciliation.data)
+        self.assertEqual(Decimal(inventory_reconciliation.data["stock_value"]), Decimal("100.0000"))
+        self.assertEqual(Decimal(inventory_reconciliation.data["gl_balance"]), Decimal("100.0000"))
+        self.assertEqual(Decimal(inventory_reconciliation.data["difference"]), Decimal("0.0000"))
+
+        for account in (cash_gl, bank_gl, inventory):
+            ledger = self.client.get(
+                f"/api/accounting/journal-entries/general-ledger/?company={self.company.pk}"
+                f"&account={account.pk}&date_from=2026-03-01&date_to=2026-03-31"
+            )
+            self.assertEqual(ledger.status_code, 200, ledger.data)
+            self.assertEqual(
+                ledger.data["closing_balance"],
+                trial_rows[account.pk]["closing_balance"],
+                f"الأستاذ العام لا يطابق ميزان المراجعة للحساب {account.code}",
+            )
+
+        # Cash and bank remain independently reconcilable, while the indirect
+        # cash-flow statement reconciles to their combined closing balance.
+        self.assertEqual(trial_rows[cash_gl.pk]["closing_balance"], Decimal("121.0000"))
+        self.assertEqual(trial_rows[bank_gl.pk]["closing_balance"], Decimal("50.0000"))
+        cash_flow = self.client.get(
+            f"/api/accounting/journal-entries/indirect-cash-flow/?{query}"
+        )
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(cash_flow.data["net_profit"], income.data["net_profit"])
+        self.assertEqual(cash_flow.data["opening_cash_balance"], Decimal("228.0000"))
+        self.assertEqual(cash_flow.data["net_increase_decrease_in_cash"], Decimal("-57.0000"))
+        self.assertEqual(cash_flow.data["closing_cash_balance"], Decimal("171.0000"))
+        self.assertEqual(cash_flow.data["ledger_closing_cash_balance"], Decimal("171.0000"))
+        self.assertEqual(cash_flow.data["closing_balance_difference"], Decimal("0.0000"))
+        self.assertEqual(cash_flow.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(
+            trial_rows[cash_gl.pk]["closing_balance"] + trial_rows[bank_gl.pk]["closing_balance"],
+            cash_flow.data["closing_cash_balance"],
+        )
+
+        balance_sheet = self.client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(balance_sheet.status_code, 200, balance_sheet.data)
+        self.assertEqual(balance_sheet.data["difference"], Decimal("0.0000"))
+        self.assertEqual(balance_sheet.data["current_year_profit"], Decimal("50.0000"))
+
+
 
 
 class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
