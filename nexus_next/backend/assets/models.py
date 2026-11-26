@@ -537,10 +537,17 @@ class AssetComponent(models.Model):
         super().clean()
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية للمكوّن لا تتجاوز تكلفته."})
-        for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account"):
+        parent_accounts = {
+            "asset_account": self.asset.asset_account_id,
+            "accumulated_depreciation_account": self.asset.accumulated_depreciation_account_id,
+            "depreciation_expense_account": self.asset.depreciation_expense_account_id,
+        }
+        for field, parent_account_id in parent_accounts.items():
             account = getattr(self, field, None)
             if account and account.company_id != self.asset.company_id:
                 raise ValidationError({field: "حساب المكوّن يجب أن يتبع شركة الأصل."})
+            if account and account.pk != parent_account_id:
+                raise ValidationError({field: "يجب استخدام حسابات الأصل الأم لضمان مطابقة دفتر الأستاذ وسجل المكونات."})
         if self.depreciation_method == FixedAsset.Method.DECLINING_BALANCE:
             if not self.declining_rate_percentage or not (0 < self.declining_rate_percentage <= 100):
                 raise ValidationError({"declining_rate_percentage": "أدخل معدل قسط متناقص أكبر من صفر وحتى 100%."})
