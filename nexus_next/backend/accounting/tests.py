@@ -6,7 +6,7 @@ from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
+from companies.models import Branch, Company, CompanyActivity, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from audit.models import AuditEvent
 from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation
 from treasury.services import (
@@ -715,6 +715,37 @@ class AccountingApiTests(TestCase):
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.REALIZED_FX_LOSS).account.code, "6150")
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_GAIN).account.code, "7210")
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_LOSS).account.code, "6160")
+
+    def test_activity_chart_templates_support_transport_and_contracting_primary_activities(self):
+        expected = {
+            "transport": ("إيرادات خدمات النقل والشحن", "تكاليف الرحلات والنقل والشحن"),
+            "contracting": ("إيرادات أعمال المقاولات", "تكاليف المشروعات والمقاولات"),
+        }
+        for activity, (revenue_name, cost_name) in expected.items():
+            company = Company.objects.create(
+                code=f"TPL-{activity.upper()}", name_ar="شركة نشاط متخصص",
+                country="EG", activity=activity, base_currency=self.currency,
+            )
+            user = User.objects.create_user(
+                username=f"template-{activity}", password="test-password"
+            )
+            CompanyMembership.objects.create(
+                user=user, company=company, role="admin", all_branches=True
+            )
+            self.client.force_authenticate(user=user)
+            response = self.client.post(
+                "/api/accounting/account-templates/",
+                {"company": company.pk}, format="json",
+            )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(
+                ChartOfAccount.objects.get(company=company, code="4110").name_ar,
+                revenue_name,
+            )
+            self.assertEqual(
+                ChartOfAccount.objects.get(company=company, code="5110").name_ar,
+                cost_name,
+            )
 
     def test_activity_chart_template_is_idempotent_and_never_overwrites_existing_role(self):
         company = Company.objects.create(
@@ -1705,12 +1736,24 @@ class TrialBalanceClosingFilterTests(TestCase):
         CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
         client = APIClient()
         client.force_authenticate(user=user)
-        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}")
-        excluded = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&exclude_closing=true")
-        self.assertEqual(included.status_code, 200)
+        excluded = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}")
+        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&exclude_closing=false")
+        ledger_excluded = client.get(
+            f"/api/accounting/journal-entries/general-ledger/?company={company.pk}&account={cash.pk}&date_from=2026-01-01&date_to=2026-12-31"
+        )
+        ledger_included = client.get(
+            f"/api/accounting/journal-entries/general-ledger/?company={company.pk}&account={cash.pk}&date_from=2026-01-01&date_to=2026-12-31&include_closing=true"
+        )
         self.assertEqual(excluded.status_code, 200)
-        self.assertEqual(included.data["debit_total"], Decimal("100.0000"))
+        self.assertEqual(included.status_code, 200)
+        self.assertEqual(ledger_excluded.status_code, 200)
+        self.assertEqual(ledger_included.status_code, 200)
         self.assertEqual(excluded.data["debit_total"], Decimal("0.0000"))
+        self.assertEqual(included.data["debit_total"], Decimal("100.0000"))
+        self.assertEqual(ledger_excluded.data["closing_balance"], Decimal("0.0000"))
+        self.assertEqual(ledger_excluded.data["rows"], [])
+        self.assertEqual(ledger_included.data["closing_balance"], Decimal("100.0000"))
+        self.assertEqual(len(ledger_included.data["rows"]), 1)
 
 
 
@@ -2048,6 +2091,47 @@ class AccountRoleRuntimeValidationTests(TestCase):
             self.cash.pk,
         )
 
+    def test_runtime_role_lookup_prefers_activity_mapping_then_legacy_fallback(self):
+        service_activity = CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.SERVICE,
+        )
+        CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.MEDICAL,
+        )
+        generic = AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.CASH, account=self.cash,
+        )
+        service_cash = ChartOfAccount.objects.create(
+            company=self.company, code="1111", name_ar="صندوق الخدمات", nature="asset",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.CASH,
+            account=service_cash, activity=service_activity,
+        )
+
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, "service").pk,
+            service_cash.pk,
+        )
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, "medical").pk,
+            generic.account_id,
+        )
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH).pk,
+            generic.account_id,
+        )
+
+    def test_runtime_role_lookup_rejects_disabled_or_unassigned_activity(self):
+        with self.assertRaises(ValidationError):
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, "medical")
+
+        disabled = CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.SERVICE, is_active=False,
+        )
+        with self.assertRaises(ValidationError):
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, disabled)
+
     def test_expense_analysis_groups_posted_expenses_by_account_branch_and_month(self):
         currency = Currency.objects.get(code="EGP")
         company = Company.objects.create(code="EXP-AN", name_ar="شركة تحليل المصروفات",
@@ -2216,6 +2300,167 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(Decimal(row["gl_balance"]), Decimal("125.2500"))
         self.assertEqual(Decimal(row["difference"]), Decimal("125.2500"))
         self.assertEqual(row["unmatched_entries"][0]["entry_number"], "MANUAL-AR-001")
+
+    def test_customer_receipt_batch_is_included_once_in_customer_reconciliation(self):
+        from customers.models import Customer
+        from sales.models import CustomerReceiptBatch
+
+        customer = Customer.objects.create(
+            company=self.company, code="RECON-CUST-001", name_ar="عميل دفعة مجمعة",
+        )
+        entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="BATCH-RECON-001", entry_date=date(2026, 3, 10),
+            description="تحصيل دفعة مقدمة للعميل",
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.cash, debit=Decimal("125.0000"),
+        )
+        JournalLine.objects.create(
+            entry=entry, account=self.receivables, credit=Decimal("125.0000"),
+        )
+        post_journal(entry.pk)
+        CustomerReceiptBatch.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            receipt_number="BATCH-RECON-001", receipt_date=date(2026, 3, 10),
+            method="cash", amount=Decimal("125.0000"),
+            status=CustomerReceiptBatch.Status.POSTED, journal_entry=entry,
+            created_by=self.user,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        customers = next(row for row in result.data["rows"] if row["key"] == "customers")
+        self.assertEqual(customers["status"], "matched", customers)
+        self.assertEqual(Decimal(customers["subledger_balance"]), Decimal("-125.0000"))
+        self.assertEqual(Decimal(customers["gl_balance"]), Decimal("-125.0000"))
+        self.assertEqual(Decimal(customers["difference"]), Decimal("0"))
+        self.assertEqual(customers["source_journal_count"], 1)
+        self.assertEqual(customers["unmatched_entry_count"], 0)
+
+    def test_customer_refund_is_included_once_in_customer_subledger_reconciliation(self):
+        from customers.models import Customer
+        from sales.models import CustomerReceiptBatch, CustomerRefund
+
+        customer = Customer.objects.create(
+            company=self.company, code="RECON-REFUND-CUST", name_ar="عميل رد مبلغ",
+        )
+        batch_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="REFUND-BATCH-RECON", entry_date=date(2026, 3, 10),
+            description="دفعة مقدمة للعميل",
+        )
+        JournalLine.objects.create(entry=batch_entry, account=self.cash, debit=Decimal("125"))
+        JournalLine.objects.create(entry=batch_entry, account=self.receivables, credit=Decimal("125"))
+        post_journal(batch_entry.pk)
+        batch = CustomerReceiptBatch.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            receipt_number="REFUND-BATCH-RECON", receipt_date=date(2026, 3, 10),
+            method="cash", amount=Decimal("125"),
+            status=CustomerReceiptBatch.Status.POSTED, journal_entry=batch_entry,
+            created_by=self.user,
+        )
+
+        refund_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="REFUND-RECON-001", entry_date=date(2026, 3, 12),
+            description="رد جزء من دفعة العميل",
+        )
+        JournalLine.objects.create(entry=refund_entry, account=self.receivables, debit=Decimal("25"))
+        JournalLine.objects.create(entry=refund_entry, account=self.cash, credit=Decimal("25"))
+        post_journal(refund_entry.pk)
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=self.cash,
+            kind=TreasuryAccount.Kind.CASH, code="REFUND-RECON-CASH",
+            name_ar="خزينة رد المبالغ",
+        )
+        treasury_transaction = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=treasury_account, counter_account=self.receivables,
+            kind=TreasuryTransaction.Kind.PAYMENT,
+            status=TreasuryTransaction.Status.POSTED,
+            document_number="REFUND-RECON-001", transaction_date=date(2026, 3, 12),
+            amount=Decimal("25"), description="رد جزء من دفعة العميل",
+            journal_entry=refund_entry, created_by=self.user,
+        )
+        CustomerRefund.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            source_receipt_batch=batch, treasury_account=treasury_account,
+            treasury_transaction=treasury_transaction,
+            refund_number="REFUND-RECON-001", refund_date=date(2026, 3, 12),
+            amount=Decimal("25"), status=CustomerRefund.Status.POSTED,
+            created_by=self.user,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        customers = next(row for row in result.data["rows"] if row["key"] == "customers")
+        self.assertEqual(customers["status"], "matched", customers)
+        self.assertEqual(Decimal(customers["subledger_balance"]), Decimal("-100.0000"))
+        self.assertEqual(Decimal(customers["gl_balance"]), Decimal("-100.0000"))
+        self.assertEqual(Decimal(customers["difference"]), Decimal("0"))
+        self.assertEqual(customers["source_journal_count"], 2)
+        self.assertEqual(customers["unmatched_entry_count"], 0)
+
+    def test_customer_refund_missing_treasury_or_reversal_journal_is_reported(self):
+        from customers.models import Customer
+        from sales.models import CustomerReceiptBatch, CustomerRefund
+        from treasury.models import TreasuryAccount
+
+        customer = Customer.objects.create(
+            company=self.company, code="RECON-REFUND-MISSING",
+            name_ar="عميل رد غير مربوط",
+        )
+        batch_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="REFUND-MISSING-BATCH", entry_date=date(2026, 3, 10),
+            description="دفعة مقدمة للعميل",
+        )
+        JournalLine.objects.create(
+            entry=batch_entry, account=self.cash, debit=Decimal("100"),
+        )
+        JournalLine.objects.create(
+            entry=batch_entry, account=self.receivables, credit=Decimal("100"),
+        )
+        post_journal(batch_entry.pk)
+        batch = CustomerReceiptBatch.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            receipt_number="REFUND-MISSING-BATCH", receipt_date=date(2026, 3, 10),
+            method="cash", amount=Decimal("100"),
+            status=CustomerReceiptBatch.Status.POSTED,
+            journal_entry=batch_entry, created_by=self.user,
+        )
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=self.cash,
+            kind=TreasuryAccount.Kind.CASH, code="REFUND-MISSING-CASH",
+            name_ar="خزينة اختبار الرد غير المربوط",
+        )
+        CustomerRefund.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            source_receipt_batch=batch, treasury_account=treasury_account,
+            refund_number="REFUND-MISSING-001", refund_date=date(2026, 3, 12),
+            amount=Decimal("10"), status=CustomerRefund.Status.POSTED,
+            created_by=self.user,
+        )
+        CustomerRefund.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            source_receipt_batch=batch, treasury_account=treasury_account,
+            refund_number="REFUND-MISSING-002", refund_date=date(2026, 3, 13),
+            amount=Decimal("10"), status=CustomerRefund.Status.REVERSED,
+            reversal_date=date(2026, 3, 14), created_by=self.user,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["posted_documents_missing_journal"]["sales"], 3)
+        self.assertEqual(result.data["posted_documents_missing_journal_count"], 3)
+        self.assertFalse(result.data["is_reconciled"])
 
     def test_missing_control_account_is_not_silently_reported_as_zero(self):
         result = self.client.get(
