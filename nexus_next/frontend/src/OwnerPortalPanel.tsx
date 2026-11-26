@@ -29,7 +29,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
-  const [activity, setActivity] = useState<Company["activity"]>("commercial");
+  const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
   type Activity = NonNullable<Company["activity"]>;
   const [enabledActivities, setEnabledActivities] = useState<Activity[]>(["commercial"]);
   const toggleEnabledActivity = (value: Activity, checked: boolean) => {
