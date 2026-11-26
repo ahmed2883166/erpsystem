@@ -3473,6 +3473,34 @@ class PurchaseDocumentTemplateAPITests(APITestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse(PurchaseDocumentTemplate.objects.filter(company=self.company).exists())
 
+    def test_template_cannot_be_moved_to_another_company_or_document_type(self):
+        template = PurchaseDocumentTemplate.objects.create(
+            company=self.company,
+            document_type="purchase_invoice",
+            name="فاتورة ثابتة",
+            style="classic",
+        )
+        other_currency = Currency.objects.create(code="SAR", name_ar="ريال سعودي")
+        other_company = Company.objects.create(
+            code="TPL2", name_ar="شركة أخرى", country="SA",
+            activity="commercial", base_currency=other_currency,
+        )
+        response = self.client.patch(
+            f"{self.url}{template.pk}/",
+            {"company": other_company.pk},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        response = self.client.patch(
+            f"{self.url}{template.pk}/",
+            {"document_type": "supplier_return"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        template.refresh_from_db()
+        self.assertEqual(template.company_id, self.company.pk)
+        self.assertEqual(template.document_type, "purchase_invoice")
+
     def test_deleting_template_deactivates_it_without_erasing_configuration(self):
         template = PurchaseDocumentTemplate.objects.create(
             company=self.company,
