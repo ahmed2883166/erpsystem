@@ -2890,3 +2890,64 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(statement_after_reversal.data["rows"][-1]["date"], "2026-03-20")
         self.assertEqual(statement_after_reversal.data["closing_balance"], "228.0000")
+
+    def test_sales_performance_keeps_return_until_actual_reversal_cutoff(self):
+        delivery_id, delivery_line_id = self._create_delivery("REPORT-REV-CUTOFF-DEL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "REPORT-REV-CUTOFF-INV",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": delivery_line_id,
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "REPORT-REV-CUTOFF-RET",
+            "return_date": "2026-03-15",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": "2026-03-20"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+
+        before_reversal = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-10&date_to=2026-03-18"
+        )
+        self.assertEqual(before_reversal.status_code, 200, before_reversal.data)
+        self.assertEqual(before_reversal.data["totals"]["return_count"], 1)
+        self.assertEqual(before_reversal.data["totals"]["net_sales"], "100.0000")
+        self.assertEqual(before_reversal.data["totals"]["net_cost"], "40.0000")
+        self.assertEqual(before_reversal.data["totals"]["gross_profit"], "60.0000")
+
+        after_reversal = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-10&date_to=2026-03-22"
+        )
+        self.assertEqual(after_reversal.status_code, 200, after_reversal.data)
+        self.assertEqual(after_reversal.data["totals"]["return_count"], 0)
+        self.assertEqual(after_reversal.data["totals"]["net_sales"], "200.0000")
+        self.assertEqual(after_reversal.data["totals"]["net_cost"], "80.0000")
+        self.assertEqual(after_reversal.data["totals"]["gross_profit"], "120.0000")
