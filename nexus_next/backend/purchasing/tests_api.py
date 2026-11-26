@@ -3282,6 +3282,9 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.client = APIClient()
         PurchasingWorkflowTests.setUp(self)
 
+    def _create_and_post_receipt(self):
+        return PurchasingWorkflowTests._create_and_post_receipt(self)
+
     def test_supplier_return_posting_owns_its_database_transaction(self):
         if connection.vendor != "postgresql":
             self.skipTest("This transaction-boundary regression specifically targets PostgreSQL row locking.")
