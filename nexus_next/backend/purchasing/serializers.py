@@ -67,9 +67,27 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
-        company = attrs.get("company")
-        supplier = attrs.get("supplier")
-        warehouse = attrs.get("warehouse")
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        supplier = attrs.get("supplier", instance.supplier if instance else None)
+        warehouse = attrs.get("warehouse", instance.warehouse if instance else None)
+        if instance:
+            immutable = {
+                "company": instance.company_id,
+                "supplier": instance.supplier_id,
+                "warehouse": instance.warehouse_id,
+                "purchase_order": instance.purchase_order_id,
+            }
+            for field, current in immutable.items():
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "لا يمكن تغيير الشركة أو المورد أو المخزن أو أمر الشراء لإذن استلام قائم."})
+            if instance.stock_movement.status != StockMovement.Status.DRAFT:
+                raise serializers.ValidationError("إذن الاستلام المرحّل غير قابل للتعديل.")
+            if PurchaseInvoice.objects.filter(receipt=instance).exists():
+                raise serializers.ValidationError("لا يمكن تعديل إذن استلام مرتبط بفاتورة مورد.")
         if supplier and not supplier.is_active:
             raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن استخدامه في مستند جديد."})
         if supplier and company and supplier.company_id != company.pk:
@@ -78,6 +96,8 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
         if warehouse and not warehouse.is_active:
             raise serializers.ValidationError({"warehouse": "مخزن الاستلام موقوف."})
+        if "lines" not in attrs and instance:
+            return attrs
         if not attrs.get("lines"):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         order = attrs.get("purchase_order")
@@ -111,10 +131,13 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                 line["destination_location_obj"] = location
         for order_line_id, requested in requested_by_line.items():
             order_line = next(x["purchase_order_line_obj"] for x in attrs["lines"] if x.get("purchase_order_line_obj") and x["purchase_order_line_obj"].pk == order_line_id)
-            reserved_drafts = PurchaseOrderReceiptLine.objects.filter(
+            reserved_query = PurchaseOrderReceiptLine.objects.filter(
                 order_line_id=order_line_id,
                 receipt_line__movement__status=StockMovement.Status.DRAFT,
-            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            )
+            if instance:
+                reserved_query = reserved_query.exclude(receipt_line__movement_id=instance.stock_movement_id)
+            reserved_drafts = reserved_query.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
             available = order_line.remaining_quantity - reserved_drafts
             if requested > available:
                 raise serializers.ValidationError({"lines": f"الكمية المطلوبة تتجاوز المتبقي بعد حجوزات أذون الاستلام المسودة للصنف {order_line.product.code}."})
@@ -151,6 +174,42 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                     quantity=line["quantity"],
                 )
         return receipt
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        """تعديل إذن استلام مسودة مع إعادة بناء بنود الحركة وحجوزات أمر الشراء بأمان."""
+        lines = validated_data.pop("lines", None)
+        movement = StockMovement.objects.select_for_update(of=("self",)).get(pk=instance.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise serializers.ValidationError("إذن الاستلام المرحّل غير قابل للتعديل.")
+        if PurchaseInvoice.objects.filter(receipt=instance).exists():
+            raise serializers.ValidationError("لا يمكن تعديل إذن استلام مرتبط بفاتورة مورد.")
+        if lines is not None:
+            old_line_ids = list(movement.lines.values_list("id", flat=True))
+            PurchaseOrderReceiptLine.objects.filter(receipt_line_id__in=old_line_ids).delete()
+            movement.lines.all().delete()
+            movement_lines = StockMovementLine.objects.bulk_create([
+                StockMovementLine(
+                    movement=movement, product=line["product"], quantity=line["quantity"],
+                    unit_cost=line["unit_cost"], destination_location=line.get("destination_location_obj"),
+                    expiry_date=line.get("expiry_date"),
+                ) for line in lines
+            ])
+            for movement_line, line in zip(movement_lines, lines):
+                order_line = line.get("purchase_order_line_obj")
+                if order_line:
+                    PurchaseOrderReceiptLine.objects.create(
+                        receipt_line=movement_line, order_line=order_line, quantity=line["quantity"],
+                    )
+        for field in ("receipt_date", "notes"):
+            if field in validated_data:
+                setattr(movement, "movement_date" if field == "receipt_date" else field,
+                        validated_data[field])
+        movement.save(update_fields=("movement_date", "notes"))
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        return instance
 
 
 class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
