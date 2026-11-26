@@ -160,8 +160,8 @@ export default function AssetControlsPanel({ asset, fiscalYearId, periodDate, on
       <label>تاريخ الجرد<input required type="date" value={countForm.count_date} onChange={e=>setCountForm({...countForm,count_date:e.target.value})}/></label>
       <label>الموقع الفعلي<input value={countForm.counted_location} onChange={e=>setCountForm({...countForm,counted_location:e.target.value})}/></label>
       <label>المستلم / المسؤول الفعلي<input value={countForm.counted_custodian} onChange={e=>setCountForm({...countForm,counted_custodian:e.target.value})}/></label>
-      <label>نتيجة الجرد<select value={countForm.result} onChange={e=>setCountForm({...countForm,result:e.target.value as AssetPhysicalInventory["result"]})}>
-        <option value="matched">مطابق</option><option value="location_mismatch">اختلاف موقع</option><option value="custodian_mismatch">اختلاف عهدة</option><option value="condition_issue">ملاحظة حالة</option><option value="not_found">غير موجود</option>
+      <label>حالة العثور على الأصل<select value={countForm.result==="not_found"?"not_found":"matched"} onChange={e=>setCountForm({...countForm,result:e.target.value as AssetPhysicalInventory["result"]})}>
+        <option value="matched">الأصل موجود</option><option value="not_found">الأصل غير موجود</option>
       </select></label>
       <label>حالة الأصل / الملاحظات<input value={countForm.condition_notes} onChange={e=>setCountForm({...countForm,condition_notes:e.target.value})}/></label>
       <button className="primary-button" type="submit" disabled={saving}>حفظ محضر الجرد</button>
