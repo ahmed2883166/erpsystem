@@ -128,7 +128,7 @@ export default function AssetControlsPanel({ asset, fiscalYearId, periodDate, on
       <button className="primary-button" type="submit" disabled={saving}>إضافة مكوّن</button>
     </form>
     <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>المكوّن</th><th>التكلفة</th><th>العمر</th><th>طريقة الإهلاك</th><th>الإهلاك المتراكم</th></tr></thead><tbody>
-      {components.map(row=><tr key={row.id}><td>{row.code}</td><td>{row.name_ar}</td><td>{Number(row.original_cost).toLocaleString("ar-EG")}</td><td>{row.useful_life_months} شهر</td><td>{row.depreciation_method==="straight_line"?"ثابت":row.depreciation_method==="declining_balance"?"متناقص":"وحدات الإنتاج"}</td><td>يظهر في سجل الإهلاك الموحد للأصل</td></tr>)}
+      {components.map(row=><tr key={row.id}><td>{row.code}</td><td>{row.name_ar}</td><td>{Number(row.original_cost).toLocaleString("ar-EG")}</td><td>{row.useful_life_months} شهر</td><td>{row.depreciation_method==="straight_line"?"ثابت":row.depreciation_method==="declining_balance"?"متناقص":"وحدات الإنتاج"}</td><td>{Number(row.accumulated_depreciation).toLocaleString("ar-EG")}</td></tr>)}
       {!components.length && <tr><td colSpan={6}>لم يتم تسجيل مكونات بعد.</td></tr>}
     </tbody></table></div>
     {components.some(row=>row.depreciation_method === "units_of_production") && <div className="asset-report-filters">
