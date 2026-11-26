@@ -550,7 +550,24 @@ class SubledgerReconciliationView(APIView):
             Q(source_warehouse__branch_id__in=branch_ids) | Q(destination_warehouse__branch_id__in=branch_ids)
         )
         missing_links = {
-            "sales": sales_invoices.filter(journal_entry__isnull=True).count() + customer_receipts.filter(journal_entry__isnull=True).count() + customer_receipt_batches.filter(journal_entry__isnull=True).count() + sales_returns.filter(journal_entry__isnull=True).count(),
+            "sales": (
+                sales_invoices.filter(journal_entry__isnull=True).count()
+                + customer_receipts.filter(journal_entry__isnull=True).count()
+                + customer_receipt_batches.filter(journal_entry__isnull=True).count()
+                + sales_returns.filter(journal_entry__isnull=True).count()
+                + customer_refunds.filter(
+                    Q(treasury_transaction__isnull=True)
+                    | Q(treasury_transaction__journal_entry__isnull=True)
+                ).count()
+                + customer_refunds.filter(
+                    status=CustomerRefund.Status.REVERSED,
+                    reversal_date__lte=as_of,
+                ).filter(
+                    Q(reversal_treasury_transaction__isnull=True)
+                    | Q(reversal_treasury_transaction__journal_entry__isnull=True)
+                    | Q(reversal_journal_entry__isnull=True)
+                ).count()
+            ),
             "purchasing": purchase_invoices.filter(journal_entry__isnull=True).count() + supplier_payments.filter(journal_entry__isnull=True).count() + supplier_returns.filter(journal_entry__isnull=True).count() + supplier_refunds.filter(journal_entry__isnull=True).count(),
             "inventory": posted_stock_movements.filter(journal_links__isnull=True).count(),
             "payroll": PayrollPosting.objects.filter(
