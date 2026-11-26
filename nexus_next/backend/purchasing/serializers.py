@@ -1041,6 +1041,10 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "requested_by", "reviewed_by", "reviewed_at",
                             "converted_order", "line_items", "created_at")
 
+    def get_branch(self, obj):
+        branch = resolve_warehouse_branch(obj.company, obj.order.warehouse)
+        return branch.pk if branch else None
+
     def get_line_items(self, obj):
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
@@ -1242,12 +1246,13 @@ class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
     line_items = serializers.SerializerMethodField()
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     order_number = serializers.CharField(source="order.order_number", read_only=True)
+    branch = serializers.SerializerMethodField()
     accepted_by_name = serializers.CharField(source="accepted_by.get_full_name", read_only=True, allow_null=True)
 
     class Meta:
         model = PurchaseServiceAcceptance
         fields = (
-            "id", "company", "order", "order_number", "supplier", "supplier_name",
+            "id", "company", "order", "order_number", "supplier", "supplier_name", "branch",
             "acceptance_number", "acceptance_date", "status", "notes", "accepted_by",
             "accepted_by_name", "accepted_at", "lines", "line_items", "created_at",
         )
