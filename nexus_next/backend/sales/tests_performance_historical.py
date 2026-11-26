@@ -1,13 +1,13 @@
 from rest_framework.test import APITestCase
 
-from sales.tests_api import SalesWorkflowTests
-
 
 class SalesPerformanceHistoricalReturnTests(APITestCase):
     def setUp(self):
+        from sales.tests_api import SalesWorkflowTests
         SalesWorkflowTests.setUp(self)
 
     def _create_delivery(self, *args, **kwargs):
+        from sales.tests_api import SalesWorkflowTests
         return SalesWorkflowTests._create_delivery(self, *args, **kwargs)
 
     def test_return_reversed_after_period_end_remains_in_historical_sales_performance(self):
