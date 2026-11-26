@@ -11,13 +11,15 @@ from .models import AssetComponent, AssetInsurancePolicy, AssetPhysicalInventory
 
 
 class AssetComponentSerializer(serializers.ModelSerializer):
+    accumulated_depreciation = serializers.DecimalField(max_digits=20, decimal_places=4, read_only=True)
+
     class Meta:
         model = AssetComponent
         fields = (
             "id", "asset", "code", "name_ar", "original_cost", "salvage_value",
             "useful_life_months", "depreciation_method", "declining_rate_percentage",
             "production_units_total", "asset_account", "accumulated_depreciation_account",
-            "depreciation_expense_account", "status", "created_at",
+            "depreciation_expense_account", "status", "accumulated_depreciation", "created_at",
         )
         read_only_fields = ("status", "created_at")
 
