@@ -18,7 +18,8 @@ const activityLabels: Record<NonNullable<Company["activity"]>, string> = {
   service: "خدمي",
   medical: "طبي",
   restaurants: "مطاعم",
-  industrial: "صناعي",};
+  industrial: "صناعي",
+};
 
 // شاشة تأسيس الشركة وإدارة الفروع والسنوات المالية والعملات والنشاط.
 export default function CompanySetupPanel({ companies, companyId, onCompanyCreated, onCompanyUpdated, onStructureChanged }: Props) {
