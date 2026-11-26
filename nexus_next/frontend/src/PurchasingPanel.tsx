@@ -3,16 +3,17 @@
  * تربط مستندات الشراء بالمخزون وحساب البضاعة المستلمة غير المفوترة والضريبة والمورد.
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import PurchaseDocumentPrint, { type PurchasePrintDocument } from "./PurchaseDocumentPrint";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
 import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport } from "./api";
 
-type Props = { companyId: number | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
+type Props = { companyId: number | null; company?: Company | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
 const money = (value: string) => formatMoney(value);
 const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitted: "sent", approved: "accepted", rejected: "cancelled", converted: "posted", open: "sent", closed: "cancelled", awarded: "accepted", posted: "posted", reversed: "reversed", confirmed: "sent", partially_received: "partial", received: "accepted", cancelled: "cancelled", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
-export default function PurchasingPanel({ companyId, activityAssignments, primaryActivity }: Props) {
+export default function PurchasingPanel({ companyId, company, activityAssignments, primaryActivity }: Props) {
   const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
   const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -75,6 +76,8 @@ export default function PurchasingPanel({ companyId, activityAssignments, primar
   const [fxInvoice, setFxInvoice] = useState<PurchaseInvoice | null>(null);
   const [fxHistory, setFxHistory] = useState<FxSubledgerRevaluation[]>([]);
   const [fxForm, setFxForm] = useState({revaluation_date:new Date().toISOString().slice(0,10),rate_date:new Date().toISOString().slice(0,10),rate:""});
+  const [printDocument,setPrintDocument] = useState<PurchasePrintDocument|null>(null);
+  const openPrint=(documentType:PurchasePrintDocument["documentType"],title:string,number:string,date:string,party:string,lines:PurchasePrintDocument["lines"],summary:PurchasePrintDocument["summary"],notes="",related="")=>setPrintDocument({documentType,title,number,date,party,lines,summary,notes,related});
 
   // تحميل بيانات الموردين والأصناف والمخازن ومستندات الشراء للشركة.
 const refresh = async () => {
