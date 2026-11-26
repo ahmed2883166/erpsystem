@@ -1526,6 +1526,94 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(history.status_code, 200, history.data)
         self.assertEqual(history.data, [])
 
+    def test_customer_fx_revaluation_respects_reversed_later_sales_return_cutoff(self):
+        delivery_id, line_id = self._create_delivery("DEL-FX-REVERSED-LATER-RETURN")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        for rate_date, rate in (
+            (date(2026, 3, 10), "50"),
+            (date(2026, 3, 12), "51"),
+            (date(2026, 3, 21), "52"),
+        ):
+            ExchangeRate.objects.create(
+                company=self.company, currency=usd,
+                rate_date=rate_date, rate=Decimal(rate),
+            )
+
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "INV-FX-REVERSED-LATER-RETURN",
+            "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk,
+            "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": line_id,
+                "transaction_unit_price": "100",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice_id,
+            "return_number": "RET-FX-REVERSED-LATER-RETURN",
+            "return_date": "2026-03-15",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": "2026-03-20"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertEqual(reversed_return.data["status"], "reversed")
+
+        before_reversal = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/revalue/",
+            {
+                "revaluation_date": "2026-03-12",
+                "rate_date": "2026-03-12",
+                "rate": "51",
+            },
+            format="json",
+        )
+        self.assertEqual(before_reversal.status_code, 400, before_reversal.data)
+        self.assertFalse(JournalEntry.objects.filter(
+            source_type=JournalEntry.Source.FX_REVALUATION,
+        ).exists())
+
+        after_reversal = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/revalue/",
+            {
+                "revaluation_date": "2026-03-21",
+                "rate_date": "2026-03-21",
+                "rate": "52",
+            },
+            format="json",
+        )
+        self.assertEqual(after_reversal.status_code, 201, after_reversal.data)
+        self.assertEqual(after_reversal.data["foreign_balance"], "200.0000")
+        self.assertEqual(after_reversal.data["previous_carrying_amount"], "10000.0000")
+        self.assertEqual(after_reversal.data["new_carrying_amount"], "10400.0000")
+        self.assertEqual(after_reversal.data["difference"], "400.0000")
+
     def test_reversed_foreign_receipt_remains_in_fx_balance_until_reversal_date(self):
         delivery_id, line_id = self._create_delivery("DEL-FX-REVERSED-ASOF")
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
