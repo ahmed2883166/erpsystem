@@ -182,12 +182,26 @@ def _depreciate_asset_components(asset, period_date, year, user=None, units_prod
         component_amounts = []
         journal_lines = []
         total_amount = Decimal("0")
+        component_depreciated_totals = {
+            component.pk: (
+                component.depreciations.filter(
+                    journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
+                ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            )
+            for component in components
+        }
+        pre_impairment_carrying_total = sum(
+            (max(Decimal("0"), component.original_cost - component_depreciated_totals[component.pk]) for component in components),
+            Decimal("0"),
+        )
         for component in components:
-            component_depreciated = component.depreciations.filter(
-                journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-            allocated_impairment = net_impairment * component.original_cost / total_component_cost
-            carrying = max(Decimal("0"), component.original_cost - component_depreciated - allocated_impairment)
+            component_depreciated = component_depreciated_totals[component.pk]
+            pre_impairment_carrying = max(Decimal("0"), component.original_cost - component_depreciated)
+            allocated_impairment = (
+                net_impairment * pre_impairment_carrying / pre_impairment_carrying_total
+                if pre_impairment_carrying_total > 0 else Decimal("0")
+            )
+            carrying = max(Decimal("0"), pre_impairment_carrying - allocated_impairment)
             remaining = max(Decimal("0"), carrying - component.salvage_value)
             if remaining <= 0:
                 continue
