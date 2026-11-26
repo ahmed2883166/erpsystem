@@ -154,6 +154,7 @@ class AssetInsurancePolicyViewSet(_AssetControlViewSet):
 class AssetPhysicalInventoryViewSet(_AssetControlViewSet):
     model = AssetPhysicalInventory
     serializer_class = AssetPhysicalInventorySerializer
+    http_method_names = ("get", "post", "head", "options")
 
     def perform_create(self, serializer):
         asset = serializer.validated_data["asset"]
