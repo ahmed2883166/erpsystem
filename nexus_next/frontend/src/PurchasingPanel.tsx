@@ -4,15 +4,16 @@
  */
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport } from "./api";
 
-type Props = { companyId: number | null };
+type Props = { companyId: number | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
 const money = (value: string) => formatMoney(value);
 const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitted: "sent", approved: "accepted", rejected: "cancelled", converted: "posted", open: "sent", closed: "cancelled", awarded: "accepted", posted: "posted", reversed: "reversed", confirmed: "sent", partially_received: "partial", received: "accepted", cancelled: "cancelled", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
-export default function PurchasingPanel({ companyId }: Props) {
+export default function PurchasingPanel({ companyId, activityAssignments, primaryActivity }: Props) {
+  const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
   const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -67,7 +68,7 @@ export default function PurchasingPanel({ companyId }: Props) {
   const [requisitionLines, setRequisitionLines] = useState<{ product: string; requested_quantity: string; estimated_unit_price: string }[]>([{ product: "", requested_quantity: "1", estimated_unit_price: "" }]);
   const [convertingReqId, setConvertingReqId] = useState<number | null>(null);
   const [conversionForm, setConversionForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10) });
-  const [invoiceForm, setInvoiceForm] = useState({ invoice_type: "inventory" as "inventory" | "direct_expense", receipt: "", supplier: "", service_acceptance: "", branch: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [invoiceForm, setInvoiceForm] = useState({ invoice_type: "inventory" as "inventory" | "direct_expense", receipt: "", supplier: "", service_acceptance: "", branch: "", activity: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [invoiceQuantities, setInvoiceQuantities] = useState<Record<number, string>>({});
   const [directInvoiceLines, setDirectInvoiceLines] = useState<{description:string;expense_account:string;cost_center:string;quantity:string;unit_price:string}[]>([{description:"",expense_account:"",cost_center:"",quantity:"1",unit_price:"0"}]);
   const [paymentForm, setPaymentForm] = useState({ invoice: "", payment_number: "", payment_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", transaction_currency: "", transaction_amount: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), reference: "" });
@@ -92,7 +93,15 @@ const refresh = async () => {
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setPaymentForm((old) => ({ ...old, payment_account: String(ta.find(x => x.is_active && x.kind === old.method)?.account || "") }));
-      setInvoiceForm((old) => ({ ...old, supplier: s.some(x=>x.id===Number(old.supplier) && x.is_active) ? old.supplier : String(s.find(x=>x.is_active)?.id || ""), branch: branchRows.some(x=>x.id===Number(old.branch) && x.is_active) ? old.branch : String(branchRows.find(x=>x.is_active)?.id || "") }));
+      const primaryAssignment = activityAssignments?.find((item) => item.is_active && item.activity === primaryActivity)
+        || activityAssignments?.find((item) => item.is_active);
+      setInvoiceForm((old) => ({
+        ...old,
+        supplier: s.some(x=>x.id===Number(old.supplier) && x.is_active) ? old.supplier : String(s.find(x=>x.is_active)?.id || ""),
+        branch: branchRows.some(x=>x.id===Number(old.branch) && x.is_active) ? old.branch : String(branchRows.find(x=>x.is_active)?.id || ""),
+        activity: activityAssignments?.some((item) => item.is_active && String(item.id) === old.activity)
+          ? old.activity : (primaryAssignment ? String(primaryAssignment.id) : ""),
+      }));
       setDirectInvoiceLines((old) => old.map(line=>({...line,expense_account:accountRows.some(x=>x.id===Number(line.expense_account) && x.is_active && !x.is_group && x.allow_posting && x.nature==="expense") ? line.expense_account : String(accountRows.find(x=>x.is_active && !x.is_group && x.allow_posting && x.nature==="expense")?.id || "")})));
       setReceiptLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل بيانات المشتريات."); }
@@ -369,7 +378,9 @@ const saveInvoice = async (event: React.FormEvent) => {
         await purchasingApi.createInvoice({
           company:companyId, supplier:Number(invoiceForm.supplier), invoice_type:"direct_expense",
           service_acceptance:invoiceForm.service_acceptance ? Number(invoiceForm.service_acceptance) : null,
-          branch:Number(invoiceForm.branch), invoice_number:invoiceForm.invoice_number,
+          branch:Number(invoiceForm.branch),
+          activity:invoiceForm.activity ? Number(invoiceForm.activity) : null,
+          invoice_number:invoiceForm.invoice_number,
           invoice_date:invoiceForm.invoice_date, notes:invoiceForm.notes,
           transaction_currency:invoiceForm.transaction_currency ? Number(invoiceForm.transaction_currency) : null,
           exchange_rate:invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
@@ -708,6 +719,7 @@ const postInvoice = async (id: number) => {
         <label>المورد<select required value={invoiceForm.supplier} onChange={e=>setInvoiceForm({...invoiceForm,supplier:e.target.value,service_acceptance:""})}><option value="">اختر المورد</option>{suppliers.map(x=><option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
         <label>محضر إنجاز الخدمة (اختياري)<select value={invoiceForm.service_acceptance} onChange={e=>setInvoiceForm({...invoiceForm,service_acceptance:e.target.value})}><option value="">بدون ربط بمحضر</option>{invoiceServiceAcceptances.map(x=><option key={x.id} value={x.id}>{x.acceptance_number} · أمر الشراء {x.order_number} · {x.acceptance_date}</option>)}</select><small>تظهر المحاضر المعتمدة الخاصة بالمورد المختار فقط.</small></label>
         <label>الفرع<select required value={invoiceForm.branch} onChange={e=>setInvoiceForm({...invoiceForm,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.map(x=><option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
+        {activeActivityAssignments.length > 0 && <label>النشاط المحاسبي<select required value={invoiceForm.activity} onChange={e=>setInvoiceForm({...invoiceForm,activity:e.target.value})}><option value="">اختر النشاط</option>{activeActivityAssignments.map(item=><option key={item.id} value={item.id}>{{commercial:"تجاري",service:"خدمي",medical:"طبي",restaurants:"مطاعم",industrial:"صناعي"}[item.activity]}</option>)}</select><small>يحدد حساب المورد والضريبة المرتبطين بهذا النشاط.</small></label>}
       </>}
       <label>رقم فاتورة المورد<input required value={invoiceForm.invoice_number} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_number: e.target.value })} /></label>
       <label>تاريخ الفاتورة<input required type="date" value={invoiceForm.invoice_date} onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })} /></label>
