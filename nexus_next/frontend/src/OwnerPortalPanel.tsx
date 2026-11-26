@@ -30,6 +30,18 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
   const [name, setName] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<Company["activity"]>("commercial");
+  type Activity = NonNullable<Company["activity"]>;
+  const [enabledActivities, setEnabledActivities] = useState<Activity[]>(["commercial"]);
+  const toggleEnabledActivity = (value: Activity, checked: boolean) => {
+    if (checked) {
+      setEnabledActivities(current => current.includes(value) ? current : [...current, value]);
+      return;
+    }
+    const next = enabledActivities.filter(item => item !== value);
+    if (!next.length) return;
+    if (activity === value) setActivity(next[0]);
+    setEnabledActivities(next);
+  };
   const [currencyId, setCurrencyId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -96,6 +108,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
       const created = await api.createCompanyWithAdmin({
         company: {
           code: code.trim().toUpperCase(), name_ar: name.trim(), country, activity,
+          activities: enabledActivities.includes(activity) ? enabledActivities : [...enabledActivities, activity],
           base_currency: Number(currencyId), is_active: true,
         },
         manager: {
@@ -240,7 +253,7 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
         <section className="work-panel">
           <div className="work-panel-head"><div><h2>سجل الشركات</h2><p>بيانات تعريفية وحالة التشغيل فقط؛ لا توجد روابط لدفاتر الأستاذ.</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الكود</th><th>اسم الشركة</th><th>الدولة</th><th>النشاط</th><th>العملة</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
-            {companies.map(company => <tr key={company.id}><td>{company.code}</td><td><button type="button" className="text-action-button" onClick={() => setSelectedId(company.id)}>{company.name_ar}</button></td><td>{company.country === "EG" ? "مصر" : "السعودية"}</td><td>{activities.find(([key]) => key === company.activity)?.[1] || "—"}</td><td>{company.base_currency_code}</td><td><span className={`status-pill ${company.is_active === false ? "draft" : "posted"}`}>{company.is_active === false ? "موقوفة" : "نشطة"}</span></td><td><button type="button" className="subtle-button" disabled={busy} onClick={() => void toggleCompany(company)}>{company.is_active === false ? "إعادة تفعيل" : "إيقاف الشركة"}</button></td></tr>)}
+            {companies.map(company => <tr key={company.id}><td>{company.code}</td><td><button type="button" className="text-action-button" onClick={() => setSelectedId(company.id)}>{company.name_ar}</button></td><td>{company.country === "EG" ? "مصر" : "السعودية"}</td><td>{(company.activities?.length ? company.activities : [company.activity]).map(value => activities.find(([key]) => key === value)?.[1]).filter(Boolean).join("، ") || "—"}</td><td>{company.base_currency_code}</td><td><span className={`status-pill ${company.is_active === false ? "draft" : "posted"}`}>{company.is_active === false ? "موقوفة" : "نشطة"}</span></td><td><button type="button" className="subtle-button" disabled={busy} onClick={() => void toggleCompany(company)}>{company.is_active === false ? "إعادة تفعيل" : "إيقاف الشركة"}</button></td></tr>)}
             {!companies.length && <tr><td colSpan={7}>لا توجد شركات مسجلة حتى الآن.</td></tr>}
           </tbody></table></div>
         </section>
@@ -250,7 +263,8 @@ export default function OwnerPortalPanel({ companies, onCompaniesChanged, onLogo
             <label>كود الشركة<input required maxLength={30} value={code} onChange={event => setCode(event.target.value)} placeholder="COMP-001" /></label>
             <label>اسم الشركة<input required maxLength={180} value={name} onChange={event => setName(event.target.value)} /></label>
             <label>الدولة<select value={country} onChange={event => {const value=event.target.value as "EG"|"SA";setCountry(value);const preferred=currencies.find(row=>row.code===(value==="EG"?"EGP":"SAR"));if(preferred)setCurrencyId(String(preferred.id));}}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
-            <label>النشاط<select value={activity} onChange={event => setActivity(event.target.value as Company["activity"])}>{activities.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
+            <label>النشاط الأساسي<select value={activity} onChange={event => { const value = event.target.value as Activity; setActivity(value); setEnabledActivities(current => current.includes(value) ? current : [...current, value]); }}>{activities.map(([key,label])=><option key={key} value={key}>{label}</option>)}</select></label>
+            <fieldset className="form-wide activity-selection"><legend>الأنشطة المفعّلة للشركة</legend><p className="asset-report-note">يمكن للشركة ممارسة أكثر من نشاط. اختر كل الأنشطة المطلوبة، ويجب أن يكون النشاط الأساسي ضمنها.</p><div className="activity-checkbox-grid">{activities.map(([key,label]) => <label key={key}><input type="checkbox" checked={enabledActivities.includes(key)} onChange={event => toggleEnabledActivity(key, event.target.checked)} />{label}</label>)}</div></fieldset>
             <label>العملة الأساسية<select required value={currencyId} onChange={event => setCurrencyId(event.target.value)} disabled={currencyLoading || !currencies.length}><option value="">{currencyLoading ? "جارٍ تحميل العملات…" : "اختر العملة"}</option>{currencies.map(row=><option key={row.id} value={row.id}>{row.code} · {row.name_ar}</option>)}</select></label>
             {currencyError && <div className="asset-report-note form-wide" role="alert">{currencyError} <button type="button" className="text-action-button" onClick={() => void loadCurrencies()} disabled={currencyLoading}>إعادة تحميل العملات</button></div>}
             <div className="setup-section-title form-wide"><div><h3>بيانات صاحب الشركة / مدير الشركة</h3><p>سيتم إنشاء حساب مستقل له وربطه بالشركة كمدير لجميع فروعها.</p></div></div>
