@@ -17,7 +17,7 @@ from inventory.models import Product, StockBalance, StockMovement, StockMovement
 from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
 
 
@@ -53,6 +53,23 @@ class PurchasingWorkflowTests(APITestCase):
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
             AccountRole.objects.create(company=self.company, role=role, account=account)
+
+        bank_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.BANK
+        ).account
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-MAIN", name_ar="البنك الرئيسي",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
+        cash_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.CASH
+        ).account
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_account,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-MAIN", name_ar="الصندوق الرئيسي",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
 
     def test_unassigned_purchase_warehouse_uses_same_branch_for_validation_and_posting(self):
         from purchasing.services import _branch_and_year
@@ -629,7 +646,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
         from treasury.models import TreasuryAccount
         TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=alternate_bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
+            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP", opening_balance=Decimal("1000"))
         payment_response = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-001", "payment_date": "2026-03-15",
@@ -858,12 +875,6 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(posted_invoice.data["grand_total"], "228.0000")
 
         bank = ChartOfAccount.objects.get(company=self.company, code="1100")
-        TreasuryAccount.objects.create(
-            company=self.company, branch=self.branch, account=bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-E2E",
-            name_ar="بنك دورة الشراء", currency_code="EGP",
-            opening_balance=Decimal("500"),
-        )
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk,
             "invoice": invoice.data["id"], "payment_number": "PAY-E2E-001",
@@ -1653,10 +1664,7 @@ class PurchasingWorkflowTests(APITestCase):
         invoice_id = invoice.data["id"]
         posted_invoice = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
-        from treasury.models import TreasuryAccount
         bank = ChartOfAccount.objects.get(company=self.company, code="1100")
-        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-REV", name_ar="بنك العكس", currency_code="EGP")
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-REV-001", "payment_date": "2026-03-11",
@@ -3281,3 +3289,226 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         # without the service transaction PostgreSQL raises TransactionManagementError.
         with self.assertRaises(SupplierReturn.DoesNotExist):
             post_supplier_return(-1, user=None)
+
+
+
+
+    def test_supplier_payment_rejects_amount_above_available_cash_or_bank_balance(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-LOW-TREASURY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        for method, code, kind in (
+            ("bank", "1191", TreasuryAccount.Kind.BANK),
+            ("cash", "1091", TreasuryAccount.Kind.CASH),
+        ):
+            account = ChartOfAccount.objects.create(
+                company=self.company, code=code, name_ar=f"خزينة منخفضة {method}",
+                nature=ChartOfAccount.Nature.ASSET,
+            )
+            TreasuryAccount.objects.create(
+                company=self.company, branch=self.branch, account=account, kind=kind,
+                code=f"LOW-{method.upper()}", name_ar=f"خزينة منخفضة {method}",
+                currency_code="EGP", opening_balance=Decimal("10"),
+            )
+            payment = self.client.post("/api/purchasing/payments/", {
+                "company": self.company.pk, "supplier": self.supplier.pk,
+                "invoice": invoice.data["id"], "payment_number": f"PAY-LOW-{method.upper()}",
+                "payment_date": "2026-03-15", "method": method,
+                "payment_account": account.pk, "amount": "20.0000",
+            }, format="json")
+            self.assertEqual(payment.status_code, 201, payment.data)
+            rejected = self.client.post(
+                f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.data)
+            stored = SupplierPayment.objects.get(pk=payment.data["id"])
+            self.assertEqual(stored.status, SupplierPayment.Status.DRAFT)
+            self.assertIsNone(stored.journal_entry_id)
+            self.assertFalse(
+                JournalEntry.objects.filter(entry_number=f"PUR-PAY-{stored.pk}").exists()
+            )
+
+    def test_backdated_supplier_payment_respects_later_treasury_withdrawals(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-BACKDATED-TREASURY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        account = ChartOfAccount.objects.create(
+            company=self.company, code="1192", name_ar="بنك بحركة لاحقة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-FUTURE",
+            name_ar="بنك بحركة لاحقة", currency_code="EGP",
+            opening_balance=Decimal("100"),
+        )
+        later_withdrawal = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=treasury_account, counter_account=ChartOfAccount.objects.get(
+                company=self.company, code="6000",
+            ),
+            kind=TreasuryTransaction.Kind.PAYMENT, document_number="TR-FUTURE-001",
+            transaction_date=date(2026, 3, 20), amount=Decimal("90"),
+            description="سحب بنكي لاحق",
+        )
+        from treasury.services import post_treasury_transaction
+        post_treasury_transaction(later_withdrawal.pk, self.user)
+
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "payment_number": "PAY-BACKDATED-001",
+            "payment_date": "2026-03-15", "method": "bank",
+            "payment_account": account.pk, "amount": "20.0000",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        rejected = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        stored = SupplierPayment.objects.get(pk=payment.data["id"])
+        self.assertEqual(stored.status, SupplierPayment.Status.DRAFT)
+        self.assertIsNone(stored.journal_entry_id)
+
+    def test_direct_service_invoice_can_be_paid_without_a_stock_receipt(self):
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "EXP-SVC-PAY-001", "invoice_date": "2026-03-15",
+            "lines": [{
+                "description": "صيانة أجهزة الشركة", "expense_account": expense.pk,
+                "billed_quantity": "1", "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "payment_number": "PAY-SVC-001",
+            "payment_date": "2026-03-16", "method": "cash", "amount": "114",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        posted_payment = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_payment.status_code, 200, posted_payment.data)
+        invoice_after = self.client.get(f"/api/purchasing/invoices/{invoice.data['id']}/").data
+        self.assertEqual(invoice_after["paid_total"], "114.0000")
+        self.assertEqual(invoice_after["balance_due"], "0.0000")
+        self.assertEqual(
+            JournalEntry.objects.get(pk=posted_payment.data["journal_entry"]).branch_id,
+            self.branch.pk,
+        )
+
+    def test_purchase_order_cannot_be_cancelled_after_service_acceptance_exists(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.unit, code="SVC-CANCEL-1",
+            name_ar="خدمة لا يجوز إلغاؤها بعد قبولها", product_type=Product.ProductType.SERVICE,
+            stock_class=None, purchase_price=Decimal("750"),
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-CANCEL-1", "order_date": "2026-03-10",
+            "lines": [{"product": service.pk, "quantity": "1", "unit_price": "750", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk, "order": order.data["id"], "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-CANCEL-1", "acceptance_date": "2026-03-11",
+            "lines": [{"order_line": order.data["line_items"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(acceptance.status_code, 201, acceptance.data)
+        cancelled = self.client.post(f"/api/purchasing/orders/{order.data['id']}/cancel/", {}, format="json")
+        self.assertEqual(cancelled.status_code, 400, cancelled.data)
+        self.assertEqual(
+            PurchaseOrder.objects.get(pk=order.data["id"]).status,
+            PurchaseOrder.Status.CONFIRMED,
+        )
+
+    def test_service_acceptance_cannot_be_accepted_after_order_is_cancelled(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.unit, code="SVC-CANCEL-2",
+            name_ar="خدمة ملغى أمرها", product_type=Product.ProductType.SERVICE,
+            stock_class=None, purchase_price=Decimal("750"),
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-CANCEL-2", "order_date": "2026-03-10",
+            "lines": [{"product": service.pk, "quantity": "1", "unit_price": "750", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk, "order": order.data["id"], "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-CANCEL-2", "acceptance_date": "2026-03-11",
+            "lines": [{"order_line": order.data["line_items"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(acceptance.status_code, 201, acceptance.data)
+        PurchaseOrder.objects.filter(pk=order.data["id"]).update(status=PurchaseOrder.Status.CANCELLED)
+        rejected = self.client.post(
+            f"/api/purchasing/service-acceptances/{acceptance.data['id']}/accept/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(
+            PurchaseServiceAcceptance.objects.get(pk=acceptance.data["id"]).status,
+            PurchaseServiceAcceptance.Status.DRAFT,
+        )
+
+
+    def test_branch_limited_user_cannot_read_or_create_documents_in_shared_default_warehouse(self):
+        shared_warehouse = Warehouse.objects.create(
+            company=self.company, branch=None, code="WH-SHARED", name_ar="مخزن عام"
+        )
+        created = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": shared_warehouse.pk,
+            "order_number": "PO-SHARED-001", "order_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        restricted_branch = Branch.objects.create(company=self.company, code="LIMITED", name_ar="فرع محدود")
+        limited_user = get_user_model().objects.create_user(
+            username="purchase-branch-limited", password="test-password"
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant", all_branches=False
+        )
+        membership.branches.add(restricted_branch)
+        self.client.force_authenticate(limited_user)
+
+        listing = self.client.get(f"/api/purchasing/orders/?company={self.company.pk}")
+        self.assertEqual(listing.status_code, 200, listing.data)
+        self.assertNotIn(created.data["id"], [row["id"] for row in listing.data])
+        detail = self.client.get(f"/api/purchasing/orders/{created.data['id']}/")
+        self.assertEqual(detail.status_code, 404, detail.data)
+
+        denied_create = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": shared_warehouse.pk,
+            "order_number": "PO-SHARED-DENIED", "order_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(denied_create.status_code, 403, denied_create.data)
