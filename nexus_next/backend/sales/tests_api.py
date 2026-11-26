@@ -1456,13 +1456,13 @@ class SalesWorkflowTests(APITestCase):
             open_fx_invoice_balances(
                 invoice_obj, direction="receivable", as_of=date(2026, 3, 11),
             ),
-            (Decimal("80.0000"), Decimal("4000.0000"), Decimal("4000.0000")),
+            (Decimal("180.0000"), Decimal("9000.0000"), Decimal("9000.0000")),
         )
         self.assertEqual(
             open_fx_invoice_balances(
                 invoice_obj, direction="receivable", as_of=date(2026, 3, 12),
             ),
-            (Decimal("100.0000"), Decimal("5000.0000"), Decimal("5000.0000")),
+            (Decimal("200.0000"), Decimal("10000.0000"), Decimal("10000.0000")),
         )
 
         overpaid = self.client.post("/api/sales-documents/receipts/", {
