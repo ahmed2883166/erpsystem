@@ -46,8 +46,8 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn, PurchaseDocumentTemplate
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer, PurchaseDocumentTemplateSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
@@ -64,6 +64,53 @@ class PurchaseBaseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         """حذف أو تعطيل السجل وفق قيود الارتباط والحالة المالية."""
         raise PermissionDenied("لا يمكن حذف مستندات المشتريات؛ استخدم إجراء مرتجع المورد أو عكس سند الصرف/الاسترداد المعتمد حسب نوع المستند.")
+
+
+class PurchaseDocumentTemplateViewSet(PurchaseBaseViewSet):
+    """إدارة قوالب الطباعة المتعددة لكل شركة ونوع مستند مشتريات."""
+
+    serializer_class = PurchaseDocumentTemplateSerializer
+    queryset = PurchaseDocumentTemplate.objects.select_related("company").all()
+    filterset_fields = ("company", "document_type", "style", "is_default", "is_active")
+    ordering_fields = ("document_type", "name", "created_at")
+
+    def get_queryset(self):
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def _check_template_admin(self, company_id):
+        if not can_access_company(self.request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        if not has_company_role(self.request.user, company_id, ("admin",)):
+            raise PermissionDenied("إدارة قوالب الطباعة متاحة لمدير الشركة فقط.")
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        company_id = serializer.validated_data["company"].pk
+        self._check_template_admin(company_id)
+        document_type = serializer.validated_data["document_type"]
+        if serializer.validated_data.get("is_default", False):
+            PurchaseDocumentTemplate.objects.filter(
+                company_id=company_id, document_type=document_type, is_default=True,
+            ).update(is_default=False)
+        serializer.save()
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        self._check_template_admin(instance.company_id)
+        document_type = serializer.validated_data.get("document_type", instance.document_type)
+        if serializer.validated_data.get("is_default", instance.is_default):
+            PurchaseDocumentTemplate.objects.filter(
+                company_id=instance.company_id, document_type=document_type, is_default=True,
+            ).exclude(pk=instance.pk).update(is_default=False)
+        serializer.save()
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        self._check_template_admin(instance.company_id)
+        instance.is_active = False
+        instance.is_default = False
+        instance.save(update_fields=("is_active", "is_default", "updated_at"))
 
 
 class PurchaseOrderViewSet(PurchaseBaseViewSet):
