@@ -550,6 +550,13 @@ class AssetComponent(models.Model):
             raise ValidationError({"production_units_total": "حدد إجمالي وحدات الإنتاج المقدرة."})
 
 
+    @property
+    def accumulated_depreciation(self):
+        return self.depreciations.filter(
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).aggregate(total=models.Sum("amount"))["total"] or 0
+
+
 class AssetInsurancePolicy(models.Model):
     """وثيقة تأمين الأصل كسجل رقابي لا ينشئ قيدًا محاسبيًا تلقائيًا."""
     class Status(models.TextChoices):
@@ -605,5 +612,22 @@ class AssetPhysicalInventory(models.Model):
         ordering = ("-count_date", "-id")
         constraints = [
             models.UniqueConstraint(fields=("asset", "count_date"), name="uq_asset_physical_count_date"),
+        ]
+
+
+class AssetComponentDepreciation(models.Model):
+    """قسط إهلاك مكوّن مستقل مرتبط بقيد الفترة المجمّع للأصل."""
+    component = models.ForeignKey(AssetComponent, on_delete=models.PROTECT, related_name="depreciations")
+    period_date = models.DateField()
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    units_produced = models.PositiveBigIntegerField(null=True, blank=True)
+    journal_entry = models.ForeignKey(JournalEntry, on_delete=models.PROTECT, related_name="asset_component_depreciations")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("period_date", "component_id")
+        constraints = [
+            models.UniqueConstraint(fields=("component", "period_date"), name="uq_asset_component_depr_period"),
+            models.CheckConstraint(condition=Q(amount__gt=0), name="ck_asset_component_depr_positive"),
         ]
 
