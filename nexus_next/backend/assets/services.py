@@ -128,11 +128,15 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     raise ValidationError("لم يتم إنشاء حركة خزينة للاقتناء؛ راجع ربط حساب البنك أو الخزينة.")
 
 
-def _depreciate_asset_components(asset, period_date, year, user=None, units_produced_by_component=None):
+def _depreciate_asset_components(asset, period_date, year, user=None, units_produced_by_component=None, is_partial_period=False):
     """Calculate all significant component charges and post one balanced asset-period journal."""
     components = list(asset.components.filter(status="active").order_by("pk"))
     if not components:
         raise ValidationError("لا توجد مكونات نشطة للأصل.")
+    if not is_partial_period and AssetDepreciation.objects.filter(
+        asset=asset, period_date__year=period_date.year, period_date__month=period_date.month,
+    ).exists():
+        raise ValidationError("تم تسجيل إهلاك هذا الأصل لهذا الشهر من قبل.")
     total_component_cost = sum((component.original_cost for component in components), Decimal("0"))
     if total_component_cost != asset.original_cost:
         raise ValidationError("يجب توزيع كامل تكلفة الأصل على مكوناته قبل تشغيل إهلاك المكونات.")
@@ -238,7 +242,7 @@ def _depreciate_asset_components(asset, period_date, year, user=None, units_prod
         )
         AssetDepreciation.objects.create(
             asset=asset, period_date=period_date, amount=total_amount,
-            is_partial_period=False, journal_entry=entry,
+            is_partial_period=is_partial_period, journal_entry=entry,
         )
         for component, amount, component_units in component_amounts:
             AssetComponentDepreciation.objects.create(
@@ -683,7 +687,7 @@ def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, revers
 
 
 @transaction.atomic
-def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None, units_produced=None):
+def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None, units_produced=None, units_produced_by_component=None):
     """إثبات بيع الأصل أو استبعاده ومعالجة النقدية ومجمع الإهلاك والربح أو الخسارة."""
     from treasury.models import TreasuryAccount, TreasuryTransaction
 
@@ -728,6 +732,17 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
         raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.") from None
     if not (year.start_date <= disposal_date <= year.end_date):
         raise ValidationError("تاريخ الاستبعاد خارج السنة المالية المفتوحة.")
+    active_components = asset.components.filter(status="active").exists()
+    if active_components:
+        last_component_period = asset.depreciations.filter(
+            journal_entry__status=JournalEntry.Status.POSTED,
+        ).order_by("-period_date", "-pk").first()
+        if not last_component_period or last_component_period.period_date < disposal_date:
+            _depreciate_asset_components(
+                asset, disposal_date, year, user,
+                units_produced_by_component=units_produced_by_component,
+                is_partial_period=True,
+            )
 
     treasury_account = None
     if proceeds > 0:
