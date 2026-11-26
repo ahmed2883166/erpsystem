@@ -997,6 +997,24 @@ export type FixedAsset = {
   vendor_payments: {id:number;payment_number:string;payment_date:string;amount:string;status:"draft"|"posted"|"reversed";journal_entry:number|null}[];
   accumulated_depreciation: string; accumulated_impairment?:string; net_book_value: string; created_at: string;
 };
+export type AssetComponent = {
+  id:number;asset:number;code:string;name_ar:string;original_cost:string;salvage_value:string;
+  useful_life_months:number;depreciation_method:"straight_line"|"declining_balance"|"units_of_production";
+  declining_rate_percentage:string|null;production_units_total:number|null;
+  asset_account:number;accumulated_depreciation_account:number;depreciation_expense_account:number;
+  status:"active"|"disposed";created_at:string;
+};
+export type AssetInsurancePolicy = {
+  id:number;asset:number;policy_number:string;insurer_name:string;coverage_description:string;
+  start_date:string;end_date:string;insured_value:string;premium_amount:string;
+  document_reference:string;status:"active"|"expired"|"cancelled";notes:string;created_at:string;
+};
+export type AssetPhysicalInventory = {
+  id:number;asset:number;count_date:string;expected_location:string;counted_location:string;
+  expected_custodian:string;counted_custodian:string;
+  result:"matched"|"location_mismatch"|"custodian_mismatch"|"condition_issue"|"not_found";
+  condition_notes:string;notes:string;counted_by:number;created_at:string;
+};
 export type AssetMovement = {
   id:number; company:number; asset:number; asset_code:string; asset_name:string;
   movement_type:"branch_transfer"|"custody_change"|"location_change"; movement_date:string;
@@ -1036,6 +1054,13 @@ export type AssetDepreciationRunResult = {
 };
 // واجهات الأصول الثابتة: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const fixedAssetsApi = {
+  // مكونات الأصل ووثائق التأمين ومحاضر الجرد الفعلي.
+  components: (assetId:number) => request<AssetComponent[]>(`/api/assets/asset-components/?asset=${assetId}`),
+  createComponent: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<AssetComponent>("/api/assets/asset-components/", {method:"POST",body:JSON.stringify(payload)}); },
+  insurancePolicies: (assetId:number) => request<AssetInsurancePolicy[]>(`/api/assets/asset-insurance/?asset=${assetId}`),
+  createInsurancePolicy: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<AssetInsurancePolicy>("/api/assets/asset-insurance/", {method:"POST",body:JSON.stringify(payload)}); },
+  physicalInventory: (assetId:number) => request<AssetPhysicalInventory[]>(`/api/assets/asset-physical-inventory/?asset=${assetId}`),
+  createPhysicalInventory: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<AssetPhysicalInventory>("/api/assets/asset-physical-inventory/", {method:"POST",body:JSON.stringify(payload)}); },
   // مستندات نقل الأصول وتغيير العهدة والموقع.
   movements: (companyId:number) => request<AssetMovement[]>(`/api/assets/asset-movements/?company=${companyId}`),
   createMovement: async (payload:{asset:number;movement_type:AssetMovement["movement_type"];movement_date:string;to_branch?:number;to_employee?:number|null;to_custodian?:string;to_location?:string;document_number:string;notes?:string}) => {
