@@ -30,3 +30,9 @@ See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend
 ## Database protection
 
 See [Windows PostgreSQL backup and restore](docs/backup-and-restore.md) for daily/monthly backups and a non-destructive restore test.
+
+## Windows Control Center and owner tools
+
+The portable Windows package includes `Admrail-Control-Center.cmd`. It provides a desktop control panel for starting/stopping the secured HTTPS LAN runner, checking PostgreSQL and service ports, opening the LAN URL, and opening the PIN-protected Owner Toolkit. Database creation, rename, deletion, backup, restore, and PostgreSQL user management remain inside the Owner Toolkit/database manager; the Control Center does not expose destructive database actions directly.
+
+The Control Center only stops the LAN process tree that it started and recorded. It will refuse to start when ports 8000 or 443 are already occupied, and it does not terminate unrelated services. The source-only development workflow remains `start-local.ps1` and is localhost-only.
