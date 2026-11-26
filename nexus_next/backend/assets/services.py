@@ -7,7 +7,7 @@ from django.db import transaction
 from django.utils import timezone, dateparse
 from django.db.models import Sum
 
-from accounting.models import AccountRole, JournalEntry, JournalLine
+from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.models import FiscalYear
 from core.money import round_currency_amount
@@ -812,6 +812,45 @@ def post_asset_supplier_payment(payment_id, user=None):
     if cash.pk == payable.pk:
         raise ValidationError("يجب فصل حساب الموردين عن حساب البنك أو الخزينة.")
 
+    # فحص حساب الخزينة قبل إنشاء القيد (NEW-7-3): كان بعد الترحيل، فيُبنى
+    # قيد ثم يُتراجع عنه. النموذج بلا حقل طريقة، فنوع حساب الخزينة المرتبط
+    # هو الطريقة فعليًا — ويُقبل النقدي أو البنكي (OneToOne: سجل واحد
+    # لكل حساب دفتر، فالاختيار حتمي). ورسالة الخطأ أدناه صارت صادقة الآن.
+    from treasury.models import TreasuryAccount, TreasuryTransaction
+    from treasury.services import record_posted_document_bank_movement
+    treasury_account = TreasuryAccount.objects.filter(
+        company=payment.company, account=cash,
+        kind__in=(TreasuryAccount.Kind.CASH, TreasuryAccount.Kind.BANK),
+        is_active=True,
+    ).first()
+    if (
+        not treasury_account
+        or (treasury_account.branch_id and treasury_account.branch_id != payment.branch_id)
+        or treasury_account.currency_code != payment.company.base_currency.code
+    ):
+        raise ValidationError("حساب السداد يجب أن يكون مرتبطًا بحساب خزينة/بنك نشط بعملة الشركة ومطابقًا للفرع.")
+
+    # فحص رصيد حساب الدفع قبل إنشاء القيد (NEW-7-2) — نفس معادلة فحص
+    # عكس استرداد المورد (purchasing/services.py:882-897)، ونفس قفل
+    # صف الحساب لمنع سباق سدادين متزامنين من نفس الحساب.
+    ChartOfAccount.objects.select_for_update().get(pk=cash.pk)
+    cash_totals = JournalLine.objects.filter(
+        account_id=cash.pk,
+        entry__entry_date__lte=payment.payment_date,
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).aggregate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    )
+    opening_balance = TreasuryAccount.objects.filter(
+        company_id=payment.company_id, account_id=cash.pk,
+        opening_journal_entry__isnull=True,
+    ).aggregate(total=Sum("opening_balance"))["total"] or Decimal("0")
+    cash_balance = opening_balance + (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+    if cash_balance < payment.amount:
+        raise ValidationError(
+            f"لا يمكن ترحيل السداد: رصيد حساب الخزينة/البنك في تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
+        )
+
     entry = JournalEntry.objects.create(
         company=payment.company, branch=payment.branch, fiscal_year=year,
         entry_number=f"FA-PAY-{payment.pk}", entry_date=payment.payment_date,
@@ -827,26 +866,20 @@ def post_asset_supplier_payment(payment_id, user=None):
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
 
-    # Keep bank/cash movements visible in the treasury cash-flow subsystem as well as the GL.
-    from treasury.models import TreasuryAccount, TreasuryTransaction
-    from treasury.services import record_posted_document_bank_movement
-    treasury_account = TreasuryAccount.objects.filter(
-        company=payment.company, account=cash, kind=TreasuryAccount.Kind.BANK, is_active=True,
-    ).first()
-    if (
-        not treasury_account
-        or (treasury_account.branch_id and treasury_account.branch_id != payment.branch_id)
-        or treasury_account.currency_code != payment.company.base_currency.code
-    ):
-        raise ValidationError("حساب السداد يجب أن يكون مرتبطًا بحساب خزينة/بنك نشط بعملة الشركة ومطابقًا للفرع.")
-    record_posted_document_bank_movement(
-        company=payment.company, branch=payment.branch, fiscal_year=year, account=cash,
-        kind=TreasuryTransaction.Kind.PAYMENT, amount=payment.amount,
-        transaction_date=payment.payment_date, document_number=f"AUTO-FA-PAY-{payment.pk}",
-        description=f"سداد فاتورة أصل {invoice.invoice_number} - سند {payment.payment_number}",
-        counter_account=payable, journal_entry=posted, user=user, reference=payment.reference,
-        cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
-    )
+    # Keep bank movements visible in the treasury cash-flow subsystem as well
+    # as the GL. The treasury account was already validated above (before the
+    # journal). The mirror itself only records BANK accounts (NEW-6-1: no
+    # CASH mirror exists yet), so a cash payment skips it — exactly like a
+    # regular CASH supplier payment.
+    if treasury_account.kind == TreasuryAccount.Kind.BANK:
+        record_posted_document_bank_movement(
+            company=payment.company, branch=payment.branch, fiscal_year=year, account=cash,
+            kind=TreasuryTransaction.Kind.PAYMENT, amount=payment.amount,
+            transaction_date=payment.payment_date, document_number=f"AUTO-FA-PAY-{payment.pk}",
+            description=f"سداد فاتورة أصل {invoice.invoice_number} - سند {payment.payment_number}",
+            counter_account=payable, journal_entry=posted, user=user, reference=payment.reference,
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
+        )
     payment.journal_entry = posted
     payment.status = AssetSupplierPayment.Status.POSTED
     payment.posted_at = timezone.now()
