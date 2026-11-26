@@ -678,20 +678,41 @@ def post_supplier_payment(payment_id, user):
         ChartOfAccount.objects.select_for_update().get(pk=payment_account.pk)
         opening_balance = Decimal("0")
 
-    cash_totals = JournalLine.objects.filter(
+    balance_movements = JournalLine.objects.filter(
         account_id=payment_account.pk,
-        entry__entry_date__lte=payment.payment_date,
         entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-    ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
-    cash_balance = (
-        opening_balance
-        + (cash_totals["debit"] or Decimal("0"))
-        - (cash_totals["credit"] or Decimal("0"))
-    )
+    ).values(
+        "entry_id", "entry__entry_date",
+    ).annotate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    ).order_by("entry__entry_date", "entry_id")
+
+    # Existing entries dated on the payment date are already posted before
+    # this payment. Check the balance immediately after this payment, then
+    # after every later posted entry so a backdated payment cannot make a
+    # subsequent withdrawal overdraw the account.
+    cash_balance = opening_balance
+    later_movements = []
+    for movement in balance_movements:
+        change = (
+            (movement["debit"] or Decimal("0"))
+            - (movement["credit"] or Decimal("0"))
+        )
+        if movement["entry__entry_date"] <= payment.payment_date:
+            cash_balance += change
+        else:
+            later_movements.append(change)
+
     if cash_balance < payment.amount:
         raise ValidationError(
-            f"لا يمكن ترحيل السداد: رصيد حساب الخزينة/البنك في تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
+            f"لا يمكن ترحيل السداد: الرصيد المتاح بعد احتساب الحركات حتى تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
         )
+    for change in later_movements:
+        cash_balance += change
+        if cash_balance < payment.amount:
+            raise ValidationError(
+                "لا يمكن ترحيل السداد بأثر رجعي؛ سيؤدي إلى رصيد نقدية/بنك سالب بعد حركة لاحقة مسجلة."
+            )
 
     journal_lines = [
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
