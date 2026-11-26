@@ -439,7 +439,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
 
 class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     serializer_class = PurchaseInvoiceSerializer
-    queryset = PurchaseInvoice.objects.select_related("company", "supplier", "activity", "branch", "receipt", "receipt__warehouse", "journal_entry").prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__cost_center", "payments", "tax_allocations__branch", "tax_allocations__journal_entry")
+    queryset = PurchaseInvoice.objects.select_related("company", "supplier", "activity", "branch", "receipt", "receipt__warehouse", "service_acceptance", "service_acceptance__order__warehouse", "journal_entry").prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__cost_center", "payments", "tax_allocations__branch", "tax_allocations__journal_entry")
     filterset_fields = ("company", "supplier", "status", "invoice_date")
     search_fields = ("invoice_number", "supplier__name_ar", "receipt__receipt_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
@@ -476,6 +476,19 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
                 raise ValidationError({"branch": "الفرع غير موجود أو موقوف داخل الشركة."})
             if not can_access_branch(request.user, branch.pk, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+            acceptance_id = request.data.get("service_acceptance")
+            if acceptance_id:
+                try:
+                    acceptance_id = int(acceptance_id)
+                except (TypeError, ValueError):
+                    raise ValidationError({"service_acceptance": "محضر إنجاز الخدمة المحدد غير صالح."}) from None
+                acceptance = PurchaseServiceAcceptance.objects.select_for_update().select_related(
+                    "order__warehouse",
+                ).filter(pk=acceptance_id, company_id=company_id).first()
+                if not acceptance:
+                    raise ValidationError({"service_acceptance": "محضر الإنجاز غير موجود داخل الشركة المحددة."})
+                if not _purchase_warehouse_accessible(request.user, acceptance.order.warehouse):
+                    raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر شراء الخدمة.")
         else:
             try:
                 receipt_id = int(request.data.get("receipt"))
@@ -497,6 +510,9 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         if data.get("invoice_type", PurchaseInvoice.InvoiceType.INVENTORY) == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
             if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+            acceptance = data.get("service_acceptance")
+            if acceptance and not _purchase_warehouse_accessible(self.request.user, acceptance.order.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر شراء الخدمة.")
         else:
             receipt = data["receipt"]
             if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):

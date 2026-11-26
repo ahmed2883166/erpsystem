@@ -274,6 +274,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     invoice_lines = PurchaseInvoiceLineSerializer(source="lines", many=True, read_only=True)
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
     receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True, allow_null=True)
+    service_acceptance_number = serializers.CharField(source="service_acceptance.acceptance_number", read_only=True, allow_null=True)
     branch_name = serializers.CharField(source="branch.name_ar", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
@@ -293,7 +294,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseInvoice
         fields = (
-            "id", "company", "supplier", "supplier_name", "activity", "invoice_type", "branch", "branch_name", "receipt", "receipt_number",
+            "id", "company", "supplier", "supplier_name", "activity", "invoice_type", "service_acceptance", "service_acceptance_number", "branch", "branch_name", "receipt", "receipt_number",
             "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "tax_total",
             "grand_total", "paid_total", "balance_due", "tax_allocations", "notes", "journal_entry", "journal_number", "invoice_lines",
             "lines", "created_at", "posted_at",
@@ -362,6 +363,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
                 "supplier": instance.supplier_id,
                 "activity": instance.activity_id,
                 "receipt": instance.receipt_id,
+                "service_acceptance": instance.service_acceptance_id,
                 "invoice_type": instance.invoice_type,
                 "branch": instance.branch_id,
                 "invoice_number": instance.invoice_number,
@@ -395,11 +397,24 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
 
         lines = attrs.get("lines")
+        linked_acceptance = attrs.get("service_acceptance", instance.service_acceptance if instance else None)
+        if linked_acceptance and invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            raise serializers.ValidationError({"service_acceptance": "محضر إنجاز الخدمة يرتبط بفاتورة خدمات ومصروفات مباشرة فقط."})
         if invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
             if receipt is not None:
                 raise serializers.ValidationError({"receipt": "فاتورة الخدمات والمصروفات لا ترتبط بإذن استلام."})
             if not branch or branch.company_id != company.pk or not branch.is_active:
                 raise serializers.ValidationError({"branch": "اختر فرعًا نشطًا تابعًا للشركة."})
+            acceptance = attrs.get("service_acceptance", instance.service_acceptance if instance else None)
+            if acceptance:
+                if acceptance.status != PurchaseServiceAcceptance.Status.ACCEPTED:
+                    raise serializers.ValidationError({"service_acceptance": "لا يمكن ربط الفاتورة إلا بمحضر إنجاز خدمة معتمد."})
+                if acceptance.company_id != company.pk or acceptance.supplier_id != supplier.pk:
+                    raise serializers.ValidationError({"service_acceptance": "محضر الإنجاز لا يتبع نفس الشركة والمورد."})
+                if acceptance.acceptance_date > invoice_date:
+                    raise serializers.ValidationError({"service_acceptance": "تاريخ الفاتورة لا يسبق تاريخ اعتماد إنجاز الخدمة."})
+            elif attrs.get("service_acceptance") is not None:
+                raise serializers.ValidationError({"service_acceptance": "محضر الإنجاز المحدد غير صالح."})
             if lines is None:
                 return attrs
             if not lines:
