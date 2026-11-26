@@ -309,7 +309,7 @@ const dispose = async (asset: FixedAsset) => {
     if (!window.confirm("تأكيد بيع / استبعاد الأصل؟ سيتم ترحيل الإهلاك حتى التاريخ وقيد الاستبعاد.")) return;
     setSaving(true); setError("");
     try {
-      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year));
+      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined);
       await refresh();
       setSchedule(await fixedAssetsApi.schedule(asset.id));
       setError("تم الاستبعاد. رقم القيد: " + result.disposal_journal + " · " + (Number(result.gain) > 0 ? "ربح " + result.gain : Number(result.loss) > 0 ? "خسارة " + result.loss : "دون ربح أو خسارة"));
@@ -491,6 +491,7 @@ const loadReport = async () => {
         <strong>بيع الأصل أو استبعاده</strong>
         <div className="asset-disposal-fields">
           <label>تاريخ البيع / الاستبعاد<input type="date" value={disposalDate} onChange={e=>setDisposalDate(e.target.value)}/></label>
+          {assets.find(x=>x.id===selected)?.depreciation_method === "units_of_production" && <label>وحدات الإنتاج منذ آخر إهلاك حتى الاستبعاد<input type="number" min="1" step="1" value={unitsProduced} onChange={e=>setUnitsProduced(e.target.value)}/></label>}
           <label>قيمة المتحصلات<input type="number" min="0" step="0.0001" value={disposalProceeds} onChange={e=>setDisposalProceeds(e.target.value)}/></label>
           <label>حساب الخزينة / البنك<select value={disposalCashAccount} onChange={e=>setDisposalCashAccount(e.target.value)}><option value="">اختر حساب الخزينة</option>{treasuryAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         </div>
