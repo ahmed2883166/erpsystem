@@ -192,6 +192,16 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
             | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
             | Q(journal_entry__reversal_entry__entry_date__gt=revaluation_date)
         ).exists()
+        later_returns = SalesReturn.objects.filter(
+            invoice=invoice,
+            return_date__gte=revaluation_date,
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(
+                status=SalesReturn.Status.REVERSED,
+                reversal_date__gt=revaluation_date,
+            )
+        ).exists()
     else:
         later_settlements = SupplierPayment.objects.filter(
             invoice=invoice, payment_date__gte=revaluation_date,
@@ -214,7 +224,7 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
             status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),
             return_date__gte=revaluation_date,
         ).exists()
-    if later_settlements or later_revaluations or (direction == "payable" and later_returns):
+    if later_settlements or later_revaluations or later_returns:
         raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو مرتجعًا أو إعادة تقييم مرحّلة.")
 
     approved = ExchangeRate.objects.filter(
