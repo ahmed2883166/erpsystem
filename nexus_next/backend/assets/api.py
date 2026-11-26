@@ -556,6 +556,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             result = dispose_asset(
                 asset.pk, request.data.get("disposal_date"), request.data.get("proceeds", "0"),
                 request.data.get("treasury_account"), request.data.get("fiscal_year"), request.user,
+                request.data.get("units_produced"),
             )
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
