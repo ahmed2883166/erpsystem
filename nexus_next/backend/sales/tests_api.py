@@ -2829,4 +2829,4 @@ class SalesWorkflowTests(APITestCase):
             StockMovement.objects.filter(company=self.company).count(),
             1,  # Opening receipt only; service invoice/return/reversal add none.
         )
-\n
+
