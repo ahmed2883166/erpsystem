@@ -11,7 +11,7 @@ from rest_framework.test import APITestCase
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.access import resolve_warehouse_branch
-from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
+from companies.models import Branch, Company, CompanyActivity, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
@@ -487,6 +487,59 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(amounts[("1300", "debit")], Decimal("14.0000"))
         self.assertEqual(amounts[("2200", "credit")], Decimal("114.0000"))
         self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
+
+    def test_direct_service_invoice_uses_activity_specific_payable_and_vat_accounts(self):
+        service = CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.SERVICE,
+        )
+        service_payable = ChartOfAccount.objects.create(
+            company=self.company, code="2210", name_ar="موردو النشاط الخدمي",
+            nature=ChartOfAccount.Nature.LIABILITY,
+        )
+        service_vat = ChartOfAccount.objects.create(
+            company=self.company, code="1310", name_ar="ضريبة مدخلات الخدمات",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE,
+            account=service_payable, activity=service,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.VAT_INPUT,
+            account=service_vat, activity=service,
+        )
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        created = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "activity": service.pk, "invoice_type": "direct_expense",
+            "branch": self.branch.pk, "invoice_number": "EXP-SVC-ACT-001",
+            "invoice_date": "2026-03-15",
+            "lines": [{
+                "description": "خدمة تشغيل للنشاط الخدمي",
+                "expense_account": expense.pk, "billed_quantity": "1",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["activity"], service.pk)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        posted_accounts = set(
+            PurchaseInvoice.objects.get(pk=created.data["id"]).journal_entry.lines
+            .values_list("account_id", flat=True)
+        )
+        self.assertIn(service_payable.pk, posted_accounts)
+        self.assertIn(service_vat.pk, posted_accounts)
+        self.assertNotIn(
+            ChartOfAccount.objects.get(company=self.company, code="2200").pk,
+            posted_accounts,
+        )
+        self.assertNotIn(
+            ChartOfAccount.objects.get(company=self.company, code="1300").pk,
+            posted_accounts,
+        )
 
     def test_direct_expense_invoice_is_included_in_supplier_statement_and_aging(self):
         self.supplier.payment_terms_days = 0

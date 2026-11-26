@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
-from companies.models import Branch, Company, Currency, FiscalYear
+from companies.models import Branch, Company, CompanyActivity, Currency, FiscalYear
 
 
 class ChartOfAccount(models.Model):
@@ -95,14 +95,31 @@ class AccountRole(models.Model):
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="account_roles")
     role = models.CharField(max_length=32, choices=Role.choices)
     account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="role_assignments")
+    activity = models.ForeignKey(
+        CompanyActivity, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="account_role_assignments",
+    )
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=("company", "role"), name="uq_account_role_company")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "role"), condition=Q(activity__isnull=True),
+                name="uq_account_role_company",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "role", "activity"), condition=Q(activity__isnull=False),
+                name="uq_acct_role_co_activity",
+            ),
+        ]
         verbose_name = "ربط دور حسابي"
         verbose_name_plural = "أدوار الحسابات"
 
     def clean(self):
         super().clean()
+        if self.activity_id and (
+            self.activity.company_id != self.company_id or not self.activity.is_active
+        ):
+            raise ValidationError({"activity": "النشاط يجب أن يكون مفعّلًا ويتبع نفس الشركة."})
         if self.account_id and self.account.company_id != self.company_id:
             raise ValidationError({"account": "الحساب المختار لا يتبع نفس الشركة."})
         if self.account_id and (self.account.is_group or not self.account.allow_posting):
