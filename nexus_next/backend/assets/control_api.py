@@ -6,7 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers, permissions, viewsets
 from rest_framework.exceptions import PermissionDenied
 
-from companies.access import accessible_companies, can_access_branch, can_access_company, has_company_role
+from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role
 from .models import AssetComponent, AssetInsurancePolicy, AssetPhysicalInventory
 
 
@@ -96,7 +96,16 @@ class _AssetControlViewSet(viewsets.ModelViewSet):
     serializer_class = None
 
     def get_queryset(self):
-        return self.model.objects.filter(asset__company__in=accessible_companies(self.request.user)).select_related("asset", "asset__company", "asset__branch")
+        queryset = self.model.objects.filter(
+            asset__company__in=accessible_companies(self.request.user),
+            asset__branch__in=accessible_branches(self.request.user),
+        ).select_related("asset", "asset__company", "asset__branch")
+        asset_id = self.request.query_params.get("asset")
+        if asset_id:
+            if not asset_id.isdigit():
+                raise PermissionDenied("معرّف الأصل غير صحيح.")
+            queryset = queryset.filter(asset_id=int(asset_id))
+        return queryset
 
     def _check_write(self, asset):
         if not can_access_company(self.request.user, asset.company_id):
