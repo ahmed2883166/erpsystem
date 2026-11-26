@@ -897,3 +897,79 @@ class PurchaseRequisitionLine(models.Model):
         if self.requisition.status != PurchaseRequisition.Status.DRAFT:
             raise ValidationError("لا يمكن حذف بنود طلب شراء تم إرساله.")
         return super().delete(*args, **kwargs)
+
+
+class PurchaseServiceAcceptance(models.Model):
+    """محضر استلام/إنجاز خدمة لأمر شراء دون إنشاء حركة مخزون."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        ACCEPTED = "accepted", "معتمد"
+        REJECTED = "rejected", "مرفوض"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_service_acceptances")
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="service_acceptances")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="service_acceptances")
+    acceptance_number = models.CharField(max_length=40)
+    acceptance_date = models.DateField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    accepted_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="accepted_purchase_services")
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-acceptance_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "acceptance_number"), name="uq_purchase_service_acceptance_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "acceptance_date"), name="pur_svc_accept_co_date_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.order_id and (
+            self.order.company_id != self.company_id
+            or self.order.supplier_id != self.supplier_id
+            or self.order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED)
+        ):
+            raise ValidationError({"order": "اختر أمر شراء معتمدًا تابعًا لنفس الشركة والمورد."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("محضر استلام الخدمة بعد اعتماده غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+
+class PurchaseServiceAcceptanceLine(models.Model):
+    acceptance = models.ForeignKey(PurchaseServiceAcceptance, on_delete=models.PROTECT, related_name="lines")
+    order_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, related_name="service_acceptance_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    notes = models.CharField(max_length=250, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(fields=("acceptance", "order_line"), name="uq_purchase_service_accept_line"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not self.order_line_id or not self.acceptance_id:
+            return
+        if (
+            self.order_line.order_id != self.acceptance.order_id
+            or self.order_line.product.product_type != "service"
+        ):
+            raise ValidationError({"order_line": "اختر بند خدمة تابعًا لأمر الشراء المحدد."})
+        accepted_before = type(self).objects.filter(
+            order_line_id=self.order_line_id,
+            acceptance__status=PurchaseServiceAcceptance.Status.ACCEPTED,
+        ).exclude(acceptance_id=self.acceptance_id).aggregate(total=models.Sum("quantity"))["total"] or Decimal("0")
+        if accepted_before + self.quantity > self.order_line.quantity:
+            raise ValidationError({"quantity": "كمية الخدمة المعتمدة تتجاوز كمية أمر الشراء المتبقية."})
