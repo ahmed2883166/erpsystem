@@ -32,8 +32,8 @@ class AssetComponentSerializer(serializers.ModelSerializer):
         if allocated + new_cost > asset.original_cost:
             raise serializers.ValidationError({"original_cost": "مجموع تكلفة المكونات لا يجوز أن يتجاوز تكلفة الأصل الأم."})
         method = attrs.get("depreciation_method", getattr(self.instance, "depreciation_method", "straight_line"))
-        rate = attrs.get("declining_rate_percentage")
-        units = attrs.get("production_units_total")
+        rate = attrs.get("declining_rate_percentage", getattr(self.instance, "declining_rate_percentage", None))
+        units = attrs.get("production_units_total", getattr(self.instance, "production_units_total", None))
         if method == "declining_balance" and (rate is None or rate <= 0 or rate > 100):
             raise serializers.ValidationError({"declining_rate_percentage": "أدخل معدلًا سنويًا أكبر من صفر وحتى 100%."})
         if method != "declining_balance" and rate is not None:
@@ -42,10 +42,17 @@ class AssetComponentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"production_units_total": "حدد إجمالي وحدات الإنتاج."})
         if method != "units_of_production" and units is not None:
             raise serializers.ValidationError({"production_units_total": "الوحدات تستخدم مع طريقة وحدات الإنتاج فقط."})
-        for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account"):
+        parent_accounts = {
+            "asset_account": asset.asset_account_id,
+            "accumulated_depreciation_account": asset.accumulated_depreciation_account_id,
+            "depreciation_expense_account": asset.depreciation_expense_account_id,
+        }
+        for field, parent_account_id in parent_accounts.items():
             account = attrs.get(field, getattr(self.instance, field, None))
             if account and account.company_id != asset.company_id:
                 raise serializers.ValidationError({field: "الحساب يجب أن يتبع شركة الأصل."})
+            if account and account.pk != parent_account_id:
+                raise serializers.ValidationError({field: "يجب أن تتطابق حسابات المكوّن مع حسابات الأصل الأم لمطابقة الأستاذ العام."})
         return attrs
 
     def create(self, validated_data):
