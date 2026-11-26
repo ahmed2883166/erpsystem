@@ -18,7 +18,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount, TreasuryTransaction
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn, PurchaseDocumentTemplate
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -3402,6 +3402,92 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(balance_sheet.data["current_year_profit"], Decimal("50.0000"))
 
 
+
+
+class PurchaseDocumentTemplateAPITests(APITestCase):
+    def setUp(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="TPL", name_ar="شركة قوالب", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        self.user = get_user_model().objects.create_user(
+            username="template-admin", password="test-password",
+        )
+        self.membership = CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(self.user)
+        self.url = "/api/purchasing/document-templates/"
+
+    def test_company_can_keep_multiple_templates_for_same_document_type(self):
+        first = self.client.post(self.url, {
+            "company": self.company.pk,
+            "document_type": "purchase_invoice",
+            "name": "فاتورة كلاسيك",
+            "style": "classic",
+            "config": {"language": "ar", "show_tax": True},
+            "is_default": True,
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post(self.url, {
+            "company": self.company.pk,
+            "document_type": "purchase_invoice",
+            "name": "فاتورة حديثة",
+            "style": "modern",
+            "config": {"accent_color": "#245A80", "language": "bilingual"},
+            "is_default": True,
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        templates = PurchaseDocumentTemplate.objects.filter(
+            company=self.company, document_type="purchase_invoice",
+        )
+        self.assertEqual(templates.count(), 2)
+        self.assertEqual(templates.filter(is_default=True).count(), 1)
+        self.assertEqual(
+            templates.get(name="فاتورة حديثة").style,
+            PurchaseDocumentTemplate.Style.MODERN,
+        )
+
+    def test_template_settings_reject_unsupported_or_invalid_values(self):
+        response = self.client.post(self.url, {
+            "company": self.company.pk,
+            "document_type": "supplier_return",
+            "name": "قالب غير صالح",
+            "style": "classic",
+            "config": {"accent_color": "not-a-color"},
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(PurchaseDocumentTemplate.objects.filter(company=self.company).exists())
+
+    def test_template_management_is_limited_to_company_admin(self):
+        self.membership.role = "accountant"
+        self.membership.save(update_fields=("role",))
+        response = self.client.post(self.url, {
+            "company": self.company.pk,
+            "document_type": "purchase_order",
+            "name": "قالب أمر الشراء",
+            "style": "classic",
+            "config": {},
+        }, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(PurchaseDocumentTemplate.objects.filter(company=self.company).exists())
+
+    def test_deleting_template_deactivates_it_without_erasing_configuration(self):
+        template = PurchaseDocumentTemplate.objects.create(
+            company=self.company,
+            document_type="supplier_return",
+            name="مرتجع محفوظ",
+            style="compact",
+            config={"footer_text": "نسخة محفوظة"},
+            is_default=True,
+        )
+        response = self.client.delete(f"{self.url}{template.pk}/")
+        self.assertEqual(response.status_code, 204)
+        template.refresh_from_db()
+        self.assertFalse(template.is_active)
+        self.assertFalse(template.is_default)
+        self.assertEqual(template.config["footer_text"], "نسخة محفوظة")
 
 
 class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
