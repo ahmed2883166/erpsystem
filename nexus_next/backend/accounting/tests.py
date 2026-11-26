@@ -1651,6 +1651,71 @@ class FinancialStatementsApiTests(TestCase):
         self.assertEqual(trial_balance.data["closing_debit_credit_difference"], Decimal("0.0000"))
 
 
+    def test_income_statement_keeps_period_profit_after_year_end_closing_entry(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="PL-AFTER-CLOSE", name_ar="شركة اختبار قائمة الدخل بعد الإقفال",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1000", name_ar="النقدية", nature="asset",
+        )
+        retained = ChartOfAccount.objects.create(
+            company=company, code="3000", name_ar="الأرباح المرحلة", nature="equity",
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4000", name_ar="الإيرادات", nature="revenue",
+        )
+        expense = ChartOfAccount.objects.create(
+            company=company, code="5000", name_ar="المصروفات", nature="expense",
+        )
+
+        operations = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="PL-CLOSE-OPS", entry_date=date(2026, 12, 20),
+            description="نتيجة النشاط قبل الإقفال",
+        )
+        JournalLine.objects.create(entry=operations, account=cash, debit=Decimal("1000"))
+        JournalLine.objects.create(entry=operations, account=revenue, credit=Decimal("1000"))
+        JournalLine.objects.create(entry=operations, account=expense, debit=Decimal("300"))
+        JournalLine.objects.create(entry=operations, account=cash, credit=Decimal("300"))
+        post_journal(operations.pk)
+
+        closing = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="PL-CLOSE-YE", entry_date=date(2026, 12, 31),
+            description="إقفال نتيجة الأعمال", source_type=JournalEntry.Source.CLOSING,
+        )
+        JournalLine.objects.create(entry=closing, account=revenue, debit=Decimal("1000"))
+        JournalLine.objects.create(entry=closing, account=expense, credit=Decimal("300"))
+        JournalLine.objects.create(entry=closing, account=retained, credit=Decimal("700"))
+        post_journal(closing.pk)
+
+        user = User.objects.create_user(username="pl_after_close_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(
+            user=user, company=company, role="viewer", all_branches=True,
+        )
+        client = APIClient()
+        client.force_authenticate(user=user)
+        response = client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-12-31"
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["revenue_total"], Decimal("1000.0000"))
+        self.assertEqual(response.data["expenses_total"], Decimal("300.0000"))
+        self.assertEqual(response.data["net_profit"], Decimal("700.0000"))
+
+
 class BranchSpecificOpeningBalanceTests(TestCase):
     def test_reports_keep_carry_forward_for_branches_without_current_year_opening(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
