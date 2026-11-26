@@ -1736,12 +1736,24 @@ class TrialBalanceClosingFilterTests(TestCase):
         CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
         client = APIClient()
         client.force_authenticate(user=user)
-        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}")
-        excluded = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&exclude_closing=true")
-        self.assertEqual(included.status_code, 200)
+        excluded = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}")
+        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&exclude_closing=false")
+        ledger_excluded = client.get(
+            f"/api/accounting/journal-entries/general-ledger/?company={company.pk}&account={cash.pk}&date_from=2026-01-01&date_to=2026-12-31"
+        )
+        ledger_included = client.get(
+            f"/api/accounting/journal-entries/general-ledger/?company={company.pk}&account={cash.pk}&date_from=2026-01-01&date_to=2026-12-31&include_closing=true"
+        )
         self.assertEqual(excluded.status_code, 200)
-        self.assertEqual(included.data["debit_total"], Decimal("100.0000"))
+        self.assertEqual(included.status_code, 200)
+        self.assertEqual(ledger_excluded.status_code, 200)
+        self.assertEqual(ledger_included.status_code, 200)
         self.assertEqual(excluded.data["debit_total"], Decimal("0.0000"))
+        self.assertEqual(included.data["debit_total"], Decimal("100.0000"))
+        self.assertEqual(ledger_excluded.data["closing_balance"], Decimal("0.0000"))
+        self.assertEqual(ledger_excluded.data["rows"], [])
+        self.assertEqual(ledger_included.data["closing_balance"], Decimal("100.0000"))
+        self.assertEqual(len(ledger_included.data["rows"]), 1)
 
 
 

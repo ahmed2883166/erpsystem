@@ -600,11 +600,11 @@ export const api = {
   },
   costCenters: (companyId:number) => request<CostCenter[]>(`/api/accounting/cost-centers/?company=${companyId}&is_active=true`),
   // جلب ميزان المراجعة مع خيارات الفترة واستبعاد قيود الإقفال.
-  trialBalance: (companyId: number, dateFrom?: string, dateTo?: string, excludeClosing = false) => {
+  trialBalance: (companyId: number, dateFrom?: string, dateTo?: string, excludeClosing = true) => {
     const q = new URLSearchParams({company:String(companyId)});
     if (dateFrom) q.set("date_from", dateFrom);
     if (dateTo) q.set("date_to", dateTo);
-    if (excludeClosing) q.set("exclude_closing", "true");
+    q.set("exclude_closing", String(excludeClosing));
     return request<TrialBalance>(`/api/accounting/journal-entries/trial-balance/?${q.toString()}`);
   },
   // جلب الميزانية العمومية في تاريخ محدد.

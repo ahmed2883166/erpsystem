@@ -792,8 +792,15 @@ class JournalEntryViewSet(AccountingViewSet):
         # every account and LEFT JOINing the full ledger. This keeps the large
         # million-entry report on the selective company/branch/date path.
         date_filter = Q(entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED))
-        exclude_closing = request.query_params.get("exclude_closing", "").lower() in ("1", "true", "yes")
-        if exclude_closing:
+        raw_exclude_closing = request.query_params.get("exclude_closing")
+        include_closing = request.query_params.get("include_closing", "").lower() in ("1", "true", "yes")
+        exclude_closing = (
+            raw_exclude_closing is None
+            or raw_exclude_closing.lower() in ("1", "true", "yes")
+        )
+        if raw_exclude_closing is not None and raw_exclude_closing.lower() in ("0", "false", "no"):
+            exclude_closing = False
+        if exclude_closing and not include_closing:
             date_filter &= ~Q(entry__source_type=JournalEntry.Source.CLOSING)
         branch_raw = request.query_params.get("branch")
         if branch_raw:
@@ -1133,6 +1140,9 @@ class JournalEntryViewSet(AccountingViewSet):
             entry__company_id=company_id,
             entry__branch__in=visible_branches,
         )
+        include_closing = request.query_params.get("include_closing", "").lower() in ("1", "true", "yes")
+        if not include_closing:
+            base = base.exclude(entry__source_type=JournalEntry.Source.CLOSING)
         branch_ids = list(visible_branches.values_list("pk", flat=True))
         fiscal_year = FiscalYear.objects.filter(
             company_id=company_id, start_date__lte=date_from, end_date__gte=date_from

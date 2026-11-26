@@ -248,7 +248,7 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.assertTrue(review.data["can_close"], review.data)
         self.assertEqual(review.data["unclosed_income_statement_accounts"], 0)
         trial_balance = self.client.get(
-            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}"
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}&include_closing=true"
         )
         self.assertEqual(trial_balance.status_code, 200, trial_balance.content)
         self.assertEqual(Decimal(str(trial_balance.data["difference"])), Decimal("0"))
