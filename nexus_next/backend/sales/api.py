@@ -746,6 +746,19 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند القبض غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف سند قبض مسودة بلا قيد."""
+        receipt = CustomerReceipt.objects.select_for_update().select_related(
+            "company", "invoice", "invoice__delivery__warehouse",
+        ).get(pk=instance.pk)
+        self._check_write(receipt.company_id)
+        if not _sales_warehouse_accessible(self.request.user, receipt.invoice.delivery.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
+        if receipt.status != CustomerReceipt.Status.DRAFT or receipt.journal_entry_id:
+            raise ValidationError("لا يمكن حذف سند قبض مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
+        receipt.delete()
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""

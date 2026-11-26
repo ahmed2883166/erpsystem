@@ -875,6 +875,27 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل مرتجع المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف مرتجع مورد مسودة فقط مع حذف بنوده وحركته المخزنية المسودة."""
+        document = SupplierReturn.objects.select_for_update().select_related(
+            "company", "invoice", "invoice__receipt__warehouse", "stock_movement",
+        ).get(pk=instance.pk)
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, document.invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        if document.status != SupplierReturn.Status.DRAFT or document.journal_entry_id:
+            raise ValidationError("لا يمكن حذف مرتجع مورد مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
+        if document.refunds.exists():
+            raise ValidationError("لا يمكن حذف مرتجع له استرداد؛ احذف مسودة الاسترداد أولًا.")
+        movement = StockMovement.objects.select_for_update().get(pk=document.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف مرتجع حركته المخزنية مرحّلة؛ استخدم إجراء العكس المعتمد.")
+        for line in document.lines.select_for_update():
+            line.delete()
+        document.delete()
+        movement.delete()
+
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         document = self.get_object()
@@ -941,6 +962,22 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
     def perform_update(self, serializer):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل استرداد المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف استرداد مورد مسودة بلا قيد."""
+        document = SupplierRefund.objects.select_for_update().select_related(
+            "company", "return_document", "return_document__invoice",
+            "return_document__invoice__receipt__warehouse",
+        ).get(pk=instance.pk)
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(
+            self.request.user, document.return_document.invoice.receipt.warehouse,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
+        if document.status != SupplierRefund.Status.DRAFT or document.journal_entry_id:
+            raise ValidationError("لا يمكن حذف استرداد مورد مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
+        document.delete()
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
@@ -1010,6 +1047,19 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند الصرف غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        """حذف سند صرف مسودة بلا قيد."""
+        payment = SupplierPayment.objects.select_for_update().select_related(
+            "company", "invoice", "invoice__receipt__warehouse",
+        ).get(pk=instance.pk)
+        self._check_write(payment.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, payment.invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        if payment.status != SupplierPayment.Status.DRAFT or payment.journal_entry_id:
+            raise ValidationError("لا يمكن حذف سند صرف مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
+        payment.delete()
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
