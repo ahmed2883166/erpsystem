@@ -264,7 +264,6 @@ def post_customer_receipt(receipt_id, user):
         ).filter(
             Q(journal_entry__isnull=True)
             | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
-            | Q(journal_entry__reversal_entry__entry_date__gt=receipt.receipt_date)
         ).exists():
             raise ValidationError("لا يمكن ترحيل تحصيل بتاريخ يسبق حركة تحصيل أو إعادة تقييم مرحّلة.")
         remaining_foreign, historical_remaining, current_remaining = open_fx_invoice_balances(
