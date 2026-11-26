@@ -1737,7 +1737,7 @@ class TrialBalanceClosingFilterTests(TestCase):
         client = APIClient()
         client.force_authenticate(user=user)
         excluded = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}")
-        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&include_closing=true")
+        included = client.get(f"/api/accounting/journal-entries/trial-balance/?company={company.pk}&exclude_closing=false")
         ledger_excluded = client.get(
             f"/api/accounting/journal-entries/general-ledger/?company={company.pk}&account={cash.pk}&date_from=2026-01-01&date_to=2026-12-31"
         )
