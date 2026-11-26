@@ -4,17 +4,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Legacy NEXUS/SQLite workflow retained for manual diagnostics only.
+# AdmRail ERP v2 validation is handled by nexus-next-ci.yml.
 on:
-  push:
-    branches:
-      - feature/company-setup-currency-tax-activity
-      - draft/postgresql-stock-compat
-      - work/phase6-industry-packs
-      - work/phase7-bootstrap-ux
-      - work/postgresql-native-rebuild
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   unit-tests:
