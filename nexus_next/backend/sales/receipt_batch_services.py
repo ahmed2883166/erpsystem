@@ -65,19 +65,12 @@ def _check_allocation_target(batch, invoice, amount, allocation_date=None):
             f"التخصيص يتجاوز المتبقي على الفاتورة {invoice.invoice_number} ({remaining})."
         )
     later_direct = CustomerReceipt.objects.filter(
-        invoice=invoice, receipt_date__gt=allocation_date,
-    ).filter(
-        Q(status=CustomerReceipt.Status.POSTED)
-        | Q(
-            status=CustomerReceipt.Status.REVERSED,
-            journal_entry__reversal_entry__entry_date__gt=allocation_date,
-        )
+        invoice=invoice, status=CustomerReceipt.Status.POSTED,
+        receipt_date__gt=allocation_date,
     ).exists()
     later_batch = CustomerReceiptBatchAllocation.objects.filter(
-        invoice=invoice, allocation_date__gt=allocation_date,
-    ).filter(
-        Q(batch__status=CustomerReceiptBatch.Status.POSTED)
-        | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=allocation_date)
+        invoice=invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
+        allocation_date__gt=allocation_date,
     ).exclude(batch=batch).exists()
     if later_direct or later_batch:
         raise ValidationError("لا يمكن تخصيص دفعة بتاريخ يسبق تحصيلًا أحدث على الفاتورة.")
@@ -258,9 +251,18 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("القيد المرتبط بسند القبض المجمع ليس مرحّلًا.")
     if entry_date < batch.receipt_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ سند القبض.")
-    if batch.refunds.filter(status="posted").exists():
+    if batch.refunds.filter(
+        Q(status=CustomerRefund.Status.POSTED)
+        | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=entry_date)
+    ).exists():
         raise ValidationError("يجب عكس رد المبلغ المرتبط بالدفعة المقدمة أولًا قبل عكس سند القبض.")
-    if batch.allocations.filter(invoice__returns__refunds__status="posted").exists():
+    if batch.allocations.filter(
+        Q(invoice__returns__refunds__status=CustomerRefund.Status.POSTED)
+        | Q(
+            invoice__returns__refunds__status=CustomerRefund.Status.REVERSED,
+            invoice__returns__refunds__reversal_date__gt=entry_date,
+        )
+    ).exists():
         raise ValidationError("يجب عكس ردود المبالغ الممولة من تخصيصات هذا السند أولًا قبل عكس سند القبض.")
 
     allocations = list(batch.allocations.select_related("invoice"))
@@ -272,22 +274,13 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق آخر تاريخ تخصيص للدفعة.")
     if not allocations:
         later_direct = CustomerReceipt.objects.filter(
-            customer=batch.customer,
-        ).filter(
-            Q(status=CustomerReceipt.Status.POSTED)
-            | Q(
-                status=CustomerReceipt.Status.REVERSED,
-                journal_entry__reversal_entry__entry_date__gt=entry_date,
-            )
+            customer=batch.customer, status=CustomerReceipt.Status.POSTED,
         ).filter(
             Q(receipt_date__gt=batch.receipt_date)
             | Q(receipt_date=batch.receipt_date, created_at__gt=batch.created_at)
         ).exists()
         later_batches = CustomerReceiptBatch.objects.filter(
-            customer=batch.customer,
-        ).filter(
-            Q(status=CustomerReceiptBatch.Status.POSTED)
-            | Q(status=CustomerReceiptBatch.Status.REVERSED, reversal_date__gt=entry_date)
+            customer=batch.customer, status=CustomerReceiptBatch.Status.POSTED,
         ).exclude(pk=batch.pk).filter(
             Q(receipt_date__gt=batch.receipt_date)
             | Q(receipt_date=batch.receipt_date, created_at__gt=batch.created_at)
@@ -296,22 +289,13 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
             raise ValidationError("يجب عكس أحدث دفعة مقدمة للعميل أولًا.")
     for allocation in allocations:
         later_direct = CustomerReceipt.objects.filter(
-            invoice=allocation.invoice,
-        ).filter(
-            Q(status=CustomerReceipt.Status.POSTED)
-            | Q(
-                status=CustomerReceipt.Status.REVERSED,
-                journal_entry__reversal_entry__entry_date__gt=entry_date,
-            )
+            invoice=allocation.invoice, status=CustomerReceipt.Status.POSTED,
         ).filter(
             Q(receipt_date__gt=allocation.allocation_date)
             | Q(receipt_date=allocation.allocation_date, created_at__gt=allocation.created_at)
         ).exists()
         later_batch = CustomerReceiptBatchAllocation.objects.filter(
-            invoice=allocation.invoice,
-        ).filter(
-            Q(batch__status=CustomerReceiptBatch.Status.POSTED)
-            | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=entry_date)
+            invoice=allocation.invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
         ).exclude(batch=batch).filter(
             Q(allocation_date__gt=allocation.allocation_date)
             | Q(allocation_date=allocation.allocation_date, created_at__gt=allocation.created_at)
