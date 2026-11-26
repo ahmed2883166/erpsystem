@@ -135,6 +135,7 @@ const refresh = async () => {
   const invoiceServiceAcceptances = serviceAcceptances.filter((acceptance) =>
     acceptance.status === "accepted"
     && acceptance.supplier === Number(invoiceForm.supplier)
+    && (!invoiceForm.branch || acceptance.branch === Number(invoiceForm.branch))
     && !invoices.some((invoice) => invoice.service_acceptance === acceptance.id)
   );
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
