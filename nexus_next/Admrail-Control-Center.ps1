@@ -97,7 +97,7 @@ function Start-LanService {
     if (-not (Test-Path -LiteralPath $script:Runner -PathType Leaf)) { throw "ملف تشغيل LAN غير موجود: $script:Runner" }
     if (-not (Test-Path -LiteralPath (Join-Path $script:AppRoot "backend\.env") -PathType Leaf)) { throw "ملف backend\.env غير موجود. شغّل التهيئة أولًا." }
     if (Get-TrackedProcess) { throw "Admrail يعمل بالفعل من خلال هذه الأداة." }
-    if (Test-ListeningPort 8000 -or Test-ListeningPort 443) { throw "المنفذ 8000 أو 443 مستخدم بالفعل. لن يتم تشغيل نسخة ثانية أو إيقاف الخدمة الأخرى." }
+    if ((Test-ListeningPort 8000) -or (Test-ListeningPort 443)) { throw "المنفذ 8000 أو 443 مستخدم بالفعل. لن يتم تشغيل نسخة ثانية أو إيقاف الخدمة الأخرى." }
     if ((Get-PostgresStatus) -ne "يعمل") { throw "خدمة PostgreSQL متوقفة. شغّل PostgreSQL ثم أعد المحاولة." }
     $hostName = Get-LanHost
     if (-not $hostName) { throw "اضبط ADMRAIL_LAN_HOST في backend\.env أولًا." }
@@ -145,7 +145,8 @@ function Stop-LanService {
 }
 function Open-OwnerToolkit {
     if (-not (Test-Path -LiteralPath $script:Toolkit -PathType Leaf)) { throw "أداة المالك غير موجودة: $script:Toolkit" }
-    Start-Process -FilePath $script:Toolkit -WorkingDirectory $script:AppRoot
+    $arguments = '/c "' + $script:Toolkit + '"'
+    Start-Process -FilePath $env:ComSpec -ArgumentList $arguments -WorkingDirectory $script:AppRoot
 }
 
 $form = New-Object Windows.Forms.Form
