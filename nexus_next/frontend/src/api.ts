@@ -3,7 +3,7 @@
  * توحّد مسارات الطلبات ومعالجة الاستجابات المستخدمة في شاشات النظام.
  */
 export type Currency = { id: number; code: string; name_ar: string; name_en: string; symbol: string; decimal_places: number; is_active: boolean };
-export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
+export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; activities?: ("commercial" | "service" | "medical" | "restaurants" | "industrial")[]; activity_assignments?: { id: number; activity: "commercial" | "service" | "medical" | "restaurants" | "industrial"; is_active: boolean }[]; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
 export type Branch = { id: number; company: number; company_code?: string; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean; created_at?: string };
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; display_name?: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
@@ -99,7 +99,7 @@ export type Customer = {
 export type PurchaseOrder = {
   id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string;
   order_number: string; order_date: string; expected_date: string | null; grand_total: string; approval_status: "pending" | "approved" | "rejected" | "superseded" | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
-  notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string;
+  notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; product_type: "goods" | "service"; quantity: string;
     received_quantity: string; remaining_quantity: string; unit_price: string; tax_rate: string }[];
   created_at: string; confirmed_at: string | null;
 };
@@ -109,15 +109,24 @@ export type PurchaseRequisition = {
   status: "draft" | "submitted" | "approved" | "rejected" | "converted" | "cancelled";
   requested_by: number; requested_by_name: string; reviewed_by: number | null; reviewed_by_name: string | null;
   reviewed_at: string | null; review_note: string; converted_order: number | null;
-  line_items: { id: number; product: number; product_code: string; product_name: string;
+  line_items: { id: number; product: number; product_code: string; product_name: string; product_type: "goods" | "service";
     requested_quantity: string; estimated_unit_price: string | null; notes: string }[];
+  created_at: string;
+};
+
+
+export type PurchaseServiceAcceptance = {
+  id: number; company: number; order: number; order_number: string; supplier: number; supplier_name: string; branch: number | null;
+  acceptance_number: string; acceptance_date: string; status: "draft" | "accepted" | "rejected"; notes: string;
+  accepted_by: number | null; accepted_by_name: string | null; accepted_at: string | null;
+  line_items: { id: number; order_line: number; product: number; product_code: string; product_name: string; quantity: string; notes: string }[];
   created_at: string;
 };
 
 export type PurchaseRFQ = {
   id: number; company: number; source_requisition: number | null; rfq_number: string; issue_date: string; closing_date: string;
   status: "draft" | "open" | "closed" | "awarded" | "cancelled"; terms: string;
-  line_items: {id:number;product:number;product_code:string;product_name:string;quantity:string;notes:string}[];
+  line_items: {id:number;product:number;product_code:string;product_name:string;product_type:"goods"|"service";quantity:string;notes:string}[];
   supplier_list: {id:number;code:string;name:string;status:string}[];
   awarded_quotation: number | null; converted_order: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
 };
@@ -136,7 +145,24 @@ export type SupplierQuotation = {
   total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
 };
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
-export type PurchaseInvoice = { id: number; company: number; supplier: number; supplier_name: string; receipt: number; receipt_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; receipt_line: number; product_code: string; product_name: string; quantity: string; billed_quantity: string; receipt_quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+export type PurchaseInvoice = {
+  id:number; company:number; supplier:number; supplier_name:string; activity:number|null;
+  invoice_type:"inventory"|"direct_expense"; service_acceptance:number|null; service_acceptance_number:string|null;
+  branch:number|null; branch_name:string|null; receipt:number|null; receipt_number:string|null; invoice_number:string; invoice_date:string;
+  transaction_currency:number|null; exchange_rate:string|null; exchange_rate_date:string|null;
+  transaction_net_total:string|null; transaction_tax_total:string|null; transaction_grand_total:string|null;
+  status:"draft"|"posted"; net_total:string; tax_total:string; grand_total:string; paid_total:string; balance_due:string;
+  notes:string; journal_entry:number|null; journal_number:string|null;
+  invoice_lines:{
+    id:number; receipt_line:number|null; product_code:string|null; product_name:string|null;
+    description:string; expense_account:number|null; expense_account_name:string|null;
+    cost_center:number|null; cost_center_name:string|null; quantity:string; billed_quantity:string;
+    receipt_quantity:string|null; unit_price:string; transaction_unit_price:string|null;
+    transaction_net_amount:string|null; transaction_tax_amount:string|null; transaction_total_amount:string|null;
+    tax_rate:string; net_amount:string; tax_amount:string; total_amount:string;
+  }[];
+  created_at:string; posted_at:string|null;
+};
 export type Supplier = { id: number; company: number; code: string; supplier_type: "company" | "individual"; name_ar: string; name_en: string; tax_number: string; phone: string; mobile: string; email: string; address: string; credit_limit: string; payment_terms_days: number; notes: string; is_active: boolean; created_at: string; updated_at: string };
 // قراءة رمز CSRF من ملفات تعريف الارتباط لاستخدامه في الطلبات التي تغيّر البيانات.
 function csrfToken(): string { const item = document.cookie.split("; ").find((part) => part.startsWith("csrftoken=")); return item ? decodeURIComponent(item.split("=").slice(1).join("=")) : ""; }
@@ -207,6 +233,10 @@ export const purchasingApi = {
   awardRFQ: async (id:number, quotation:number, reason:string) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/award/`, {method:"POST",body:JSON.stringify({quotation,reason})}); },
   convertAward: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<{rfq:PurchaseRFQ;purchase_order_id:number}>(`/api/purchasing/rfqs/${id}/convert-award/`,{method:"POST",body:JSON.stringify(payload)}); },
   createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
+  serviceAcceptances: (companyId: number) => request<PurchaseServiceAcceptance[]>(`/api/purchasing/service-acceptances/?company=${companyId}&ordering=-acceptance_date`),
+  createServiceAcceptance: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseServiceAcceptance>("/api/purchasing/service-acceptances/", { method: "POST", body: JSON.stringify(payload) }); },
+  acceptServiceAcceptance: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseServiceAcceptance>(`/api/purchasing/service-acceptances/${id}/accept/`, { method: "POST" }); },
+
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
@@ -733,7 +763,7 @@ export const stockApi = {
 };
 
 
-export type AccountRole = { id: number; company: number; role: string; account: number; account_code: string };
+export type AccountRole = { id: number; company: number; role: string; account: number; account_code: string; activity: number | null; activity_code?: Company["activity"] | null };
 // واجهات أدوار الحسابات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const accountRoleApi = {
   // جلب أدوار الحسابات المعرفة للشركة.

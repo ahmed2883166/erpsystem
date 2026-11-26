@@ -6,9 +6,9 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
-from accounting.models import ChartOfAccount, JournalEntry, TaxCode
+from accounting.models import ChartOfAccount, CostCenter, JournalEntry, TaxCode
 from core.money import round_currency_amount
-from companies.models import Branch, Company, Currency, ExchangeRate
+from companies.models import Branch, Company, CompanyActivity, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 from suppliers.models import Supplier
 
@@ -45,6 +45,10 @@ class PurchaseReceipt(models.Model):
 
     def clean(self):
         super().clean()
+        if self.activity_id and (
+            self.activity.company_id != self.company_id or not self.activity.is_active
+        ):
+            raise ValidationError({"activity": "نشاط الفاتورة يجب أن يكون مفعّلًا ويتبع الشركة المحددة."})
         if self.supplier_id and self.supplier.company_id != self.company_id:
             raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
         if self.warehouse_id and self.warehouse.company_id != self.company_id:
@@ -74,8 +78,22 @@ class PurchaseInvoice(models.Model):
         POSTED = "posted", "مرحّلة"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_invoices")
+    class InvoiceType(models.TextChoices):
+        INVENTORY = "inventory", "مشتريات مخزنية"
+        DIRECT_EXPENSE = "direct_expense", "خدمات ومصروفات مباشرة"
+
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_invoices")
-    receipt = models.ForeignKey(PurchaseReceipt, on_delete=models.PROTECT, related_name="invoices")
+    activity = models.ForeignKey(
+        CompanyActivity, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="purchase_invoices",
+    )
+    invoice_type = models.CharField(max_length=20, choices=InvoiceType.choices, default=InvoiceType.INVENTORY)
+    service_acceptance = models.OneToOneField(
+        "PurchaseServiceAcceptance", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_invoice",
+    )
+    receipt = models.ForeignKey(PurchaseReceipt, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
     transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
@@ -125,6 +143,24 @@ class PurchaseInvoice(models.Model):
             self.receipt.company_id != self.company_id or self.receipt.supplier_id != self.supplier_id
         ):
             raise ValidationError({"receipt": "إذن الاستلام لا يتبع المورد والشركة المحددين."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if self.service_acceptance_id:
+            acceptance = self.service_acceptance
+            if self.invoice_type != self.InvoiceType.DIRECT_EXPENSE:
+                raise ValidationError({"service_acceptance": "محضر إنجاز الخدمة يرتبط بفاتورة خدمات ومصروفات مباشرة فقط."})
+            if acceptance.status != PurchaseServiceAcceptance.Status.ACCEPTED:
+                raise ValidationError({"service_acceptance": "لا يمكن ربط الفاتورة إلا بمحضر إنجاز خدمة معتمد."})
+            if acceptance.company_id != self.company_id or acceptance.supplier_id != self.supplier_id:
+                raise ValidationError({"service_acceptance": "محضر الإنجاز لا يتبع نفس الشركة والمورد."})
+            if acceptance.acceptance_date > self.invoice_date:
+                raise ValidationError({"service_acceptance": "تاريخ الفاتورة لا يسبق تاريخ اعتماد إنجاز الخدمة."})
+        if self.invoice_type == self.InvoiceType.INVENTORY and not self.receipt_id:
+            raise ValidationError({"receipt": "فاتورة المشتريات المخزنية تتطلب إذن استلام."})
+        if self.invoice_type == self.InvoiceType.INVENTORY and self.branch_id:
+            raise ValidationError({"branch": "فرع فاتورة المخزون يُحدد من مخزن إذن الاستلام."})
+        if self.invoice_type == self.InvoiceType.DIRECT_EXPENSE and (self.receipt_id or not self.branch_id):
+            raise ValidationError({"branch": "فاتورة الخدمات والمصروفات المباشرة تتطلب فرعًا ولا ترتبط بإذن استلام."})
         if self.status == self.Status.POSTED and self.pk:
             old = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
             if old == self.Status.POSTED:
@@ -147,7 +183,10 @@ class PurchaseInvoice(models.Model):
 class PurchaseInvoiceLine(models.Model):
     """يمثل بندًا ماليًا وضريبيًا داخل فاتورة المشتريات."""
     invoice = models.ForeignKey(PurchaseInvoice, on_delete=models.PROTECT, related_name="lines")
-    receipt_line = models.ForeignKey(StockMovementLine, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    receipt_line = models.ForeignKey(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
+    description = models.CharField(max_length=240, blank=True)
+    expense_account = models.ForeignKey(ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_expense_lines")
+    cost_center = models.ForeignKey(CostCenter, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoice_lines")
     billed_quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
@@ -198,12 +237,29 @@ class PurchaseInvoiceLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.invoice_id and self.receipt_line_id:
-            receipt = self.invoice.receipt
-            if self.receipt_line.movement_id != receipt.stock_movement_id:
+        if not self.invoice_id:
+            return
+        if self.invoice.invoice_type == PurchaseInvoice.InvoiceType.INVENTORY:
+            if not self.receipt_line_id or not self.invoice.receipt_id:
+                raise ValidationError({"receipt_line": "فاتورة المشتريات المخزنية تتطلب سطر استلام."})
+            if self.receipt_line.movement_id != self.invoice.receipt.stock_movement_id:
                 raise ValidationError({"receipt_line": "سطر الصنف لا يتبع إذن الاستلام المحدد."})
             if self.receipt_line.product.product_type != "goods":
                 raise ValidationError({"receipt_line": "لا يمكن فوترة خدمة من خلال استلام مخزني."})
+            if self.expense_account_id or self.cost_center_id:
+                raise ValidationError({"expense_account": "لا تستخدم حساب مصروف أو مركز تكلفة في سطر مخزني."})
+        else:
+            if self.receipt_line_id:
+                raise ValidationError({"receipt_line": "الفاتورة المباشرة لا ترتبط بسطر استلام مخزني."})
+            if not self.expense_account_id:
+                raise ValidationError({"expense_account": "حدد حساب المصروف لكل بند."})
+            account = self.expense_account
+            if (account.company_id != self.invoice.company_id or account.nature != ChartOfAccount.Nature.EXPENSE or not account.is_active or account.is_group or not account.allow_posting):
+                raise ValidationError({"expense_account": "اختر حساب مصروف نشطًا وتفصيليًا وقابلًا للترحيل من نفس الشركة."})
+            if self.cost_center_id and (self.cost_center.company_id != self.invoice.company_id or not self.cost_center.is_active):
+                raise ValidationError({"cost_center": "مركز التكلفة غير نشط أو لا يتبع الشركة."})
+            if not self.description.strip():
+                raise ValidationError({"description": "وصف بند الخدمة أو المصروف مطلوب."})
 
     def save(self, *args, **kwargs):
         if self.invoice_id and PurchaseInvoice.objects.filter(
@@ -211,7 +267,7 @@ class PurchaseInvoiceLine(models.Model):
         ).exists():
             raise ValidationError("لا يمكن تعديل سطور فاتورة مورد مرحلة.")
         if self.billed_quantity is None:
-            self.billed_quantity = self.receipt_line.quantity
+            self.billed_quantity = self.receipt_line.quantity if self.receipt_line_id else Decimal("1")
         self.calculate()
         return super().save(*args, **kwargs)
 
@@ -453,8 +509,8 @@ class PurchaseRFQLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type != "goods"):
-            raise ValidationError({"product": "الصنف يجب أن يكون مخزنيًا ويتبع شركة طلب العروض."})
+        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type not in ("goods", "service") or not self.product.is_active):
+            raise ValidationError({"product": "اختر صنفًا أو خدمة نشطة تابعة لشركة طلب العروض."})
 
 
 class PurchaseRFQInvitation(models.Model):
@@ -613,8 +669,8 @@ class PurchaseOrderLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.order.company_id or self.product.product_type != "goods"):
-            raise ValidationError({"product": "اختر صنفًا مخزنيًا تابعًا لشركة أمر الشراء."})
+        if self.product_id and (self.product.company_id != self.order.company_id or self.product.product_type not in ("goods", "service") or not self.product.is_active):
+            raise ValidationError({"product": "اختر صنفًا أو خدمة نشطة تابعة لشركة أمر الشراء."})
         if self.received_quantity > self.quantity:
             raise ValidationError({"received_quantity": "الكمية المستلمة تتجاوز كمية أمر الشراء."})
 
@@ -843,7 +899,7 @@ class PurchaseRequisitionLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.requisition.company_id or self.product.product_type != "goods" or not self.product.is_active):
+        if self.product_id and (self.product.company_id != self.requisition.company_id or self.product.product_type not in ("goods", "service") or not self.product.is_active):
             raise ValidationError({"product": "اختر صنفًا مخزنيًا نشطًا تابعًا لشركة الطلب."})
 
     def save(self, *args, **kwargs):
@@ -855,3 +911,79 @@ class PurchaseRequisitionLine(models.Model):
         if self.requisition.status != PurchaseRequisition.Status.DRAFT:
             raise ValidationError("لا يمكن حذف بنود طلب شراء تم إرساله.")
         return super().delete(*args, **kwargs)
+
+
+class PurchaseServiceAcceptance(models.Model):
+    """محضر استلام/إنجاز خدمة لأمر شراء دون إنشاء حركة مخزون."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        ACCEPTED = "accepted", "معتمد"
+        REJECTED = "rejected", "مرفوض"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_service_acceptances")
+    order = models.ForeignKey(PurchaseOrder, on_delete=models.PROTECT, related_name="service_acceptances")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="service_acceptances")
+    acceptance_number = models.CharField(max_length=40)
+    acceptance_date = models.DateField()
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    accepted_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="accepted_purchase_services")
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-acceptance_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "acceptance_number"), name="uq_purchase_service_acceptance_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "acceptance_date"), name="pur_svc_accept_co_date_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.order_id and (
+            self.order.company_id != self.company_id
+            or self.order.supplier_id != self.supplier_id
+            or self.order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED)
+        ):
+            raise ValidationError({"order": "اختر أمر شراء معتمدًا تابعًا لنفس الشركة والمورد."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("محضر استلام الخدمة بعد اعتماده غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+
+class PurchaseServiceAcceptanceLine(models.Model):
+    acceptance = models.ForeignKey(PurchaseServiceAcceptance, on_delete=models.PROTECT, related_name="lines")
+    order_line = models.ForeignKey(PurchaseOrderLine, on_delete=models.PROTECT, related_name="service_acceptance_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    notes = models.CharField(max_length=250, blank=True)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(fields=("acceptance", "order_line"), name="uq_purchase_service_accept_line"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not self.order_line_id or not self.acceptance_id:
+            return
+        if (
+            self.order_line.order_id != self.acceptance.order_id
+            or self.order_line.product.product_type != "service"
+        ):
+            raise ValidationError({"order_line": "اختر بند خدمة تابعًا لأمر الشراء المحدد."})
+        accepted_before = type(self).objects.filter(
+            order_line_id=self.order_line_id,
+            acceptance__status=PurchaseServiceAcceptance.Status.ACCEPTED,
+        ).exclude(acceptance_id=self.acceptance_id).aggregate(total=models.Sum("quantity"))["total"] or Decimal("0")
+        if accepted_before + self.quantity > self.order_line.quantity:
+            raise ValidationError({"quantity": "كمية الخدمة المعتمدة تتجاوز كمية أمر الشراء المتبقية."})

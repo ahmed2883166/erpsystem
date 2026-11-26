@@ -45,6 +45,7 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
 
 class AccountRoleSerializer(serializers.ModelSerializer):
     account_code = serializers.CharField(source="account.code", read_only=True)
+    activity_code = serializers.CharField(source="activity.activity", read_only=True, allow_null=True)
     ROLE_NATURES = {
         "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
         "inventory": {"asset"}, "vat_input": {"asset"},
@@ -61,16 +62,23 @@ class AccountRoleSerializer(serializers.ModelSerializer):
     }
     class Meta:
         model = AccountRole
-        fields = ("id", "company", "role", "account", "account_code")
+        fields = ("id", "company", "role", "account", "activity", "activity_code", "account_code")
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         company = attrs.get("company", getattr(self.instance, "company", None))
         account = attrs.get("account", getattr(self.instance, "account", None))
+        activity = attrs.get("activity", getattr(self.instance, "activity", None))
         if self.instance and "company" in attrs and company.pk != self.instance.company_id:
             raise serializers.ValidationError({"company": "لا يمكن نقل الدور المحاسبي إلى شركة أخرى؛ أنشئ ربطًا مستقلًا للشركة الأخرى."})
         if self.instance and "role" in attrs and attrs["role"] != self.instance.role:
             raise serializers.ValidationError({"role": "هوية الدور المحاسبي ثابتة؛ غيّر الحساب المرتبط فقط."})
+        if self.instance and "activity" in attrs and attrs["activity"] != self.instance.activity:
+            raise serializers.ValidationError({"activity": "نطاق النشاط ثابت بعد إنشاء الربط؛ أنشئ ربطًا جديدًا للنشاط الآخر."})
+        if activity and (
+            not company or activity.company_id != company.id or not activity.is_active
+        ):
+            raise serializers.ValidationError({"activity": "النشاط يجب أن يكون مفعّلًا ويتبع نفس الشركة."})
         if company and account and account.company_id != company.id:
             raise serializers.ValidationError({"account": "الحساب لا يتبع نفس الشركة."})
         if account and (account.is_group or not account.allow_posting or not account.is_active):

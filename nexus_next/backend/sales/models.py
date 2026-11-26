@@ -831,3 +831,98 @@ class CustomerReceiptBatchAllocation(models.Model):
             raise ValidationError("لا يمكن حذف تخصيص من سند قبض مرحّل.")
         return super().delete(*args, **kwargs)
 
+class CustomerRefund(models.Model):
+    """استرداد نقدي للعميل مقابل رصيد دائن ناتج عن سند قبض مجمع."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="customer_refunds")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="refunds")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="customer_refunds")
+    source_receipt_batch = models.ForeignKey(
+        "CustomerReceiptBatch", on_delete=models.PROTECT, related_name="refunds",
+    )
+    treasury_account = models.ForeignKey(
+        "treasury.TreasuryAccount", on_delete=models.PROTECT, related_name="customer_refunds",
+    )
+    treasury_transaction = models.ForeignKey(
+        "treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refunds",
+    )
+    reversal_treasury_transaction = models.ForeignKey(
+        "treasury.TreasuryTransaction", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_customer_refunds",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_refund_reversal",
+    )
+    refund_number = models.CharField(max_length=40)
+    refund_date = models.DateField()
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    reversal_date = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_customer_refunds",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-refund_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "refund_number"), name="uq_customer_refund_company_no"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "refund_date"), name="sales_refund_co_status_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if self.source_receipt_batch_id and (
+            self.source_receipt_batch.company_id != self.company_id
+            or self.source_receipt_batch.customer_id != self.customer_id
+            or self.source_receipt_batch.branch_id != self.branch_id
+        ):
+            raise ValidationError({"source_receipt_batch": "سند القبض لا يطابق الشركة أو العميل أو الفرع."})
+        if self.treasury_account_id and self.treasury_account.company_id != self.company_id:
+            raise ValidationError({"treasury_account": "حساب الخزينة لا يتبع الشركة المحددة."})
+        if self.treasury_transaction_id and (
+            self.treasury_transaction.company_id != self.company_id
+            or self.treasury_transaction.branch_id != self.branch_id
+        ):
+            raise ValidationError({"treasury_transaction": "حركة الخزينة لا تطابق الشركة أو الفرع."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            current_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if current_status == self.Status.REVERSED:
+                raise ValidationError("مردود العميل المعكوس غير قابل للتعديل.")
+            if current_status == self.Status.POSTED:
+                reversal_fields = {
+                    "reversal_journal_entry", "reversal_treasury_transaction",
+                    "reversal_date", "status",
+                }
+                update_fields = set(kwargs.get("update_fields") or ())
+                if self.status != self.Status.REVERSED or not update_fields or not update_fields.issubset(reversal_fields):
+                    raise ValidationError("مردود العميل المرحّل غير قابل للتعديل إلا من خلال إجراء العكس.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status in (self.Status.POSTED, self.Status.REVERSED):
+            raise ValidationError("لا يمكن حذف مردود عميل مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
+

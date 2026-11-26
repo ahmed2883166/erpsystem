@@ -46,6 +46,17 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
   const [companyNameEn, setCompanyNameEn] = useState("");
   const [country, setCountry] = useState<"EG" | "SA">("EG");
   const [activity, setActivity] = useState<NonNullable<Company["activity"]>>("commercial");
+  const [enabledActivities, setEnabledActivities] = useState<NonNullable<Company["activity"]>[]>(["commercial"]);
+  const [companyActivities, setCompanyActivities] = useState<NonNullable<Company["activity"]>[]>([]);
+  const toggleEnabledActivity = (value: NonNullable<Company["activity"]>, checked: boolean) => {
+    if (checked) {
+      setEnabledActivities(current => current.includes(value) ? current : [...current, value]);
+      return;
+    }
+    if (enabledActivities.length <= 1) return;
+    if (activity === value) setActivity(enabledActivities.find(item => item !== value) || "commercial");
+    setEnabledActivities(current => current.filter(item => item !== value));
+  };
   const [currencyId, setCurrencyId] = useState("");
   const [taxNumber, setTaxNumber] = useState("");
   const [address, setAddress] = useState("");
@@ -76,6 +87,7 @@ export default function CompanySetupPanel({ companies, companyId, onCompanyCreat
     setProfileAddress(selectedCompany.address || "");
     setProfilePhone(selectedCompany.phone || "");
     setProfileEmail(selectedCompany.email || "");
+    setCompanyActivities(selectedCompany.activities?.length ? selectedCompany.activities : [selectedCompany.activity || "commercial"]);
   }, [selectedCompany?.id, selectedCompany?.updated_at]);
 
   // تحديث فروع وسنوات الشركة المحددة بعد الإنشاء أو التعديل.
@@ -134,6 +146,7 @@ const createCompany = async (event: FormEvent) => {
         name_en: companyNameEn.trim(),
         country,
         activity,
+        activities: enabledActivities.includes(activity) ? enabledActivities : [...enabledActivities, activity],
         base_currency: Number(currencyId),
         tax_registration_number: taxNumber.trim(),
         address: address.trim(),
@@ -168,6 +181,28 @@ const createCompany = async (event: FormEvent) => {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر حفظ بيانات الشركة.");
     } finally { setBusy(false); }
+  };
+
+  const saveCompanyActivities = async () => {
+    if (!companyId || !selectedCompany) return;
+    const primary = selectedCompany.activity || "commercial";
+    const activities = companyActivities.includes(primary) ? companyActivities : [primary, ...companyActivities];
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const updated = await api.updateCompany(companyId, { activities });
+      onCompanyUpdated(updated);
+      setCompanyActivities(updated.activities?.length ? updated.activities : [primary]);
+      setNotice("تم تحديث أنشطة الشركة مع الإبقاء على النشاط الأساسي.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحديث أنشطة الشركة.");
+    } finally { setBusy(false); }
+  };
+
+  const toggleCompanyActivity = (value: NonNullable<Company["activity"]>, checked: boolean) => {
+    if (value === (selectedCompany?.activity || "commercial")) return;
+    setCompanyActivities(current => checked
+      ? (current.includes(value) ? current : [...current, value])
+      : current.filter(item => item !== value));
   };
 
   // إضافة فرع جديد إلى الشركة الحالية.
@@ -298,7 +333,8 @@ const createYear = async (event: FormEvent) => {
       <label>اسم الشركة بالعربية<input required maxLength={180} value={companyName} onChange={e => setCompanyName(e.target.value)} /></label>
       <label>اسم الشركة بالإنجليزية<input maxLength={180} value={companyNameEn} onChange={e => setCompanyNameEn(e.target.value)} /></label>
       <label>الدولة<select value={country} onChange={e => setCountry(e.target.value as "EG" | "SA")}><option value="EG">مصر</option><option value="SA">السعودية</option></select></label>
-      <label>النشاط<select value={activity} onChange={e => setActivity(e.target.value as NonNullable<Company["activity"]>)}>{Object.entries(activityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <label>النشاط الأساسي<select value={activity} onChange={e => { const value = e.target.value as NonNullable<Company["activity"]>; setActivity(value); setEnabledActivities(current => current.includes(value) ? current : [...current, value]); }}>{Object.entries(activityLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+      <fieldset className="form-wide activity-selection"><legend>الأنشطة المفعّلة للشركة</legend><p className="asset-report-note">يمكن للشركة ممارسة أكثر من نشاط في نفس الوقت. اختر كل الأنشطة المطلوبة، وحدد النشاط الأساسي من القائمة السابقة.</p><div className="activity-checkbox-grid">{Object.entries(activityLabels).map(([key, label]) => <label key={key}><input type="checkbox" checked={enabledActivities.includes(key as NonNullable<Company["activity"]>)} onChange={e => toggleEnabledActivity(key as NonNullable<Company["activity"]>, e.target.checked)} />{label}</label>)}</div></fieldset>
       <label>العملة الأساسية<select required value={currencyId} onChange={e => setCurrencyId(e.target.value)} disabled={currencyLoading || !currencies.length}><option value="">{currencyLoading ? "جارٍ تحميل العملات…" : "اختر العملة"}</option>{currencies.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name_ar}</option>)}</select></label>
       {currencyError && <div className="asset-report-note form-wide" role="alert">{currencyError} <button type="button" className="text-action-button" onClick={() => void loadCurrencies()} disabled={currencyLoading}>إعادة تحميل العملات</button></div>}
       <label>رقم التسجيل الضريبي<input maxLength={80} value={taxNumber} onChange={e => setTaxNumber(e.target.value)} /></label>
@@ -323,11 +359,15 @@ const createYear = async (event: FormEvent) => {
         <div className="form-actions form-wide"><button className="primary-button" type="submit" disabled={busy || !profileName.trim()}>{busy ? "جارٍ حفظ البيانات…" : "حفظ بيانات الشركة"}</button></div>
         <p className="asset-report-note form-wide">الدولة والنشاط والعملة الأساسية معروضة أدناه كإعدادات تأسيسية؛ لا نغيّرها من تعديل الملف التعريفي حتى لا تتأثر المعالجة الضريبية أو الأرصدة المحاسبية القائمة.</p>
       </form>
+      <div className="setup-section-title"><div><h3>الأنشطة التشغيلية للشركة</h3><p>يمكن إضافة أو إيقاف الأنشطة الإضافية دون تغيير النشاط الأساسي أو التأثير على بيانات الشركة.</p></div></div>
+      <fieldset className="activity-selection"><legend>الأنشطة المفعّلة</legend><div className="activity-checkbox-grid">{Object.entries(activityLabels).map(([key, label]) => { const value = key as NonNullable<Company["activity"]>; const primary = value === (selectedCompany?.activity || "commercial"); return <label key={key}><input type="checkbox" checked={primary || companyActivities.includes(value)} disabled={primary || busy} onChange={event => toggleCompanyActivity(value, event.target.checked)} />{label}{primary ? " · أساسي" : ""}</label>; })}</div><div className="form-actions"><button type="button" className="primary-button" disabled={busy || !companyActivities.length} onClick={() => void saveCompanyActivities()}>{busy ? "جارٍ حفظ الأنشطة…" : "حفظ الأنشطة"}</button></div></fieldset>
+
       <div className="setup-company-summary">
         <div><span>الشركة المحددة</span><strong>{selectedCompany.name_ar}</strong></div>
         <div><span>الكود</span><strong>{selectedCompany.code}</strong></div>
         <div><span>الدولة</span><strong>{selectedCompany.country === "EG" ? "مصر" : "السعودية"}</strong></div>
-        <div><span>النشاط</span><strong>{activityLabels[selectedCompany.activity || "commercial"]}</strong></div>
+        <div><span>النشاط الأساسي</span><strong>{activityLabels[selectedCompany.activity || "commercial"]}</strong></div>
+        <div><span>الأنشطة المفعّلة</span><strong>{(selectedCompany.activities?.length ? selectedCompany.activities : [selectedCompany.activity || "commercial"]).map(value => activityLabels[value]).join("، ")}</strong></div>
         <div><span>العملة الأساسية</span><strong>{selectedCompany.base_currency_code}</strong></div>
         <div><span>حالة الشركة</span><strong>{selectedCompany.is_active === false ? "موقوفة" : "نشطة"}</strong></div>
       </div>
