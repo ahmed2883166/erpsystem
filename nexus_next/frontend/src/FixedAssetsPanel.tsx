@@ -44,6 +44,7 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [form, setForm] = useState(emptyForm);
   const [periodDate, setPeriodDate] = useState(today.slice(0, 7) + "-28");
   const [unitsProduced, setUnitsProduced] = useState("");
+  const [componentUnitsById, setComponentUnitsById] = useState<Record<string,string>>({});
   const [disposalDate, setDisposalDate] = useState(today);
   const [disposalProceeds, setDisposalProceeds] = useState("0");
   const [disposalCashAccount, setDisposalCashAccount] = useState("");
@@ -291,7 +292,7 @@ const depreciate = async (asset: FixedAsset) => {
     setSaving(true); setError("");
     try {
       if (asset.depreciation_method === "units_of_production" && !(Number(unitsProduced) > 0)) { setError("أدخل وحدات الإنتاج الفعلية للفترة."); setSaving(false); return; }
-      await fixedAssetsApi.depreciate(asset.id, periodDate, Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined);
+      await fixedAssetsApi.depreciate(asset.id, periodDate, Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined, Object.fromEntries(Object.entries(componentUnitsById).map(([key,value])=>[key,Number(value)])));
       setUnitsProduced("");
       await refresh(); if (selected === asset.id) setSchedule(await fixedAssetsApi.schedule(asset.id));
     }
@@ -310,7 +311,7 @@ const dispose = async (asset: FixedAsset) => {
     if (!window.confirm("تأكيد بيع / استبعاد الأصل؟ سيتم ترحيل الإهلاك حتى التاريخ وقيد الاستبعاد.")) return;
     setSaving(true); setError("");
     try {
-      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined);
+      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined, Object.fromEntries(Object.entries(componentUnitsById).map(([key,value])=>[key,Number(value)])));
       await refresh();
       setSchedule(await fixedAssetsApi.schedule(asset.id));
       setError("تم الاستبعاد. رقم القيد: " + result.disposal_journal + " · " + (Number(result.gain) > 0 ? "ربح " + result.gain : Number(result.loss) > 0 ? "خسارة " + result.loss : "دون ربح أو خسارة"));
@@ -498,7 +499,13 @@ const loadReport = async () => {
         </div>
         <button className="danger-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void dispose(a);}}>{saving ? "جارٍ الترحيل…" : "تأكيد البيع / الاستبعاد"}</button>
       </div>}
-      {assets.find(x=>x.id===selected) && <AssetControlsPanel asset={assets.find(x=>x.id===selected)!} onChanged={()=>void refresh()}/>}
+      {assets.find(x=>x.id===selected) && <AssetControlsPanel
+        asset={assets.find(x=>x.id===selected)!}
+        fiscalYearId={form.fiscal_year ? Number(form.fiscal_year) : null}
+        periodDate={periodDate}
+        onComponentUnitsChange={setComponentUnitsById}
+        onChanged={()=>void refresh()}
+      />}
     </div>}
   </section>;
 }
