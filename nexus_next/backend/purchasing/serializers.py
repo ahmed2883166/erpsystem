@@ -1313,6 +1313,16 @@ class PurchaseDocumentTemplateSerializer(serializers.ModelSerializer):
         read_only_fields = ("created_at", "updated_at")
         validators = []
 
+    def validate(self, attrs):
+        if self.instance:
+            company = attrs.get("company", self.instance.company)
+            document_type = attrs.get("document_type", self.instance.document_type)
+            if company.pk != self.instance.company_id:
+                raise serializers.ValidationError({"company": "لا يمكن نقل قالب الطباعة إلى شركة أخرى."})
+            if document_type != self.instance.document_type:
+                raise serializers.ValidationError({"document_type": "لا يمكن تغيير نوع المستند بعد إنشاء القالب."})
+        return attrs
+
     def validate_config(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("إعدادات القالب يجب أن تكون كائنًا.")
