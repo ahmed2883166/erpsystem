@@ -138,4 +138,8 @@ class AssetPhysicalInventoryViewSet(_AssetControlViewSet):
     def perform_create(self, serializer):
         asset = serializer.validated_data["asset"]
         self._check_write(asset)
-        serializer.save(counted_by=self.request.user)
+        serializer.save(
+            counted_by=self.request.user,
+            expected_location=asset.location,
+            expected_custodian=asset.custodian,
+        )
