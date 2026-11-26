@@ -16,7 +16,7 @@ from inventory.models import Product, StockBalance, StockMovement, StockMovement
 from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, SupplierPayment, SupplierReturn
 
 
