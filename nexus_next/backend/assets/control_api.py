@@ -95,7 +95,7 @@ class AssetPhysicalInventorySerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetPhysicalInventory
         fields = "__all__"
-        read_only_fields = ("counted_by", "created_at")
+        read_only_fields = ("counted_by", "result", "created_at")
 
     def validate(self, attrs):
         asset = attrs.get("asset", getattr(self.instance, "asset", None))
@@ -158,8 +158,22 @@ class AssetPhysicalInventoryViewSet(_AssetControlViewSet):
     def perform_create(self, serializer):
         asset = serializer.validated_data["asset"]
         self._check_write(asset)
+        counted_location = serializer.validated_data.get("counted_location", "")
+        counted_custodian = serializer.validated_data.get("counted_custodian", "")
+        requested_result = self.request.data.get("result")
+        if requested_result == AssetPhysicalInventory.Result.NOT_FOUND:
+            result = AssetPhysicalInventory.Result.NOT_FOUND
+        elif counted_location != asset.location:
+            result = AssetPhysicalInventory.Result.LOCATION_MISMATCH
+        elif counted_custodian != asset.custodian:
+            result = AssetPhysicalInventory.Result.CUSTODIAN_MISMATCH
+        elif serializer.validated_data.get("condition_notes"):
+            result = AssetPhysicalInventory.Result.CONDITION_ISSUE
+        else:
+            result = AssetPhysicalInventory.Result.MATCHED
         serializer.save(
             counted_by=self.request.user,
             expected_location=asset.location,
             expected_custodian=asset.custodian,
+            result=result,
         )
