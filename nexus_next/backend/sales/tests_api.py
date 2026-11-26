@@ -1064,6 +1064,19 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
         self.assertEqual(reversed_return.data["status"], "reversed")
+        backdated_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-003-BACKDATED", "return_date": "2026-03-13",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1.1",
+            }],
+        }, format="json")
+        self.assertEqual(backdated_return.status_code, 201, backdated_return.data)
+        rejected_backdated_return = self.client.post(
+            f"/api/sales-documents/returns/{backdated_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected_backdated_return.status_code, 400, rejected_backdated_return.data)
+        self.assertIn("تتجاوز الكمية المباعة", str(rejected_backdated_return.data))
         invoice_after_reversal = self.client.get(
             f"/api/sales-documents/invoices/{invoice.data['id']}/"
         )
@@ -1498,6 +1511,15 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
         self.assertEqual(reversed_response.data["status"], "reversed")
+        from sales.refund_services import _customer_credit_balance
+        self.assertEqual(
+            _customer_credit_balance(self.company.pk, self.customer.pk, date(2026, 3, 11)),
+            Decimal("128.0000"),
+        )
+        self.assertEqual(
+            _customer_credit_balance(self.company.pk, self.customer.pk, date(2026, 3, 12)),
+            Decimal("228.0000"),
+        )
         backdated_overpayment = self.client.post("/api/sales-documents/receipts/", {
             "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
             "receipt_number": "RC-REV-001-BACKDATED", "receipt_date": "2026-03-11",
