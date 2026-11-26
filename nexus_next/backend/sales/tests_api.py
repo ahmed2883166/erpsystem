@@ -1479,6 +1479,59 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(rejected.status_code, 400, rejected.data)
 
+    def test_reversing_receipt_respects_later_receipt_until_its_actual_reversal_date(self):
+        delivery_id, line_id = self._create_delivery("DEL-REV-ORDER")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-REV-ORDER",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        receipt_ids = []
+        for number, receipt_date in (
+            ("RC-REV-ORDER-1", "2026-03-11"),
+            ("RC-REV-ORDER-2", "2026-03-12"),
+        ):
+            receipt = self.client.post("/api/sales-documents/receipts/", {
+                "company": self.company.pk, "customer": self.customer.pk,
+                "invoice": invoice_id, "receipt_number": number,
+                "receipt_date": receipt_date, "method": "cash", "amount": "50",
+            }, format="json")
+            self.assertEqual(receipt.status_code, 201, receipt.data)
+            posted = self.client.post(
+                f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json",
+            )
+            self.assertEqual(posted.status_code, 200, posted.data)
+            receipt_ids.append(receipt.data["id"])
+
+        reversed_latest = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_ids[1]}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_latest.status_code, 200, reversed_latest.data)
+
+        blocked_earlier = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_ids[0]}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(blocked_earlier.status_code, 400, blocked_earlier.data)
+        self.assertIn("أحدث سند قبض", str(blocked_earlier.data))
+
+        allowed_after_latest_reversal = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_ids[0]}/reverse/",
+            {"entry_date": "2026-03-15"}, format="json",
+        )
+        self.assertEqual(
+            allowed_after_latest_reversal.status_code, 200, allowed_after_latest_reversal.data,
+        )
+
     def test_latest_customer_receipt_can_be_reversed_with_linked_journal(self):
         delivery_id, line_id = self._create_delivery("DEL-REV-001")
         invoice = self.client.post("/api/sales-documents/invoices/", {
