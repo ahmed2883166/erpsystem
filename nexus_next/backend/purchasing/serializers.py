@@ -100,7 +100,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             return attrs
         if not attrs.get("lines"):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
-        order = attrs.get("purchase_order")
+        order = attrs.get("purchase_order", instance.purchase_order if instance else None)
         if order:
             if order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED):
                 raise serializers.ValidationError({"purchase_order": "أمر الشراء غير معتمد أو مكتمل الاستلام."})
