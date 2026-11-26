@@ -28,8 +28,8 @@ class ReceiptLineInputSerializer(serializers.Serializer):
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
-        if product.product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not product.is_active:
-            raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
+        if product.product_type != Product.ProductType.GOODS or not product.is_active:
+            raise serializers.ValidationError("إذن الاستلام مخصص للأصناف المخزنية فقط؛ الخدمات تُثبت بمحضر إنجاز خدمة.")
         if product.track_expiry and not attrs.get("expiry_date"):
             raise serializers.ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
         if not product.track_expiry and attrs.get("expiry_date"):
