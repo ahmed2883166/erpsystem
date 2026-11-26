@@ -197,7 +197,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None, units_pro
                 journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=latest_measurement_date,
             ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
             reversal_at_measurement = asset.impairment_reversals.filter(
-                journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=latest_measurement_date,
+                journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=latest_measurement_date,
             ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
             carrying_at_measurement = asset.original_cost - dep_at_measurement - loss_at_measurement + reversal_at_measurement
             life_used_days = max(0, (latest_measurement_date - asset.depreciation_start_date).days + 1)
