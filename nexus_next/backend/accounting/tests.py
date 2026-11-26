@@ -2353,6 +2353,62 @@ class SubledgerReconciliationApiTests(APITestCase):
         self.assertEqual(customers["source_journal_count"], 2)
         self.assertEqual(customers["unmatched_entry_count"], 0)
 
+    def test_customer_refund_missing_treasury_or_reversal_journal_is_reported(self):
+        from customers.models import Customer
+        from sales.models import CustomerReceiptBatch, CustomerRefund
+        from treasury.models import TreasuryAccount
+
+        customer = Customer.objects.create(
+            company=self.company, code="RECON-REFUND-MISSING",
+            name_ar="عميل رد غير مربوط",
+        )
+        batch_entry = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="REFUND-MISSING-BATCH", entry_date=date(2026, 3, 10),
+            description="دفعة مقدمة للعميل",
+        )
+        JournalLine.objects.create(
+            entry=batch_entry, account=self.cash, debit=Decimal("100"),
+        )
+        JournalLine.objects.create(
+            entry=batch_entry, account=self.receivables, credit=Decimal("100"),
+        )
+        post_journal(batch_entry.pk)
+        batch = CustomerReceiptBatch.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            receipt_number="REFUND-MISSING-BATCH", receipt_date=date(2026, 3, 10),
+            method="cash", amount=Decimal("100"),
+            status=CustomerReceiptBatch.Status.POSTED,
+            journal_entry=batch_entry, created_by=self.user,
+        )
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=self.cash,
+            kind=TreasuryAccount.Kind.CASH, code="REFUND-MISSING-CASH",
+            name_ar="خزينة اختبار الرد غير المربوط",
+        )
+        CustomerRefund.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            source_receipt_batch=batch, treasury_account=treasury_account,
+            refund_number="REFUND-MISSING-001", refund_date=date(2026, 3, 12),
+            amount=Decimal("10"), status=CustomerRefund.Status.POSTED,
+            created_by=self.user,
+        )
+        CustomerRefund.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            source_receipt_batch=batch, treasury_account=treasury_account,
+            refund_number="REFUND-MISSING-002", refund_date=date(2026, 3, 13),
+            amount=Decimal("10"), status=CustomerRefund.Status.REVERSED,
+            reversal_date=date(2026, 3, 14), created_by=self.user,
+        )
+
+        result = self.client.get(
+            f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(result.data["posted_documents_missing_journal"]["sales"], 3)
+        self.assertEqual(result.data["posted_documents_missing_journal_count"], 3)
+        self.assertFalse(result.data["is_reconciled"])
+
     def test_missing_control_account_is_not_silently_reported_as_zero(self):
         result = self.client.get(
             f"/api/accounting/subledger-reconciliation/?company={self.company.pk}&as_of=2026-03-31"
