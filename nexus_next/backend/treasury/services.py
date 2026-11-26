@@ -332,7 +332,14 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
         raise ValidationError("يوجد حركة خزينة مرحّلة بتاريخ لاحق؛ أعد التقييم بعد آخر حركة أو عالج التسلسل الزمني أولًا.")
     if rate_date > revaluation_date:
         raise ValidationError("تاريخ سعر الصرف لا يجوز أن يتجاوز تاريخ إعادة التقييم.")
-    if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date__gt=revaluation_date).exists():
+    if TreasuryFxRevaluation.objects.filter(
+        account=account, revaluation_date__gt=revaluation_date,
+    ).filter(
+        # التقييم المعكوس لا يمنع تقييمًا بتاريخ رجعي — نظير فحص الفواتير
+        # (fx_subledger_services.py) الذي يستثني المعكوسة (NEW-6-2).
+        Q(reversal_journal_entry__isnull=True)
+        | Q(reversal_journal_entry__status=JournalEntry.Status.REVERSED),
+    ).exists():
         raise ValidationError("يوجد تقييم أحدث؛ لا يمكن إنشاء تقييم بتاريخ رجعي.")
     if TreasuryFxRevaluation.objects.filter(
         account=account,
@@ -341,7 +348,15 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
         reversal_journal_entry__status=JournalEntry.Status.POSTED,
     ).exists():
         raise ValidationError("يوجد عكس تقييم بتاريخ لاحق؛ لا يمكن إنشاء تقييم قبل تاريخ العكس.")
-    if TreasuryFxRevaluation.objects.filter(account=account, revaluation_date=revaluation_date).exists():
+    if TreasuryFxRevaluation.objects.filter(
+        account=account, revaluation_date=revaluation_date,
+    ).filter(
+        # سجل بلا قيد (فرق صفر — NEW-7-1) أو سجل معكوس لا يمنع تقييمًا
+        # جديدًا في نفس التاريخ.
+        Q(journal_entry__isnull=False),
+        Q(reversal_journal_entry__isnull=True)
+        | Q(reversal_journal_entry__status=JournalEntry.Status.REVERSED),
+    ).exists():
         raise ValidationError("تمت إعادة تقييم هذا الحساب في التاريخ نفسه من قبل.")
     rate_row = ExchangeRate.objects.filter(
         company=account.company, currency__code=account.currency_code,
@@ -384,6 +399,16 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
         journal = post_journal(entry.pk, actor=user)
     position.carrying_base_amount = new_value
     position.save(update_fields=("carrying_base_amount", "updated_at"))
+    if not difference:
+        # فرق صفر: لا ننشئ سجل تقييم بلا قيد (NEW-7-1؛ وهو أيضًا أصل
+        # NEW-3-12). نعيد نسخة غير محفوظة بنفس القيم؛ فيبقى عقد
+        # الاستجابة كما هو مع status "no_difference" وdifference 0.
+        return TreasuryFxRevaluation(
+            company=account.company, account=account, fiscal_year=year,
+            revaluation_date=revaluation_date, rate_date=rate_date, rate=rate_row.rate,
+            foreign_amount=position.foreign_amount, previous_carrying_amount=previous,
+            new_carrying_amount=new_value, difference=difference, journal_entry=None,
+        )
     return TreasuryFxRevaluation.objects.create(
         company=account.company, account=account, fiscal_year=year,
         revaluation_date=revaluation_date, rate_date=rate_date, rate=rate_row.rate,

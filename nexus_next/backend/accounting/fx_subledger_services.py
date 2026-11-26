@@ -154,6 +154,11 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
     if FxSubledgerRevaluation.objects.filter(
         **({"sales_invoice": invoice} if direction == "receivable" else {"purchase_invoice": invoice}),
         revaluation_date=revaluation_date,
+    ).filter(
+        # سجل بلا قيد (فرق صفر — NEW-7-1) أو سجل معكوس لا يمنع تقييمًا
+        # جديدًا في نفس التاريخ: لم يغيّر شيئًا اقتصاديًا.
+        Q(journal_entry__isnull=False),
+        ~Q(journal_entry__status=JournalEntry.Status.REVERSED),
     ).exists():
         raise ValidationError("تمت إعادة تقييم هذه الفاتورة في التاريخ المحدد بالفعل.")
 
@@ -165,6 +170,20 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__gt=revaluation_date,
         ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
+        # نظير payable: مرتجع لاحق (بتاريخ الإنشاء) يمنع التقييم بأثر رجعي.
+        later_returns = SalesReturn.objects.filter(
+            invoice=invoice,
+            status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
+            return_date__gte=revaluation_date,
+        ).exists()
+        # عكس مرتجع بتاريخ لاحق لتاريخ التقييم حدث لاحق أيضًا: مرتجع
+        # أُنشئ قبل التاريخ وعُكس بعده كان ساريًا حينها، فالتقييم بينهما
+        # يترك الرصيد الجاري منحرفًا (NEW-6-3 — مثال الـ 800 جنيه).
+        later_return_reversals = SalesReturn.objects.filter(
+            invoice=invoice,
+            status=SalesReturn.Status.REVERSED,
+            reversal_date__gte=revaluation_date,
+        ).exists()
     else:
         later_settlements = SupplierPayment.objects.filter(
             invoice=invoice, status=SupplierPayment.Status.POSTED,
@@ -178,8 +197,13 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
             status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),
             return_date__gte=revaluation_date,
         ).exists()
-    if later_settlements or later_revaluations or (direction == "payable" and later_returns):
-        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو مرتجعًا أو إعادة تقييم مرحّلة.")
+        later_return_reversals = SupplierReturn.objects.filter(
+            invoice=invoice,
+            status=SupplierReturn.Status.REVERSED,
+            reversal_date__gte=revaluation_date,
+        ).exists()
+    if later_settlements or later_revaluations or later_returns or later_return_reversals:
+        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو مرتجعًا أو عكس مرتجع أو إعادة تقييم مرحّلة.")
 
     approved = ExchangeRate.objects.filter(
         company=invoice.company, currency=invoice.transaction_currency,
@@ -239,6 +263,23 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
 
+    if not difference:
+        # فرق صفر: لا ننشئ سجل تقييم بلا قيد؛ فكل الحراس تعتبر غياب القيد
+        # دليل نشاط، فيحظر السجلُ المردوداتِ والتسويات إلى الأبد دون أي
+        # مسار لعكسه (NEW-7-1؛ وهو أيضًا أصل NEW-3-12). نعيد نسخة غير
+        # محفوظة بنفس القيم حتى يبقى عقد الاستجابة كما هو
+        # (id: null وdifference: 0 وjournal_entry: null) — والواجهة لا
+        # تستخدم القيمة المرجعة أصلًا (SalesPanel يعيد تحميل السجل).
+        return FxSubledgerRevaluation(
+            company=invoice.company,
+            sales_invoice=invoice if direction == "receivable" else None,
+            purchase_invoice=invoice if direction == "payable" else None,
+            revaluation_date=revaluation_date, rate_date=rate_date, rate=approved.rate,
+            foreign_balance=remaining_foreign,
+            previous_carrying_amount=previous_carrying,
+            new_carrying_amount=new_carrying,
+            difference=difference, journal_entry=None, created_by=user,
+        )
     record = FxSubledgerRevaluation.objects.create(
         company=invoice.company,
         sales_invoice=invoice if direction == "receivable" else None,
