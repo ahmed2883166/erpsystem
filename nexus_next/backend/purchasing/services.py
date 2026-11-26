@@ -856,6 +856,53 @@ def post_supplier_payment(payment_id, user):
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
+    # Serialize with treasury postings on the same TreasuryAccount row.
+    from treasury.models import TreasuryAccount
+    treasury_account = TreasuryAccount.objects.select_for_update().filter(
+        company_id=payment.company_id, account_id=payment_account.pk,
+    ).first()
+    if treasury_account:
+        opening_balance = (
+            Decimal("0") if treasury_account.opening_journal_entry_id
+            else treasury_account.opening_balance
+        )
+    else:
+        ChartOfAccount.objects.select_for_update().get(pk=payment_account.pk)
+        opening_balance = Decimal("0")
+
+    balance_movements = JournalLine.objects.filter(
+        account_id=payment_account.pk,
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).values("entry_id", "entry__entry_date").annotate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    ).order_by("entry__entry_date", "entry_id")
+
+    # A backdated payment reduces every later balance too. Include all posted
+    # movements after the payment date and reject if any later balance turns
+    # negative, not merely the balance on the payment date.
+    cash_balance = opening_balance
+    later_movements = []
+    for movement in balance_movements:
+        change = (
+            (movement["debit"] or Decimal("0"))
+            - (movement["credit"] or Decimal("0"))
+        )
+        if movement["entry__entry_date"] <= payment.payment_date:
+            cash_balance += change
+        else:
+            later_movements.append(change)
+
+    if cash_balance < payment.amount:
+        raise ValidationError(
+            f"لا يمكن ترحيل السداد: الرصيد المتاح حتى تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
+        )
+    for change in later_movements:
+        cash_balance += change
+        if cash_balance < payment.amount:
+            raise ValidationError(
+                "لا يمكن ترحيل السداد بأثر رجعي؛ سيؤدي إلى رصيد نقدية/بنك سالب بعد حركة لاحقة مسجلة."
+            )
+
     journal_lines = [
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
