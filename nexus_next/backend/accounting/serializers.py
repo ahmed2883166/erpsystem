@@ -45,6 +45,7 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
 
 class AccountRoleSerializer(serializers.ModelSerializer):
     account_code = serializers.CharField(source="account.code", read_only=True)
+    activity_code = serializers.CharField(source="activity.activity", read_only=True, allow_null=True)
     ROLE_NATURES = {
         "cash": {"asset"}, "bank": {"asset"}, "accounts_receivable": {"asset"},
         "inventory": {"asset"}, "vat_input": {"asset"},
@@ -61,7 +62,7 @@ class AccountRoleSerializer(serializers.ModelSerializer):
     }
     class Meta:
         model = AccountRole
-        fields = ("id", "company", "role", "account", "activity", "account_code")
+        fields = ("id", "company", "role", "account", "activity", "activity_code", "account_code")
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
