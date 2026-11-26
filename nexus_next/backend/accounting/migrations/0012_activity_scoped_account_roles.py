@@ -33,7 +33,7 @@ class Migration(migrations.Migration):
             model_name="accountrole",
             constraint=models.UniqueConstraint(
                 condition=Q(activity__isnull=False), fields=("company", "role", "activity"),
-                name="uq_account_role_company_activity",
+                name="uq_acct_role_co_activity",
             ),
         ),
     ]
