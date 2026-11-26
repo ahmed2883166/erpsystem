@@ -189,6 +189,7 @@ jobs:
             Get-Item nexus_next/setup-admrail.ps1
             Get-Item nexus_next/run-admrail-lan.ps1
             Get-Item nexus_next/start-production.ps1
+            Get-Item nexus_next/Admrail-Control-Center.ps1
             Get-Item nexus_next/configure-admrail-lan.ps1
             Get-Item nexus_next/Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1
             Get-Item nexus_next/scripts/Remove-Old-Admrail-Database.ps1

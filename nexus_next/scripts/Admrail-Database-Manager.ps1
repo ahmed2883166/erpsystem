@@ -168,6 +168,70 @@ function Show-DatabaseList {
         Write-Host (" - {0}   ({1}){2}" -f $name,$size,$marker)
     }
 }
+function Connect-ExistingDatabase {
+    Assert-AppStopped
+    $config = Read-Config
+    $names = @(Get-DatabaseNames)
+    if ($names.Count -eq 0) { throw "لم يتم اكتشاف قواعد بيانات على خادم PostgreSQL الحالي." }
+    $rows = @()
+    foreach ($dbName in $names) {
+        $safe = $dbName.Replace("'","''")
+        $json = Invoke-Psql "SELECT json_build_object('name',datname,'owner',pg_get_userbyid(datdba),'encoding',pg_encoding_to_char(encoding),'size',pg_size_pretty(pg_database_size(datname)))::text FROM pg_database WHERE datname='$safe';"
+        if ($json) { $rows += ($json | ConvertFrom-Json) }
+    }
+    Write-Host "قواعد PostgreSQL المكتشفة:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+        $r = $rows[$i]
+        $active = if ($r.name -eq $config.POSTGRES_DB) { " [النشطة حاليًا]" } else { "" }
+        Write-Host ("[{0}] {1} | المالك: {2} | الترميز: {3} | الحجم: {4}{5}" -f ($i + 1),$r.name,$r.owner,$r.encoding,$r.size,$active)
+    }
+    Write-Host "[M] إدخال اسم يدويًا"
+    $pick = (Read-Host "اختر رقم القاعدة أو M (Enter للإلغاء)").Trim()
+    if (-not $pick) { return }
+    if ($pick -match "^[Mm]$") {
+        $target = (Read-Host "اسم قاعدة البيانات الموجودة").Trim()
+    } elseif ($pick -match "^\d+$" -and [int]$pick -ge 1 -and [int]$pick -le $rows.Count) {
+        $target = [string]$rows[[int]$pick - 1].name
+    } else { throw "اختيار قاعدة البيانات غير صحيح." }
+    if ($target -notmatch "^[A-Za-z0-9_][A-Za-z0-9_$-]{0,62}$") { throw "اسم قاعدة البيانات غير صالح." }
+    $safeTarget = $target.Replace("'","''")
+    $exists = Invoke-Psql "SELECT 1 FROM pg_database WHERE datname='$safeTarget' AND datallowconn;"
+    if (-not $exists) { throw "قاعدة البيانات [$target] غير موجودة أو لا تسمح بالاتصال." }
+    if ($target -eq $config.POSTGRES_DB) { Write-Host "هذه هي القاعدة النشطة بالفعل." -ForegroundColor Green; return }
+    $schemaText = Invoke-Psql "SELECT json_build_object('has_migrations',to_regclass('public.django_migrations') IS NOT NULL,'table_count',(SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'))::text;" $target
+    $schema = $schemaText | ConvertFrom-Json
+    if (-not $schema.has_migrations -and [int]$schema.table_count -gt 0) { throw "القاعدة تحتوي جداول ولا تحتوي سجل Django migrations؛ قد تكون من نظام أو إصدار قديم. لم يتم تعديلها." }
+    $backup = Save-VerifiedBackup $target
+    try {
+        Save-ConfigValue "POSTGRES_DB" $target
+        Push-Location $Backend
+        try {
+            $plan = & $Python manage.py migrate --plan 2>&1
+            $code = $LASTEXITCODE
+            $plan | ForEach-Object { Write-Host $_ }
+            if ($code -ne 0) { throw "فشل فحص خطة الترحيلات؛ لم تُنفذ ترحيلات." }
+            & $Python manage.py check
+            if ($LASTEXITCODE -ne 0) { throw "فشل فحص التطبيق مع القاعدة المختارة." }
+        } finally { Pop-Location }
+        Write-Host "النسخة الاحتياطية المشفرة والتحقق منها: $backup" -ForegroundColor Green
+        if ((Read-Host "لتنفيذ خطة الترحيلات وربط البرنامج، اكتب APPLY") -cne "APPLY") {
+            Save-ConfigValue "POSTGRES_DB" $config.POSTGRES_DB
+            Write-Host "تم الإلغاء. اتصال البرنامج عاد للقاعدة السابقة ولم تُنفذ ترحيلات." -ForegroundColor Cyan
+            return
+        }
+        Push-Location $Backend
+        try {
+            & $Python manage.py migrate --noinput
+            if ($LASTEXITCODE -ne 0) { throw "فشل تنفيذ الترحيلات؛ النسخة الاحتياطية محفوظة." }
+            & $Python manage.py check
+            if ($LASTEXITCODE -ne 0) { throw "فشل الفحص النهائي بعد الترحيل." }
+        } finally { Pop-Location }
+        Write-Host "تم ربط Admrail بقاعدة [$target] بنجاح. لم يتم حذف أي قاعدة." -ForegroundColor Green
+    } catch {
+        Save-ConfigValue "POSTGRES_DB" $config.POSTGRES_DB
+        throw "لم يكتمل الربط. أُعيد الاتصال إلى [$($config.POSTGRES_DB)]. النسخة الاحتياطية: $backup. التفاصيل: $($_.Exception.Message)"
+    }
+}
 function Install-FreshDatabase {
     Assert-AppStopped
     $config = Read-Config
@@ -431,8 +495,8 @@ function Manage-LoginRoles {
     }
 }
 try {
-    $svc = Get-Service -Name "postgresql-x64-16" -ErrorAction SilentlyContinue
-    if (-not $svc -or $svc.Status -ne "Running") { throw "خدمة PostgreSQL 16 غير موجودة أو متوقفة." }
+    $services = @(Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "Running" })
+    if ($services.Count -eq 0) { throw "لم يتم العثور على خدمة PostgreSQL قيد التشغيل." }
     if (-not (Test-Path $Python)) { throw "Python المرفق غير موجود." }
     Read-AdminPassword
     while ($true) {
@@ -451,6 +515,7 @@ try {
         Write-Host "9 - عرض قواعد البيانات وتحديد القاعدة النشطة"
         Write-Host "10 - تجهيز قاعدة جديدة واختيار قاعدة قديمة لحذفها بعد النجاح"
         Write-Host "11 - إدارة مستخدمي PostgreSQL"
+        Write-Host "12 - اكتشاف وربط قاعدة بيانات موجودة تلقائيًا"
         Write-Host "0 - خروج"
         Write-Host "ملاحظة: استعادة كلمة مرور postgres المنسية تتطلب إجراء استرداد مسؤول Windows؛ الأداة لا تتجاوز حماية PostgreSQL." -ForegroundColor Yellow
         $choice = Read-Host "اختر رقم العملية"
@@ -472,6 +537,7 @@ try {
                 "9" { Show-DatabaseList }
                 "10" { Install-FreshDatabase }
                 "11" { Manage-LoginRoles }
+                "12" { Connect-ExistingDatabase }
                 "0" { break }
                 default { Write-Host "اختيار غير صحيح." }
             }

@@ -69,6 +69,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root "Setup-Admrail.cmd") -Destination (Join-Path $Stage "Setup-Admrail.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Remove-Old-Admrail-Database.cmd") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Admrail-Database-Manager.cmd") -Destination (Join-Path $Stage "Admrail-Database-Manager.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Admrail-Control-Center.ps1") -Destination (Join-Path $Stage "Admrail-Control-Center.ps1") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Admrail-Control-Center.cmd") -Destination (Join-Path $Stage "Admrail-Control-Center.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Admrail-Owner-Toolkit") -Destination (Join-Path $Stage "Admrail-Owner-Toolkit") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $Root "docs\database-manager-ar.md") -Destination (Join-Path $Stage "DATABASE-MANAGER-AR.md") -Force
   Copy-Item -LiteralPath (Join-Path $Root "scripts\Remove-Old-Admrail-Database.ps1") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.ps1") -Force
@@ -120,7 +122,7 @@ FIRST RUN
 6. Choose the first Admrail administrator username, email, and password when prompted.
    The wizard generates the Django secret, writes backend\.env, applies migrations,
    creates the administrator, and registers the platform owner.
-7. After the success message, double-click run-admrail.cmd and open http://127.0.0.1:8000.
+7. For a localhost-only check, double-click run-admrail.cmd and open http://127.0.0.1:8000. For the secured LAN service, use Admrail-Control-Center.cmd after configuring LAN mode below.
 
 The wizard never installs PostgreSQL, never drops an existing database, and refuses to
 reuse existing admrail_app / admrail_db names. Keep backend\.env private. If setup stops
@@ -131,12 +133,16 @@ OPTIONAL PRIVATE LAN MODE
    The wizard backs up backend\\.env and configures the required HTTPS, host, CSRF, and secure-cookie settings.
 2. Reserve a fixed LAN IP for the server and create an internal DNS A-record mapping the chosen name to that IP.
 3. Install Caddy once on the server, or copy caddy.exe to the package's tools\\caddy.exe.
-4. Run run-admrail-lan.cmd from an elevated PowerShell/Command Prompt if you want it to
-   configure the Private-profile firewall rule; otherwise open TCP 443 on Private manually.
+4. Double-click Admrail-Control-Center.cmd and choose تشغيل خدمة الشبكة. The control panel shows
+   PostgreSQL/Backend/HTTPS status, the LAN URL, and startup logs. It stops only the service
+   process tree it started and recorded. If you prefer direct launch, run run-admrail-lan.cmd.
    Waitress remains bound to 127.0.0.1:8000 and Caddy serves HTTPS on 443.
 5. Copy only the public root.crt from %APPDATA%\\Caddy\\pki\\authorities\\local\\root.crt
    to each client and import it into Trusted Root Certification Authorities. Never share root.key.
 6. Open https://<host> from client PCs. Do not expose ports 8000 or 5432 to the LAN.
+7. In the Control Center, choose أدوات المالك وقواعد البيانات to open the PIN-protected Owner
+   Toolkit. Database backup/restore, create/rename/delete database, and PostgreSQL user actions
+   remain restricted to the owner toolkit and require the existing safety confirmations.
 
 The LAN launcher checks production security settings, refuses pending migrations, and
 uses Caddy's internal TLS CA. DNS/hosts records and client certificate trust are managed
@@ -178,7 +184,7 @@ Never expose ports 8000 or 5432 to employee devices.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Admrail-Database-Manager.cmd", "Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1", "Admrail-Owner-Toolkit/Start-Owner-Toolkit.cmd", "Admrail-Owner-Toolkit/README.md", "DATABASE-MANAGER-AR.md", "Remove-Old-Admrail-Database.ps1", "scripts/Admrail-Database-Manager.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Admrail-Database-Manager.cmd", "Admrail-Control-Center.ps1", "Admrail-Control-Center.cmd", "Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1", "Admrail-Owner-Toolkit/Start-Owner-Toolkit.cmd", "Admrail-Owner-Toolkit/README.md", "DATABASE-MANAGER-AR.md", "Remove-Old-Admrail-Database.ps1", "scripts/Admrail-Database-Manager.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
