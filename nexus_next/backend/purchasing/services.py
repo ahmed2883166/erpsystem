@@ -795,7 +795,7 @@ def post_supplier_payment(payment_id, user):
     branch, year = _branch_and_year_for_invoice(invoice, payment.payment_date)
     payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
-    payment_account = payment.payment_account or _account(payment.company, cash_role)
+    payment_account = payment.payment_account or _account(payment.company, cash_role, invoice.activity)
     if payment_account.company_id != payment.company_id or payment_account.nature != "asset" or not payment_account.is_active or payment_account.is_group or not payment_account.allow_posting:
         raise ValidationError("حساب الصرف يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
     if payment.payment_account_id:
@@ -812,10 +812,10 @@ def post_supplier_payment(payment_id, user):
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
     ]
-    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN) if realized_gain else None
-    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS) if realized_loss else None
-    unrealized_gain = _account(payment.company, AccountRole.Role.UNREALIZED_FX_GAIN) if unrealized_adjustment < 0 else None
-    unrealized_loss = _account(payment.company, AccountRole.Role.UNREALIZED_FX_LOSS) if unrealized_adjustment > 0 else None
+    gain = _account(payment.company, AccountRole.Role.REALIZED_FX_GAIN, invoice.activity) if realized_gain else None
+    loss = _account(payment.company, AccountRole.Role.REALIZED_FX_LOSS, invoice.activity) if realized_loss else None
+    unrealized_gain = _account(payment.company, AccountRole.Role.UNREALIZED_FX_GAIN, invoice.activity) if unrealized_adjustment < 0 else None
+    unrealized_loss = _account(payment.company, AccountRole.Role.UNREALIZED_FX_LOSS, invoice.activity) if unrealized_adjustment > 0 else None
     used_ids = {payable.pk, payment_account.pk}
     for account in (gain, loss, unrealized_gain, unrealized_loss):
         if account and account.pk in used_ids:
