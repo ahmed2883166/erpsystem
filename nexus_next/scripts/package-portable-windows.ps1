@@ -122,7 +122,7 @@ FIRST RUN
 6. Choose the first Admrail administrator username, email, and password when prompted.
    The wizard generates the Django secret, writes backend\.env, applies migrations,
    creates the administrator, and registers the platform owner.
-7. After the success message, double-click run-admrail.cmd and open http://127.0.0.1:8000.
+7. For a localhost-only check, double-click run-admrail.cmd and open http://127.0.0.1:8000. For the secured LAN service, use Admrail-Control-Center.cmd after configuring LAN mode below.
 
 The wizard never installs PostgreSQL, never drops an existing database, and refuses to
 reuse existing admrail_app / admrail_db names. Keep backend\.env private. If setup stops
@@ -133,12 +133,16 @@ OPTIONAL PRIVATE LAN MODE
    The wizard backs up backend\\.env and configures the required HTTPS, host, CSRF, and secure-cookie settings.
 2. Reserve a fixed LAN IP for the server and create an internal DNS A-record mapping the chosen name to that IP.
 3. Install Caddy once on the server, or copy caddy.exe to the package's tools\\caddy.exe.
-4. Run run-admrail-lan.cmd from an elevated PowerShell/Command Prompt if you want it to
-   configure the Private-profile firewall rule; otherwise open TCP 443 on Private manually.
+4. Double-click Admrail-Control-Center.cmd and choose تشغيل خدمة الشبكة. The control panel shows
+   PostgreSQL/Backend/HTTPS status, the LAN URL, and startup logs. It stops only the service
+   process tree it started and recorded. If you prefer direct launch, run run-admrail-lan.cmd.
    Waitress remains bound to 127.0.0.1:8000 and Caddy serves HTTPS on 443.
 5. Copy only the public root.crt from %APPDATA%\\Caddy\\pki\\authorities\\local\\root.crt
    to each client and import it into Trusted Root Certification Authorities. Never share root.key.
 6. Open https://<host> from client PCs. Do not expose ports 8000 or 5432 to the LAN.
+7. In the Control Center, choose أدوات المالك وقواعد البيانات to open the PIN-protected Owner
+   Toolkit. Database backup/restore, create/rename/delete database, and PostgreSQL user actions
+   remain restricted to the owner toolkit and require the existing safety confirmations.
 
 The LAN launcher checks production security settings, refuses pending migrations, and
 uses Caddy's internal TLS CA. DNS/hosts records and client certificate trust are managed
