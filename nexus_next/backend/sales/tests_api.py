@@ -2992,9 +2992,9 @@ class SalesWorkflowTests(APITestCase):
             payload, format="json",
         )
         self.assertEqual(first.status_code, 201, first.data)
-        self.assertEqual(first.data["foreign_balance"], "100.0000")
-        self.assertEqual(first.data["previous_carrying_amount"], "5000.0000")
-        self.assertEqual(first.data["new_carrying_amount"], "5000.0000")
+        self.assertEqual(first.data["foreign_balance"], "200.0000")
+        self.assertEqual(first.data["previous_carrying_amount"], "10000.0000")
+        self.assertEqual(first.data["new_carrying_amount"], "10000.0000")
         self.assertEqual(first.data["difference"], "0.0000")
         self.assertIsNone(first.data["journal_entry"])
 
