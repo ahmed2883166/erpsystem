@@ -69,6 +69,8 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root "Setup-Admrail.cmd") -Destination (Join-Path $Stage "Setup-Admrail.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Remove-Old-Admrail-Database.cmd") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Admrail-Database-Manager.cmd") -Destination (Join-Path $Stage "Admrail-Database-Manager.cmd") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Admrail-Control-Center.ps1") -Destination (Join-Path $Stage "Admrail-Control-Center.ps1") -Force
+  Copy-Item -LiteralPath (Join-Path $Root "Admrail-Control-Center.cmd") -Destination (Join-Path $Stage "Admrail-Control-Center.cmd") -Force
   Copy-Item -LiteralPath (Join-Path $Root "Admrail-Owner-Toolkit") -Destination (Join-Path $Stage "Admrail-Owner-Toolkit") -Recurse -Force
   Copy-Item -LiteralPath (Join-Path $Root "docs\database-manager-ar.md") -Destination (Join-Path $Stage "DATABASE-MANAGER-AR.md") -Force
   Copy-Item -LiteralPath (Join-Path $Root "scripts\Remove-Old-Admrail-Database.ps1") -Destination (Join-Path $Stage "Remove-Old-Admrail-Database.ps1") -Force
@@ -178,7 +180,7 @@ Never expose ports 8000 or 5432 to employee devices.
     Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
     Remove-Item -Force
 
-  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Admrail-Database-Manager.cmd", "Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1", "Admrail-Owner-Toolkit/Start-Owner-Toolkit.cmd", "Admrail-Owner-Toolkit/README.md", "DATABASE-MANAGER-AR.md", "Remove-Old-Admrail-Database.ps1", "scripts/Admrail-Database-Manager.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
+  foreach ($Name in @("runtime/python.exe", "backend/manage.py", "frontend/dist/index.html", "initialize-admrail.cmd", "Setup-Admrail.cmd", "Remove-Old-Admrail-Database.cmd", "Admrail-Database-Manager.cmd", "Admrail-Control-Center.ps1", "Admrail-Control-Center.cmd", "Admrail-Owner-Toolkit/Admrail-Owner-Toolkit.ps1", "Admrail-Owner-Toolkit/Start-Owner-Toolkit.cmd", "Admrail-Owner-Toolkit/README.md", "DATABASE-MANAGER-AR.md", "Remove-Old-Admrail-Database.ps1", "scripts/Admrail-Database-Manager.ps1", "setup-admrail.ps1", "run-admrail.cmd", "run-admrail-lan.cmd", "run-admrail-lan.ps1", "configure-admrail-lan.ps1", "Configure-Admrail-LAN.cmd", "PORTABLE-README.txt")) {
     if (-not (Test-Path (Join-Path $Stage $Name))) { throw "Portable package is missing required item: $Name" }
   }
 
