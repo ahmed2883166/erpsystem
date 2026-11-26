@@ -82,6 +82,8 @@ class FixedAsset(models.Model):
             raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
         if self.custodian_employee_id and (self.custodian_employee.company_id != self.company_id or self.custodian_employee.branch_id != self.branch_id):
             raise ValidationError({"custodian_employee": "الموظف المسؤول يجب أن يتبع نفس الشركة والفرع."})
+        if self.custodian_employee_id and (self.custodian_employee.company_id != self.company_id or self.custodian_employee.branch_id != self.branch_id):
+            raise ValidationError({"custodian_employee": "الموظف المسؤول يجب أن يتبع نفس الشركة والفرع."})
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية لا يمكن أن تتجاوز التكلفة."})
         if self.nonrecoverable_tax_amount < 0 or self.recoverable_tax_amount < 0:
@@ -476,6 +478,8 @@ class AssetMovement(models.Model):
             employee = getattr(self, field, None)
             if employee and employee.company_id != self.company_id:
                 raise ValidationError({field: "الموظف يجب أن يتبع نفس الشركة."})
+        if self.from_employee_id and self.from_employee.branch_id != self.from_branch_id:
+            raise ValidationError({"from_employee": "الموظف السابق يجب أن يتبع فرع الأصل السابق."})
         if self.to_employee_id and self.to_employee.branch_id != self.to_branch_id:
             raise ValidationError({"to_employee": "الموظف المستلم يجب أن يتبع الفرع المستلم للأصل."})
         if self.movement_type == self.MovementType.BRANCH_TRANSFER and self.from_branch_id == self.to_branch_id:

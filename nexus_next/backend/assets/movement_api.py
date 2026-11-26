@@ -178,14 +178,16 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
     def reject(self, request, pk=None):
         movement = self.get_object()
         self._review(movement.company_id)
-        if movement.status != AssetMovement.Status.PENDING:
-            raise ValidationError("مستند الحركة تمت مراجعته بالفعل.")
         note = str(request.data.get("review_note", "")).strip()
         if not note:
             raise ValidationError({"review_note": "سبب رفض الحركة مطلوب."})
-        movement.status = AssetMovement.Status.REJECTED
-        movement.reviewed_by = request.user
-        movement.reviewed_at = timezone.now()
-        movement.review_note = note[:500]
-        movement.save(update_fields=("status", "reviewed_by", "reviewed_at", "review_note"))
+        with transaction.atomic():
+            movement = AssetMovement.objects.select_for_update().get(pk=movement.pk)
+            if movement.status != AssetMovement.Status.PENDING:
+                raise ValidationError("مستند الحركة تمت مراجعته بالفعل.")
+            movement.status = AssetMovement.Status.REJECTED
+            movement.reviewed_by = request.user
+            movement.reviewed_at = timezone.now()
+            movement.review_note = note[:500]
+            movement.save(update_fields=("status", "reviewed_by", "reviewed_at", "review_note"))
         return response.Response(self.get_serializer(movement).data)
