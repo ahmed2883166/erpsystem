@@ -2951,3 +2951,62 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(after_reversal.data["totals"]["net_sales"], "200.0000")
         self.assertEqual(after_reversal.data["totals"]["net_cost"], "80.0000")
         self.assertEqual(after_reversal.data["totals"]["gross_profit"], "120.0000")
+
+
+    def test_customer_fx_revaluation_without_difference_records_audit_without_journal(self):
+        delivery_id, line_id = self._create_delivery("DEL-FX-NO-DIFF")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 10), rate=Decimal("50"),
+        )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "INV-FX-NO-DIFF",
+            "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk,
+            "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": line_id,
+                "transaction_unit_price": "100",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        payload = {
+            "revaluation_date": "2026-03-10",
+            "rate_date": "2026-03-10",
+            "rate": "50",
+        }
+        first = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/revalue/",
+            payload, format="json",
+        )
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["foreign_balance"], "100.0000")
+        self.assertEqual(first.data["previous_carrying_amount"], "5000.0000")
+        self.assertEqual(first.data["new_carrying_amount"], "5000.0000")
+        self.assertEqual(first.data["difference"], "0.0000")
+        self.assertIsNone(first.data["journal_entry"])
+
+        history = self.client.get(
+            f"/api/sales-documents/invoices/{invoice_id}/revaluations/",
+        )
+        self.assertEqual(history.status_code, 200, history.data)
+        self.assertEqual(len(history.data), 1)
+        self.assertEqual(history.data[0]["status"], "no_difference")
+
+        duplicate = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/revalue/",
+            payload, format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
