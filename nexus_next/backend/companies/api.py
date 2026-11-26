@@ -538,6 +538,7 @@ class FiscalYearViewSet(viewsets.ModelViewSet):
             )
             expected_rows = JournalLine.objects.filter(
                 entry__company_id=fiscal_year.company_id,
+                entry__fiscal_year=fiscal_year,
                 entry__entry_date__lte=fiscal_year.end_date,
                 entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
                 account__nature__in=balance_sheet_natures,

@@ -383,6 +383,68 @@ class FiscalYearJournalSafetyTests(APITestCase):
         self.assertEqual(closed.status_code, 200, closed.content)
 
 
+    def test_next_year_review_uses_current_year_opening_snapshot_without_double_counting_history(self):
+        from accounting.models import JournalLine
+        from accounting.services import post_journal
+
+        next_year = FiscalYear.objects.create(
+            company=self.company, name="2027",
+            start_date="2027-01-01", end_date="2027-12-31",
+        )
+        following_year = FiscalYear.objects.create(
+            company=self.company, name="2028",
+            start_date="2028-01-01", end_date="2028-12-31",
+        )
+
+        def post_entry(fiscal_year, number, entry_date, source_type, amount):
+            entry = JournalEntry.objects.create(
+                company=self.company, branch=self.branch, fiscal_year=fiscal_year,
+                entry_number=number, entry_date=entry_date,
+                description="اختبار ترحيل رصيد السنة",
+                source_type=source_type,
+            )
+            JournalLine.objects.create(
+                entry=entry, account=self.asset, debit=Decimal(amount),
+                credit=Decimal("0"),
+            )
+            JournalLine.objects.create(
+                entry=entry, account=self.equity, debit=Decimal("0"),
+                credit=Decimal(amount),
+            )
+            post_journal(entry.pk)
+            return entry
+
+        # 2026 starts with 100. The 2027 opening snapshot carries that 100
+        # forward, then 2027 activity increases the balance by another 50.
+        post_entry(
+            self.year, "OPEN-2026-SNAPSHOT", "2026-01-01",
+            JournalEntry.Source.OPENING, "100.0000",
+        )
+        post_entry(
+            next_year, "OPEN-2027-SNAPSHOT", "2027-01-01",
+            JournalEntry.Source.OPENING, "100.0000",
+        )
+        post_entry(
+            next_year, "MOVEMENT-2027", "2027-06-30",
+            JournalEntry.Source.MANUAL, "50.0000",
+        )
+        post_entry(
+            following_year, "OPEN-2028-SNAPSHOT", "2028-01-01",
+            JournalEntry.Source.OPENING, "150.0000",
+        )
+
+        review = self.client.get(
+            f"/api/setup/fiscal-years/{next_year.pk}/closing_review/"
+        )
+        self.assertEqual(review.status_code, 200, review.content)
+        self.assertEqual(
+            review.data["opening_balance_mismatches"], 0,
+            "The 2028 opening must match the 2027 snapshot plus 2027 movements, "
+            "not the duplicated historical 2026 ledger balances.",
+        )
+        self.assertTrue(review.data["checks"]["next_year_opening"], review.data)
+
+
 class AccountingReportPostgresProfileTests(APITestCase):
     def test_large_report_scope_uses_bounded_single_worker_postgres_profile(self):
         if connection.vendor != "postgresql":
