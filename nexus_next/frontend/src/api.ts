@@ -1115,7 +1115,7 @@ export const fixedAssetsApi = {
     return request<{id:number;asset_id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model"}>(`/api/assets/fixed-assets/${id}/reverse-impairment/`, {method:"POST",body:JSON.stringify(payload)});
   },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
-  dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
+  dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number, unitsProduced?:number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear,units_produced:unitsProduced})}); },
 };
 
 
