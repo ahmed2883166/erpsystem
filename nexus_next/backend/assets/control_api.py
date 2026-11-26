@@ -149,6 +149,7 @@ class AssetComponentViewSet(_AssetControlViewSet):
 class AssetInsurancePolicyViewSet(_AssetControlViewSet):
     model = AssetInsurancePolicy
     serializer_class = AssetInsurancePolicySerializer
+    http_method_names = ("get", "post", "patch", "put", "head", "options")
 
 
 class AssetPhysicalInventoryViewSet(_AssetControlViewSet):
