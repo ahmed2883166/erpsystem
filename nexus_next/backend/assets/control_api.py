@@ -25,17 +25,13 @@ class AssetComponentSerializer(serializers.ModelSerializer):
         asset = attrs.get("asset", getattr(self.instance, "asset", None))
         if asset is None:
             raise serializers.ValidationError({"asset": "حدد الأصل المرتبط بالمكوّن."})
-        if asset.acquisition_journal_id and self.instance is None:
-            # Components are a subledger allocation; the sum of component costs
-            # may not exceed the original capitalized asset cost.
-            current = asset.components.aggregate_total if hasattr(asset.components, "aggregate_total") else None
-            if current is None:
-                from django.db.models import Sum
-                current = asset.components.aggregate(total=Sum("original_cost"))["total"] or Decimal("0")
-            new_cost = attrs.get("original_cost", Decimal("0"))
-            if current + new_cost > asset.original_cost:
-                raise serializers.ValidationError({"original_cost": "مجموع تكلفة المكونات لا يجوز أن يتجاوز تكلفة الأصل الأم."})
-        method = attrs.get("depreciation_method", AssetComponent._meta.get_field("depreciation_method").default)
+        from django.db.models import Sum
+        existing = asset.components.exclude(pk=self.instance.pk) if self.instance else asset.components.all()
+        allocated = existing.aggregate(total=Sum("original_cost"))["total"] or Decimal("0")
+        new_cost = attrs.get("original_cost", getattr(self.instance, "original_cost", Decimal("0")))
+        if allocated + new_cost > asset.original_cost:
+            raise serializers.ValidationError({"original_cost": "مجموع تكلفة المكونات لا يجوز أن يتجاوز تكلفة الأصل الأم."})
+        method = attrs.get("depreciation_method", getattr(self.instance, "depreciation_method", "straight_line"))
         rate = attrs.get("declining_rate_percentage")
         units = attrs.get("production_units_total")
         if method == "declining_balance" and (rate is None or rate <= 0 or rate > 100):
