@@ -135,7 +135,7 @@ class SubledgerReconciliationView(APIView):
             default_branch = Branch.objects.filter(company_id=company_id, is_active=True).order_by("code").first()
         include_unassigned_warehouses = bool(default_branch and default_branch.pk in branch_ids)
 
-        from sales.models import SalesInvoice, CustomerReceipt, SalesReturn
+        from sales.models import SalesInvoice, CustomerReceipt, CustomerReceiptBatch, CustomerRefund, SalesReturn
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn, SupplierRefund
         from customers.models import Customer
         from suppliers.models import Supplier
@@ -144,11 +144,11 @@ class SubledgerReconciliationView(APIView):
         from hr.models import Employee, PayrollComponent, PayrollCycle, PayrollPosting, PayrollResult, PayrollResultLine
 
         # The warehouse branch is the source of truth for operational-document branch scope.
-        sales_invoice_scope = Q(delivery__warehouse__branch_id__in=branch_ids)
-        receipt_scope = Q(invoice__delivery__warehouse__branch_id__in=branch_ids)
-        sales_return_scope = Q(warehouse__branch_id__in=branch_ids)
-        purchase_invoice_scope = Q(receipt__warehouse__branch_id__in=branch_ids)
-        supplier_payment_scope = Q(invoice__receipt__warehouse__branch_id__in=branch_ids)
+        sales_invoice_scope = Q(branch_id__in=branch_ids) | Q(delivery__warehouse__branch_id__in=branch_ids)
+        receipt_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__delivery__warehouse__branch_id__in=branch_ids)
+        sales_return_scope = Q(branch_id__in=branch_ids) | Q(warehouse__branch_id__in=branch_ids)
+        purchase_invoice_scope = Q(branch_id__in=branch_ids) | Q(receipt__warehouse__branch_id__in=branch_ids)
+        supplier_payment_scope = Q(invoice__branch_id__in=branch_ids) | Q(invoice__receipt__warehouse__branch_id__in=branch_ids)
         supplier_return_scope = (
             Q(stock_movement__source_warehouse__branch_id__in=branch_ids)
             | Q(stock_movement__destination_warehouse__branch_id__in=branch_ids)
@@ -158,11 +158,11 @@ class SubledgerReconciliationView(APIView):
             | Q(return_document__stock_movement__destination_warehouse__branch_id__in=branch_ids)
         )
         if include_unassigned_warehouses:
-            sales_invoice_scope |= Q(delivery__warehouse__branch__isnull=True)
-            receipt_scope |= Q(invoice__delivery__warehouse__branch__isnull=True)
-            sales_return_scope |= Q(warehouse__branch__isnull=True)
-            purchase_invoice_scope |= Q(receipt__warehouse__branch__isnull=True)
-            supplier_payment_scope |= Q(invoice__receipt__warehouse__branch__isnull=True)
+            sales_invoice_scope |= Q(delivery__isnull=False, delivery__warehouse__branch__isnull=True)
+            receipt_scope |= Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True)
+            sales_return_scope |= Q(warehouse__isnull=False, warehouse__branch__isnull=True)
+            purchase_invoice_scope |= Q(branch__isnull=True, receipt__warehouse__branch__isnull=True)
+            supplier_payment_scope |= Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True)
             supplier_return_scope |= (Q(stock_movement__source_warehouse__branch__isnull=True, stock_movement__destination_warehouse__branch_id__in=branch_ids) | Q(stock_movement__destination_warehouse__branch__isnull=True, stock_movement__source_warehouse__branch_id__in=branch_ids) | Q(stock_movement__source_warehouse__branch__isnull=True, stock_movement__destination_warehouse__branch__isnull=True))
             supplier_refund_scope |= (Q(return_document__stock_movement__source_warehouse__branch__isnull=True, return_document__stock_movement__destination_warehouse__branch_id__in=branch_ids) | Q(return_document__stock_movement__destination_warehouse__branch__isnull=True, return_document__stock_movement__source_warehouse__branch_id__in=branch_ids) | Q(return_document__stock_movement__source_warehouse__branch__isnull=True, return_document__stock_movement__destination_warehouse__branch__isnull=True))
 
@@ -172,12 +172,25 @@ class SubledgerReconciliationView(APIView):
         customer_receipts = CustomerReceipt.objects.filter(
             company_id=company_id, receipt_date__lte=as_of, status__in=(CustomerReceipt.Status.POSTED, CustomerReceipt.Status.REVERSED)
         ).filter(receipt_scope)
+        customer_receipt_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, branch_id__in=branch_ids, receipt_date__lte=as_of,
+            status__in=(CustomerReceiptBatch.Status.POSTED, CustomerReceiptBatch.Status.REVERSED),
+        )
         sales_returns = SalesReturn.objects.filter(
             company_id=company_id, return_date__lte=as_of, status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED)
         ).filter(sales_return_scope)
+        customer_refunds = CustomerRefund.objects.filter(
+            company_id=company_id, branch_id__in=branch_ids,
+            refund_date__lte=as_of,
+            status__in=(CustomerRefund.Status.POSTED, CustomerRefund.Status.REVERSED),
+        )
         sales_fx = FxSubledgerRevaluation.objects.filter(
             company_id=company_id, sales_invoice__isnull=False, revaluation_date__lte=as_of
-        ).filter(Q(sales_invoice__delivery__warehouse__branch_id__in=branch_ids) | (Q(sales_invoice__delivery__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[])))
+        ).filter(
+            Q(sales_invoice__branch_id__in=branch_ids)
+            | Q(sales_invoice__delivery__warehouse__branch_id__in=branch_ids)
+            | (Q(sales_invoice__delivery__isnull=False, sales_invoice__delivery__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
+        )
 
         purchase_invoices = PurchaseInvoice.objects.filter(
             company_id=company_id, invoice_date__lte=as_of, status=PurchaseInvoice.Status.POSTED
@@ -193,7 +206,11 @@ class SubledgerReconciliationView(APIView):
         ).filter(supplier_refund_scope)
         purchase_fx = FxSubledgerRevaluation.objects.filter(
             company_id=company_id, purchase_invoice__isnull=False, revaluation_date__lte=as_of
-        ).filter(Q(purchase_invoice__receipt__warehouse__branch_id__in=branch_ids) | (Q(purchase_invoice__receipt__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[])))
+        ).filter(
+            Q(purchase_invoice__branch_id__in=branch_ids)
+            | Q(purchase_invoice__receipt__warehouse__branch_id__in=branch_ids)
+            | (Q(purchase_invoice__branch__isnull=True, purchase_invoice__receipt__warehouse__branch__isnull=True) if include_unassigned_warehouses else Q(pk__in=[]))
+        )
 
         # Direct fixed-asset vendor invoices and their payments also belong to AP.
         from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
@@ -211,6 +228,10 @@ class SubledgerReconciliationView(APIView):
         active_sales_returns = sales_returns.filter(
             Q(status=SalesReturn.Status.POSTED)
             | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
+        )
+        active_customer_refunds = customer_refunds.filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=as_of)
         )
         active_supplier_returns = supplier_returns.filter(
             Q(status=SupplierReturn.Status.POSTED)
@@ -252,7 +273,16 @@ class SubledgerReconciliationView(APIView):
         customer_receipt_totals = grouped_amount(
             posted_customer_receipts, "customer_id", "amount", "carrying_base_amount"
         )
+        active_customer_receipt_batches = customer_receipt_batches.filter(
+            Q(status=CustomerReceiptBatch.Status.POSTED)
+            | Q(status=CustomerReceiptBatch.Status.REVERSED, reversal_date__gt=as_of)
+        )
+        for party_id, amount in grouped_amount(
+            active_customer_receipt_batches, "customer_id", "amount"
+        ).items():
+            customer_receipt_totals[party_id] = customer_receipt_totals.get(party_id, Decimal("0")) + amount
         customer_return_totals = grouped_amount(active_sales_returns, "invoice__customer_id", "grand_total")
+        customer_refund_totals = grouped_amount(active_customer_refunds, "customer_id", "amount")
         active_sales_fx = sales_fx.annotate(
             _reversed_by_as_of=Exists(reversal_journals_as_of)
         ).filter(
@@ -264,7 +294,8 @@ class SubledgerReconciliationView(APIView):
             active_sales_fx, "sales_invoice__customer_id", "difference",
         )
         customer_ids = set().union(
-            customer_invoice_totals, customer_receipt_totals, customer_return_totals, customer_fx_totals
+            customer_invoice_totals, customer_receipt_totals, customer_return_totals,
+            customer_refund_totals, customer_fx_totals,
         )
         customer_rows = {
             item["id"]: item for item in Customer.objects.filter(
@@ -277,6 +308,7 @@ class SubledgerReconciliationView(APIView):
                 customer_invoice_totals.get(party_id, Decimal("0"))
                 - customer_receipt_totals.get(party_id, Decimal("0"))
                 - customer_return_totals.get(party_id, Decimal("0"))
+                + customer_refund_totals.get(party_id, Decimal("0"))
                 + customer_fx_totals.get(party_id, Decimal("0"))
             )
             party = customer_rows.get(party_id)
@@ -341,8 +373,11 @@ class SubledgerReconciliationView(APIView):
         )
 
         sales_journal_ids = _with_reversals(_collect_ids(
-            [sales_invoices, customer_receipts, sales_returns, sales_fx],
-            [("journal_entry_id",), ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"), ("journal_entry_id",)],
+            [sales_invoices, customer_receipts, sales_returns, sales_fx, customer_receipt_batches, customer_refunds],
+            [("journal_entry_id",), ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"),
+             ("journal_entry_id",), ("journal_entry_id", "reversal_journal_entry_id"),
+             ("treasury_transaction__journal_entry_id", "reversal_treasury_transaction__journal_entry_id",
+              "reversal_journal_entry_id")],
         ))
         purchase_journal_ids = _with_reversals(_collect_ids(
             [purchase_invoices, supplier_payments, supplier_returns, supplier_refunds, purchase_fx,
@@ -489,6 +524,8 @@ class SubledgerReconciliationView(APIView):
         pending = {
             "sales": SalesInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=SalesInvoice.Status.DRAFT).filter(sales_invoice_scope).count()
             + CustomerReceipt.objects.filter(company_id=company_id, receipt_date__lte=as_of, status=CustomerReceipt.Status.DRAFT).filter(receipt_scope).count()
+            + CustomerRefund.objects.filter(company_id=company_id, refund_date__lte=as_of, status=CustomerRefund.Status.DRAFT, branch_id__in=branch_ids).count()
+            + CustomerReceiptBatch.objects.filter(company_id=company_id, branch_id__in=branch_ids, receipt_date__lte=as_of, status=CustomerReceiptBatch.Status.DRAFT).count()
             + SalesReturn.objects.filter(company_id=company_id, return_date__lte=as_of, status=SalesReturn.Status.DRAFT).filter(sales_return_scope).count(),
             "purchasing": PurchaseInvoice.objects.filter(company_id=company_id, invoice_date__lte=as_of, status=PurchaseInvoice.Status.DRAFT).filter(purchase_invoice_scope).count()
             + SupplierPayment.objects.filter(company_id=company_id, payment_date__lte=as_of, status=SupplierPayment.Status.DRAFT).filter(supplier_payment_scope).count()
@@ -513,7 +550,24 @@ class SubledgerReconciliationView(APIView):
             Q(source_warehouse__branch_id__in=branch_ids) | Q(destination_warehouse__branch_id__in=branch_ids)
         )
         missing_links = {
-            "sales": sales_invoices.filter(journal_entry__isnull=True).count() + customer_receipts.filter(journal_entry__isnull=True).count() + sales_returns.filter(journal_entry__isnull=True).count(),
+            "sales": (
+                sales_invoices.filter(journal_entry__isnull=True).count()
+                + customer_receipts.filter(journal_entry__isnull=True).count()
+                + customer_receipt_batches.filter(journal_entry__isnull=True).count()
+                + sales_returns.filter(journal_entry__isnull=True).count()
+                + customer_refunds.filter(
+                    Q(treasury_transaction__isnull=True)
+                    | Q(treasury_transaction__journal_entry__isnull=True)
+                ).count()
+                + customer_refunds.filter(
+                    status=CustomerRefund.Status.REVERSED,
+                    reversal_date__lte=as_of,
+                ).filter(
+                    Q(reversal_treasury_transaction__isnull=True)
+                    | Q(reversal_treasury_transaction__journal_entry__isnull=True)
+                    | Q(reversal_journal_entry__isnull=True)
+                ).count()
+            ),
             "purchasing": purchase_invoices.filter(journal_entry__isnull=True).count() + supplier_payments.filter(journal_entry__isnull=True).count() + supplier_returns.filter(journal_entry__isnull=True).count() + supplier_refunds.filter(journal_entry__isnull=True).count(),
             "inventory": posted_stock_movements.filter(journal_links__isnull=True).count(),
             "payroll": PayrollPosting.objects.filter(
