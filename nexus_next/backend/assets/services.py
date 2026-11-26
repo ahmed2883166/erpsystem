@@ -140,6 +140,9 @@ def _depreciate_asset_components(asset, period_date, year, user=None, units_prod
     total_component_cost = sum((component.original_cost for component in components), Decimal("0"))
     if total_component_cost != asset.original_cost:
         raise ValidationError("يجب توزيع كامل تكلفة الأصل على مكوناته قبل تشغيل إهلاك المكونات.")
+    total_component_salvage = sum((component.salvage_value for component in components), Decimal("0"))
+    if total_component_salvage != asset.salvage_value:
+        raise ValidationError("يجب توزيع كامل القيمة التخريدية للأصل على مكوناته.")
     if asset.depreciations.exists() and not AssetComponentDepreciation.objects.filter(component__asset=asset).exists():
         raise ValidationError("لا يمكن تحويل أصل له إهلاك مرحّل سابقًا إلى إهلاك بالمكونات؛ يلزم اعتماد تسوية تحويل مستقلة أولًا.")
     last_depreciation = asset.depreciations.filter(
