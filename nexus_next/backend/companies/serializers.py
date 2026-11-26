@@ -30,15 +30,22 @@ class CompanyActivitiesField(serializers.ListField):
 class CompanySerializer(serializers.ModelSerializer):
     base_currency_code = serializers.CharField(source="base_currency.code", read_only=True)
     activities = CompanyActivitiesField(required=False)
+    activity_assignments = serializers.SerializerMethodField()
 
     class Meta:
         model = Company
         fields = (
             "id", "code", "name_ar", "name_en", "country", "activity", "activities",
-            "base_currency", "base_currency_code", "tax_registration_number",
+            "activity_assignments", "base_currency", "base_currency_code", "tax_registration_number",
             "address", "phone", "email", "is_active", "created_at", "updated_at",
         )
         read_only_fields = ("created_at", "updated_at")
+
+    def get_activity_assignments(self, obj):
+        return [
+            {"id": item.pk, "activity": item.activity, "is_active": item.is_active}
+            for item in obj.activity_assignments.all()
+        ]
 
     @transaction.atomic
     def create(self, validated_data):
