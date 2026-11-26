@@ -8,7 +8,7 @@ from django.db import models
 
 from accounting.models import ChartOfAccount, CostCenter, JournalEntry, TaxCode
 from core.money import round_currency_amount
-from companies.models import Branch, Company, Currency, ExchangeRate
+from companies.models import Branch, Company, CompanyActivity, Currency, ExchangeRate
 from inventory.models import StockMovement, StockMovementLine, Warehouse
 from suppliers.models import Supplier
 
@@ -45,6 +45,10 @@ class PurchaseReceipt(models.Model):
 
     def clean(self):
         super().clean()
+        if self.activity_id and (
+            self.activity.company_id != self.company_id or not self.activity.is_active
+        ):
+            raise ValidationError({"activity": "نشاط الفاتورة يجب أن يكون مفعّلًا ويتبع الشركة المحددة."})
         if self.supplier_id and self.supplier.company_id != self.company_id:
             raise ValidationError({"supplier": "المورد لا يتبع الشركة المحددة."})
         if self.warehouse_id and self.warehouse.company_id != self.company_id:
@@ -79,6 +83,10 @@ class PurchaseInvoice(models.Model):
         DIRECT_EXPENSE = "direct_expense", "خدمات ومصروفات مباشرة"
 
     supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, related_name="purchase_invoices")
+    activity = models.ForeignKey(
+        CompanyActivity, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="purchase_invoices",
+    )
     invoice_type = models.CharField(max_length=20, choices=InvoiceType.choices, default=InvoiceType.INVENTORY)
     receipt = models.ForeignKey(PurchaseReceipt, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices")
     branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
