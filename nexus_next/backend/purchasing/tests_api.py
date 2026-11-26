@@ -2996,3 +2996,49 @@ class PurchasingWorkflowTests(APITestCase):
             "lines": [{"order_line": order_line_id, "quantity": "1"}],
         }, format="json")
         self.assertEqual(over_acceptance.status_code, 400, over_acceptance.data)
+
+
+    def test_supplier_returns_accumulate_across_multiple_partial_returns(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-MULTI-RETURN", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        invoice_line_id = invoice.data["invoice_lines"][0]["id"]
+
+        for return_number, return_date in (
+            ("RET-MULTI-001", "2026-03-12"),
+            ("RET-MULTI-002", "2026-03-13"),
+        ):
+            returned = self.client.post("/api/purchasing/returns/", {
+                "company": self.company.pk, "supplier": self.supplier.pk,
+                "invoice": invoice.data["id"], "return_number": return_number,
+                "return_date": return_date,
+                "lines": [{"invoice_line": invoice_line_id, "quantity": "1"}],
+            }, format="json")
+            self.assertEqual(returned.status_code, 201, returned.data)
+            posted_return = self.client.post(
+                f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json",
+            )
+            self.assertEqual(posted_return.status_code, 200, posted_return.data)
+            self.assertEqual(posted_return.data["grand_total"], "114.0000")
+
+        excess_return = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "return_number": "RET-MULTI-003",
+            "return_date": "2026-03-14",
+            "lines": [{"invoice_line": invoice_line_id, "quantity": "0.01"}],
+        }, format="json")
+        self.assertEqual(excess_return.status_code, 400, excess_return.data)
+        self.assertEqual(
+            SupplierReturn.objects.filter(
+                invoice_id=invoice.data["id"], status=SupplierReturn.Status.POSTED,
+            ).count(),
+            2,
+        )
