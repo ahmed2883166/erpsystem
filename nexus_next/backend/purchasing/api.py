@@ -236,13 +236,39 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        """قفل إذن الاستلام وحركة المخزون وبنود أمر الشراء قبل تعديل المسودة."""
+        receipt = self.get_object()
+        self._check_write(receipt.company_id)
+        locked = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
+            "stock_movement", "warehouse",
+        ).get(pk=receipt.pk)
+        movement = StockMovement.objects.select_for_update(of=("self",)).get(pk=locked.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل؛ استخدم مستند تسوية مستقلًا.")
+        if PurchaseInvoice.objects.filter(receipt=locked).exists():
+            raise ValidationError("لا يمكن تعديل إذن استلام مرتبط بفاتورة مورد.")
+        order_ids = {locked.purchase_order_id}
+        supplied_order = request.data.get("purchase_order")
+        if supplied_order not in (None, ""):
+            try:
+                order_ids.add(int(supplied_order))
+            except (TypeError, ValueError):
+                raise ValidationError({"purchase_order": "أمر الشراء المحدد غير صالح."}) from None
+        if order_ids - {None}:
+            list(PurchaseOrderLine.objects.select_for_update().filter(
+                order_id__in=order_ids - {None},
+            ).order_by("pk"))
+        return super().update(request, *args, **kwargs)
+
     def perform_update(self, serializer):
-        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
+        """حفظ تعديلات المسودة بعد إعادة فحص صلاحيات الشركة والفرع."""
         receipt = serializer.instance
         self._check_write(receipt.company_id)
-        if receipt.stock_movement.status != StockMovement.Status.DRAFT:
-            raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل؛ أنشئ مستند تسوية مستقلًا بدل تغيير حركة المخزون.")
-        raise ValidationError("تعديل إذن الاستلام غير متاح حاليًا؛ أنشئ إذن استلام مسودة جديدًا.")
+        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        serializer.save()
 
     @transaction.atomic
     def perform_destroy(self, instance):
