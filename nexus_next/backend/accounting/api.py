@@ -397,8 +397,8 @@ class ChartOfAccountViewSet(AccountingViewSet):
 
 class AccountRoleViewSet(AccountingViewSet):
     serializer_class = AccountRoleSerializer
-    queryset = AccountRole.objects.select_related("company", "account").all()
-    filterset_fields = ("company", "role")
+    queryset = AccountRole.objects.select_related("company", "account", "activity").all()
+    filterset_fields = ("company", "role", "activity")
 
 
 class CostCenterViewSet(AccountingViewSet):
