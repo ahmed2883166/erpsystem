@@ -4,8 +4,9 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from accounting.models import ChartOfAccount
+from accounting.models import ChartOfAccount, JournalEntry
 from assets.models import AssetMovement, FixedAsset
+from assets.services import depreciate_asset
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from hr.models import Employee
 from treasury.models import TreasuryAccount
@@ -164,3 +165,37 @@ class AssetMovementWorkflowTests(APITestCase):
         self.assertEqual(self.asset.custodian_employee_id, employee_here.pk)
         self.assertEqual(self.asset.custodian, employee_here.full_name_ar)
         self.assertEqual(self.asset.branch_id, self.branch.pk)
+
+    def test_depreciation_is_split_at_approved_branch_transfer_and_reconciles(self):
+        requested = self.client.post("/api/assets/asset-movements/", {
+            "asset": self.asset.pk, "movement_type": "branch_transfer",
+            "movement_date": "2026-02-15", "to_branch": self.target_branch.pk,
+            "to_custodian": "مسؤول فرع غرب", "document_number": "AM-DEP-SPLIT-01",
+        }, format="json")
+        self.assertEqual(requested.status_code, 201, requested.data)
+
+        self.client.force_authenticate(self.manager)
+        approved = self.client.post(
+            f"/api/assets/asset-movements/{requested.data['id']}/approve/", {}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+
+        amount = depreciate_asset(self.asset.pk, date(2026, 2, 28), self.year.pk, self.manager)
+        rows = list(self.asset.depreciations.select_related("journal_entry").order_by("journal_entry__branch_id"))
+        self.assertEqual(amount, Decimal("5000.0000"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(sum((row.amount for row in rows), Decimal("0")), amount)
+        self.assertTrue(all(row.is_partial_period for row in rows))
+        by_branch = {row.journal_entry.branch_id: row.amount for row in rows}
+        self.assertEqual(by_branch[self.branch.pk], Decimal("3600.0000"))
+        self.assertEqual(by_branch[self.target_branch.pk], Decimal("1400.0000"))
+
+        reconciliation = self.client.get(
+            "/api/assets/fixed-assets/account-reconciliation/",
+            {"company": self.company.pk, "branch": self.target_branch.pk,
+             "as_of": "2026-02-28", "date_from": "2026-01-01", "date_to": "2026-02-28"},
+        )
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        self.assertTrue(reconciliation.data["is_reconciled"], reconciliation.data)
+        self.assertEqual(reconciliation.data["difference_count"], 0)
+
