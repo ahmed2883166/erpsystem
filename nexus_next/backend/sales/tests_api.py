@@ -1469,8 +1469,8 @@ class SalesWorkflowTests(APITestCase):
             "company": self.company.pk, "customer": self.customer.pk,
             "invoice": invoice_id, "receipt_number": "RC-FX-REVERSED-ASOF-OVER",
             "receipt_date": "2026-03-11", "method": "cash",
-            "amount": "4050", "transaction_currency": usd.pk,
-            "transaction_amount": "81", "exchange_rate": "50",
+            "amount": "9050", "transaction_currency": usd.pk,
+            "transaction_amount": "181", "exchange_rate": "50",
             "exchange_rate_date": "2026-03-10",
         }, format="json")
         self.assertEqual(overpaid.status_code, 201, overpaid.data)
