@@ -7,12 +7,13 @@ import {
   type AssetPhysicalInventory,
 } from "./api";
 
-type Props = { asset: FixedAsset; onChanged?: () => void };
+type Props = { asset: FixedAsset; fiscalYearId: number | null; periodDate: string; onChanged?: () => void; onComponentUnitsChange?: (values:Record<string,string>) => void };
 
-export default function AssetControlsPanel({ asset, onChanged }: Props) {
+export default function AssetControlsPanel({ asset, fiscalYearId, periodDate, onChanged, onComponentUnitsChange }: Props) {
   const [components, setComponents] = useState<AssetComponent[]>([]);
   const [policies, setPolicies] = useState<AssetInsurancePolicy[]>([]);
   const [counts, setCounts] = useState<AssetPhysicalInventory[]>([]);
+  const [componentUnits, setComponentUnits] = useState<Record<string,string>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
@@ -77,6 +78,27 @@ export default function AssetControlsPanel({ asset, onChanged }: Props) {
     depreciation_expense_account: asset.depreciation_expense_account,
   }), "تم حفظ مكوّن الأصل. يجب توزيع كامل التكلفة والقيمة التخريدية قبل تشغيل إهلاك المكونات.");
 
+  const runComponentDepreciation = async () => {
+    if (!fiscalYearId) { setError("حدد سنة مالية مفتوحة من شاشة الأصول."); return; }
+    const units: Record<string,number> = {};
+    for (const component of components.filter(row=>row.depreciation_method === "units_of_production")) {
+      const quantity = Number(componentUnits[String(component.id)]);
+      if (!(quantity > 0)) { setError("أدخل وحدات الإنتاج الفعلية لكل مكوّن يعمل بطريقة وحدات الإنتاج."); return; }
+      units[String(component.id)] = quantity;
+    }
+    setSaving(true); setError(""); setNotice("");
+    try {
+      await fixedAssetsApi.depreciate(asset.id, periodDate, fiscalYearId, undefined, units);
+      await reload();
+      setNotice("تم احتساب وترحيل إهلاك مكونات الأصل.");
+      onChanged?.();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر ترحيل إهلاك المكونات.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const savePolicy = (event: FormEvent) => submit(event, () => fixedAssetsApi.createInsurancePolicy({
     asset: asset.id, ...policyForm, policy_number: policyForm.policy_number.trim(),
     insurer_name: policyForm.insurer_name.trim(),
@@ -109,6 +131,12 @@ export default function AssetControlsPanel({ asset, onChanged }: Props) {
       {components.map(row=><tr key={row.id}><td>{row.code}</td><td>{row.name_ar}</td><td>{Number(row.original_cost).toLocaleString("ar-EG")}</td><td>{row.useful_life_months} شهر</td><td>{row.depreciation_method==="straight_line"?"ثابت":row.depreciation_method==="declining_balance"?"متناقص":"وحدات الإنتاج"}</td><td>يظهر في سجل الإهلاك الموحد للأصل</td></tr>)}
       {!components.length && <tr><td colSpan={6}>لم يتم تسجيل مكونات بعد.</td></tr>}
     </tbody></table></div>
+    {components.some(row=>row.depreciation_method === "units_of_production") && <div className="asset-report-filters">
+      {components.filter(row=>row.depreciation_method === "units_of_production").map(row=><label key={row.id}>وحدات الإنتاج الفعلية · {row.name_ar}
+        <input type="number" min="1" step="1" value={componentUnits[String(row.id)] || ""} onChange={e=>{const next={...componentUnits,[String(row.id)]:e.target.value};setComponentUnits(next);onComponentUnitsChange?.(next);}}/>
+      </label>)}
+    </div>}
+    {components.length > 0 && <button className="primary-button" type="button" disabled={saving} onClick={()=>void runComponentDepreciation()}>تشغيل إهلاك المكونات للفترة</button>}
 
     <div className="asset-form-heading"><strong>وثائق التأمين</strong><small>سجل الوثيقة والتغطية وقيمة التأمين والقسط وفترة السريان؛ لا يتم إنشاء قيد تلقائي من هذا السجل.</small></div>
     <form className="asset-form" onSubmit={savePolicy}>
