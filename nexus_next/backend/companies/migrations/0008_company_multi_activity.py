@@ -31,7 +31,7 @@ class Migration(migrations.Migration):
                         ("medical", "طبي"),
                         ("restaurants", "مطاعم"),
                         ("industrial", "صناعي"),
-                            ],
+                    ],
                     max_length=24,
                 )),
                 ("is_active", models.BooleanField(default=True)),
