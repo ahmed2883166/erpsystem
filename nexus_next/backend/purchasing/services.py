@@ -20,9 +20,9 @@ from inventory.services import post_stock_movement
 from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
-def _account(company, role):
-    """استخراج الحساب التفصيلي المرتبط بدور المشتريات المطلوب."""
-    return get_account_for_role(company, role)
+def _account(company, role, activity=None):
+    """استخراج الحساب التفصيلي المرتبط بدور المشتريات والنشاط المحدد."""
+    return get_account_for_role(company, role, activity=activity)
 
 
 def _branch_and_year(receipt, entry_date):
@@ -342,8 +342,8 @@ def _post_direct_expense_purchase_invoice(invoice, user):
     elif any(line.transaction_unit_price is not None for line in lines):
         raise ValidationError("توجد أسعار أجنبية دون تحديد عملة الفاتورة.")
 
-    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_tax else None
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT, invoice.activity) if recoverable_tax else None
     journal_lines = []
     for line in lines:
         nonrecoverable_line_tax = (
@@ -580,10 +580,10 @@ def post_purchase_invoice(invoice_id, user):
                     for category, amount in amounts.items():
                         allocations_by_branch[branch_id][category] += amount
 
-    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
-    grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_tax > 0 else None
-    clearing = _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING) if nonrecoverable_tax > 0 else None
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
+    grni = _account(invoice.company, AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED, invoice.activity)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT, invoice.activity) if recoverable_tax > 0 else None
+    clearing = _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING, invoice.activity) if nonrecoverable_tax > 0 else None
     account_list = [payable, grni]
     account_list.extend(account for account in (vat_input, clearing) if account)
     if len({account.pk for account in account_list}) != len(account_list):
@@ -595,11 +595,11 @@ def post_purchase_invoice(invoice_id, user):
     }
     allocation_accounts = {}
     if allocation_totals["inventory"]:
-        allocation_accounts["inventory"] = _account(invoice.company, AccountRole.Role.INVENTORY)
+        allocation_accounts["inventory"] = _account(invoice.company, AccountRole.Role.INVENTORY, invoice.activity)
     if allocation_totals["cogs"]:
-        allocation_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS)
+        allocation_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS, invoice.activity)
     if allocation_totals["loss"]:
-        allocation_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS)
+        allocation_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, invoice.activity)
     if allocation_accounts:
         used = {account.pk for account in [*account_list, *allocation_accounts.values()]}
         if len(used) != len(account_list) + len(allocation_accounts):
@@ -793,7 +793,7 @@ def post_supplier_payment(payment_id, user):
         realized_gain = realized_loss = Decimal("0")
 
     branch, year = _branch_and_year_for_invoice(invoice, payment.payment_date)
-    payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    payable = _account(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
     cash_role = AccountRole.Role.CASH if payment.method == SupplierPayment.Method.CASH else AccountRole.Role.BANK
     payment_account = payment.payment_account or _account(payment.company, cash_role)
     if payment_account.company_id != payment.company_id or payment_account.nature != "asset" or not payment_account.is_active or payment_account.is_group or not payment_account.allow_posting:
@@ -939,7 +939,7 @@ def post_supplier_refund(refund_id, user):
         raise ValidationError(
             f"قيمة الاسترداد تتجاوز الرصيد الدائن المتاح للمورد ({available_credit})."
         )
-    payable = _account(document.company, AccountRole.Role.ACCOUNTS_PAYABLE)
+    payable = _account(document.company, AccountRole.Role.ACCOUNTS_PAYABLE, return_document.invoice.activity)
     if document.payment_account_id == payable.pk:
         raise ValidationError("حساب الاسترداد يجب أن يختلف عن حساب الموردين.")
     from treasury.models import TreasuryAccount
@@ -1193,9 +1193,9 @@ def post_supplier_return(return_id, user):
     if abs(inventory_credit - expected_inventory_credit) > Decimal("0.0001"):
         raise ValidationError("قيمة تكلفة المخزون المرتجع لا تتطابق مع صافي المرتجع والضريبة غير القابلة للخصم ضمن هامش التقريب.")
 
-    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE)
-    inventory = _account(invoice.company, AccountRole.Role.INVENTORY)
-    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT) if recoverable_total else None
+    payable = _account(invoice.company, AccountRole.Role.ACCOUNTS_PAYABLE, invoice.activity)
+    inventory = _account(invoice.company, AccountRole.Role.INVENTORY, invoice.activity)
+    vat_input = _account(invoice.company, AccountRole.Role.VAT_INPUT, invoice.activity) if recoverable_total else None
     if len({account.pk for account in (payable, inventory, *([vat_input] if vat_input else []))}) != (3 if vat_input else 2):
         raise ValidationError("يجب فصل حساب الموردين والمخزون وضريبة المدخلات.")
 
