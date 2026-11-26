@@ -57,7 +57,7 @@ class AssetComponentSerializer(serializers.ModelSerializer):
         try:
             obj.full_clean()
         except DjangoValidationError as exc:
-            raise serializers.ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages)
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
         obj.save()
         return obj
 
