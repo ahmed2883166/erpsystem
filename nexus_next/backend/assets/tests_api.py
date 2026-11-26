@@ -907,4 +907,11 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(AssetDepreciation.objects.filter(asset_id=asset_id).count(), 1)
         self.assertEqual(sum((row.amount for row in AssetComponentDepreciation.objects.all()), Decimal("0")), Decimal("9554.7945"))
         self.assertEqual(AssetComponent.objects.filter(asset_id=asset_id).count(), 2)
+        reconciliation = self.client.get(
+            f"/api/assets/fixed-assets/account-reconciliation/?company={self.company.pk}"
+            "&as_of=2026-02-28&date_from=2026-01-01&date_to=2026-02-28"
+        )
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        self.assertTrue(reconciliation.data["is_reconciled"], reconciliation.data)
+        self.assertEqual(reconciliation.data["difference_count"], 0)
 
