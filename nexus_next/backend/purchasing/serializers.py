@@ -397,6 +397,9 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
 
         lines = attrs.get("lines")
+        linked_acceptance = attrs.get("service_acceptance", instance.service_acceptance if instance else None)
+        if linked_acceptance and invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            raise serializers.ValidationError({"service_acceptance": "محضر إنجاز الخدمة يرتبط بفاتورة خدمات ومصروفات مباشرة فقط."})
         if invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
             if receipt is not None:
                 raise serializers.ValidationError({"receipt": "فاتورة الخدمات والمصروفات لا ترتبط بإذن استلام."})
