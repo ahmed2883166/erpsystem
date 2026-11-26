@@ -3161,6 +3161,114 @@ class PurchasingWorkflowTests(APITestCase):
 
 
 
+    def test_purchase_to_sale_cycle_reconciles_grni_inventory_cogs_and_customer_balance(self):
+        """Cover one product from supplier receipt through customer sale and GL posting."""
+        from customers.models import Customer
+
+        # Complete the accounting roles needed by the sales side of the same company.
+        sales_roles = {
+            AccountRole.Role.ACCOUNTS_RECEIVABLE: ("1200", "العملاء", ChartOfAccount.Nature.ASSET),
+            AccountRole.Role.SALES: ("4000", "المبيعات", ChartOfAccount.Nature.REVENUE),
+            AccountRole.Role.VAT_OUTPUT: ("2300", "ضريبة مخرجات", ChartOfAccount.Nature.LIABILITY),
+        }
+        for role, (code, name, nature) in sales_roles.items():
+            account = ChartOfAccount.objects.create(
+                company=self.company, code=code, name_ar=name, nature=nature,
+            )
+            AccountRole.objects.create(company=self.company, role=role, account=account)
+
+        # Purchase: receipt creates inventory and GRNI; supplier invoice clears GRNI.
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        purchase = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "receipt": receipt_id,
+            "invoice_number": "CYCLE-PUR-001",
+            "invoice_date": "2026-03-11",
+            "lines": [{
+                "receipt_line": receipt_line_id,
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(purchase.status_code, 201, purchase.data)
+        purchase_posted = self.client.post(
+            f"/api/purchasing/invoices/{purchase.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(purchase_posted.status_code, 200, purchase_posted.data)
+
+        # Sale: issue one of the two received units, then recognize revenue and receivable.
+        customer = Customer.objects.create(
+            company=self.company, code="CYCLE-CUS-001", name_ar="عميل اختبار الدورة",
+        )
+        delivery = self.client.post("/api/sales-documents/deliveries/", {
+            "company": self.company.pk,
+            "customer": customer.pk,
+            "warehouse": self.warehouse.pk,
+            "delivery_number": "CYCLE-DEL-001",
+            "delivery_date": "2026-03-12",
+            "lines": [{"product": self.product.pk, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(delivery.status_code, 201, delivery.data)
+        delivery_posted = self.client.post(
+            f"/api/sales-documents/deliveries/{delivery.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(delivery_posted.status_code, 200, delivery_posted.data)
+
+        sale = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": customer.pk,
+            "delivery": delivery.data["id"],
+            "invoice_number": "CYCLE-SAL-001",
+            "invoice_date": "2026-03-12",
+            "lines": [{
+                "delivery_line": delivery.data["line_items"][0]["id"],
+                "unit_price": "150",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(sale.status_code, 201, sale.data)
+        sale_posted = self.client.post(
+            f"/api/sales-documents/invoices/{sale.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(sale_posted.status_code, 200, sale_posted.data)
+
+        # Reconcile subledgers and inventory valuation against their posted GL accounts.
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("1.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("100.0000"))
+
+        grni = ChartOfAccount.objects.get(company=self.company, code="2100")
+        grni_totals = JournalLine.objects.filter(
+            entry__company=self.company, entry__status=JournalEntry.Status.POSTED,
+            account=grni,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        self.assertEqual(grni_totals["debit"], Decimal("200.0000"))
+        self.assertEqual(grni_totals["credit"], Decimal("200.0000"))
+
+        inventory = ChartOfAccount.objects.get(company=self.company, code="1000")
+        inventory_totals = JournalLine.objects.filter(
+            entry__company=self.company, entry__status=JournalEntry.Status.POSTED,
+            account=inventory,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        self.assertEqual(inventory_totals["debit"] - inventory_totals["credit"], balance.inventory_value)
+
+        cogs = ChartOfAccount.objects.get(company=self.company, code="5100")
+        cogs_total = JournalLine.objects.filter(
+            entry__company=self.company, entry__status=JournalEntry.Status.POSTED,
+            account=cogs,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        self.assertEqual(cogs_total["debit"] - cogs_total["credit"], Decimal("100.0000"))
+
+        self.assertEqual(sale_posted.data["grand_total"], "171.0000")
+        self.assertEqual(sale_posted.data["balance_due"], "171.0000")
+        for entry in JournalEntry.objects.filter(
+            company=self.company, status=JournalEntry.Status.POSTED,
+        ):
+            totals = entry.lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+            self.assertEqual(totals["debit"], totals["credit"], entry.entry_number)
+
+
 class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
     def test_supplier_return_posting_owns_its_database_transaction(self):
         if connection.vendor != "postgresql":
