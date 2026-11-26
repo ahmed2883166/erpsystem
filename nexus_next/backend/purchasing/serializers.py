@@ -339,16 +339,16 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         supplier = attrs.get("supplier", instance.supplier if instance else None)
+        receipt = attrs.get("receipt", instance.receipt if instance else None)
+        invoice_type = attrs.get("invoice_type", instance.invoice_type if instance else PurchaseInvoice.InvoiceType.INVENTORY)
+        branch = attrs.get("branch", instance.branch if instance else None)
+        activity = attrs.get("activity", instance.activity if instance else None)
         if supplier and not supplier.is_active and not instance:
             raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن إنشاء فاتورة جديدة له."})
         if activity and (
             not company or activity.company_id != company.pk or not activity.is_active
         ):
             raise serializers.ValidationError({"activity": "اختر نشاطًا مفعّلًا تابعًا للشركة."})
-        receipt = attrs.get("receipt", instance.receipt if instance else None)
-        invoice_type = attrs.get("invoice_type", instance.invoice_type if instance else PurchaseInvoice.InvoiceType.INVENTORY)
-        branch = attrs.get("branch", instance.branch if instance else None)
-        activity = attrs.get("activity", instance.activity if instance else None)
         invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
         transaction_currency = attrs.get("transaction_currency", instance.transaction_currency if instance else None)
         exchange_rate = attrs.get("exchange_rate", instance.exchange_rate if instance else None)
