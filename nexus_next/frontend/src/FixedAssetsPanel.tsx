@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { formatMoney } from "./formatters";
 import AssetMovementsPanel from "./AssetMovementsPanel";
+import AssetControlsPanel from "./AssetControlsPanel";
 import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport, type AssetAccountReconciliation, type AssetDepreciationRunResult, type Supplier, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
@@ -497,6 +498,7 @@ const loadReport = async () => {
         </div>
         <button className="danger-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void dispose(a);}}>{saving ? "جارٍ الترحيل…" : "تأكيد البيع / الاستبعاد"}</button>
       </div>}
+      {assets.find(x=>x.id===selected) && <AssetControlsPanel asset={assets.find(x=>x.id===selected)!} onChanged={()=>void refresh()}/>}
     </div>}
   </section>;
 }
