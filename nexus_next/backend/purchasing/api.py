@@ -46,8 +46,8 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
@@ -1486,3 +1486,73 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
         PurchaseRequisition.objects.filter(pk=requisition.pk, status=requisition.status).update(status=PurchaseRequisition.Status.CANCELLED)
         requisition.refresh_from_db()
         return Response(self.get_serializer(requisition).data)
+
+
+class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
+    serializer_class = PurchaseServiceAcceptanceSerializer
+    queryset = PurchaseServiceAcceptance.objects.select_related(
+        "company", "order", "order__warehouse", "supplier", "accepted_by",
+    ).prefetch_related("lines__order_line__product")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return self.queryset.filter(company__in=companies).filter(
+            Q(order__warehouse__branch__in=branches)
+            | Q(order__warehouse__branch__isnull=True, company_id__in=defaults)
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        order = serializer.validated_data["order"]
+        self._check_write(order.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, order.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("لا يعدل محضر الخدمة؛ احذف المسودة وأنشئ محضرًا جديدًا.")
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        document = PurchaseServiceAcceptance.objects.select_for_update().get(pk=instance.pk)
+        self._check_write(document.company_id)
+        if document.status != PurchaseServiceAcceptance.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف محضر خدمة معتمد أو مرفوض.")
+        document.lines.all().delete()
+        document.delete()
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def accept(self, request, pk=None):
+        document = PurchaseServiceAcceptance.objects.select_for_update().select_related(
+            "order__warehouse"
+        ).get(pk=self.get_object().pk)
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(request.user, document.order.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+        if document.status != PurchaseServiceAcceptance.Status.DRAFT:
+            raise ValidationError("محضر الخدمة ليس مسودة.")
+        lines = list(document.lines.select_related("order_line__product"))
+        if not lines:
+            raise ValidationError("محضر الخدمة لا يحتوي على بنود.")
+        for line in lines:
+            line.full_clean()
+        PurchaseServiceAcceptance.objects.filter(
+            pk=document.pk, status=PurchaseServiceAcceptance.Status.DRAFT,
+        ).update(
+            status=PurchaseServiceAcceptance.Status.ACCEPTED,
+            accepted_by=request.user,
+            accepted_at=timezone.now(),
+        )
+        document.refresh_from_db()
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
