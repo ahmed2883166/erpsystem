@@ -6,7 +6,7 @@ from django.contrib.auth.models import Permission
 from rest_framework.test import APIClient
 
 from accounts.models import User
-from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
+from companies.models import Branch, Company, CompanyActivity, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from audit.models import AuditEvent
 from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation
 from treasury.services import (
@@ -2078,6 +2078,44 @@ class AccountRoleRuntimeValidationTests(TestCase):
             self.get_account_for_role(self.company, AccountRole.Role.CASH).pk,
             self.cash.pk,
         )
+
+    def test_runtime_role_lookup_prefers_activity_mapping_then_legacy_fallback(self):
+        service_activity = CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.SERVICE,
+        )
+        generic = AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.CASH, account=self.cash,
+        )
+        service_cash = ChartOfAccount.objects.create(
+            company=self.company, code="1111", name_ar="صندوق الخدمات", nature="asset",
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.CASH,
+            account=service_cash, activity=service_activity,
+        )
+
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, "service").pk,
+            service_cash.pk,
+        )
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, "medical").pk,
+            generic.pk,
+        )
+        self.assertEqual(
+            self.get_account_for_role(self.company, AccountRole.Role.CASH).pk,
+            generic.pk,
+        )
+
+    def test_runtime_role_lookup_rejects_disabled_or_unassigned_activity(self):
+        with self.assertRaises(ValidationError):
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, "medical")
+
+        disabled = CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.SERVICE, is_active=False,
+        )
+        with self.assertRaises(ValidationError):
+            self.get_account_for_role(self.company, AccountRole.Role.CASH, disabled)
 
     def test_expense_analysis_groups_posted_expenses_by_account_branch_and_month(self):
         currency = Currency.objects.get(code="EGP")
