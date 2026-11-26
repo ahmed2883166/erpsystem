@@ -234,8 +234,8 @@ export const purchasingApi = {
   convertAward: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<{rfq:PurchaseRFQ;purchase_order_id:number}>(`/api/purchasing/rfqs/${id}/convert-award/`,{method:"POST",body:JSON.stringify(payload)}); },
   createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
   serviceAcceptances: (companyId: number) => request<PurchaseServiceAcceptance[]>(`/api/purchasing/service-acceptances/?company=${companyId}&ordering=-acceptance_date`),
-  createServiceAcceptance: async (payload: unknown) => { await request<{ detail: string }>(" /api/csrf/".trim()); return request<PurchaseServiceAcceptance>("/api/purchasing/service-acceptances/", { method: "POST", body: JSON.stringify(payload) }); },
-  acceptServiceAcceptance: async (id: number) => { await request<{ detail: string }>(" /api/csrf/".trim()); return request<PurchaseServiceAcceptance>(`/api/purchasing/service-acceptances/${id}/accept/`, { method: "POST" }); },
+  createServiceAcceptance: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseServiceAcceptance>("/api/purchasing/service-acceptances/", { method: "POST", body: JSON.stringify(payload) }); },
+  acceptServiceAcceptance: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseServiceAcceptance>(`/api/purchasing/service-acceptances/${id}/accept/`, { method: "POST" }); },
 
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
