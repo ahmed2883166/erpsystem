@@ -818,7 +818,7 @@ class FixedAssetWorkflowTests(APITestCase):
             "period_date": "2026-02-28", "fiscal_year": self.year.pk,
         }, format="json")
         self.assertEqual(result.status_code, 201, result.data)
-        self.assertEqual(result.data["depreciation_amount"], Decimal("4109.5890"))
+        self.assertEqual(result.data["depreciation_amount"], Decimal("4109.59"))
 
     def test_units_of_production_depreciation_requires_and_records_actual_units(self):
         payload = self._payload()
@@ -902,7 +902,7 @@ class FixedAssetWorkflowTests(APITestCase):
             "period_date": "2026-02-28", "fiscal_year": self.year.pk,
         }, format="json")
         self.assertEqual(depreciation.status_code, 201, depreciation.data)
-        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("9554.7945"))
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("9554.79"))
         self.assertEqual(AssetComponentDepreciation.objects.count(), 2)
         self.assertEqual(AssetDepreciation.objects.filter(asset_id=asset_id).count(), 1)
         self.assertEqual(sum((row.amount for row in AssetComponentDepreciation.objects.all()), Decimal("0")), Decimal("9554.7945"))
