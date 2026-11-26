@@ -3000,7 +3000,7 @@ class PurchasingWorkflowTests(APITestCase):
 
     def test_supplier_returns_accumulate_across_multiple_partial_returns(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
-        invoice = self.client.post(" /api/purchasing/invoices/".strip(), {
+        invoice = self.client.post("/api/purchasing/invoices/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
             "invoice_number": "INV-MULTI-RETURN", "invoice_date": "2026-03-10",
             "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
