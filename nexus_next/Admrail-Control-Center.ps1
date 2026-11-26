@@ -85,7 +85,7 @@ function Refresh-Status {
         $logBox.Text = Get-LogText
         $stopButton.Enabled = $running
         $startButton.Enabled = -not $running
-        $openButton.Enabled = $running -and [bool]$url
+        $openButton.Enabled = $running -and $port443 -and [bool]$url
     } catch {
         $statusLabel.Text = "تعذر قراءة الحالة: $($_.Exception.Message)"
         $statusLabel.ForeColor = [System.Drawing.Color]::Firebrick
