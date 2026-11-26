@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.db import connection, DatabaseError, transaction
+from django.db.models import Sum
 from django.db.models.query import QuerySet
 from unittest.mock import patch
 
