@@ -805,3 +805,113 @@ class FixedAssetWorkflowTests(APITestCase):
             str(payment_error.data),
         )
         self.assertNotIn("DoesNotExist", str(payment_error.data))
+
+    def test_declining_balance_depreciation_uses_configured_annual_rate(self):
+        payload = self._payload()
+        payload.update({
+            "depreciation_method": "declining_balance",
+            "declining_rate_percentage": "25.0000",
+        })
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        result = self.client.post(f"/api/assets/fixed-assets/{created.data['id']}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(result.status_code, 201, result.data)
+        self.assertEqual(result.data["depreciation_amount"], Decimal("4109.59"))
+
+    def test_units_of_production_depreciation_requires_and_records_actual_units(self):
+        payload = self._payload()
+        payload.update({
+            "depreciation_method": "units_of_production",
+            "production_units_total": 36000,
+        })
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        missing_units = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(missing_units.status_code, 400, missing_units.data)
+        result = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk, "units_produced": 9000,
+        }, format="json")
+        self.assertEqual(result.status_code, 201, result.data)
+        self.assertEqual(result.data["depreciation_amount"], Decimal("27000.0000"))
+        depreciation = asset_id and FixedAsset.objects.get(pk=asset_id).depreciations.get()
+        self.assertEqual(depreciation.units_produced, 9000)
+
+    def test_component_insurance_and_physical_inventory_control_records_are_available(self):
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        component = self.client.post("/api/assets/asset-components/", {
+            "asset": asset_id, "code": "ENGINE", "name_ar": "المحرك",
+            "original_cost": "30000.0000", "salvage_value": "0.0000",
+            "useful_life_months": 60, "depreciation_method": "straight_line",
+            "asset_account": self.asset_gl.pk,
+            "accumulated_depreciation_account": self.accum_gl.pk,
+            "depreciation_expense_account": self.expense_gl.pk,
+        }, format="json")
+        self.assertEqual(component.status_code, 201, component.data)
+        policy = self.client.post("/api/assets/asset-insurance/", {
+            "asset": asset_id, "policy_number": "POL-FA-01", "insurer_name": "شركة التأمين",
+            "coverage_description": "تغطية شاملة", "start_date": "2026-01-01",
+            "end_date": "2026-12-31", "insured_value": "120000.0000",
+            "premium_amount": "2500.0000", "status": "active",
+        }, format="json")
+        self.assertEqual(policy.status_code, 201, policy.data)
+        count = self.client.post("/api/assets/asset-physical-inventory/", {
+            "asset": asset_id, "count_date": "2026-06-30",
+            "expected_location": "المقر الرئيسي", "counted_location": "المقر الرئيسي",
+            "expected_custodian": "مدير الحركة", "counted_custodian": "مدير الحركة",
+            "result": "matched", "condition_notes": "سليم",
+        }, format="json")
+        self.assertEqual(count.status_code, 201, count.data)
+        self.assertEqual(count.data["counted_by"], self.user.pk)
+
+    def test_component_depreciation_posts_component_rates_and_reconciles_parent_ledger(self):
+        from assets.models import AssetComponent, AssetComponentDepreciation, AssetDepreciation
+
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        shared_accounts = {
+            "asset_account": self.asset_gl.pk,
+            "accumulated_depreciation_account": self.accum_gl.pk,
+            "depreciation_expense_account": self.expense_gl.pk,
+        }
+        for payload in (
+            {
+                "asset": asset_id, "code": "BODY", "name_ar": "هيكل السيارة",
+                "original_cost": "60000.0000", "salvage_value": "6000.0000",
+                "useful_life_months": 12, "depreciation_method": "straight_line",
+                **shared_accounts,
+            },
+            {
+                "asset": asset_id, "code": "ENGINE", "name_ar": "محرك السيارة",
+                "original_cost": "60000.0000", "salvage_value": "6000.0000",
+                "useful_life_months": 36, "depreciation_method": "declining_balance",
+                "declining_rate_percentage": "25.0000",
+                **shared_accounts,
+            },
+        ):
+            response = self.client.post("/api/assets/asset-components/", payload, format="json")
+            self.assertEqual(response.status_code, 201, response.data)
+        depreciation = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(depreciation.status_code, 201, depreciation.data)
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("9554.79"))
+        self.assertEqual(AssetComponentDepreciation.objects.count(), 2)
+        self.assertEqual(AssetDepreciation.objects.filter(asset_id=asset_id).count(), 1)
+        self.assertEqual(sum((row.amount for row in AssetComponentDepreciation.objects.all()), Decimal("0")), Decimal("9554.7900"))
+        self.assertEqual(AssetComponent.objects.filter(asset_id=asset_id).count(), 2)
+        reconciliation = self.client.get(
+            f"/api/assets/fixed-assets/account-reconciliation/?company={self.company.pk}"
+            "&as_of=2026-02-28&date_from=2026-01-01&date_to=2026-02-28"
+        )
+        self.assertEqual(reconciliation.status_code, 200, reconciliation.data)
+        self.assertTrue(reconciliation.data["is_reconciled"], reconciliation.data)
+        self.assertEqual(reconciliation.data["difference_count"], 0)
+

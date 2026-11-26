@@ -989,13 +989,31 @@ export const importBankStatementCsv = async (id: number, file: File): Promise<{i
 export type FixedAsset = {
   id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; custodian_employee: number | null; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;
   acquisition_date: string; depreciation_start_date: string; original_cost: string; acquisition_net_amount: string|null; recoverable_tax_amount:string; nonrecoverable_tax_amount:string; acquisition_tax_code:number|null; salvage_value: string;
-  useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
+  useful_life_months: number; depreciation_method: "straight_line"|"declining_balance"|"units_of_production"; declining_rate_percentage: string|null; production_units_total: number|null; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
   acquisition_counter_account: number; disposal_gain_loss_account: number; disposal_loss_account: number | null; acquisition_journal: number | null; acquisition_treasury_transaction: number | null;
   status: "active" | "disposed"; disposed_at: string | null; disposal_proceeds: string | null; disposal_journal: number | null; disposal_treasury_transaction: number | null;
   vendor_invoice_id: number | null; vendor_invoice_status: "draft" | "posted" | null;
   vendor_payments: {id:number;payment_number:string;payment_date:string;amount:string;status:"draft"|"posted"|"reversed";journal_entry:number|null}[];
   accumulated_depreciation: string; accumulated_impairment?:string; net_book_value: string; created_at: string;
+};
+export type AssetComponent = {
+  id:number;asset:number;code:string;name_ar:string;original_cost:string;salvage_value:string;
+  useful_life_months:number;depreciation_method:"straight_line"|"declining_balance"|"units_of_production";
+  declining_rate_percentage:string|null;production_units_total:number|null;
+  asset_account:number;accumulated_depreciation_account:number;depreciation_expense_account:number;
+  status:"active"|"disposed";accumulated_depreciation:string;created_at:string;
+};
+export type AssetInsurancePolicy = {
+  id:number;asset:number;policy_number:string;insurer_name:string;coverage_description:string;
+  start_date:string;end_date:string;insured_value:string;premium_amount:string;
+  document_reference:string;status:"active"|"expired"|"cancelled";notes:string;created_at:string;
+};
+export type AssetPhysicalInventory = {
+  id:number;asset:number;count_date:string;expected_location:string;counted_location:string;
+  expected_custodian:string;counted_custodian:string;
+  result:"matched"|"location_mismatch"|"custodian_mismatch"|"condition_issue"|"not_found";
+  condition_notes:string;notes:string;counted_by:number;created_at:string;
 };
 export type AssetMovement = {
   id:number; company:number; asset:number; asset_code:string; asset_name:string;
@@ -1036,6 +1054,13 @@ export type AssetDepreciationRunResult = {
 };
 // واجهات الأصول الثابتة: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const fixedAssetsApi = {
+  // مكونات الأصل ووثائق التأمين ومحاضر الجرد الفعلي.
+  components: (assetId:number) => request<AssetComponent[]>(`/api/assets/asset-components/?asset=${assetId}`),
+  createComponent: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<AssetComponent>("/api/assets/asset-components/", {method:"POST",body:JSON.stringify(payload)}); },
+  insurancePolicies: (assetId:number) => request<AssetInsurancePolicy[]>(`/api/assets/asset-insurance/?asset=${assetId}`),
+  createInsurancePolicy: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<AssetInsurancePolicy>("/api/assets/asset-insurance/", {method:"POST",body:JSON.stringify(payload)}); },
+  physicalInventory: (assetId:number) => request<AssetPhysicalInventory[]>(`/api/assets/asset-physical-inventory/?asset=${assetId}`),
+  createPhysicalInventory: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<AssetPhysicalInventory>("/api/assets/asset-physical-inventory/", {method:"POST",body:JSON.stringify(payload)}); },
   // مستندات نقل الأصول وتغيير العهدة والموقع.
   movements: (companyId:number) => request<AssetMovement[]>(`/api/assets/asset-movements/?company=${companyId}`),
   createMovement: async (payload:{asset:number;movement_type:AssetMovement["movement_type"];movement_date:string;to_branch?:number;to_employee?:number|null;to_custodian?:string;to_location?:string;document_number:string;notes?:string}) => {
@@ -1101,7 +1126,7 @@ export const fixedAssetsApi = {
     return request<{id:number;status:"posted";journal_entry:number;amount:string}>(`/api/assets/fixed-assets/${id}/post-supplier-payment/`, {method:"POST",body:JSON.stringify({payment})});
   },
   // احتساب وترحيل إهلاك الأصل عن الفترة والسنة المالية.
-  depreciate: async (id: number, periodDate: string, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear})}); },
+  depreciate: async (id: number, periodDate: string, fiscalYear: number, unitsProduced?:number, unitsProducedByComponent?:Record<string,number>) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;depreciation_amount:string}>(`/api/assets/fixed-assets/${id}/depreciate/`, {method:"POST",body:JSON.stringify({period_date:periodDate,fiscal_year:fiscalYear,units_produced:unitsProduced,units_produced_by_component:unitsProducedByComponent})}); },
   // جلب جدول الإهلاك والانخفاض والقيمة الدفترية للأصل.
   schedule: (id: number) => request<AssetSchedule>(`/api/assets/fixed-assets/${id}/schedule/`),
   // إثبات خسارة انخفاض القيمة بعد تحديد القيمة القابلة للاسترداد وحسابات القيد.
@@ -1115,7 +1140,7 @@ export const fixedAssetsApi = {
     return request<{id:number;asset_id:number;reversal_date:string;carrying_amount_before:string;recoverable_amount:string;hypothetical_carrying_amount:string;reversal_amount:string;journal_entry:number;accounting_model:"cost";oci_impact:"none_under_cost_model"}>(`/api/assets/fixed-assets/${id}/reverse-impairment/`, {method:"POST",body:JSON.stringify(payload)});
   },
   // تنفيذ بيع أو استبعاد الأصل وإرسال بيانات التسوية.
-  dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear})}); },
+  dispose: async (id: number, disposalDate: string, proceeds: string, treasuryAccount: number, fiscalYear: number, unitsProduced?:number, unitsProducedByComponent?:Record<string,number>) => { await request<{detail:string}>("/api/csrf/"); return request<{asset_id:number;disposal_journal:number;accumulated_depreciation:string;net_book_value:string;proceeds:string;gain:string;loss:string}>(`/api/assets/fixed-assets/${id}/dispose/`, {method:"POST",body:JSON.stringify({disposal_date:disposalDate,proceeds,treasury_account:treasuryAccount,fiscal_year:fiscalYear,units_produced:unitsProduced,units_produced_by_component:unitsProducedByComponent})}); },
 };
 
 

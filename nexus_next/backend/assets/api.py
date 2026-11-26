@@ -79,7 +79,11 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         asset = self.get_object()
         self._write(asset.company_id)
         try:
-            amount = depreciate_asset(asset.pk, request.data.get("period_date"), request.data.get("fiscal_year"), request.user)
+            amount = depreciate_asset(
+                asset.pk, request.data.get("period_date"), request.data.get("fiscal_year"),
+                request.user, request.data.get("units_produced"),
+                request.data.get("units_produced_by_component"),
+            )
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
             raise ValidationError(detail) from exc
@@ -556,6 +560,8 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             result = dispose_asset(
                 asset.pk, request.data.get("disposal_date"), request.data.get("proceeds", "0"),
                 request.data.get("treasury_account"), request.data.get("fiscal_year"), request.user,
+                request.data.get("units_produced"),
+                request.data.get("units_produced_by_component"),
             )
         except (DjangoValidationError, TypeError, ValueError) as exc:
             detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])

@@ -5,13 +5,14 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { formatMoney } from "./formatters";
 import AssetMovementsPanel from "./AssetMovementsPanel";
+import AssetControlsPanel from "./AssetControlsPanel";
 import { api, fixedAssetsApi, treasuryApi, type Account, type Branch, type FiscalYear, type FixedAsset, type AssetSchedule, type TreasuryAccount, type AssetRegisterReport, type AssetDepreciationReport, type AssetMovementReport, type CashFlowReport, type AssetAccountReconciliation, type AssetDepreciationRunResult, type Supplier, type TaxCode } from "./api";
 
 type Props = { companyId: number | null };
 const today = new Date().toISOString().slice(0, 10);
 const emptyForm = {
   branch: "", code: "", name_ar: "", category: "other", description: "", location: "", custodian: "", serial_number: "", warranty_end_date: "", supplier_name: "", supplier_invoice: "", acquisition_mode: "cash", supplier_id: "", supplier_net_amount: "", supplier_tax_code: "", cash_tax_code: "", acquisition_date: today, depreciation_start_date: today,
-  original_cost: "", salvage_value: "0", useful_life_months: "60", asset_account: "",
+  original_cost: "", salvage_value: "0", useful_life_months: "60", depreciation_method: "straight_line", declining_rate_percentage: "", production_units_total: "", asset_account: "",
   accumulated_depreciation_account: "", depreciation_expense_account: "", acquisition_counter_account: "",
   disposal_gain_loss_account: "", disposal_loss_account: "", fiscal_year: "",
 };
@@ -42,6 +43,8 @@ export default function FixedAssetsPanel({ companyId }: Props) {
   const [draftInvoiceAssetId, setDraftInvoiceAssetId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [periodDate, setPeriodDate] = useState(today.slice(0, 7) + "-28");
+  const [unitsProduced, setUnitsProduced] = useState("");
+  const [componentUnitsById, setComponentUnitsById] = useState<Record<string,string>>({});
   const [disposalDate, setDisposalDate] = useState(today);
   const [disposalProceeds, setDisposalProceeds] = useState("0");
   const [disposalCashAccount, setDisposalCashAccount] = useState("");
@@ -133,7 +136,7 @@ const create = async (event: FormEvent) => {
         nonrecoverable_tax_amount: String(cashNonrecoverableTax.toFixed(4)),
         acquisition_tax_code: cashTaxCode?.id ?? null,
         salvage_value: form.salvage_value, useful_life_months: Number(form.useful_life_months),
-        depreciation_method: "straight_line", asset_account: Number(form.asset_account),
+        depreciation_method: form.depreciation_method, declining_rate_percentage: form.depreciation_method === "declining_balance" ? form.declining_rate_percentage : null, production_units_total: form.depreciation_method === "units_of_production" ? Number(form.production_units_total) : null, asset_account: Number(form.asset_account),
         accumulated_depreciation_account: Number(form.accumulated_depreciation_account),
         depreciation_expense_account: Number(form.depreciation_expense_account),
         acquisition_counter_account: Number(form.acquisition_counter_account),
@@ -287,7 +290,12 @@ const create = async (event: FormEvent) => {
 const depreciate = async (asset: FixedAsset) => {
     if (!form.fiscal_year) { setError("حدد سنة مالية مفتوحة."); return; }
     setSaving(true); setError("");
-    try { await fixedAssetsApi.depreciate(asset.id, periodDate, Number(form.fiscal_year)); await refresh(); if (selected === asset.id) setSchedule(await fixedAssetsApi.schedule(asset.id)); }
+    try {
+      if (asset.depreciation_method === "units_of_production" && !(Number(unitsProduced) > 0)) { setError("أدخل وحدات الإنتاج الفعلية للفترة."); setSaving(false); return; }
+      await fixedAssetsApi.depreciate(asset.id, periodDate, Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined, Object.fromEntries(Object.entries(componentUnitsById).map(([key,value])=>[key,Number(value)])));
+      setUnitsProduced("");
+      await refresh(); if (selected === asset.id) setSchedule(await fixedAssetsApi.schedule(asset.id));
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تسجيل الإهلاك."); }
     finally { setSaving(false); }
   };
@@ -303,7 +311,7 @@ const dispose = async (asset: FixedAsset) => {
     if (!window.confirm("تأكيد بيع / استبعاد الأصل؟ سيتم ترحيل الإهلاك حتى التاريخ وقيد الاستبعاد.")) return;
     setSaving(true); setError("");
     try {
-      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year));
+      const result = await fixedAssetsApi.dispose(asset.id, disposalDate, disposalProceeds, Number(disposalCashAccount || 0), Number(form.fiscal_year), asset.depreciation_method === "units_of_production" ? Number(unitsProduced) : undefined, Object.fromEntries(Object.entries(componentUnitsById).map(([key,value])=>[key,Number(value)])));
       await refresh();
       setSchedule(await fixedAssetsApi.schedule(asset.id));
       setError("تم الاستبعاد. رقم القيد: " + result.disposal_journal + " · " + (Number(result.gain) > 0 ? "ربح " + result.gain : Number(result.loss) > 0 ? "خسارة " + result.loss : "دون ربح أو خسارة"));
@@ -381,6 +389,11 @@ const loadReport = async () => {
       </>}
       <label>القيمة التخريدية<input type="number" min="0" step="0.0001" value={form.salvage_value} onChange={e=>setForm({...form,salvage_value:e.target.value})}/></label>
       <label>العمر (شهر)<input required type="number" min="1" value={form.useful_life_months} onChange={e=>setForm({...form,useful_life_months:e.target.value})}/></label>
+      <label>طريقة الإهلاك<select value={form.depreciation_method} onChange={e=>setForm({...form,depreciation_method:e.target.value,declining_rate_percentage:"",production_units_total:""})}>
+        <option value="straight_line">القسط الثابت</option><option value="declining_balance">القسط المتناقص</option><option value="units_of_production">وحدات الإنتاج</option>
+      </select></label>
+      {form.depreciation_method === "declining_balance" && <label>معدل الإهلاك السنوي (%)<input required type="number" min="0.0001" max="100" step="0.0001" value={form.declining_rate_percentage} onChange={e=>setForm({...form,declining_rate_percentage:e.target.value})}/></label>}
+      {form.depreciation_method === "units_of_production" && <label>إجمالي وحدات الإنتاج المقدرة للعمر<input required type="number" min="1" step="1" value={form.production_units_total} onChange={e=>setForm({...form,production_units_total:e.target.value})}/></label>}
       <label>السنة المالية<select required value={form.fiscal_year} onChange={e=>setForm({...form,fiscal_year:e.target.value})}><option value="">اختر السنة</option>{years.map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label>
       {accountSelect("حساب تكلفة الأصل","asset_account",assetAccounts)}
       {accountSelect("حساب مجمع الإهلاك","accumulated_depreciation_account",assetAccounts)}
@@ -449,7 +462,9 @@ const loadReport = async () => {
     <AssetMovementsPanel companyId={companyId} onChanged={()=>void refresh()} />
     {selected && schedule && <div className="asset-schedule"><div className="work-panel-head"><div><h2>سجل إهلاك الأصل</h2><p>صافي القيمة الدفترية: {formatMoney(schedule.net_book_value)} · مجمع الانخفاض: {formatMoney(schedule.accumulated_impairment)}</p></div><button className="subtle-button" onClick={()=>{setSelected(null);setSchedule(null);}}>إغلاق</button></div>
       {!assets.find(x=>x.id===selected)?.acquisition_journal && <p className="asset-report-note">الاقتناء لم يُرحّل بعد؛ بعد اعتماد حركة السداد وترحيل قيد الاقتناء ستتاح إجراءات الإهلاك والاستبعاد.</p>}
-      {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-depreciation-action"><label>تاريخ الإهلاك<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label><button className="primary-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void depreciate(a);}}>تسجيل إهلاك الفترة</button></div>}
+      {assets.find(x=>x.id===selected)?.status === "active" && assets.find(x=>x.id===selected)?.acquisition_journal && <div className="asset-depreciation-action"><label>تاريخ الإهلاك<input type="date" value={periodDate} onChange={e=>setPeriodDate(e.target.value)}/></label>
+        {assets.find(x=>x.id===selected)?.depreciation_method === "units_of_production" && <label>وحدات الإنتاج الفعلية<input type="number" min="1" step="1" value={unitsProduced} onChange={e=>setUnitsProduced(e.target.value)}/></label>}
+        <button className="primary-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void depreciate(a);}}>تسجيل إهلاك الفترة</button></div>}
       <div className="data-table-wrap"><table><thead><tr><th>تاريخ الفترة</th><th>قيمة الإهلاك</th><th>النوع</th><th>رقم القيد</th></tr></thead><tbody>{schedule.rows.map(row=><tr key={row.id}><td>{row.period_date}</td><td>{formatMoney(row.amount)}</td><td>{row.is_partial_period ? "حتى تاريخ الاستبعاد" : "شهري"}</td><td>{row.journal_entry}</td></tr>)}</tbody></table></div>
       {schedule.impairments.length > 0 && <div className="data-table-wrap"><h3>سجل انخفاض القيمة</h3><table><thead><tr><th>تاريخ الاختبار</th><th>القيمة قبل الانخفاض</th><th>القيمة القابلة للاسترداد</th><th>خسارة الانخفاض</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{schedule.impairments.map(row=><tr key={row.id}><td>{row.impairment_date}</td><td>{formatMoney(row.carrying_amount_before)}</td><td>{formatMoney(row.recoverable_amount)}</td><td>{formatMoney(row.impairment_loss)}</td><td>{row.journal_entry}</td><td>{row.status==="posted"?"مرحل":"معكوس"}</td></tr>)}</tbody></table></div>}
       {schedule.impairment_reversals?.length > 0 && <div className="data-table-wrap"><h3>سجل عكس انخفاض القيمة</h3><table><thead><tr><th>تاريخ العكس</th><th>القيمة قبل العكس</th><th>القيمة القابلة للاسترداد</th><th>سقف IAS 36</th><th>مبلغ العكس</th><th>القيد</th><th>الحالة</th></tr></thead><tbody>{schedule.impairment_reversals.map(row=><tr key={row.id}><td>{row.reversal_date}</td><td>{formatMoney(row.carrying_amount_before)}</td><td>{formatMoney(row.recoverable_amount)}</td><td>{formatMoney(row.hypothetical_carrying_amount)}</td><td>{formatMoney(row.reversal_amount)}</td><td>{row.journal_entry}</td><td>{row.status==="posted"?"مرحل":"معكوس"}</td></tr>)}</tbody></table></div>}
@@ -478,11 +493,19 @@ const loadReport = async () => {
         <strong>بيع الأصل أو استبعاده</strong>
         <div className="asset-disposal-fields">
           <label>تاريخ البيع / الاستبعاد<input type="date" value={disposalDate} onChange={e=>setDisposalDate(e.target.value)}/></label>
+          {assets.find(x=>x.id===selected)?.depreciation_method === "units_of_production" && <label>وحدات الإنتاج منذ آخر إهلاك حتى الاستبعاد<input type="number" min="1" step="1" value={unitsProduced} onChange={e=>setUnitsProduced(e.target.value)}/></label>}
           <label>قيمة المتحصلات<input type="number" min="0" step="0.0001" value={disposalProceeds} onChange={e=>setDisposalProceeds(e.target.value)}/></label>
           <label>حساب الخزينة / البنك<select value={disposalCashAccount} onChange={e=>setDisposalCashAccount(e.target.value)}><option value="">اختر حساب الخزينة</option>{treasuryAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         </div>
         <button className="danger-button" disabled={saving} onClick={()=>{const a=assets.find(x=>x.id===selected);if(a)void dispose(a);}}>{saving ? "جارٍ الترحيل…" : "تأكيد البيع / الاستبعاد"}</button>
       </div>}
+      {assets.find(x=>x.id===selected) && <AssetControlsPanel
+        asset={assets.find(x=>x.id===selected)!}
+        fiscalYearId={form.fiscal_year ? Number(form.fiscal_year) : null}
+        periodDate={periodDate}
+        onComponentUnitsChange={setComponentUnitsById}
+        onChanged={()=>void refresh()}
+      />}
     </div>}
   </section>;
 }

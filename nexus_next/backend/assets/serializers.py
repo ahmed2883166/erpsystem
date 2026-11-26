@@ -20,7 +20,7 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         fields = ("id", "company", "branch", "code", "name_ar", "category", "description", "location", "custodian", "custodian_employee", "serial_number", "warranty_end_date", "supplier_name", "supplier_invoice", "acquisition_date",
                   "depreciation_start_date", "original_cost", "acquisition_net_amount",
                   "recoverable_tax_amount", "nonrecoverable_tax_amount", "acquisition_tax_code", "salvage_value", "useful_life_months",
-                  "depreciation_method", "asset_account", "accumulated_depreciation_account",
+                  "depreciation_method", "declining_rate_percentage", "production_units_total", "asset_account", "accumulated_depreciation_account",
                   "depreciation_expense_account", "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account",
                   "acquisition_journal", "acquisition_treasury_transaction", "status", "disposed_at", "disposal_proceeds", "disposal_journal", "disposal_treasury_transaction",
                   "accumulated_depreciation", "accumulated_impairment", "net_book_value", "vendor_invoice_id", "vendor_invoice_status", "vendor_payments", "created_at")
@@ -93,6 +93,21 @@ class FixedAssetSerializer(serializers.ModelSerializer):
         life = attrs.get("useful_life_months", getattr(self.instance, "useful_life_months", 0))
         if cost <= 0 or salvage < 0 or salvage > cost or life <= 0:
             raise serializers.ValidationError("راجع التكلفة والقيمة التخريدية والعمر الإنتاجي.")
+        method = attrs.get("depreciation_method", getattr(self.instance, "depreciation_method", FixedAsset.Method.STRAIGHT_LINE))
+        declining_rate = attrs.get("declining_rate_percentage", getattr(self.instance, "declining_rate_percentage", None))
+        production_total = attrs.get("production_units_total", getattr(self.instance, "production_units_total", None))
+        if method == FixedAsset.Method.DECLINING_BALANCE:
+            if declining_rate is None or declining_rate <= 0 or declining_rate > 100:
+                raise serializers.ValidationError({"declining_rate_percentage": "أدخل معدل إهلاك سنوي أكبر من صفر وحتى 100%."})
+            if production_total is not None:
+                raise serializers.ValidationError({"production_units_total": "إجمالي وحدات الإنتاج يستخدم مع طريقة وحدات الإنتاج فقط."})
+        elif declining_rate is not None:
+            raise serializers.ValidationError({"declining_rate_percentage": "معدل الإهلاك المتناقص يستخدم مع طريقته فقط."})
+        if method == FixedAsset.Method.UNITS_OF_PRODUCTION:
+            if not production_total or production_total <= 0:
+                raise serializers.ValidationError({"production_units_total": "حدد إجمالي وحدات الإنتاج المقدرة."})
+        elif production_total is not None:
+            raise serializers.ValidationError({"production_units_total": "إجمالي وحدات الإنتاج يستخدم مع طريقة وحدات الإنتاج فقط."})
         net_amount = attrs.get("acquisition_net_amount", getattr(self.instance, "acquisition_net_amount", None))
         recoverable_tax = attrs.get(
             "recoverable_tax_amount",
@@ -147,4 +162,4 @@ class FixedAssetSerializer(serializers.ModelSerializer):
 class AssetDepreciationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssetDepreciation
-        fields = ("id", "asset", "period_date", "amount", "is_partial_period", "journal_entry", "created_at")
+        fields = ("id", "asset", "period_date", "amount", "is_partial_period", "units_produced", "journal_entry", "created_at")
