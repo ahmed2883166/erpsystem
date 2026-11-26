@@ -7,14 +7,14 @@ from rest_framework import serializers
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
 
-from accounting.models import ChartOfAccount, FxSubledgerRevaluation, JournalEntry, TaxCode
+from accounting.models import ChartOfAccount, CostCenter, FxSubledgerRevaluation, JournalEntry, TaxCode
 from companies.access import resolve_warehouse_branch
 from companies.models import ExchangeRate
 from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from suppliers.models import Supplier
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, PurchaseServiceAcceptance, PurchaseServiceAcceptanceLine, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -29,7 +29,7 @@ class ReceiptLineInputSerializer(serializers.Serializer):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
         if product.product_type != Product.ProductType.GOODS or not product.is_active:
-            raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
+            raise serializers.ValidationError("إذن الاستلام مخصص للأصناف المخزنية فقط؛ الخدمات تُثبت بمحضر إنجاز خدمة.")
         if product.track_expiry and not attrs.get("expiry_date"):
             raise serializers.ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
         if not product.track_expiry and attrs.get("expiry_date"):
@@ -60,16 +60,34 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "quantity": str(line.quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type, "quantity": str(line.quantity),
             "unit_cost": str(line.unit_cost), "cost_amount": str(line.cost_amount),
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
-        company = attrs.get("company")
-        supplier = attrs.get("supplier")
-        warehouse = attrs.get("warehouse")
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        supplier = attrs.get("supplier", instance.supplier if instance else None)
+        warehouse = attrs.get("warehouse", instance.warehouse if instance else None)
+        if instance:
+            immutable = {
+                "company": instance.company_id,
+                "supplier": instance.supplier_id,
+                "warehouse": instance.warehouse_id,
+                "purchase_order": instance.purchase_order_id,
+            }
+            for field, current in immutable.items():
+                if field in attrs:
+                    supplied = attrs[field]
+                    supplied = supplied.pk if hasattr(supplied, "pk") else supplied
+                    if supplied != current:
+                        raise serializers.ValidationError({field: "لا يمكن تغيير الشركة أو المورد أو المخزن أو أمر الشراء لإذن استلام قائم."})
+            if instance.stock_movement.status != StockMovement.Status.DRAFT:
+                raise serializers.ValidationError("إذن الاستلام المرحّل غير قابل للتعديل.")
+            if PurchaseInvoice.objects.filter(receipt=instance).exists():
+                raise serializers.ValidationError("لا يمكن تعديل إذن استلام مرتبط بفاتورة مورد.")
         if supplier and not supplier.is_active:
             raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن استخدامه في مستند جديد."})
         if supplier and company and supplier.company_id != company.pk:
@@ -78,9 +96,11 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
         if warehouse and not warehouse.is_active:
             raise serializers.ValidationError({"warehouse": "مخزن الاستلام موقوف."})
+        if "lines" not in attrs and instance:
+            return attrs
         if not attrs.get("lines"):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
-        order = attrs.get("purchase_order")
+        order = attrs.get("purchase_order", instance.purchase_order if instance else None)
         if order:
             if order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED):
                 raise serializers.ValidationError({"purchase_order": "أمر الشراء غير معتمد أو مكتمل الاستلام."})
@@ -111,10 +131,13 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                 line["destination_location_obj"] = location
         for order_line_id, requested in requested_by_line.items():
             order_line = next(x["purchase_order_line_obj"] for x in attrs["lines"] if x.get("purchase_order_line_obj") and x["purchase_order_line_obj"].pk == order_line_id)
-            reserved_drafts = PurchaseOrderReceiptLine.objects.filter(
+            reserved_query = PurchaseOrderReceiptLine.objects.filter(
                 order_line_id=order_line_id,
                 receipt_line__movement__status=StockMovement.Status.DRAFT,
-            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            )
+            if instance:
+                reserved_query = reserved_query.exclude(receipt_line__movement_id=instance.stock_movement_id)
+            reserved_drafts = reserved_query.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
             available = order_line.remaining_quantity - reserved_drafts
             if requested > available:
                 raise serializers.ValidationError({"lines": f"الكمية المطلوبة تتجاوز المتبقي بعد حجوزات أذون الاستلام المسودة للصنف {order_line.product.code}."})
@@ -152,11 +175,51 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
                 )
         return receipt
 
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        """تعديل إذن استلام مسودة مع إعادة بناء بنود الحركة وحجوزات أمر الشراء بأمان."""
+        lines = validated_data.pop("lines", None)
+        movement = StockMovement.objects.select_for_update(of=("self",)).get(pk=instance.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise serializers.ValidationError("إذن الاستلام المرحّل غير قابل للتعديل.")
+        if PurchaseInvoice.objects.filter(receipt=instance).exists():
+            raise serializers.ValidationError("لا يمكن تعديل إذن استلام مرتبط بفاتورة مورد.")
+        if lines is not None:
+            old_line_ids = list(movement.lines.values_list("id", flat=True))
+            PurchaseOrderReceiptLine.objects.filter(receipt_line_id__in=old_line_ids).delete()
+            movement.lines.all().delete()
+            movement_lines = StockMovementLine.objects.bulk_create([
+                StockMovementLine(
+                    movement=movement, product=line["product"], quantity=line["quantity"],
+                    unit_cost=line["unit_cost"], destination_location=line.get("destination_location_obj"),
+                    expiry_date=line.get("expiry_date"),
+                ) for line in lines
+            ])
+            for movement_line, line in zip(movement_lines, lines):
+                order_line = line.get("purchase_order_line_obj")
+                if order_line:
+                    PurchaseOrderReceiptLine.objects.create(
+                        receipt_line=movement_line, order_line=order_line, quantity=line["quantity"],
+                    )
+        for field in ("receipt_date", "notes"):
+            if field in validated_data:
+                setattr(movement, "movement_date" if field == "receipt_date" else field,
+                        validated_data[field])
+        movement.save(update_fields=("movement_date", "notes"))
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        instance.save()
+        return instance
+
 
 class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
     receipt_line = serializers.PrimaryKeyRelatedField(
-        queryset=StockMovementLine.objects.select_related("movement", "product")
+        queryset=StockMovementLine.objects.select_related("movement", "product"),
+        required=False, allow_null=True,
     )
+    description = serializers.CharField(max_length=240, required=False, allow_blank=True)
+    expense_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all(), required=False, allow_null=True)
+    cost_center = serializers.PrimaryKeyRelatedField(queryset=CostCenter.objects.all(), required=False, allow_null=True)
     billed_quantity = serializers.DecimalField(
         max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False,
     )
@@ -170,13 +233,15 @@ class PurchaseInvoiceLineInputSerializer(serializers.Serializer):
 
 
 class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
-    product_code = serializers.CharField(source="receipt_line.product.code", read_only=True)
-    product_name = serializers.CharField(source="receipt_line.product.name_ar", read_only=True)
+    product_code = serializers.CharField(source="receipt_line.product.code", read_only=True, allow_null=True)
+    product_name = serializers.CharField(source="receipt_line.product.name_ar", read_only=True, allow_null=True)
+    expense_account_name = serializers.CharField(source="expense_account.name_ar", read_only=True, allow_null=True)
+    cost_center_name = serializers.CharField(source="cost_center.name_ar", read_only=True, allow_null=True)
     quantity = serializers.DecimalField(
         source="billed_quantity", max_digits=18, decimal_places=4, read_only=True
     )
     receipt_quantity = serializers.DecimalField(
-        source="receipt_line.quantity", max_digits=18, decimal_places=4, read_only=True
+        source="receipt_line.quantity", max_digits=18, decimal_places=4, read_only=True, allow_null=True
     )
     recoverable_tax_amount = serializers.SerializerMethodField()
     nonrecoverable_tax_amount = serializers.SerializerMethodField()
@@ -194,7 +259,8 @@ class PurchaseInvoiceLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseInvoiceLine
         fields = (
-            "id", "receipt_line", "product_code", "product_name", "quantity", "billed_quantity", "receipt_quantity",
+            "id", "receipt_line", "product_code", "product_name", "description", "expense_account", "expense_account_name",
+            "cost_center", "cost_center_name", "quantity", "billed_quantity", "receipt_quantity",
             "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "net_amount", "tax_amount", "recoverable_tax_amount", "nonrecoverable_tax_amount", "total_amount",
         )
         read_only_fields = (
@@ -207,7 +273,9 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     lines = PurchaseInvoiceLineInputSerializer(many=True, write_only=True)
     invoice_lines = PurchaseInvoiceLineSerializer(source="lines", many=True, read_only=True)
     supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
-    receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True)
+    receipt_number = serializers.CharField(source="receipt.receipt_number", read_only=True, allow_null=True)
+    service_acceptance_number = serializers.CharField(source="service_acceptance.acceptance_number", read_only=True, allow_null=True)
+    branch_name = serializers.CharField(source="branch.name_ar", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
@@ -226,7 +294,7 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = PurchaseInvoice
         fields = (
-            "id", "company", "supplier", "supplier_name", "receipt", "receipt_number",
+            "id", "company", "supplier", "supplier_name", "activity", "invoice_type", "service_acceptance", "service_acceptance_number", "branch", "branch_name", "receipt", "receipt_number",
             "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "tax_total",
             "grand_total", "paid_total", "balance_due", "tax_allocations", "notes", "journal_entry", "journal_number", "invoice_lines",
             "lines", "created_at", "posted_at",
@@ -272,9 +340,16 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         instance = self.instance
         company = attrs.get("company", instance.company if instance else None)
         supplier = attrs.get("supplier", instance.supplier if instance else None)
+        receipt = attrs.get("receipt", instance.receipt if instance else None)
+        invoice_type = attrs.get("invoice_type", instance.invoice_type if instance else PurchaseInvoice.InvoiceType.INVENTORY)
+        branch = attrs.get("branch", instance.branch if instance else None)
+        activity = attrs.get("activity", instance.activity if instance else None)
         if supplier and not supplier.is_active and not instance:
             raise serializers.ValidationError({"supplier": "المورد موقوف ولا يمكن إنشاء فاتورة جديدة له."})
-        receipt = attrs.get("receipt", instance.receipt if instance else None)
+        if activity and (
+            not company or activity.company_id != company.pk or not activity.is_active
+        ):
+            raise serializers.ValidationError({"activity": "اختر نشاطًا مفعّلًا تابعًا للشركة."})
         invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
         transaction_currency = attrs.get("transaction_currency", instance.transaction_currency if instance else None)
         exchange_rate = attrs.get("exchange_rate", instance.exchange_rate if instance else None)
@@ -286,7 +361,11 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
             immutable = {
                 "company": instance.company_id,
                 "supplier": instance.supplier_id,
+                "activity": instance.activity_id,
                 "receipt": instance.receipt_id,
+                "service_acceptance": instance.service_acceptance_id,
+                "invoice_type": instance.invoice_type,
+                "branch": instance.branch_id,
                 "invoice_number": instance.invoice_number,
                 "invoice_date": instance.invoice_date,
             }
@@ -317,6 +396,54 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         elif exchange_rate is not None or exchange_rate_date is not None:
             raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
 
+        lines = attrs.get("lines")
+        linked_acceptance = attrs.get("service_acceptance", instance.service_acceptance if instance else None)
+        if linked_acceptance and invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            raise serializers.ValidationError({"service_acceptance": "محضر إنجاز الخدمة يرتبط بفاتورة خدمات ومصروفات مباشرة فقط."})
+        if invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            if receipt is not None:
+                raise serializers.ValidationError({"receipt": "فاتورة الخدمات والمصروفات لا ترتبط بإذن استلام."})
+            if not branch or branch.company_id != company.pk or not branch.is_active:
+                raise serializers.ValidationError({"branch": "اختر فرعًا نشطًا تابعًا للشركة."})
+            acceptance = attrs.get("service_acceptance", instance.service_acceptance if instance else None)
+            if acceptance:
+                if acceptance.status != PurchaseServiceAcceptance.Status.ACCEPTED:
+                    raise serializers.ValidationError({"service_acceptance": "لا يمكن ربط الفاتورة إلا بمحضر إنجاز خدمة معتمد."})
+                if acceptance.company_id != company.pk or acceptance.supplier_id != supplier.pk:
+                    raise serializers.ValidationError({"service_acceptance": "محضر الإنجاز لا يتبع نفس الشركة والمورد."})
+                if acceptance.acceptance_date > invoice_date:
+                    raise serializers.ValidationError({"service_acceptance": "تاريخ الفاتورة لا يسبق تاريخ اعتماد إنجاز الخدمة."})
+            elif attrs.get("service_acceptance") is not None:
+                raise serializers.ValidationError({"service_acceptance": "محضر الإنجاز المحدد غير صالح."})
+            if lines is None:
+                return attrs
+            if not lines:
+                raise serializers.ValidationError({"lines": "أدخل بند خدمة أو مصروف واحدًا على الأقل."})
+            for line in lines:
+                if line.get("receipt_line") is not None:
+                    raise serializers.ValidationError({"lines": "لا تستخدم سطر استلام في فاتورة مباشرة."})
+                line["billed_quantity"] = line.get("billed_quantity") or Decimal("1")
+                account = line.get("expense_account")
+                if not account or account.company_id != company.pk or account.nature != ChartOfAccount.Nature.EXPENSE or not account.is_active or account.is_group or not account.allow_posting:
+                    raise serializers.ValidationError({"lines": "كل بند مباشر يتطلب حساب مصروف نشطًا وتفصيليًا وقابلًا للترحيل."})
+                cost_center = line.get("cost_center")
+                if cost_center and (cost_center.company_id != company.pk or not cost_center.is_active):
+                    raise serializers.ValidationError({"lines": "مركز التكلفة يجب أن يكون نشطًا ويتبع نفس الشركة."})
+                if not str(line.get("description") or "").strip():
+                    raise serializers.ValidationError({"lines": "وصف كل بند خدمة أو مصروف مطلوب."})
+                if transaction_currency and line.get("transaction_unit_price") is None:
+                    raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
+                if not transaction_currency and line.get("unit_price") is None:
+                    raise serializers.ValidationError({"lines": "قيمة البند بالعملة الأساسية مطلوبة."})
+                code = line.get("tax_code")
+                if code and (code.company_id != company.pk or code.country != company.country or not code.is_active
+                             or code.category == TaxCode.Category.REVERSE_CHARGE
+                             or code.effective_from > invoice_date or (code.effective_to and code.effective_to < invoice_date)):
+                    raise serializers.ValidationError({"lines": "يوجد كود ضريبي غير صالح أو لا يسري على الشركة أو تاريخ الفاتورة."})
+            return attrs
+
+        if branch is not None:
+            raise serializers.ValidationError({"branch": "فرع فاتورة المخزون يُحدد من مخزن إذن الاستلام."})
         if not receipt or receipt.stock_movement.status != StockMovement.Status.POSTED:
             raise serializers.ValidationError({"receipt": "يجب ترحيل إذن استلام البضاعة أولاً."})
         if company and receipt.company_id != company.pk:
@@ -328,9 +455,12 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         if receipt.stock_movement.movement_type != StockMovement.MovementType.RECEIPT:
             raise serializers.ValidationError({"receipt": "الإذن المرتبط ليس استلامًا مخزنيًا."})
 
-        lines = attrs.get("lines")
         if lines is None:
             return attrs
+        if any(not line.get("receipt_line") for line in lines):
+            raise serializers.ValidationError({"lines": "كل بند مخزني يجب أن يرتبط بسطر استلام."})
+        if any(line.get("expense_account") or line.get("cost_center") for line in lines):
+            raise serializers.ValidationError({"lines": "حساب المصروف ومركز التكلفة مخصصان لفواتير الخدمات والمصروفات المباشرة."})
         expected = set(receipt.stock_movement.lines.values_list("id", flat=True))
         supplied = [line["receipt_line"].pk for line in lines]
         if not lines or len(supplied) != len(set(supplied)):
@@ -383,7 +513,10 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         for line in lines:
             PurchaseInvoiceLine.objects.create(
                 invoice=invoice,
-                receipt_line=line["receipt_line"],
+                receipt_line=line.get("receipt_line"),
+                description=line.get("description", ""),
+                expense_account=line.get("expense_account"),
+                cost_center=line.get("cost_center"),
                 billed_quantity=line["billed_quantity"],
                 unit_price=line.get("unit_price", Decimal("0")),
                 transaction_unit_price=line.get("transaction_unit_price"),
@@ -419,30 +552,45 @@ class PurchaseInvoiceSerializer(serializers.ModelSerializer):
         lines = validated_data.pop("lines", None)
         invoice = super().update(invoice, validated_data)
         if lines is not None:
-            existing = {line.receipt_line_id: line for line in invoice.lines.select_for_update()}
-            supplied_ids = set()
-            for data in lines:
-                receipt_line = data["receipt_line"]
-                supplied_ids.add(receipt_line.pk)
-                line = existing.get(receipt_line.pk)
-                if line is None:
-                    line = PurchaseInvoiceLine(
-                        invoice=invoice, receipt_line=receipt_line,
-                        billed_quantity=data["billed_quantity"],
+            if invoice.invoice_type == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+                for old_line in invoice.lines.select_for_update():
+                    old_line.delete()
+                for data in lines:
+                    PurchaseInvoiceLine.objects.create(
+                        invoice=invoice, receipt_line=None,
+                        description=data.get("description", ""),
+                        expense_account=data.get("expense_account"),
+                        cost_center=data.get("cost_center"),
+                        billed_quantity=data.get("billed_quantity", Decimal("1")),
                         unit_price=data.get("unit_price", Decimal("0")),
                         transaction_unit_price=data.get("transaction_unit_price"),
                         tax_rate=data["tax_rate"], tax_code=data.get("tax_code"),
                     )
-                else:
-                    line.billed_quantity = data["billed_quantity"]
-                    line.unit_price = data.get("unit_price", line.unit_price)
-                    line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
-                    line.tax_rate = data.get("tax_rate", line.tax_rate)
-                    line.tax_code = data.get("tax_code", line.tax_code)
-                line.save()
-            for receipt_line_id, old_line in existing.items():
-                if receipt_line_id not in supplied_ids:
-                    old_line.delete()
+            else:
+                existing = {line.receipt_line_id: line for line in invoice.lines.select_for_update()}
+                supplied_ids = set()
+                for data in lines:
+                    receipt_line = data["receipt_line"]
+                    supplied_ids.add(receipt_line.pk)
+                    line = existing.get(receipt_line.pk)
+                    if line is None:
+                        line = PurchaseInvoiceLine(
+                            invoice=invoice, receipt_line=receipt_line,
+                            billed_quantity=data["billed_quantity"],
+                            unit_price=data.get("unit_price", Decimal("0")),
+                            transaction_unit_price=data.get("transaction_unit_price"),
+                            tax_rate=data["tax_rate"], tax_code=data.get("tax_code"),
+                        )
+                    else:
+                        line.billed_quantity = data["billed_quantity"]
+                        line.unit_price = data.get("unit_price", line.unit_price)
+                        line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
+                        line.tax_rate = data.get("tax_rate", line.tax_rate)
+                        line.tax_code = data.get("tax_code", line.tax_code)
+                    line.save()
+                for receipt_line_id, old_line in existing.items():
+                    if receipt_line_id not in supplied_ids:
+                        old_line.delete()
 
             invoice.net_total = sum((line.net_amount for line in invoice.lines.all()), Decimal("0"))
             invoice.tax_total = sum((line.tax_amount for line in invoice.lines.all()), Decimal("0"))
@@ -595,8 +743,8 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
                 base_amount = validate_snapshot(base_currency_code=company.base_currency.code,
                     currency_code=currency.code, foreign_amount=amount, rate=rate,
                     rate_date=rate_date, document_date=attrs.get("payment_date"), approved_rate=approved.rate)
-            except ValueError as exc:
-                raise serializers.ValidationError({"exchange_rate": str(exc)}) from exc
+            except ValueError:
+                raise serializers.ValidationError({"exchange_rate": "بيانات سعر الصرف غير صالحة أو لا تطابق السعر المعتمد."}) from None
             if base_amount != attrs.get("amount"):
                 raise serializers.ValidationError({"amount": "المبلغ الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         elif any(attrs.get(field) is not None for field in ("transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date")):
@@ -605,7 +753,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == SupplierPayment.Method.CASH else TreasuryAccount.Kind.BANK
             treasury_account = TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).first()
-            branch = resolve_warehouse_branch(company, invoice.receipt.warehouse)
+            branch = invoice.branch or (resolve_warehouse_branch(company, invoice.receipt.warehouse) if invoice.receipt_id else None)
             branch_id = branch.pk if branch else None
             if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                     or not account.is_active or account.is_group or not account.allow_posting
@@ -662,7 +810,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "quantity": str(line.quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type, "quantity": str(line.quantity),
             "received_quantity": str(line.received_quantity), "remaining_quantity": str(line.remaining_quantity),
             "unit_price": str(line.unit_price), "tax_rate": str(line.tax_rate),
         } for line in obj.lines.select_related("product").all()]
@@ -703,8 +851,8 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         for line in lines:
             product = line["product"]
-            if not company or product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
-                raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
+            if not company or product.company_id != company.pk or product.product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not product.is_active:
+                raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا أو خدمات نشطة تابعة للشركة."})
         return attrs
 
     @transaction.atomic
@@ -792,6 +940,8 @@ class SupplierReturnSerializer(serializers.ModelSerializer):
         lines = attrs.get("lines", [])
         if not invoice or invoice.status != PurchaseInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مورد مرحلة."})
+        if invoice.invoice_type != PurchaseInvoice.InvoiceType.INVENTORY or not invoice.receipt_id:
+            raise serializers.ValidationError({"invoice": "مرتجع المورد متاح لفواتير الأصناف المخزنية المرتبطة باستلام فقط."})
         if invoice.transaction_currency_id and (
             SupplierPayment.objects.filter(invoice=invoice, status=SupplierPayment.Status.POSTED).exists()
             or FxSubledgerRevaluation.objects.filter(purchase_invoice=invoice).filter(
@@ -891,7 +1041,7 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
     def get_line_items(self, obj):
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "requested_quantity": str(line.requested_quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type, "requested_quantity": str(line.requested_quantity),
             "estimated_unit_price": str(line.estimated_unit_price) if line.estimated_unit_price is not None else None,
             "notes": line.notes,
         } for line in obj.lines.select_related("product").all()]
@@ -911,8 +1061,8 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
         if lines is not None:
             for line in lines:
                 product = line["product"]
-                if not company or product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
-                    raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
+                if not company or product.company_id != company.pk or product.product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not product.is_active:
+                    raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا أو خدمات نشطة تابعة للشركة."})
         if attrs.get("required_date") and attrs.get("request_date", self.instance.request_date if self.instance else None) and attrs["required_date"] < attrs.get("request_date", self.instance.request_date if self.instance else None):
             raise serializers.ValidationError({"required_date": "تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب."})
         return attrs
@@ -963,7 +1113,7 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "line_items", "supplier_list", "awarded_quotation", "converted_order", "award_reason", "awarded_by", "awarded_at", "created_at")
 
     def get_line_items(self, obj):
-        return [{"id": x.pk, "product": x.product_id, "product_code": x.product.code, "product_name": x.product.name_ar, "quantity": str(x.quantity), "notes": x.notes} for x in obj.lines.select_related("product")]
+        return [{"id": x.pk, "product": x.product_id, "product_code": x.product.code, "product_name": x.product.name_ar, "product_type": x.product.product_type, "quantity": str(x.quantity), "notes": x.notes} for x in obj.lines.select_related("product")]
 
     def get_supplier_list(self, obj):
         return [{"id": x.supplier_id, "code": x.supplier.code, "name": x.supplier.name_ar, "status": x.status} for x in obj.invitations.select_related("supplier")]
@@ -980,8 +1130,8 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
         product_ids = [x["product"].pk for x in lines]
         if len(product_ids) != len(set(product_ids)):
             raise serializers.ValidationError({"lines": "لا تكرر الصنف داخل طلب العروض؛ اجمع الكمية في بند واحد."})
-        if any(x["product"].company_id != company.pk or x["product"].product_type != Product.ProductType.GOODS or not x["product"].is_active for x in lines):
-            raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة من نفس الشركة."})
+        if any(x["product"].company_id != company.pk or x["product"].product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not x["product"].is_active for x in lines):
+            raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا أو خدمات نشطة من نفس الشركة."})
         source = attrs.get("source_requisition")
         if source:
             if source.company_id != company.pk or source.status != "approved":
@@ -1037,7 +1187,7 @@ class SupplierQuotationSerializer(serializers.ModelSerializer):
         return net, tax, net + tax
 
     def get_line_items(self, obj):
-        return [{"id": x.pk, "rfq_line": x.rfq_line_id, "product_code": x.rfq_line.product.code, "product_name": x.rfq_line.product.name_ar, "quantity": str(x.rfq_line.quantity), "unit_price": str(x.unit_price), "discount_percent": str(x.discount_percent), "tax_rate": str(x.tax_rate), "net_amount": str(x.net_amount), "tax_amount": str(x.tax_amount), "total_amount": str(x.total_amount)} for x in obj.lines.select_related("rfq_line__product")]
+        return [{"id": x.pk, "rfq_line": x.rfq_line_id, "product_code": x.rfq_line.product.code, "product_name": x.rfq_line.product.name_ar, "product_type": x.rfq_line.product.product_type, "quantity": str(x.rfq_line.quantity), "unit_price": str(x.unit_price), "discount_percent": str(x.discount_percent), "tax_rate": str(x.tax_rate), "net_amount": str(x.net_amount), "tax_amount": str(x.tax_amount), "total_amount": str(x.total_amount)} for x in obj.lines.select_related("rfq_line__product")]
 
     def get_total_before_tax(self, obj):
         return str(self._totals(obj)[0])
@@ -1076,3 +1226,77 @@ class SupplierQuotationSerializer(serializers.ModelSerializer):
         SupplierQuotationLine.objects.bulk_create([SupplierQuotationLine(quotation=quotation, **line) for line in lines])
         PurchaseRFQInvitation.objects.filter(rfq=quotation.rfq, supplier=quotation.supplier).update(status=PurchaseRFQInvitation.Status.QUOTED)
         return quotation
+
+
+class PurchaseServiceAcceptanceLineInputSerializer(serializers.Serializer):
+    order_line = serializers.PrimaryKeyRelatedField(queryset=PurchaseOrderLine.objects.select_related("order", "product"))
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=250)
+
+
+class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
+    lines = PurchaseServiceAcceptanceLineInputSerializer(many=True, write_only=True)
+    line_items = serializers.SerializerMethodField()
+    supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    accepted_by_name = serializers.CharField(source="accepted_by.get_full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = PurchaseServiceAcceptance
+        fields = (
+            "id", "company", "order", "order_number", "supplier", "supplier_name",
+            "acceptance_number", "acceptance_date", "status", "notes", "accepted_by",
+            "accepted_by_name", "accepted_at", "lines", "line_items", "created_at",
+        )
+        read_only_fields = ("status", "accepted_by", "accepted_by_name", "accepted_at", "line_items", "created_at")
+
+    def get_line_items(self, obj):
+        return [{
+            "id": line.pk,
+            "order_line": line.order_line_id,
+            "product": line.order_line.product_id,
+            "product_code": line.order_line.product.code,
+            "product_name": line.order_line.product.name_ar,
+            "quantity": str(line.quantity),
+            "notes": line.notes,
+        } for line in obj.lines.select_related("order_line__product")]
+
+    def validate(self, attrs):
+        company = attrs["company"]
+        order = attrs["order"]
+        supplier = attrs["supplier"]
+        lines = attrs["lines"]
+        if order.company_id != company.pk or order.supplier_id != supplier.pk:
+            raise serializers.ValidationError({"order": "أمر الشراء والمورد يجب أن يتبعا الشركة المحددة."})
+        if order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED):
+            raise serializers.ValidationError({"order": "لا يمكن استلام خدمة قبل اعتماد أمر الشراء."})
+        if not lines:
+            raise serializers.ValidationError({"lines": "أضف بند خدمة واحدًا على الأقل."})
+        seen = set()
+        requested_by_line = {}
+        for line in lines:
+            order_line = line["order_line"]
+            if order_line.order_id != order.pk or order_line.product.product_type != Product.ProductType.SERVICE:
+                raise serializers.ValidationError({"lines": "محضر الخدمة يقبل بنود الخدمات التابعة لأمر الشراء فقط."})
+            if order_line.pk in seen:
+                raise serializers.ValidationError({"lines": "لا تكرر بند الخدمة داخل المحضر."})
+            seen.add(order_line.pk)
+            requested_by_line[order_line.pk] = line["quantity"]
+        for line_id, quantity in requested_by_line.items():
+            accepted = PurchaseServiceAcceptanceLine.objects.filter(
+                order_line_id=line_id,
+                acceptance__status=PurchaseServiceAcceptance.Status.ACCEPTED,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if accepted + quantity > PurchaseOrderLine.objects.get(pk=line_id).quantity:
+                raise serializers.ValidationError({"lines": "كمية الخدمة تتجاوز الكمية المتبقية في أمر الشراء."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lines = validated_data.pop("lines")
+        document = PurchaseServiceAcceptance.objects.create(**validated_data)
+        for line in lines:
+            item = PurchaseServiceAcceptanceLine(acceptance=document, **line)
+            item.full_clean()
+            item.save()
+        return document
