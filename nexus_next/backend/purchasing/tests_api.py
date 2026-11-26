@@ -2910,3 +2910,13 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(accepted.data["status"], PurchaseServiceAcceptance.Status.ACCEPTED)
         self.assertEqual(accepted.data["line_items"][0]["quantity"], "2.0000")
         self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        over_acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk,
+            "order": order_id,
+            "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-OVER",
+            "acceptance_date": date.today().isoformat(),
+            "lines": [{"order_line": order_line_id, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(over_acceptance.status_code, 400, over_acceptance.data)
