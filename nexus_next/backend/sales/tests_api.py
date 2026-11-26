@@ -15,7 +15,7 @@ from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
 from sales.models import CustomerReceipt, SalesInvoice, SalesQuotation, SalesDocumentTemplate
-from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
+from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementJournalLink, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
 
@@ -1099,6 +1099,54 @@ class SalesWorkflowTests(APITestCase):
             Decimal("0"),
         )
         self.assertEqual(consumed, Decimal("1.0000"))
+
+        # The reversal movement itself must carry the compensating COGS / inventory journal.
+        reversal_link = StockMovementJournalLink.objects.get(movement=reversal_movement)
+        reversal_lines = list(reversal_link.journal_entry.lines.select_related("account"))
+        inventory_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INVENTORY,
+        ).account
+        cogs_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.COGS,
+        ).account
+        self.assertEqual(reversal_link.journal_entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(
+            sum((line.debit for line in reversal_lines if line.account_id == cogs_account.pk), Decimal("0")),
+            Decimal("40.0000"),
+        )
+        self.assertEqual(
+            sum((line.credit for line in reversal_lines if line.account_id == inventory_account.pk), Decimal("0")),
+            Decimal("40.0000"),
+        )
+        self.assertEqual(
+            sum((line.debit for line in reversal_lines), Decimal("0")),
+            sum((line.credit for line in reversal_lines), Decimal("0")),
+        )
+        inventory_net = (
+            JournalLine.objects.filter(
+                entry__source_type=JournalEntry.Source.INVENTORY,
+                entry__status=JournalEntry.Status.POSTED,
+                account=inventory_account,
+            ).aggregate(total=Sum("debit"))["total"] or Decimal("0")
+        ) - (
+            JournalLine.objects.filter(
+                entry__source_type=JournalEntry.Source.INVENTORY,
+                entry__status=JournalEntry.Status.POSTED,
+                account=inventory_account,
+            ).aggregate(total=Sum("credit"))["total"] or Decimal("0")
+        )
+        self.assertEqual(inventory_net, Decimal("120.0000"))
+        cogs_net = (
+            JournalLine.objects.filter(
+                entry__status=JournalEntry.Status.POSTED, account=cogs_account,
+            ).aggregate(total=Sum("debit"))["total"] or Decimal("0")
+        ) - (
+            JournalLine.objects.filter(
+                entry__status=JournalEntry.Status.POSTED, account=cogs_account,
+            ).aggregate(total=Sum("credit"))["total"] or Decimal("0")
+        )
+        self.assertEqual(cogs_net, Decimal("80.0000"))
+
         repeated = self.client.post(
             f"/api/sales-documents/returns/{created.data['id']}/reverse/",
             {"entry_date": "2026-03-15"}, format="json",
@@ -2721,5 +2769,63 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(invalid_period.status_code, 400, invalid_period.data)
 
+    def test_service_invoice_return_and_reversal_never_create_stock_or_cogs_postings(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.product.unit, code="SERVICE-NO-STOCK",
+            name_ar="خدمة بدون مخزون", product_type=Product.ProductType.SERVICE,
+            stock_class=None, sale_price=Decimal("100"),
+        )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "invoice_number": "INV-SERVICE-NO-STOCK",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "product": service.pk, "quantity": "1",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
 
+        created_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "RET-SERVICE-NO-STOCK",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(created_return.status_code, 201, created_return.data)
+        self.assertIsNone(created_return.data["movement_status"])
+        self.assertEqual(created_return.data["line_items"][0]["cost_amount"], "0.0000")
 
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{created_return.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertIsNone(posted_return.data["movement_status"])
+        self.assertIsNone(posted_return.data["cost_journal_entry"])
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{created_return.data['id']}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+        self.assertIsNone(reversed_return.data["reversal_stock_movement"])
+
+        cogs_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.COGS,
+        ).account
+        self.assertFalse(JournalLine.objects.filter(account=cogs_account).exists())
+        self.assertEqual(
+            StockMovement.objects.filter(company=self.company).count(),
+            1,  # Opening receipt only; service invoice/return/reversal add none.
+        )
+\n
