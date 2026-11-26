@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from rest_framework import serializers
 
 from accounting.models import ChartOfAccount, TaxCode
@@ -11,7 +11,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from customers.models import CustomerDiscountRule
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate
+from .models import CustomerReceipt, CustomerReceiptBatch, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesQuotationLine, SalesDocumentTemplate, SalesReturn, SalesOrder, SalesOrderLine, SalesDeliveryAllocation
 from approvals.snapshots import invoice_discount_snapshot
 
 
@@ -35,17 +35,131 @@ def _customer_discount_for_line(*, customer, product, quantity, gross_invoice_am
         matches.append((rule.priority, specificity, -rule.pk, rule))
     return max(matches, default=(0, 0, 0, None))[3]
 
+class SalesOrderLineInputSerializer(serializers.Serializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"))
+    tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False, default=Decimal("0"))
+    tax_code = serializers.PrimaryKeyRelatedField(queryset=TaxCode.objects.all(), required=False, allow_null=True)
+    discount_percent = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"), max_value=Decimal("100"), required=False, default=Decimal("0"))
+
+
+class SalesOrderLineSerializer(serializers.ModelSerializer):
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
+    allocated_quantity = serializers.SerializerMethodField()
+    remaining_quantity = serializers.SerializerMethodField()
+
+    def get_allocated_quantity(self, obj):
+        return str(obj.delivery_allocations.aggregate(total=Sum("quantity"))["total"] or Decimal("0"))
+
+    def get_remaining_quantity(self, obj):
+        allocated = obj.delivery_allocations.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+        return str(max(obj.quantity - allocated, Decimal("0")))
+
+    class Meta:
+        model = SalesOrderLine
+        fields = ("id", "product", "product_code", "product_name", "quantity", "allocated_quantity",
+                  "remaining_quantity", "unit_price", "tax_rate", "tax_code", "discount_percent",
+                  "discount_amount", "net_amount", "tax_amount", "total_amount")
+        read_only_fields = fields
+
+
+class SalesOrderSerializer(serializers.ModelSerializer):
+    lines = SalesOrderLineInputSerializer(many=True, write_only=True, required=False)
+    order_lines = SalesOrderLineSerializer(source="lines", many=True, read_only=True)
+    customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
+    warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
+
+    class Meta:
+        model = SalesOrder
+        fields = ("id", "company", "customer", "customer_name", "warehouse", "warehouse_name",
+                  "order_number", "order_date", "requested_delivery_date", "status",
+                  "net_total", "discount_total", "tax_total", "grand_total", "notes",
+                  "lines", "order_lines", "created_at", "updated_at")
+        read_only_fields = ("status", "net_total", "discount_total", "tax_total", "grand_total",
+                            "order_lines", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        instance = self.instance
+        company = attrs.get("company", instance.company if instance else None)
+        customer = attrs.get("customer", instance.customer if instance else None)
+        warehouse = attrs.get("warehouse", instance.warehouse if instance else None)
+        order_date = attrs.get("order_date", instance.order_date if instance else None)
+        requested_date = attrs.get("requested_delivery_date", instance.requested_delivery_date if instance else None)
+        if instance and instance.status != SalesOrder.Status.DRAFT:
+            raise serializers.ValidationError("لا يمكن تعديل أمر بيع معتمد.")
+        if instance and company.pk != instance.company_id:
+            raise serializers.ValidationError({"company": "لا يمكن نقل أمر البيع إلى شركة أخرى."})
+        if not customer.is_active or customer.company_id != company.pk:
+            raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
+        if not warehouse.is_active or warehouse.company_id != company.pk:
+            raise serializers.ValidationError({"warehouse": "اختر مخزنًا نشطًا تابعًا للشركة."})
+        if requested_date and order_date and requested_date < order_date:
+            raise serializers.ValidationError({"requested_delivery_date": "تاريخ التسليم المطلوب لا يسبق تاريخ أمر البيع."})
+        lines = attrs.get("lines")
+        if lines is None and not instance:
+            raise serializers.ValidationError({"lines": "أضف بندًا واحدًا على الأقل."})
+        if lines is not None:
+            if not lines:
+                raise serializers.ValidationError({"lines": "أضف بندًا واحدًا على الأقل."})
+            for line in lines:
+                product = line["product"]
+                if product.company_id != company.pk or not product.is_active or product.product_type != Product.ProductType.GOODS:
+                    raise serializers.ValidationError({"lines": "أوامر البيع تقبل أصنافًا مخزنية نشطة تتبع الشركة فقط."})
+                tax_code = line.get("tax_code")
+                if tax_code and (not tax_code.is_active or tax_code.company_id != company.pk or tax_code.country != company.country):
+                    raise serializers.ValidationError({"lines": "كود الضريبة غير نشط أو لا يتبع الشركة."})
+        return attrs
+
+    def _save_lines(self, order, rows):
+        saved = []
+        for row in rows:
+            line = SalesOrderLine(order=order, **row)
+            line.calculate()
+            line.save()
+            saved.append(line)
+        order.net_total = sum((line.net_amount for line in saved), Decimal("0"))
+        order.discount_total = sum((line.discount_amount for line in saved), Decimal("0"))
+        order.tax_total = sum((line.tax_amount for line in saved), Decimal("0"))
+        order.grand_total = order.net_total + order.tax_total
+        order.save(update_fields=("net_total", "discount_total", "tax_total", "grand_total", "updated_at"))
+
+    @transaction.atomic
+    def create(self, validated_data):
+        rows = validated_data.pop("lines")
+        order = SalesOrder.objects.create(
+            **validated_data, created_by=self.context["request"].user,
+        )
+        self._save_lines(order, rows)
+        return order
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        rows = validated_data.pop("lines", None)
+        order = super().update(instance, validated_data)
+        if rows is not None:
+            for line in order.lines.all():
+                line.delete()
+            self._save_lines(order, rows)
+        return order
+
+
 class DeliveryLineInputSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
     quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
     source_location = serializers.IntegerField(required=False, allow_null=True)
     expiry_date = serializers.DateField(required=False, allow_null=True)
+    order_line = serializers.PrimaryKeyRelatedField(queryset=SalesOrderLine.objects.select_related("order"), required=False, allow_null=True)
 
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
         if product.product_type != Product.ProductType.GOODS or not product.is_active:
             raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
+        order_line = attrs.get("order_line")
+        if order_line and order_line.product_id != product.pk:
+            raise serializers.ValidationError({"order_line": "بند أمر البيع لا يطابق الصنف المحدد."})
         if product.track_expiry and not attrs.get("expiry_date"):
             raise serializers.ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
         if not product.track_expiry and attrs.get("expiry_date"):
@@ -56,6 +170,7 @@ class DeliveryLineInputSerializer(serializers.Serializer):
 class SalesDeliverySerializer(serializers.ModelSerializer):
     delivery_number = serializers.CharField(max_length=37)
     lines = DeliveryLineInputSerializer(many=True, write_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True, allow_null=True)
     movement_status = serializers.CharField(source="stock_movement.status", read_only=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     warehouse_name = serializers.CharField(source="warehouse.name_ar", read_only=True)
@@ -64,9 +179,9 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
     class Meta:
         model = SalesDelivery
         fields = ("id", "company", "customer", "customer_name", "warehouse", "warehouse_name",
-                  "delivery_number", "delivery_date", "customer_reference", "notes",
-                  "movement_status", "line_items", "quotation_snapshot", "lines", "created_at")
-        read_only_fields = ("movement_status", "line_items", "quotation_snapshot", "created_at")
+                  "delivery_number", "delivery_date", "customer_reference", "notes", "order", "order_number",
+                  "movement_status", "line_items", "quotation_snapshot", "order_snapshot", "lines", "created_at")
+        read_only_fields = ("movement_status", "line_items", "quotation_snapshot", "order_snapshot", "created_at")
 
     def get_line_items(self, obj):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
@@ -74,6 +189,7 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
             "product_name": line.product.name_ar, "quantity": str(line.quantity),
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
+            "order_line": getattr(getattr(line, "sales_order_allocation", None), "order_line_id", None),
         } for line in obj.stock_movement.lines.select_related("product").all()]
 
     def validate(self, attrs):
@@ -95,6 +211,17 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"customer": "اختر عميلًا نشطًا تابعًا للشركة."})
         if warehouse and (warehouse.company_id != company.pk or not warehouse.is_active):
             raise serializers.ValidationError({"warehouse": "اختر مخزنًا نشطًا تابعًا للشركة."})
+        order = attrs.get("order", instance.order if instance else None)
+        if instance and "order" in attrs and attrs["order"] != instance.order:
+            raise serializers.ValidationError({"order": "لا يمكن تغيير أمر البيع المرتبط بإذن التسليم."})
+        if order:
+            if order.company_id != company.pk or order.customer_id != customer.pk or order.warehouse_id != warehouse.pk:
+                raise serializers.ValidationError({"order": "أمر البيع يجب أن يطابق الشركة والعميل والمخزن."})
+            if order.status not in (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED):
+                raise serializers.ValidationError({"order": "لا يمكن التسليم إلا من أمر بيع معتمد وغير مكتمل."})
+            delivery_date = attrs.get("delivery_date", instance.delivery_date if instance else None)
+            if delivery_date and delivery_date < order.order_date:
+                raise serializers.ValidationError({"delivery_date": "تاريخ التسليم لا يسبق تاريخ أمر البيع."})
         lines = attrs.get("lines")
         if lines is None:
             if instance:
@@ -102,9 +229,18 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         if not lines:
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
+        if order:
+            if instance and "lines" in attrs:
+                raise serializers.ValidationError({"lines": "لا يمكن تغيير بنود إذن مرتبط بأمر بيع؛ أنشئ إذنًا جديدًا للكميات المتبقية."})
+            if not instance:
+                self._validate_order_allocations(order, lines)
+        elif any(line.get("order_line") for line in lines):
+            raise serializers.ValidationError({"lines": "حدد أمر البيع عند ربط بنوده بإذن التسليم."})
         for line in lines:
             if line["product"].company_id != company.pk or not line["product"].is_active or line["product"].product_type != Product.ProductType.GOODS:
                 raise serializers.ValidationError({"lines": "اختر أصنافًا مخزنية نشطة تتبع الشركة؛ الخدمات غير مدعومة في دورة التسليم الحالية."})
+            if order and (not line.get("order_line") or line["order_line"].order_id != order.pk):
+                raise serializers.ValidationError({"lines": "كل صنف في إذن مرتبط بأمر بيع يجب ربطه ببند من نفس الأمر."})
             location_id = line.get("source_location")
             if location_id:
                 location = StorageLocation.objects.filter(
@@ -115,24 +251,91 @@ class SalesDeliverySerializer(serializers.ModelSerializer):
                 line["source_location_obj"] = location
         return attrs
 
+    def _validate_order_allocations(self, order, lines, exclude_delivery_id=None):
+        totals = {}
+        for row in lines:
+            order_line = row.get("order_line")
+            if not order_line or order_line.order_id != order.pk or order_line.product_id != row["product"].pk:
+                raise serializers.ValidationError({"lines": "اربط كل صنف ببند صحيح من أمر البيع."})
+            if order_line.pk in totals:
+                raise serializers.ValidationError({"lines": "لا تكرر بند أمر البيع داخل إذن واحد؛ اجمع الكمية في سطر واحد."})
+            totals[order_line.pk] = row["quantity"]
+        locked_lines = {
+            line.pk: line for line in SalesOrderLine.objects.filter(
+                pk__in=sorted(totals), order_id=order.pk
+            )
+        }
+        for line_id, requested in totals.items():
+            line = locked_lines.get(line_id)
+            if not line:
+                raise serializers.ValidationError({"lines": "بند أمر البيع غير موجود."})
+            delivered = SalesDeliveryAllocation.objects.filter(order_line_id=line_id)
+            if exclude_delivery_id:
+                delivered = delivered.exclude(delivery_id=exclude_delivery_id)
+            already_allocated = delivered.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if already_allocated + requested > line.quantity:
+                remaining = line.quantity - already_allocated
+                raise serializers.ValidationError({
+                    "lines": f"الكمية المطلوبة تتجاوز المتبقي في أمر البيع للصنف {line.product.name_ar}. المتبقي: {remaining}."
+                })
+
     @transaction.atomic
     def create(self, validated_data):
         """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         lines = validated_data.pop("lines")
         company, warehouse = validated_data["company"], validated_data["warehouse"]
+        order = validated_data.get("order")
+        if order:
+            order = SalesOrder.objects.select_for_update().get(pk=order.pk)
+            if order.status not in (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED):
+                raise serializers.ValidationError({"order": "أمر البيع غير متاح للتسليم."})
+            self._validate_order_allocations(order, lines)
+            validated_data["order"] = order
         user = self.context["request"].user
         movement = StockMovement.objects.create(
             company=company, movement_number=f"SD-{validated_data['delivery_number']}",
             movement_type=StockMovement.MovementType.ISSUE, movement_date=validated_data["delivery_date"],
             source_warehouse=warehouse, notes=validated_data.get("notes", ""), created_by=user,
         )
-        StockMovementLine.objects.bulk_create([
-            StockMovementLine(
-                movement=movement, product=line["product"], quantity=line["quantity"],
-                source_location=line.get("source_location_obj"), expiry_date=line.get("expiry_date"),
-            ) for line in lines
-        ])
-        return SalesDelivery.objects.create(**validated_data, stock_movement=movement, created_by=user)
+        order_snapshot = {}
+        if order:
+            order_snapshot = {
+                "order_id": order.pk,
+                "order_number": order.order_number,
+                "order_date": order.order_date.isoformat(),
+                "lines": [{
+                    "order_line_id": row["order_line"].pk,
+                    "product": row["product"].pk,
+                    "quantity": str(row["quantity"]),
+                    "unit_price": str(row["order_line"].unit_price),
+                    "tax_rate": str(row["order_line"].tax_rate),
+                    "tax_code": row["order_line"].tax_code_id,
+                    "discount_percent": str(row["order_line"].discount_percent),
+                    "discount_rule": None,
+                } for row in lines],
+            }
+        delivery = SalesDelivery.objects.create(
+            **validated_data, stock_movement=movement, created_by=user,
+            order_snapshot=order_snapshot,
+        )
+        if order:
+            for row in lines:
+                movement_line = StockMovementLine.objects.create(
+                    movement=movement, product=row["product"], quantity=row["quantity"],
+                    source_location=row.get("source_location_obj"), expiry_date=row.get("expiry_date"),
+                )
+                SalesDeliveryAllocation.objects.create(
+                    delivery=delivery, order_line=row["order_line"],
+                    movement_line=movement_line, quantity=row["quantity"],
+                )
+        else:
+            StockMovementLine.objects.bulk_create([
+                StockMovementLine(
+                    movement=movement, product=line["product"], quantity=line["quantity"],
+                    source_location=line.get("source_location_obj"), expiry_date=line.get("expiry_date"),
+                ) for line in lines
+            ])
+        return delivery
 
     @transaction.atomic
     def update(self, instance, validated_data):
@@ -352,7 +555,9 @@ class SalesDocumentTemplateSerializer(serializers.ModelSerializer):
 
 
 class SalesInvoiceLineInputSerializer(serializers.Serializer):
-    delivery_line = serializers.PrimaryKeyRelatedField(queryset=StockMovementLine.objects.select_related("movement", "product"))
+    delivery_line = serializers.PrimaryKeyRelatedField(queryset=StockMovementLine.objects.select_related("movement", "product"), required=False)
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all(), required=False)
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"), required=False)
     unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     transaction_unit_price = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0"), required=False)
     tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, min_value=Decimal("0"),
@@ -362,52 +567,79 @@ class SalesInvoiceLineInputSerializer(serializers.Serializer):
 
 
 class SalesInvoiceLineSerializer(serializers.ModelSerializer):
-    product_code = serializers.CharField(source="delivery_line.product.code", read_only=True)
-    product_name = serializers.CharField(source="delivery_line.product.name_ar", read_only=True)
-    quantity = serializers.DecimalField(source="delivery_line.quantity", max_digits=18, decimal_places=4, read_only=True)
+    product_code = serializers.CharField(source="product.code", read_only=True)
+    product_name = serializers.CharField(source="product.name_ar", read_only=True)
     discount_rule_name = serializers.CharField(source="discount_rule.notes", read_only=True, allow_null=True)
+    transaction_discount_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesInvoiceLine
-        fields = ("id", "delivery_line", "product_code", "product_name", "quantity",
-                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_rule", "discount_rule_name", "discount_amount", "net_amount", "tax_amount", "total_amount")
+        fields = ("id", "delivery_line", "product", "product_code", "product_name", "quantity",
+                  "unit_price", "transaction_unit_price", "transaction_net_amount", "transaction_discount_amount", "transaction_tax_amount", "transaction_total_amount", "tax_rate", "tax_code", "discount_percent", "discount_rule", "discount_rule_name", "discount_amount", "net_amount", "tax_amount", "total_amount")
+
+    def get_transaction_discount_amount(self, obj):
+        if obj.transaction_unit_price is None or obj.transaction_net_amount is None:
+            return None
+        gross = obj.quantity * obj.transaction_unit_price
+        return str((gross - obj.transaction_net_amount).quantize(Decimal("0.0001")))
 
 
 class SalesInvoiceSerializer(serializers.ModelSerializer):
     lines = SalesInvoiceLineInputSerializer(many=True, write_only=True)
     invoice_lines = SalesInvoiceLineSerializer(source="lines", many=True, read_only=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
-    delivery_number = serializers.CharField(source="delivery.delivery_number", read_only=True)
+    delivery_number = serializers.CharField(source="delivery.delivery_number", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     paid_total = serializers.SerializerMethodField()
     balance_due = serializers.SerializerMethodField()
     approval_status = serializers.SerializerMethodField()
+    transaction_currency_code = serializers.CharField(source="transaction_currency.code", read_only=True, allow_null=True)
+    transaction_discount_total = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesInvoice
-        fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number",
-                  "invoice_number", "invoice_date", "transaction_currency", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
+        fields = ("id", "company", "customer", "customer_name", "delivery", "delivery_number", "branch",
+                  "invoice_number", "invoice_date", "transaction_currency", "transaction_currency_code", "exchange_rate", "exchange_rate_date", "transaction_net_total", "transaction_discount_total", "transaction_tax_total", "transaction_grand_total", "status", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                   "paid_total", "balance_due", "approval_status", "notes", "journal_entry", "journal_number",
                   "invoice_lines", "lines", "print_template_snapshot", "created_at", "posted_at")
         read_only_fields = ("status", "transaction_net_total", "transaction_tax_total", "transaction_grand_total", "net_total", "discount_total", "discount_approval_limit", "invoice_approval_limit", "tax_total", "grand_total",
                             "balance_due", "journal_entry", "journal_number", "invoice_lines",
                             "created_at", "posted_at", "print_template_snapshot")
 
+    def get_transaction_discount_total(self, obj):
+        if not obj.transaction_currency_id:
+            return None
+        total = sum((
+            line.quantity * line.transaction_unit_price - line.transaction_net_amount
+            for line in obj.lines.all()
+            if line.transaction_unit_price is not None and line.transaction_net_amount is not None
+        ), Decimal("0"))
+        return str(total.quantize(Decimal("0.0001")))
+
+    def _paid_amount(self, obj):
+        direct_paid = (
+            sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
+            if obj.transaction_currency_id else
+            sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
+        )
+        batch_paid = sum(
+            (row.amount for row in obj.receipt_batch_allocations.all()
+             if row.batch.status == CustomerReceiptBatch.Status.POSTED),
+            Decimal("0"),
+        )
+        return direct_paid + batch_paid
+
     def get_paid_total(self, obj):
-        """حساب إجمالي المبالغ المسددة والمعتمدة للمستند."""
-        if obj.transaction_currency_id:
-            paid = sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        else:
-            paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        return str(paid)
+        """حساب إجمالي التحصيلات المباشرة والمخصصة من سندات القبض المجمعة."""
+        return str(self._paid_amount(obj))
 
     def get_balance_due(self, obj):
-        """حساب الرصيد المتبقي بعد خصم الدفعات المرحلة."""
-        if obj.transaction_currency_id:
-            paid = sum((r.carrying_base_amount or Decimal("0") for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        else:
-            paid = sum((r.amount for r in obj.receipts.all() if r.status == CustomerReceipt.Status.POSTED), Decimal("0"))
-        return str(max(obj.grand_total - paid, Decimal("0")))
+        """حساب الرصيد المتبقي بعد خصم التحصيلات والمردودات المرحلة."""
+        paid = self._paid_amount(obj)
+        returned = obj.returns.filter(
+            status=SalesReturn.Status.POSTED,
+        ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+        return str(max(obj.grand_total - paid - returned, Decimal("0")))
 
     def get_approval_status(self, obj):
         """تحديد حالة الموافقة بناءً على حدود الاعتماد ولقطة الفاتورة الحالية."""
@@ -440,6 +672,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         company = attrs.get("company", instance.company if instance else None)
         customer = attrs.get("customer", instance.customer if instance else None)
         delivery = attrs.get("delivery", instance.delivery if instance else None)
+        branch = attrs.get("branch", instance.branch if instance else None)
         invoice_date = attrs.get("invoice_date", instance.invoice_date if instance else None)
         transaction_currency = attrs.get("transaction_currency", instance.transaction_currency if instance else None)
         exchange_rate = attrs.get("exchange_rate", instance.exchange_rate if instance else None)
@@ -452,6 +685,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 "company": instance.company_id,
                 "customer": instance.customer_id,
                 "delivery": instance.delivery_id,
+                "branch": instance.branch_id,
                 "invoice_number": instance.invoice_number,
                 "invoice_date": instance.invoice_date,
             }
@@ -470,10 +704,18 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             if "lines" not in attrs:
                 return attrs
 
-        if not delivery or delivery.stock_movement.status != StockMovement.Status.POSTED:
-            raise serializers.ValidationError({"delivery": "يجب ترحيل إذن التسليم أولًا."})
-        if delivery.company_id != company.pk or delivery.customer_id != customer.pk:
-            raise serializers.ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة."})
+        if delivery:
+            if delivery.stock_movement.status != StockMovement.Status.POSTED:
+                raise serializers.ValidationError({"delivery": "يجب ترحيل إذن التسليم أولًا."})
+            if invoice_date < delivery.delivery_date:
+                raise serializers.ValidationError({"invoice_date": "تاريخ الفاتورة لا يجوز أن يسبق تاريخ إذن التسليم."})
+            if delivery.company_id != company.pk or delivery.customer_id != customer.pk:
+                raise serializers.ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة."})
+            resolved_branch = resolve_warehouse_branch(company, delivery.warehouse)
+            if branch and resolved_branch and branch.pk != resolved_branch.pk:
+                raise serializers.ValidationError({"branch": "فرع الفاتورة لا يطابق فرع إذن التسليم أو الفرع الافتراضي للمخزن."})
+        elif not branch or branch.company_id != company.pk or not branch.is_active:
+            raise serializers.ValidationError({"branch": "حدد فرعًا نشطًا تابعًا للشركة لفاتورة الخدمة."})
         if not customer.is_active:
             raise serializers.ValidationError({"customer": "العميل موقوف."})
 
@@ -490,15 +732,33 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"transaction_currency": "حدد العملة الأجنبية قبل إدخال سعر الصرف."})
 
         lines = attrs.get("lines", [])
-        expected = set(delivery.stock_movement.lines.values_list("id", flat=True))
-        supplied = [line["delivery_line"].pk for line in lines]
-        if not supplied or set(supplied) != expected or len(supplied) != len(expected):
-            raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن التسليم مرة واحدة دون حذف أو تكرار."})
+        if not lines:
+            raise serializers.ValidationError({"lines": "أضف بندًا واحدًا على الأقل."})
+        if delivery:
+            expected = set(delivery.stock_movement.lines.values_list("id", flat=True))
+            supplied = [line.get("delivery_line").pk for line in lines if line.get("delivery_line")]
+            if len(supplied) != len(lines) or not supplied or set(supplied) != expected or len(supplied) != len(expected):
+                raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن التسليم مرة واحدة دون حذف أو تكرار."})
+        else:
+            for line in lines:
+                product = line.get("product")
+                if not product or product.product_type != Product.ProductType.SERVICE or product.company_id != company.pk or not product.is_active:
+                    raise serializers.ValidationError({"lines": "فاتورة الخدمة تقبل خدمات تابعة للشركة فقط، دون بنود مخزنية."})
+                quantity = line.get("quantity")
+                if not quantity:
+                    raise serializers.ValidationError({"lines": "الكمية مطلوبة لكل خدمة."})
+                quantum = Decimal("1").scaleb(-product.unit.decimal_places)
+                if quantity != quantity.quantize(quantum):
+                    raise serializers.ValidationError({
+                        "lines": f"كمية الخدمة {product.code} تتجاوز دقة وحدة القياس ({product.unit.decimal_places} منازل عشرية)."
+                    })
         for line in lines:
             if transaction_currency and line.get("transaction_unit_price") is None:
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأجنبية مطلوب لكل بند."})
             if not transaction_currency and line.get("unit_price") is None:
                 raise serializers.ValidationError({"lines": "سعر الوحدة بالعملة الأساسية مطلوب لكل بند."})
+            if delivery and line.get("product") and line["product"].pk != line["delivery_line"].product_id:
+                raise serializers.ValidationError({"lines": "الصنف لا يطابق بند إذن التسليم."})
             code = line.get("tax_code")
             if code and (
                 code.company_id != company.pk or code.country != company.country or not code.is_active
@@ -580,7 +840,8 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             base_unit_price = line.get("unit_price")
             if base_unit_price is None and line.get("transaction_unit_price") is not None and invoice.exchange_rate:
                 base_unit_price = line["transaction_unit_price"] * invoice.exchange_rate
-            gross_invoice_amount += line["delivery_line"].quantity * (base_unit_price or Decimal("0"))
+            quantity = line.get("quantity") or (line["delivery_line"].quantity if line.get("delivery_line") else Decimal("0"))
+            gross_invoice_amount += quantity * (base_unit_price or Decimal("0"))
         discount_rules = list(
             CustomerDiscountRule.objects.filter(company=invoice.company, is_active=True, effective_from__lte=invoice.invoice_date)
             .filter(Q(effective_to__isnull=True) | Q(effective_to__gte=invoice.invoice_date))
@@ -590,13 +851,15 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             .order_by("-priority", "id")
         )
         for line in lines:
-            delivery_line = line["delivery_line"]
+            delivery_line = line.get("delivery_line")
+            product = line.get("product") or delivery_line.product
+            quantity = line.get("quantity") or (delivery_line.quantity if delivery_line else Decimal("1"))
             selected_rule = None
             if "discount_percent" in line:
                 discount_percent = line["discount_percent"]
             else:
                 selected_rule = _customer_discount_for_line(
-                    customer=invoice.customer, product=delivery_line.product, quantity=delivery_line.quantity,
+                    customer=invoice.customer, product=product, quantity=quantity,
                     gross_invoice_amount=gross_invoice_amount, rules=discount_rules,
                 )
                 discount_percent = selected_rule.discount_percent if selected_rule else invoice.customer.default_discount_percent
@@ -605,6 +868,8 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 unit_price=line.get("unit_price", Decimal("0")),
                 transaction_unit_price=line.get("transaction_unit_price"),
                 delivery_line=delivery_line,
+                product=product,
+                quantity=quantity,
                 tax_rate=line.get("tax_rate", Decimal("0")),
                 tax_code=line.get("tax_code"),
                 discount_percent=discount_percent,
@@ -622,10 +887,20 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
         lines = validated_data.pop("lines", None)
         if lines is not None:
-            existing = {line.delivery_line_id: line for line in instance.lines.all()}
-            for data in lines:
-                delivery_line = data.pop("delivery_line")
-                line = existing[delivery_line.pk]
+            existing = list(instance.lines.order_by("id"))
+            if len(existing) != len(lines):
+                raise serializers.ValidationError({"lines": "لا يمكن إضافة أو حذف بنود من فاتورة موجودة؛ أنشئ الفاتورة من جديد قبل الترحيل."})
+            for line, data in zip(existing, lines):
+                delivery_line = data.pop("delivery_line", None)
+                product = data.pop("product", None)
+                if delivery_line is not None:
+                    line.delivery_line = delivery_line
+                    line.product = delivery_line.product
+                    line.quantity = delivery_line.quantity
+                else:
+                    if product is not None:
+                        line.product = product
+                    line.quantity = data.get("quantity", line.quantity)
                 line.unit_price = data.get("unit_price", line.unit_price)
                 line.transaction_unit_price = data.get("transaction_unit_price", line.transaction_unit_price)
                 line.tax_rate = data.get("tax_rate", line.tax_rate)
@@ -642,6 +917,7 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     payment_account = serializers.PrimaryKeyRelatedField(queryset=ChartOfAccount.objects.all(), required=False, allow_null=True)
     customer_name = serializers.CharField(source="customer.name_ar", read_only=True)
     invoice_number = serializers.CharField(source="invoice.invoice_number", read_only=True)
+    transaction_currency_code = serializers.CharField(source="transaction_currency.code", read_only=True, allow_null=True)
     journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True, allow_null=True)
     payment_account_name = serializers.CharField(source="payment_account.name_ar", read_only=True, allow_null=True)
 
@@ -657,7 +933,7 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerReceipt
         fields = ("id", "company", "customer", "customer_name", "invoice", "invoice_number",
-                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
+                  "receipt_number", "receipt_date", "method", "payment_account", "payment_account_name", "amount", "transaction_currency", "transaction_currency_code", "transaction_amount", "exchange_rate", "exchange_rate_date", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "reference", "status",
                   "journal_entry", "journal_number", "created_at", "posted_at", "reversal_journal_entry")
         read_only_fields = ("status", "carrying_base_amount", "historical_carrying_base_amount", "realized_fx_gain", "realized_fx_loss", "journal_entry", "journal_number", "created_at", "posted_at")
 
@@ -668,6 +944,11 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"customer": "العميل موقوف."})
         if invoice.status != SalesInvoice.Status.POSTED:
             raise serializers.ValidationError({"invoice": "اختر فاتورة مبيعات مرحلة."})
+        receipt_date = attrs.get("receipt_date")
+        if receipt_date and receipt_date < invoice.invoice_date:
+            raise serializers.ValidationError({
+                "receipt_date": "تاريخ سند القبض لا يجوز أن يسبق تاريخ فاتورة المبيعات."
+            })
         if invoice.company_id != company.pk or invoice.customer_id != customer.pk:
             raise serializers.ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة."})
         if invoice.transaction_currency_id:
@@ -685,8 +966,8 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
                 base_amount = validate_snapshot(base_currency_code=company.base_currency.code,
                     currency_code=currency.code, foreign_amount=amount, rate=rate,
                     rate_date=rate_date, document_date=attrs.get("receipt_date"), approved_rate=approved.rate)
-            except ValueError as exc:
-                raise serializers.ValidationError({"exchange_rate": str(exc)}) from exc
+            except ValueError:
+                raise serializers.ValidationError({"exchange_rate": "بيانات سعر الصرف غير صالحة أو لا تطابق السعر المعتمد."}) from None
             if base_amount != attrs.get("amount"):
                 raise serializers.ValidationError({"amount": "المبلغ الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف."})
         elif any(attrs.get(field) is not None for field in ("transaction_currency", "transaction_amount", "exchange_rate", "exchange_rate_date")):
@@ -695,7 +976,10 @@ class CustomerReceiptSerializer(serializers.ModelSerializer):
         if account:
             expected_kind = TreasuryAccount.Kind.CASH if attrs.get("method") == CustomerReceipt.Method.CASH else TreasuryAccount.Kind.BANK
             treasury_account = TreasuryAccount.objects.filter(company=company, account=account, kind=expected_kind, is_active=True).first()
-            branch = resolve_warehouse_branch(company, invoice.delivery.warehouse)
+            if invoice.delivery_id:
+                branch = resolve_warehouse_branch(company, invoice.delivery.warehouse)
+            else:
+                branch = invoice.branch
             branch_id = branch.pk if branch else None
             if (account.company_id != company.pk or account.nature != ChartOfAccount.Nature.ASSET
                     or not account.is_active or account.is_group or not account.allow_posting

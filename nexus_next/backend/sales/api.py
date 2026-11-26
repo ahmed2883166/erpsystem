@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -17,10 +17,10 @@ from accounting.models import FxSubledgerRevaluation, JournalEntry, JournalLine
 from accounting.services import reverse_operational_journal
 from accounting.fx_subledger_services import revalue_fx_invoice
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, is_platform_owner
-from companies.models import Branch
+from companies.models import Branch, CompanyMembership
 from inventory.models import StockMovement
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesQuotation, SalesDocumentTemplate
-from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer
+from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine, SalesReturn, SalesReturnLine, SalesQuotation, SalesDocumentTemplate, SalesOrder, SalesDeliveryAllocation
+from .serializers import CustomerReceiptSerializer, SalesDeliverySerializer, SalesInvoiceSerializer, SalesQuotationSerializer, SalesDocumentTemplateSerializer, SalesOrderSerializer
 from .services import post_customer_receipt, post_sales_delivery, post_sales_invoice
 
 
@@ -49,6 +49,44 @@ def _sales_warehouse_accessible(user, warehouse):
     return bool(branch and can_access_branch(user, branch.pk, warehouse.company_id))
 
 
+def _historical_branch_accessible(user, branch_id, company_id):
+    """السماح بقراءة تاريخ الفرع الموقوف للمستخدم المصرح له به فقط."""
+    if not Branch.objects.filter(pk=branch_id, company_id=company_id).exists():
+        return False
+    if user.is_superuser and not is_platform_owner(user):
+        return True
+    return CompanyMembership.objects.filter(
+        user=user, company_id=company_id, is_active=True, company__is_active=True,
+    ).filter(
+        Q(all_branches=True) | Q(branches__id=branch_id, branches__company_id=company_id)
+    ).exists()
+
+
+def _historical_sales_invoice_queryset(user, company_id):
+    """نطاق فواتير التقارير التاريخية مع الاحتفاظ بصلاحيات الفروع حتى عند إيقافها."""
+    qs = SalesInvoice.objects.filter(company_id=company_id)
+    if user.is_superuser and not is_platform_owner(user):
+        return qs
+
+    memberships = CompanyMembership.objects.filter(
+        user=user, company_id=company_id, is_active=True, company__is_active=True,
+    )
+    if memberships.filter(all_branches=True).exists():
+        branch_ids = Branch.objects.filter(company_id=company_id).values("id")
+    else:
+        branch_ids = memberships.filter(
+            branches__company_id=company_id,
+        ).values("branches__id")
+
+    scope = Q(delivery__warehouse__branch_id__in=branch_ids) | Q(branch_id__in=branch_ids)
+    default_branch = Branch.objects.filter(
+        company_id=company_id, is_active=True,
+    ).order_by("-is_head_office", "code").first()
+    if default_branch and _historical_branch_accessible(user, default_branch.pk, company_id):
+        scope |= Q(delivery__isnull=False, delivery__warehouse__branch__isnull=True)
+    return qs.filter(scope).distinct()
+
+
 
 
 
@@ -65,6 +103,92 @@ class SalesBaseViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         """تنفيذ الحذف المسموح به مع حماية السجلات المرتبطة والمراحل المالية."""
         raise PermissionDenied("لا يمكن حذف مستندات المبيعات؛ استخدم إجراء مردود المبيعات أو عكس سند القبض المعتمد حسب نوع المستند.")
+
+
+class SalesOrderViewSet(SalesBaseViewSet):
+    """إدارة أوامر البيع واعتمادها قبل بدء التسليم."""
+    serializer_class = SalesOrderSerializer
+    queryset = SalesOrder.objects.select_related("company", "customer", "warehouse").prefetch_related("lines__product", "lines__tax_code", "lines__delivery_allocations")
+    filterset_fields = ("company", "customer", "warehouse", "status", "order_date")
+    search_fields = ("order_number", "customer__name_ar")
+    ordering_fields = ("order_date", "order_number", "created_at", "grand_total")
+
+    def get_queryset(self):
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if self.request.user.is_superuser and not is_platform_owner(self.request.user):
+            return qs
+        branches = accessible_branches(self.request.user)
+        default_company_ids = []
+        for company_id in accessible_companies(self.request.user).values_list("id", flat=True):
+            default_branch = Branch.objects.filter(
+                company_id=company_id, is_active=True
+            ).order_by("-is_head_office", "code").first()
+            if default_branch and can_access_branch(self.request.user, default_branch.pk, company_id):
+                default_company_ids.append(company_id)
+        return qs.filter(
+            Q(warehouse__branch__in=branches)
+            | Q(warehouse__branch__isnull=True, company_id__in=default_company_ids)
+        )
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_write(data["company"].pk)
+        if not _sales_warehouse_accessible(self.request.user, data["warehouse"]):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مخزن أمر البيع.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        order = serializer.instance
+        self._check_write(order.company_id)
+        if order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل أمر بيع معتمد.")
+        warehouse = serializer.validated_data.get("warehouse", order.warehouse)
+        if not _sales_warehouse_accessible(self.request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مخزن أمر البيع.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._check_write(instance.company_id)
+        if instance.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر بيع معتمد.")
+        for line in instance.lines.all():
+            line.delete()
+        instance.delete()
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def cancel(self, request, pk=None):
+        order = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)), pk=self.kwargs["pk"],
+        )
+        self.check_object_permissions(request, order)
+        self._check_write(order.company_id)
+        if order.status not in (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_DELIVERED):
+            raise ValidationError("لا يمكن إلغاء أمر البيع في حالته الحالية.")
+        if order.deliveries.filter(stock_movement__status=StockMovement.Status.DRAFT).exists():
+            raise ValidationError("احذف أذون التسليم المسودة أولًا قبل إلغاء أمر البيع.")
+        order.status = SalesOrder.Status.CANCELLED
+        order.save(update_fields=("status", "updated_at"))
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def confirm(self, request, pk=None):
+        order = get_object_or_404(
+            self.get_queryset().select_for_update(of=("self",)), pk=self.kwargs["pk"],
+        )
+        self.check_object_permissions(request, order)
+        self._check_write(order.company_id)
+        if order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("أمر البيع ليس في حالة مسودة.")
+        if not order.lines.exists():
+            raise ValidationError("لا يمكن اعتماد أمر بيع بدون بنود.")
+        if not order.customer.is_active or not order.warehouse.is_active:
+            raise ValidationError("العميل أو المخزن موقوف.")
+        order.status = SalesOrder.Status.CONFIRMED
+        order.save(update_fields=("status", "updated_at"))
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
 
 
 class SalesDeliveryViewSet(SalesBaseViewSet):
@@ -123,6 +247,7 @@ class SalesDeliveryViewSet(SalesBaseViewSet):
         if hasattr(instance, "invoice"):
             raise ValidationError("لا يمكن حذف إذن تسليم مرتبط بفاتورة.")
         movement = instance.stock_movement
+        SalesDeliveryAllocation.objects.filter(delivery=instance).delete()
         instance.delete()
         movement.delete()
 
@@ -281,7 +406,11 @@ class SalesQuotationViewSet(SalesBaseViewSet):
         if quotation.valid_until < timezone.localdate():
             quotation.status = SalesQuotation.Status.EXPIRED
             quotation.save(update_fields=("status", "updated_at"))
-            raise ValidationError("انتهت صلاحية عرض السعر.")
+            # Return normally so the surrounding atomic block commits the EXPIRED status.
+            return Response(
+                {"detail": "انتهت صلاحية عرض السعر."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             warehouse_id = int(request.data.get("warehouse"))
         except (TypeError, ValueError):
@@ -339,7 +468,7 @@ class SalesQuotationViewSet(SalesBaseViewSet):
 
 class SalesInvoiceViewSet(SalesBaseViewSet):
     serializer_class = SalesInvoiceSerializer
-    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "journal_entry").prefetch_related("lines__delivery_line__product", "lines__tax_code", "receipts", "approval_requests")
+    queryset = SalesInvoice.objects.select_related("company", "customer", "delivery", "delivery__warehouse", "branch", "journal_entry", "transaction_currency").prefetch_related("lines__delivery_line__product", "lines__product", "lines__tax_code", "receipts", "receipt_batch_allocations__batch", "approval_requests")
     filterset_fields = ("company", "customer", "status", "invoice_date")
     search_fields = ("invoice_number", "customer__name_ar", "delivery__delivery_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
@@ -357,7 +486,8 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 default_company_ids.append(company_id)
         return qs.filter(
             Q(delivery__warehouse__branch__in=branches)
-            | Q(delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(delivery__isnull=False, delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(branch__in=branches)
         )
 
     def create(self, request, *args, **kwargs):
@@ -372,9 +502,12 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        warehouse = data["delivery"].warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        delivery = data.get("delivery")
+        if delivery:
+            if not _sales_warehouse_accessible(self.request.user, delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        elif not data.get("branch") or not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة الخدمة.")
         serializer.save()
 
     def perform_update(self, serializer):
@@ -383,19 +516,24 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         self._check_write(invoice.company_id)
         if invoice.status != SalesInvoice.Status.DRAFT:
             raise ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
     @transaction.atomic
     def perform_destroy(self, instance):
         """حذف فاتورة مسودة بلا تحصيل أو اعتماد أو مردود أو أثر إعادة تقييم."""
-        invoice = SalesInvoice.objects.select_for_update().select_related(
-            "company", "delivery__warehouse"
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related(
+            "company", "delivery__warehouse", "branch"
         ).get(pk=instance.pk)
         self._check_write(invoice.company_id)
-        if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if invoice.status != SalesInvoice.Status.DRAFT or invoice.journal_entry_id:
             raise ValidationError("لا يمكن حذف فاتورة مبيعات مرحلة أو مرتبطة بقيد.")
@@ -416,9 +554,11 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن التسليم.")
+        elif not invoice.branch_id or not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة الخدمة.")
         invoice.print_template_snapshot = _document_template_snapshot(invoice.company, SalesDocumentTemplate.DocumentType.INVOICE)
         invoice.save(update_fields=("print_template_snapshot",))
         invoice = post_sales_invoice(invoice.pk, request.user)
@@ -429,7 +569,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
     def revalue(self, request, pk=None):
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
+        if invoice.delivery_id:
+            if not _sales_warehouse_accessible(request.user, invoice.delivery.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not invoice.branch_id or not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         revaluation_date = parse_date(request.data.get("revaluation_date", ""))
         rate_date = parse_date(request.data.get("rate_date", ""))
@@ -509,9 +652,9 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         invoices = self.get_queryset().filter(
             company_id=company_id, customer_id=customer_id,
             status=SalesInvoice.Status.POSTED,
-        ).select_related("customer", "delivery__warehouse")
+        ).select_related("customer", "delivery__warehouse", "branch")
         if branch_id:
-            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id))
 
         events = []
         for invoice in invoices:
@@ -522,15 +665,64 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "debit": invoice.grand_total, "credit": Decimal("0"), "sort": 0,
             })
         receipts = CustomerReceipt.objects.filter(
-            invoice__in=invoices, status=CustomerReceipt.Status.POSTED,
-        ).select_related("invoice")
+            invoice__in=invoices,
+            status__in=(CustomerReceipt.Status.POSTED, CustomerReceipt.Status.REVERSED),
+        ).select_related("invoice", "journal_entry__reversal_entry")
         for receipt in receipts:
+            carrying_amount = (
+                receipt.carrying_base_amount
+                if receipt.carrying_base_amount is not None else receipt.amount
+            )
             events.append({
                 "date": receipt.receipt_date, "kind": "receipt",
                 "number": receipt.receipt_number,
                 "description": f"سند قبض عن فاتورة {receipt.invoice.invoice_number}",
-                "debit": Decimal("0"), "credit": receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount, "sort": 1,
+                "debit": Decimal("0"), "credit": carrying_amount, "sort": 1,
             })
+            reversal = (
+                receipt.journal_entry.reversal_entry
+                if receipt.status == CustomerReceipt.Status.REVERSED and receipt.journal_entry_id
+                else None
+            )
+            if reversal:
+                events.append({
+                    "date": reversal.entry_date, "kind": "receipt_reversal",
+                    "number": f"REV-{receipt.receipt_number}",
+                    "description": f"عكس سند قبض العميل {receipt.receipt_number}",
+                    "debit": carrying_amount, "credit": Decimal("0"), "sort": 3,
+                })
+        receipt_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, customer_id=customer_id,
+            branch__in=accessible_branches(request.user),
+            status__in=(CustomerReceiptBatch.Status.POSTED, CustomerReceiptBatch.Status.REVERSED),
+        ).select_related("journal_entry", "reversal_journal_entry").prefetch_related("allocations__invoice")
+        if branch_id:
+            receipt_batches = receipt_batches.filter(branch_id=branch_id)
+        statement_as_of = date_to or timezone.localdate()
+        for batch in receipt_batches:
+            invoice_numbers = ", ".join(
+                allocation.invoice.invoice_number
+                for allocation in batch.allocations.filter(
+                    allocation_date__lte=statement_as_of,
+                ).select_related("invoice")
+            )
+            description = (
+                f"سند قبض مجمع عن الفواتير {invoice_numbers}"
+                if invoice_numbers else "دفعة مقدمة غير مخصصة من العميل"
+            )
+            events.append({
+                "date": batch.receipt_date, "kind": "receipt_batch",
+                "number": batch.receipt_number, "description": description,
+                "debit": Decimal("0"), "credit": batch.amount, "sort": 1,
+            })
+            if batch.status == CustomerReceiptBatch.Status.REVERSED and batch.reversal_journal_entry_id:
+                events.append({
+                    "date": batch.reversal_date or batch.reversal_journal_entry.entry_date,
+                    "kind": "receipt_batch_reversal",
+                    "number": f"REV-{batch.receipt_number}",
+                    "description": f"عكس سند القبض المجمع {batch.receipt_number}",
+                    "debit": batch.amount, "credit": Decimal("0"), "sort": 3,
+                })
         returns = SalesReturn.objects.filter(
             invoice__in=invoices,
             status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
@@ -617,11 +809,13 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             company_id=company_id,
             status=SalesInvoice.Status.POSTED,
             invoice_date__lte=as_of,
-        ).select_related("customer", "delivery__warehouse").prefetch_related("receipts")
+        ).select_related("customer", "delivery__warehouse", "branch").prefetch_related(
+            "receipts__journal_entry__reversal_entry"
+        )
         if customer_id:
             invoices = invoices.filter(customer_id=customer_id)
         if branch_id:
-            invoices = invoices.filter(delivery__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id))
 
         returned_by_invoice = {
             row["invoice_id"]: row["total"]
@@ -632,19 +826,44 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
             ).values("invoice_id").annotate(total=Sum("grand_total"))
         }
+        batch_paid_by_invoice = {
+            row["invoice_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                invoice__in=invoices, batch__receipt_date__lte=as_of,
+                allocation_date__lte=as_of,
+            ).filter(
+                Q(batch__status=CustomerReceiptBatch.Status.POSTED)
+                | Q(batch__status=CustomerReceiptBatch.Status.REVERSED, batch__reversal_date__gt=as_of)
+            ).values("invoice_id").annotate(total=Sum("amount"))
+        }
         customers = {}
         totals = {
             "not_due": Decimal("0"), "1_30": Decimal("0"),
             "31_60": Decimal("0"), "61_90": Decimal("0"),
             "over_90": Decimal("0"), "total_due": Decimal("0"),
+            "unallocated_advances": Decimal("0"),
         }
         for invoice in invoices:
-            paid_as_of = sum(
-                ((receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount) for receipt in invoice.receipts.all()
-                 if receipt.status == CustomerReceipt.Status.POSTED
-                 and receipt.receipt_date <= as_of),
-                Decimal("0"),
-            )
+            paid_as_of = Decimal("0")
+            for receipt in invoice.receipts.all():
+                if (
+                    receipt.status not in (CustomerReceipt.Status.POSTED, CustomerReceipt.Status.REVERSED)
+                    or receipt.receipt_date > as_of
+                ):
+                    continue
+                reversal = (
+                    receipt.journal_entry.reversal_entry
+                    if receipt.status == CustomerReceipt.Status.REVERSED and receipt.journal_entry_id
+                    else None
+                )
+                if reversal and reversal.entry_date <= as_of:
+                    continue
+                paid_as_of += (
+                    receipt.carrying_base_amount
+                    if receipt.carrying_base_amount is not None else receipt.amount
+                )
+            batch_paid_as_of = batch_paid_by_invoice.get(invoice.pk, Decimal("0"))
+            paid_as_of += batch_paid_as_of
             returned_as_of = returned_by_invoice.get(invoice.pk, Decimal("0"))
             balance_due = max(invoice.grand_total - paid_as_of - returned_as_of, Decimal("0"))
             if balance_due <= 0:
@@ -664,7 +883,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "not_due": Decimal("0"), "1_30": Decimal("0"),
                 "31_60": Decimal("0"), "61_90": Decimal("0"),
                 "over_90": Decimal("0"), "total_due": Decimal("0"),
-                "invoices": [],
+                "unallocated_advances": Decimal("0"), "invoices": [],
             })
             customer[bucket] += balance_due
             customer["total_due"] += balance_due
@@ -683,6 +902,40 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             totals[bucket] += balance_due
             totals["total_due"] += balance_due
 
+        advance_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, branch__in=accessible_branches(request.user),
+            receipt_date__lte=as_of,
+        ).filter(
+            Q(status=CustomerReceiptBatch.Status.POSTED)
+            | Q(status=CustomerReceiptBatch.Status.REVERSED, reversal_date__gt=as_of)
+        ).select_related("customer")
+        if customer_id:
+            advance_batches = advance_batches.filter(customer_id=customer_id)
+        if branch_id:
+            advance_batches = advance_batches.filter(branch_id=branch_id)
+        allocated_by_batch = {
+            row["batch_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                batch__in=advance_batches, allocation_date__lte=as_of,
+            ).values("batch_id").annotate(total=Sum("amount"))
+        }
+        for batch in advance_batches:
+            allocated_as_of = allocated_by_batch.get(batch.pk, Decimal("0"))
+            unallocated = max(batch.amount - allocated_as_of, Decimal("0"))
+            if unallocated <= 0:
+                continue
+            customer = customers.setdefault(batch.customer_id, {
+                "customer": batch.customer_id,
+                "customer_code": batch.customer.code,
+                "customer_name": batch.customer.name_ar,
+                "not_due": Decimal("0"), "1_30": Decimal("0"),
+                "31_60": Decimal("0"), "61_90": Decimal("0"),
+                "over_90": Decimal("0"), "total_due": Decimal("0"),
+                "unallocated_advances": Decimal("0"), "invoices": [],
+            })
+            customer["unallocated_advances"] += unallocated
+            totals["unallocated_advances"] += unallocated
+
         for customer in customers.values():
             for key in (*totals.keys(),):
                 customer[key] = str(customer[key])
@@ -697,9 +950,259 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         })
 
 
+    @action(detail=False, methods=("get",), url_path="sales-performance")
+    def sales_performance(self, request):
+        """تقرير المبيعات والمرتجعات والربحية حسب العميل والصنف لفترة محددة."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير المبيعات."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+
+        date_from_raw = request.query_params.get("date_from", "")
+        date_to_raw = request.query_params.get("date_to", "")
+        date_from = parse_date(date_from_raw)
+        date_to = parse_date(date_to_raw)
+        if not date_from:
+            raise ValidationError({"date_from": "حدد تاريخ بداية صحيحًا بصيغة YYYY-MM-DD."})
+        if not date_to:
+            raise ValidationError({"date_to": "حدد تاريخ نهاية صحيحًا بصيغة YYYY-MM-DD."})
+        if date_from > date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية يجب ألا يسبق تاريخ البداية."})
+
+        accessible_invoices = _historical_sales_invoice_queryset(
+            request.user, company_id,
+        ).filter(status=SalesInvoice.Status.POSTED)
+        branch_raw = request.query_params.get("branch")
+        branch_id = None
+        if branch_raw:
+            try:
+                branch_id = int(branch_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not _historical_branch_accessible(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            accessible_invoices = accessible_invoices.filter(
+                Q(delivery__warehouse__branch_id=branch_id) | Q(branch_id=branch_id)
+            )
+
+        customer_raw = request.query_params.get("customer")
+        customer_id = None
+        if customer_raw:
+            try:
+                customer_id = int(customer_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"customer": "معرّف العميل غير صالح."}) from None
+            accessible_invoices = accessible_invoices.filter(customer_id=customer_id)
+
+        product_raw = request.query_params.get("product")
+        product_id = None
+        if product_raw:
+            try:
+                product_id = int(product_raw)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+            accessible_invoices = accessible_invoices.filter(lines__product_id=product_id).distinct()
+
+        invoices = accessible_invoices.filter(invoice_date__range=(date_from, date_to))
+        returns = SalesReturn.objects.filter(
+            invoice__in=accessible_invoices,
+            status=SalesReturn.Status.POSTED,
+            return_date__range=(date_from, date_to),
+        )
+        if product_id is not None:
+            returns = returns.filter(lines__invoice_line__product_id=product_id).distinct()
+        invoice_lines = SalesInvoiceLine.objects.filter(invoice__in=invoices)
+        return_lines = SalesReturnLine.objects.filter(sales_return__in=returns)
+        if product_id is not None:
+            invoice_lines = invoice_lines.filter(product_id=product_id)
+            return_lines = return_lines.filter(invoice_line__product_id=product_id)
+
+        def amount(value):
+            return value if value is not None else Decimal("0")
+
+        if product_id is not None:
+            # عند اختيار صنف، تُحسب الإجماليات من بنوده فقط لا من إجمالي الفاتورة التي قد تضم أصنافًا أخرى.
+            sales_totals = invoice_lines.aggregate(
+                net=Sum("net_amount"), discount=Sum("discount_amount"),
+                tax=Sum("tax_amount"), total=Sum("total_amount"),
+            )
+            return_totals = return_lines.aggregate(
+                net=Sum("net_amount"), tax=Sum("tax_amount"), total=Sum("total_amount"),
+            )
+            invoice_count = invoice_lines.values("invoice_id").distinct().count()
+            return_count = return_lines.values("sales_return_id").distinct().count()
+        else:
+            sales_totals = invoices.aggregate(
+                net=Sum("net_total"), discount=Sum("discount_total"),
+                tax=Sum("tax_total"), total=Sum("grand_total"),
+            )
+            return_totals = returns.aggregate(
+                net=Sum("net_total"), tax=Sum("tax_total"), total=Sum("grand_total"),
+            )
+            invoice_count = invoices.count()
+            return_count = returns.count()
+        sales_cost = amount(invoice_lines.aggregate(total=Sum("delivery_line__cost_amount"))["total"])
+        return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
+        sales_net = amount(sales_totals["net"])
+        returned_net = amount(return_totals["net"])
+        net_sales = sales_net - returned_net
+        net_cost = sales_cost - return_cost
+
+        customer_sales = invoice_lines.values(
+            "invoice__customer_id", "invoice__customer__name_ar",
+        ).annotate(
+            invoice_count=Count("invoice_id", distinct=True),
+            quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
+            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+        )
+        customer_returns = return_lines.values(
+            "sales_return__invoice__customer_id",
+            "sales_return__invoice__customer__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"),
+            tax=Sum("tax_amount"), cost=Sum("cost_amount"),
+        )
+        customers = {}
+        for row in customer_sales:
+            key = row["invoice__customer_id"]
+            customers[key] = {
+                "customer": key,
+                "customer_name": row["invoice__customer__name_ar"],
+                "invoice_count": row["invoice_count"],
+                "quantity_sold": amount(row["quantity"]),
+                "quantity_returned": Decimal("0"),
+                "sales_net": amount(row["net"]),
+                "return_net": Decimal("0"),
+                "sales_tax": amount(row["tax"]),
+                "return_tax": Decimal("0"),
+                "sales_cost": amount(row["cost"]),
+                "return_cost": Decimal("0"),
+            }
+        for row in customer_returns:
+            key = row["sales_return__invoice__customer_id"]
+            customer = customers.setdefault(key, {
+                "customer": key,
+                "customer_name": row["sales_return__invoice__customer__name_ar"],
+                "invoice_count": 0,
+                "quantity_sold": Decimal("0"),
+                "quantity_returned": Decimal("0"),
+                "sales_net": Decimal("0"),
+                "return_net": Decimal("0"),
+                "sales_tax": Decimal("0"),
+                "return_tax": Decimal("0"),
+                "sales_cost": Decimal("0"),
+                "return_cost": Decimal("0"),
+            })
+            customer["quantity_returned"] += amount(row["quantity"])
+            customer["return_net"] += amount(row["net"])
+            customer["return_tax"] += amount(row["tax"])
+            customer["return_cost"] += amount(row["cost"])
+
+        product_sales = invoice_lines.values(
+            "product_id", "product__code", "product__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
+            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+            invoice_count=Count("invoice_id", distinct=True),
+        )
+        product_returns = return_lines.values(
+            "invoice_line__product_id", "invoice_line__product__code",
+            "invoice_line__product__name_ar",
+        ).annotate(
+            quantity=Sum("quantity"), net=Sum("net_amount"),
+            tax=Sum("tax_amount"), cost=Sum("cost_amount"),
+        )
+        products = {}
+        for row in product_sales:
+            key = row["product_id"]
+            products[key] = {
+                "product": key,
+                "product_code": row["product__code"],
+                "product_name": row["product__name_ar"],
+                "invoice_count": row["invoice_count"],
+                "quantity_sold": amount(row["quantity"]),
+                "quantity_returned": Decimal("0"),
+                "sales_net": amount(row["net"]),
+                "return_net": Decimal("0"),
+                "sales_tax": amount(row["tax"]),
+                "return_tax": Decimal("0"),
+                "sales_cost": amount(row["cost"]),
+                "return_cost": Decimal("0"),
+            }
+        for row in product_returns:
+            key = row["invoice_line__product_id"]
+            product = products.setdefault(key, {
+                "product": key,
+                "product_code": row["invoice_line__product__code"],
+                "product_name": row["invoice_line__product__name_ar"],
+                "invoice_count": 0,
+                "quantity_sold": Decimal("0"),
+                "quantity_returned": Decimal("0"),
+                "sales_net": Decimal("0"),
+                "return_net": Decimal("0"),
+                "sales_tax": Decimal("0"),
+                "return_tax": Decimal("0"),
+                "sales_cost": Decimal("0"),
+                "return_cost": Decimal("0"),
+            })
+            product["quantity_returned"] += amount(row["quantity"])
+            product["return_net"] += amount(row["net"])
+            product["return_tax"] += amount(row["tax"])
+            product["return_cost"] += amount(row["cost"])
+
+        def serialize_group(row):
+            sales_net_value = row["sales_net"] - row["return_net"]
+            cost_value = row["sales_cost"] - row["return_cost"]
+            return {
+                **{key: value for key, value in row.items() if not key.endswith("_cost")},
+                "net_sales": str(sales_net_value),
+                "net_cost": str(cost_value),
+                "gross_profit": str(sales_net_value - cost_value),
+                "quantity_sold": str(row["quantity_sold"]),
+                "quantity_returned": str(row["quantity_returned"]),
+                "sales_net": str(row["sales_net"]),
+                "return_net": str(row["return_net"]),
+                "sales_tax": str(row["sales_tax"]),
+                "return_tax": str(row["return_tax"]),
+            }
+
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat(),
+            "date_to": date_to.isoformat(),
+            "branch": branch_id,
+            "customer_filter": customer_id,
+            "product_filter": product_id,
+            "totals": {
+                "invoice_count": invoice_count,
+                "return_count": return_count,
+                "sales_net": str(sales_net),
+                "discount_total": str(amount(sales_totals["discount"])),
+                "sales_tax": str(amount(sales_totals["tax"])),
+                "sales_total": str(amount(sales_totals["total"])),
+                "return_net": str(returned_net),
+                "return_tax": str(amount(return_totals["tax"])),
+                "return_total": str(amount(return_totals["total"])),
+                "net_sales": str(net_sales),
+                "net_cost": str(net_cost),
+                "gross_profit": str(net_sales - net_cost),
+            },
+            "by_customer": sorted(
+                (serialize_group(row) for row in customers.values()),
+                key=lambda row: row["customer_name"],
+            ),
+            "by_product": sorted(
+                (serialize_group(row) for row in products.values()),
+                key=lambda row: row["product_name"],
+            ),
+        })
+
+
 class CustomerReceiptViewSet(SalesBaseViewSet):
     serializer_class = CustomerReceiptSerializer
-    queryset = CustomerReceipt.objects.select_related("company", "customer", "invoice", "journal_entry", "journal_entry__reversal_entry")
+    queryset = CustomerReceipt.objects.select_related("company", "customer", "invoice", "transaction_currency", "journal_entry", "journal_entry__reversal_entry")
     filterset_fields = ("company", "customer", "invoice", "status", "receipt_date", "method")
     search_fields = ("receipt_number", "reference", "customer__name_ar", "invoice__invoice_number")
     ordering_fields = ("receipt_date", "receipt_number", "amount", "created_at")
@@ -721,7 +1224,8 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
                     default_company_ids.append(company_id)
         return qs.filter(
             Q(invoice__delivery__warehouse__branch__in=branches)
-            | Q(invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(invoice__delivery__isnull=False, invoice__delivery__warehouse__branch__isnull=True, company_id__in=default_company_ids)
+            | Q(invoice__branch__in=branches)
         )
 
     def create(self, request, *args, **kwargs):
@@ -736,8 +1240,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """حفظ السجل الجديد بعد تطبيق قواعد الصلاحيات والتحقق من نطاق الشركة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        warehouse = data["invoice"].delivery.warehouse
-        if not _sales_warehouse_accessible(self.request.user, warehouse):
+        invoice = data["invoice"]
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(self.request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         serializer.save()
 
@@ -748,12 +1256,19 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
 
     @transaction.atomic
     def perform_destroy(self, instance):
-        """حذف سند قبض مسودة بلا قيد."""
+        """حذف سند قبض مسودة فقط مع التحقق من صلاحية فرع الفاتورة."""
         receipt = CustomerReceipt.objects.select_for_update().select_related(
-            "company", "invoice", "invoice__delivery__warehouse",
+            "company", "invoice", "invoice__delivery__warehouse", "invoice__branch",
         ).get(pk=instance.pk)
         self._check_write(receipt.company_id)
-        if not _sales_warehouse_accessible(self.request.user, receipt.invoice.delivery.warehouse):
+        invoice = receipt.invoice
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(self.request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(
+                self.request.user, invoice.branch_id, invoice.company_id,
+            ))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         if receipt.status != CustomerReceipt.Status.DRAFT or receipt.journal_entry_id:
             raise ValidationError("لا يمكن حذف سند قبض مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
@@ -764,8 +1279,12 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         """تنفيذ الإجراء المطلوب بعد التحقق من الصلاحيات وحالة المستند."""
         receipt = self.get_object()
         self._check_write(receipt.company_id)
-        warehouse = receipt.invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
+        invoice = receipt.invoice
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         receipt = post_customer_receipt(receipt.pk, request.user)
         return Response(self.get_serializer(receipt).data, status=status.HTTP_200_OK)
@@ -775,12 +1294,15 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
     def reverse(self, request, pk=None):
         """عكس آخر سند قبض مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
         receipt = CustomerReceipt.objects.select_for_update(of=("self",)).select_related(
-            "invoice", "invoice__delivery__warehouse", "journal_entry"
+            "invoice", "invoice__delivery__warehouse", "invoice__branch", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(receipt.company_id)
-        invoice = SalesInvoice.objects.select_for_update().select_related("delivery__warehouse").get(pk=receipt.invoice_id)
-        warehouse = invoice.delivery.warehouse
-        if not _sales_warehouse_accessible(request.user, warehouse):
+        invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related("delivery__warehouse", "branch").get(pk=receipt.invoice_id)
+        if invoice.delivery_id:
+            accessible = _sales_warehouse_accessible(request.user, invoice.delivery.warehouse)
+        else:
+            accessible = bool(invoice.branch_id and can_access_branch(request.user, invoice.branch_id, invoice.company_id))
+        if not accessible:
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة أو الفرع الرئيسي للمخزن العام.")
         if receipt.status != CustomerReceipt.Status.POSTED or not receipt.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند قبض غير مرحّل.")

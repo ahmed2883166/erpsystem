@@ -745,12 +745,12 @@ export const accountRoleApi = {
 };
 
 
-export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; quotation_snapshot?: { quotation_id:number; quotation_number:string; quotation_date:string; valid_until:string; lines:{quotation_line_id:number;product:number;quantity:string;unit_price:string;tax_rate:string;tax_code:number|null;discount_percent:string;discount_rule:number|null}[] }; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null }[]; created_at: string };
-export type SalesInvoice = { print_template_snapshot?: {template_id:number|null;name:string;style:"classic"|"modern"|"compact";config:SalesDocumentTemplate["config"]}; id: number; company: number; customer: number; customer_name: string; delivery: number; delivery_number: string; invoice_number: string; invoice_date: string; transaction_currency: number | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; discount_total: string; discount_approval_limit: string | null; invoice_approval_limit: string | null; approval_status: "not_required" | "pending" | "approved" | "rejected" | "superseded"; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; tax_code: number | null; discount_percent: string; discount_amount: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
+export type SalesDelivery = { id: number; company: number; customer: number; customer_name: string; warehouse: number; warehouse_name: string; order:number|null; order_number:string|null; order_snapshot?: {order_id:number;order_number:string;order_date:string;lines:{order_line_id:number;product:number;quantity:string;unit_price:string;tax_rate:string;tax_code:number|null;discount_percent:string;discount_rule:null}[]}; delivery_number: string; delivery_date: string; customer_reference: string; notes: string; movement_status: "draft" | "posted"; quotation_snapshot?: { quotation_id:number; quotation_number:string; quotation_date:string; valid_until:string; lines:{quotation_line_id:number;product:number;quantity:string;unit_price:string;tax_rate:string;tax_code:number|null;discount_percent:string;discount_rule:number|null}[] }; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; expiry_date: string | null; order_line:number|null }[]; created_at: string };
+export type SalesInvoice = { print_template_snapshot?: {template_id:number|null;name:string;style:"classic"|"modern"|"compact";config:SalesDocumentTemplate["config"]}; id: number; company: number; customer: number; customer_name: string; delivery: number | null; delivery_number: string | null; branch: number | null; invoice_number: string; invoice_date: string; transaction_currency: number | null; transaction_currency_code: string | null; exchange_rate: string | null; exchange_rate_date: string | null; transaction_net_total: string | null; transaction_discount_total: string | null; transaction_tax_total: string | null; transaction_grand_total: string | null; status: "draft" | "posted"; net_total: string; discount_total: string; discount_approval_limit: string | null; invoice_approval_limit: string | null; approval_status: "not_required" | "pending" | "approved" | "rejected" | "superseded"; tax_total: string; grand_total: string; paid_total: string; balance_due: string; notes: string; journal_entry: number | null; journal_number: string | null; invoice_lines: { id: number; delivery_line: number | null; product: number; product_code: string; product_name: string; quantity: string; unit_price: string; transaction_unit_price: string | null; transaction_net_amount: string | null; transaction_discount_amount: string | null; transaction_tax_amount: string | null; transaction_total_amount: string | null; tax_rate: string; tax_code: number | null; discount_percent: string; discount_amount: string; net_amount: string; tax_amount: string; total_amount: string }[]; created_at: string; posted_at: string | null };
 
 export type SalesDocumentTemplate = {
   id:number; company:number; company_name:string;
-  document_type:"quotation"|"invoice"|"delivery"|"receipt";
+  document_type:"quotation"|"invoice"|"delivery"|"receipt"|"return";
   name:string; style:"classic"|"modern"|"compact";
   config:{accent_color?:string;show_tax_number?:boolean;show_discount?:boolean;show_tax?:boolean;show_bank_details?:boolean;bank_details?:string;footer_text?:string;language?:"ar"|"en"|"bilingual";font_scale?:"small"|"normal"|"large"};
   is_default:boolean;is_active:boolean;created_at:string;updated_at:string;
@@ -765,11 +765,11 @@ export type SalesQuotation = {
     tax_rate:string;tax_code:number|null;discount_percent:string;discount_rule:number|null;
     discount_amount:string;net_amount:string;tax_amount:string;total_amount:string}[];
 };
-export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; movement_status:string; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;cost_amount:string}[]; created_at:string; posted_at:string|null };
+export type SalesReturn = { id:number; company:number; invoice:number; invoice_number:string; customer_name:string; warehouse:number|null; branch:number|null; return_number:string; return_date:string; status:"draft"|"posted"|"reversed"; net_total:string; tax_total:string; grand_total:string; transaction_currency_code:string|null; transaction_net_total:string|null; transaction_tax_total:string|null; transaction_grand_total:string|null; movement_status:string|null; journal_entry:number|null; journal_number:string|null; cost_journal_entry:number|null; cost_journal_number:string|null; reversal_stock_movement:number|null; reversal_journal_entry:number|null; reversal_journal_number:string|null; reversal_date:string|null; reversed_at:string|null; reversed_by:number|null; notes:string; line_items:{id:number;invoice_line:number;product_code:string;product_name:string;quantity:string;net_amount:string;tax_amount:string;total_amount:string;transaction_net_amount:string|null;transaction_tax_amount:string|null;transaction_total_amount:string|null;cost_amount:string}[]; created_at:string; posted_at:string|null };
 
 export type DiscountApprovalPolicy = { id: number; company: number; company_name: string; max_discount_percent: string | null; max_sales_invoice_amount: string | null; max_purchase_invoice_amount: string | null; max_purchase_order_amount: string | null; max_payment_amount: string | null; created_at: string; updated_at: string };
 export type SalesInvoiceApprovalLineSnapshot = {
-  delivery_line_id: number; product_id: number; product_code: string; product_name: string;
+  delivery_line_id: number | null; product_id: number; product_code: string; product_name: string;
   quantity: string; unit_price: string; tax_code_id: number | null; tax_code: string | null;
   tax_category: string | null; tax_rate: string; discount_percent: string;
   discount_amount: string; net_amount: string; tax_amount: string; total_amount: string;
@@ -826,20 +826,66 @@ export type CustomerDiscountRule = {
   created_at: string; updated_at: string;
 };
 
-export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
+export type CustomerReceipt = { id: number; company: number; customer: number; customer_name: string; invoice: number; invoice_number: string; receipt_number: string; receipt_date: string; method: "cash" | "bank"; payment_account: number | null; payment_account_name: string | null; amount: string; transaction_currency: number | null; transaction_currency_code: string | null; transaction_amount: string | null; exchange_rate: string | null; exchange_rate_date: string | null; carrying_base_amount: string | null; realized_fx_gain: string; realized_fx_loss: string; reference: string; status: "draft" | "posted" | "reversed"; journal_entry: number | null; journal_number: string | null; reversal_journal_entry: number | null; created_at: string; posted_at: string | null };
 export type CustomerStatement = {
   company:number; customer:number; customer_name:string; date_from:string|null; date_to:string|null;
   branch_filter:number|null; opening_balance:string; closing_balance:string;
-  rows:{date:string;document_type:"invoice"|"receipt";document_number:string;description:string;debit:string;credit:string;balance:string}[];
+  rows:{date:string;document_type:"invoice"|"receipt"|"receipt_reversal"|"receipt_batch"|"receipt_batch_reversal"|"sales_return"|"sales_return_reversal";document_number:string;description:string;debit:string;credit:string;balance:string}[];
 };
 export type CustomerAging = {
   company: number; as_of: string; customer_filter: number | null; branch_filter: number | null;
-  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string };
-  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string;
-    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; balance_due: string }[] }[];
+  totals: { not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string };
+  customers: { customer: number; customer_code: string; customer_name: string; not_due: string; "1_30": string; "31_60": string; "61_90": string; over_90: string; total_due: string; unallocated_advances: string;
+    invoices: { invoice: number; invoice_number: string; invoice_date: string; due_date: string; overdue_days: number; bucket: string; grand_total: string; paid_as_of: string; returned_as_of: string; balance_due: string }[] }[];
 };
 // واجهات المبيعات والتحصيل: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
+export type SalesOrder = {
+  id:number; company:number; customer:number; customer_name:string; warehouse:number; warehouse_name:string;
+  order_number:string; order_date:string; requested_delivery_date:string|null;
+  status:"draft"|"confirmed"|"partially_delivered"|"delivered"|"cancelled";
+  net_total:string;discount_total:string;tax_total:string;grand_total:string;notes:string;
+  order_lines:{id:number;product:number;product_code:string;product_name:string;quantity:string;allocated_quantity:string;remaining_quantity:string;unit_price:string;
+    tax_rate:string;tax_code:number|null;discount_percent:string;discount_amount:string;net_amount:string;tax_amount:string;total_amount:string}[];
+  created_at:string;updated_at:string;
+};
+
+export type CustomerReceiptBatchAllocation = {
+  id:number;invoice:number;invoice_number:string;invoice_date:string;amount:string;allocation_date:string;created_at:string;
+};
+
+export type CustomerReceiptBatch = {
+  id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
+  receipt_number:string;receipt_date:string;method:"cash"|"bank";payment_account:number|null;
+  payment_account_name:string|null;amount:string;allocated_amount:string;unallocated_amount:string;
+  allocation_lines:CustomerReceiptBatchAllocation[];reference:string;status:"draft"|"posted"|"reversed";
+  journal_entry:number|null;journal_number:string|null;reversal_journal_entry:number|null;
+  reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
+};
+
+export type SalesPerformanceReport = {
+  company:number;date_from:string;date_to:string;branch:number|null;customer_filter:number|null;product_filter:number|null;
+  totals:{
+    invoice_count:number;return_count:number;sales_net:string;discount_total:string;sales_tax:string;sales_total:string;
+    return_net:string;return_tax:string;return_total:string;net_sales:string;net_cost:string;gross_profit:string;
+  };
+  by_customer:Array<{
+    customer:number;customer_name:string;invoice_count:number;quantity_sold:string;quantity_returned:string;
+    sales_net:string;return_net:string;sales_tax:string;return_tax:string;net_sales:string;net_cost:string;gross_profit:string;
+  }>;
+  by_product:Array<{
+    product:number;product_code:string;product_name:string;invoice_count:number;quantity_sold:string;quantity_returned:string;
+    sales_net:string;return_net:string;sales_tax:string;return_tax:string;net_sales:string;net_cost:string;gross_profit:string;
+  }>;
+};
+
 export const salesApi = {
+  salesPerformance: (companyId:number,dateFrom:string,dateTo:string,branchId?:number,customerId?:number,productId?:number) => {
+    const q=new URLSearchParams({company:String(companyId),date_from:dateFrom,date_to:dateTo});
+    if(branchId)q.set("branch",String(branchId));
+    if(customerId)q.set("customer",String(customerId));
+    if(productId)q.set("product",String(productId));
+    return request<SalesPerformanceReport>(`/api/sales-documents/invoices/sales-performance/?${q.toString()}`);
+  },
   // جلب كشف حساب العميل مع رصيد أول وآخر المدة والحركات المرحلة.
   customerStatement: (companyId:number, customerId:number, dateFrom="", dateTo="") => request<CustomerStatement>(`/api/sales-documents/invoices/customer-statement/?company=${companyId}&customer=${customerId}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`),
   documentTemplates: (companyId:number) => request<SalesDocumentTemplate[]>(`/api/sales-documents/document-templates/?company=${companyId}&ordering=document_type`),
@@ -853,6 +899,11 @@ export const salesApi = {
   acceptQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/accept/`,{method:"POST",body:"{}"}); },
   rejectQuotation: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesQuotation>(`/api/sales-documents/quotations/${id}/reject/`,{method:"POST",body:"{}"}); },
   convertQuotation: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesDelivery>(`/api/sales-documents/quotations/${id}/convert-to-delivery/`,{method:"POST",body:JSON.stringify(payload)}); },
+  // أوامر البيع وحالتها والكميات المتبقية.
+  orders: (companyId:number) => request<SalesOrder[]>(`/api/sales-documents/orders/?company=${companyId}&ordering=-order_date`),
+  createOrder: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SalesOrder>("/api/sales-documents/orders/",{method:"POST",body:JSON.stringify(payload)}); },
+  confirmOrder: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesOrder>(`/api/sales-documents/orders/${id}/confirm/`,{method:"POST",body:"{}"}); },
+  cancelOrder: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<SalesOrder>(`/api/sales-documents/orders/${id}/cancel/`,{method:"POST",body:"{}"}); },
   // جلب مستندات تسليم المبيعات للشركة.
   deliveries: (companyId: number) => request<SalesDelivery[]>(`/api/sales-documents/deliveries/?company=${companyId}&ordering=-delivery_date`),
   // جلب فواتير الموردين للشركة.
@@ -885,6 +936,16 @@ export const salesApi = {
   postReceipt: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/post/`, { method: "POST" }); },
   // عكس آخر سند قبض مرحّل مع إنشاء قيد عكسي مرتبط.
   reverseReceipt: async (id: number, entryDate?: string) => { await request<{ detail: string }>("/api/csrf/"); return request<CustomerReceipt>(`/api/sales-documents/receipts/${id}/reverse/`, { method: "POST", body: JSON.stringify(entryDate ? { entry_date: entryDate } : {}) }); },
+  // جلب سندات القبض المجمعة والدفعات المقدمة.
+  receiptBatches: (companyId:number) => request<CustomerReceiptBatch[]>(`/api/sales-documents/receipt-batches/?company=${companyId}&ordering=-receipt_date`),
+  // إنشاء سند قبض مجمع بمخصصات اختيارية على عدة فواتير.
+  createReceiptBatch: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>("/api/sales-documents/receipt-batches/", {method:"POST",body:JSON.stringify(payload)}); },
+  // ترحيل سند القبض المجمع إلى الخزينة وحساب العملاء.
+  postReceiptBatch: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/post/`, {method:"POST"}); },
+  // تخصيص جزء من دفعة مقدمة إلى فاتورة دون حركة نقدية إضافية.
+  allocateReceiptBatch: async (id:number,invoice:number,amount:string,allocation_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/allocate/`, {method:"POST",body:JSON.stringify({invoice,amount,allocation_date})}); },
+  // عكس سند قبض مجمع وقيد التحصيل المرتبط به.
+  reverseReceiptBatch: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<CustomerReceiptBatch>(`/api/sales-documents/receipt-batches/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
 };
 
 

@@ -8,7 +8,7 @@ from django.db import models
 
 from accounting.models import ChartOfAccount, TaxCode
 from core.money import round_currency_amount
-from companies.models import Company, Currency, ExchangeRate
+from companies.models import Branch, Company, Currency, ExchangeRate
 from customers.models import Customer, CustomerDiscountRule
 from inventory.models import Product, StockMovement, StockMovementLine, Warehouse
 
@@ -19,11 +19,13 @@ class SalesDelivery(models.Model):
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_deliveries")
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_deliveries")
     stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_delivery")
+    order = models.ForeignKey("sales.SalesOrder", null=True, blank=True, on_delete=models.PROTECT, related_name="deliveries")
     delivery_number = models.CharField(max_length=40)
     delivery_date = models.DateField()
     customer_reference = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
     quotation_snapshot = models.JSONField(default=dict, blank=True, editable=False)
+    order_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_deliveries")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -54,6 +56,29 @@ class SalesDelivery(models.Model):
             raise ValidationError({"stock_movement": "حركة الصرف لا تطابق إذن التسليم."})
 
 
+
+
+
+class SalesDeliveryAllocation(models.Model):
+    """ربط بند إذن التسليم ببند أمر البيع لمنع تجاوز الكمية المتفق عليها."""
+    delivery = models.ForeignKey(SalesDelivery, on_delete=models.PROTECT, related_name="order_allocations")
+    order_line = models.ForeignKey("sales.SalesOrderLine", on_delete=models.PROTECT, related_name="delivery_allocations")
+    movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_order_allocation")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=("delivery", "order_line"), name="uq_delivery_order_line"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.delivery.order_id != self.order_line.order_id:
+            raise ValidationError("بند أمر البيع لا يتبع أمر التسليم المحدد.")
+        if self.movement_line.product_id != self.order_line.product_id:
+            raise ValidationError("الصنف في إذن التسليم لا يطابق بند أمر البيع.")
+        if self.movement_line.quantity != self.quantity:
+            raise ValidationError("كمية الربط لا تطابق كمية حركة المخزون.")
 
 
 class SalesQuotation(models.Model):
@@ -174,7 +199,8 @@ class SalesInvoice(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_invoices")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_invoices")
-    delivery = models.OneToOneField(SalesDelivery, on_delete=models.PROTECT, related_name="invoice")
+    delivery = models.OneToOneField(SalesDelivery, null=True, blank=True, on_delete=models.PROTECT, related_name="invoice")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
     transaction_currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoices")
@@ -236,12 +262,20 @@ class SalesInvoice(models.Model):
             self.delivery.company_id != self.company_id or self.delivery.customer_id != self.customer_id
         ):
             raise ValidationError({"delivery": "إذن التسليم لا يتبع العميل والشركة المحددين."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if not self.delivery_id and not self.branch_id:
+            raise ValidationError({"branch": "حدد فرع فاتورة الخدمة."})
+        if self.delivery_id and self.branch_id and self.delivery.warehouse.branch_id and self.delivery.warehouse.branch_id != self.branch_id:
+            raise ValidationError({"branch": "فرع الفاتورة يجب أن يطابق فرع إذن التسليم."})
 
 
 class SalesInvoiceLine(models.Model):
-    """يمثل بند البيع المرتبط بصنف تم تسليمه."""
+    """يمثل بند بيع بضاعة مسلمة أو خدمة مفوترة مباشرة."""
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="lines")
-    delivery_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_invoice_line")
+    delivery_line = models.OneToOneField(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoice_line")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_invoice_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, default=1, validators=[MinValueValidator(Decimal("0.0001"))])
     unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
     transaction_unit_price = models.DecimalField(max_digits=18, decimal_places=4, null=True, blank=True, validators=[MinValueValidator(0)])
     transaction_net_amount = models.DecimalField(max_digits=20, decimal_places=4, null=True, blank=True)
@@ -269,10 +303,19 @@ class SalesInvoiceLine(models.Model):
                     or (code.effective_to and code.effective_to < self.invoice.invoice_date)):
                 raise ValidationError({"tax_code": "كود الضريبة غير صالح لهذه الشركة أو تاريخ الفاتورة."})
             self.tax_rate = code.rate
+        if self.product_id and self.product.company_id != self.invoice.company_id:
+            raise ValidationError({"product": "الصنف أو الخدمة لا يتبع شركة الفاتورة."})
+        if self.delivery_line_id:
+            if self.delivery_line.product_id != self.product_id or self.product.product_type != Product.ProductType.GOODS:
+                raise ValidationError({"delivery_line": "بند التسليم يجب أن يطابق صنفًا مخزنيًا."})
+            if self.quantity != self.delivery_line.quantity:
+                self.quantity = self.delivery_line.quantity
+        elif self.product.product_type != Product.ProductType.SERVICE:
+            raise ValidationError({"product": "الفوترة المباشرة متاحة للخدمات فقط."})
         if self.invoice.transaction_currency_id:
             if self.transaction_unit_price is None:
                 raise ValidationError({"transaction_unit_price": "سعر الوحدة بالعملة الأجنبية مطلوب."})
-            foreign_gross = (self.delivery_line.quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
+            foreign_gross = (self.quantity * self.transaction_unit_price).quantize(Decimal("0.0001"))
             foreign_discount = (foreign_gross * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
             self.transaction_net_amount = foreign_gross - foreign_discount
             self.transaction_tax_amount = round_currency_amount(self.transaction_net_amount * self.tax_rate / Decimal("100"), self.invoice.transaction_currency)
@@ -286,7 +329,7 @@ class SalesInvoiceLine(models.Model):
             if self.transaction_unit_price is not None:
                 raise ValidationError({"transaction_unit_price": "لا تستخدم سعر وحدة أجنبيًا مع فاتورة بالعملة الأساسية."})
             self.transaction_net_amount = self.transaction_tax_amount = self.transaction_total_amount = None
-            gross_amount = (self.delivery_line.quantity * self.unit_price).quantize(Decimal("0.0001"))
+            gross_amount = (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
             self.discount_amount = (gross_amount * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
             self.net_amount = gross_amount - self.discount_amount
             self.tax_amount = round_currency_amount(self.net_amount * self.tax_rate / Decimal("100"), self.invoice.company.base_currency)
@@ -376,8 +419,9 @@ class SalesReturn(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_returns")
     invoice = models.ForeignKey(SalesInvoice, on_delete=models.PROTECT, related_name="returns")
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_returns")
-    stock_movement = models.OneToOneField(StockMovement, on_delete=models.PROTECT, related_name="sales_return")
+    warehouse = models.ForeignKey(Warehouse, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_returns")
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_returns")
+    stock_movement = models.OneToOneField(StockMovement, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return")
     return_number = models.CharField(max_length=37)
     return_date = models.DateField()
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
@@ -435,17 +479,22 @@ class SalesReturn(models.Model):
             or self.invoice.status != SalesInvoice.Status.POSTED
         ):
             raise ValidationError({"invoice": "يجب اختيار فاتورة مبيعات مرحلة تابعة للشركة."})
-        if self.warehouse_id and (
-            self.warehouse.company_id != self.company_id
-            or (self.invoice_id and self.invoice.delivery.warehouse_id != self.warehouse_id)
-        ):
-            raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+        if self.invoice_id and self.invoice.delivery_id:
+            if not self.warehouse_id or self.warehouse.company_id != self.company_id or self.invoice.delivery.warehouse_id != self.warehouse_id:
+                raise ValidationError({"warehouse": "مخزن المردود يجب أن يطابق مخزن إذن التسليم الأصلي."})
+            if self.branch_id and self.warehouse.branch_id and self.branch_id != self.warehouse.branch_id:
+                raise ValidationError({"branch": "فرع المردود لا يطابق فرع المخزن."})
+        elif self.invoice_id:
+            if self.warehouse_id or not self.branch_id or self.branch.company_id != self.company_id or self.branch_id != self.invoice.branch_id:
+                raise ValidationError({"branch": "مردود الخدمة يجب أن يتبع فرع فاتورة الخدمة دون حركة مخزنية."})
         if self.stock_movement_id and (
-            self.stock_movement.company_id != self.company_id
+            not self.warehouse_id or self.stock_movement.company_id != self.company_id
             or self.stock_movement.destination_warehouse_id != self.warehouse_id
             or self.stock_movement.movement_type != StockMovement.MovementType.RECEIPT
         ):
             raise ValidationError({"stock_movement": "حركة الاستلام لا تطابق مردود المبيعات."})
+        if self.invoice_id and not self.invoice.delivery_id and self.stock_movement_id:
+            raise ValidationError({"stock_movement": "مردود الخدمة لا ينشئ حركة مخزنية."})
         if self.invoice_id and self.return_date and self.return_date < self.invoice.invoice_date:
             raise ValidationError({"return_date": "تاريخ المردود لا يجوز أن يسبق تاريخ الفاتورة الأصلية."})
 
@@ -454,7 +503,7 @@ class SalesReturnLine(models.Model):
     """بند مردود يحتفظ بلقطة السعر والضريبة والتكلفة من الفاتورة الأصلية."""
     sales_return = models.ForeignKey(SalesReturn, on_delete=models.PROTECT, related_name="lines")
     invoice_line = models.ForeignKey(SalesInvoiceLine, on_delete=models.PROTECT, related_name="return_lines")
-    movement_line = models.OneToOneField(StockMovementLine, on_delete=models.PROTECT, related_name="sales_return_line")
+    movement_line = models.OneToOneField(StockMovementLine, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_return_line")
     quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
     net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
@@ -486,6 +535,7 @@ class SalesDocumentTemplate(models.Model):
         INVOICE = "invoice", "فاتورة مبيعات"
         DELIVERY = "delivery", "إذن تسليم"
         RECEIPT = "receipt", "سند قبض"
+        RETURN = "return", "مردود مبيعات"
 
     class Style(models.TextChoices):
         CLASSIC = "classic", "Classic"
@@ -516,3 +566,268 @@ class SalesDocumentTemplate(models.Model):
             raise ValidationError({"style": "نمط القالب غير صالح."})
         if not isinstance(self.config, dict):
             raise ValidationError({"config": "إعدادات القالب يجب أن تكون كائن إعدادات."})
+
+
+
+class SalesOrder(models.Model):
+    """أمر بيع معتمد كأساس لتجهيز وتسليم البضائع على دفعات."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        CONFIRMED = "confirmed", "معتمد"
+        PARTIALLY_DELIVERED = "partially_delivered", "تم التسليم جزئيًا"
+        DELIVERED = "delivered", "تم التسليم"
+        CANCELLED = "cancelled", "ملغي"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_orders")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_orders")
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="sales_orders")
+    order_number = models.CharField(max_length=80)
+    order_date = models.DateField()
+    requested_delivery_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.DRAFT)
+    net_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    discount_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    grand_total = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="created_sales_orders")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-order_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "order_number"), name="uq_sales_order_company_no"),
+            models.CheckConstraint(
+                condition=models.Q(requested_delivery_date__isnull=True) | models.Q(requested_delivery_date__gte=models.F("order_date")),
+                name="ck_sales_order_delivery_date",
+            ),
+        ]
+        indexes = [models.Index(fields=("company", "status", "order_date"), name="sales_order_co_status_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.warehouse_id and self.warehouse.company_id != self.company_id:
+            raise ValidationError({"warehouse": "المخزن لا يتبع الشركة المحددة."})
+        if self.requested_delivery_date and self.order_date and self.requested_delivery_date < self.order_date:
+            raise ValidationError({"requested_delivery_date": "تاريخ التسليم المطلوب لا يسبق تاريخ أمر البيع."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).values("status").first()
+            if previous and previous["status"] != self.Status.DRAFT:
+                update_fields = set(kwargs.get("update_fields") or ())
+                if not update_fields or not update_fields.issubset({"status", "updated_at"}):
+                    raise ValidationError("أمر البيع المعتمد لا يمكن تعديل بياناته.")
+                allowed = {
+                    self.Status.CONFIRMED: {self.Status.PARTIALLY_DELIVERED, self.Status.DELIVERED, self.Status.CANCELLED},
+                    self.Status.PARTIALLY_DELIVERED: {self.Status.DELIVERED, self.Status.CANCELLED},
+                    self.Status.DELIVERED: set(),
+                    self.Status.CANCELLED: set(),
+                }
+                if self.status != previous["status"] and self.status not in allowed.get(previous["status"], set()):
+                    raise ValidationError("انتقال حالة أمر البيع غير مسموح.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف أمر بيع معتمد.")
+        return super().delete(*args, **kwargs)
+
+
+class SalesOrderLine(models.Model):
+    """بند أمر البيع؛ تحفظ الكمية والسعر والضريبة وقت الاتفاق مع العميل."""
+    order = models.ForeignKey(SalesOrder, on_delete=models.PROTECT, related_name="lines")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="sales_order_lines")
+    quantity = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))])
+    unit_price = models.DecimalField(max_digits=18, decimal_places=4, validators=[MinValueValidator(0)])
+    tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    tax_code = models.ForeignKey(TaxCode, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_order_lines")
+    discount_percent = models.DecimalField(max_digits=7, decimal_places=4, default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    discount_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    net_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    tax_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+
+    class Meta:
+        ordering = ("id",)
+
+    def calculate(self):
+        if self.product.company_id != self.order.company_id or not self.product.is_active or self.product.product_type != Product.ProductType.GOODS:
+            raise ValidationError({"product": "اختر صنفًا مخزنيًا نشطًا تابعًا لشركة أمر البيع."})
+        if self.tax_code_id:
+            code = self.tax_code
+            if (not code.is_active or code.company_id != self.order.company_id
+                    or code.country != self.order.company.country
+                    or code.category == TaxCode.Category.REVERSE_CHARGE
+                    or code.effective_from > self.order.order_date
+                    or (code.effective_to and code.effective_to < self.order.order_date)):
+                raise ValidationError({"tax_code": "كود الضريبة غير صالح لأمر البيع."})
+            self.tax_rate = code.rate
+        gross = (self.quantity * self.unit_price).quantize(Decimal("0.0001"))
+        self.discount_amount = (gross * self.discount_percent / Decimal("100")).quantize(Decimal("0.0001"))
+        self.net_amount = gross - self.discount_amount
+        self.tax_amount = (self.net_amount * self.tax_rate / Decimal("100")).quantize(Decimal("0.0001"))
+        self.total_amount = self.net_amount + self.tax_amount
+
+    def save(self, *args, **kwargs):
+        if self.order_id and self.order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل بنود أمر بيع معتمد.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.order.status != SalesOrder.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف بنود أمر بيع معتمد.")
+        return super().delete(*args, **kwargs)
+
+class CustomerReceiptBatch(models.Model):
+    """سند قبض واحد يوزع على عدة فواتير أو يسجل دفعة مقدمة غير مخصصة."""
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="customer_receipt_batches")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="receipt_batches")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="customer_receipt_batches")
+    receipt_number = models.CharField(max_length=40)
+    receipt_date = models.DateField()
+    method = models.CharField(max_length=8, choices=CustomerReceipt.Method.choices, default=CustomerReceipt.Method.BANK)
+    payment_account = models.ForeignKey(
+        ChartOfAccount, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_receipt_batches",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4,
+        validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    reference = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="customer_receipt_batch",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_customer_receipt_batch",
+    )
+    reversal_date = models.DateField(null=True, blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_customer_receipt_batches",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_customer_receipt_batches",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-receipt_date", "-id")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "receipt_number"),
+                name="uq_rcpt_batch_company_no",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("company", "status", "receipt_date"),
+                name="sales_rcpt_batch_co_stat_idx",
+            ),
+            models.Index(fields=("branch", "receipt_date"), name="sales_rcpt_batch_branch_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    @property
+    def allocated_amount(self):
+        return self.allocations.aggregate(total=models.Sum("amount"))["total"] or Decimal("0")
+
+    @property
+    def unallocated_amount(self):
+        return max(self.amount - self.allocated_amount, Decimal("0"))
+
+    def clean(self):
+        super().clean()
+        if self.customer_id and self.customer.company_id != self.company_id:
+            raise ValidationError({"customer": "العميل لا يتبع الشركة المحددة."})
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(
+            pk=self.pk, status__in=(self.Status.POSTED, self.Status.REVERSED)
+        ).exists():
+            allowed = {
+                "status", "reversal_journal_entry", "reversal_date",
+                "reversed_at", "reversed_by",
+            }
+            fields = set(kwargs.get("update_fields") or ())
+            if not fields or not fields.issubset(allowed):
+                raise ValidationError("سند قبض العميل المرحّل غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف سند قبض مجمع مرحّل.")
+        return super().delete(*args, **kwargs)
+
+
+class CustomerReceiptBatchAllocation(models.Model):
+    """تخصيص جزء من سند القبض المجمع إلى فاتورة عميل محددة."""
+    batch = models.ForeignKey(
+        CustomerReceiptBatch, on_delete=models.PROTECT, related_name="allocations",
+    )
+    invoice = models.ForeignKey(
+        SalesInvoice, on_delete=models.PROTECT, related_name="receipt_batch_allocations",
+    )
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4,
+        validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    allocation_date = models.DateField()
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_customer_receipt_batch_allocations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        indexes = [
+            models.Index(fields=("invoice", "batch"), name="sales_rcpt_alloc_invoice_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.batch_id and self.invoice_id:
+            if (
+                self.batch.company_id != self.invoice.company_id
+                or self.batch.customer_id != self.invoice.customer_id
+            ):
+                raise ValidationError({"invoice": "الفاتورة لا تتبع العميل والشركة المحددين في سند القبض."})
+            if self.invoice.transaction_currency_id:
+                raise ValidationError("التخصيص المجمع متاح لفواتير العملة الأساسية فقط.")
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError("سطر تخصيص سند القبض غير قابل للتعديل؛ أضف تخصيصًا جديدًا.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.batch.status != CustomerReceiptBatch.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف تخصيص من سند قبض مرحّل.")
+        return super().delete(*args, **kwargs)
+
