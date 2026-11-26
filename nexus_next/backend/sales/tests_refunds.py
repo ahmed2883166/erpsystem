@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalLine
+from accounting.models import AccountRole, ChartOfAccount, JournalLine, TaxCode
 from companies.models import Currency, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance
 from treasury.models import TreasuryAccount, TreasuryTransaction
@@ -677,3 +677,72 @@ class CustomerRefundTests(APITestCase):
             f"/api/sales-documents/refunds/{second.data['id']}/post/", {}, format="json",
         )
         self.assertEqual(rejected.status_code, 400, rejected.data)
+
+    def test_vat_report_reconciles_sales_return_and_later_reversal_in_their_own_periods(self):
+        tax_code = TaxCode.objects.create(
+            company=self.company, country="EG", code="VAT-RETURN-14",
+            name_ar="ضريبة مردودات", category=TaxCode.Category.STANDARD,
+            rate=Decimal("14"), effective_from=date(2026, 1, 1),
+        )
+        delivery_id, delivery_line_id = self._create_delivery("VAT-RETURN-DELIVERY")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "VAT-RETURN-INVOICE",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": delivery_line_id,
+                "unit_price": "100",
+                "tax_code": tax_code.pk,
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "VAT-RETURN-001",
+            "return_date": "2026-03-20",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["tax_total"], "14.0000")
+
+        march = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(march.status_code, 200, march.data)
+        self.assertEqual(march.data["output_tax"], "14.0000")
+        self.assertEqual(
+            march.data["ledger_reconciliation"]["output_tax_difference"], "0.0000",
+        )
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": "2026-04-02"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+
+        april = self.client.get(
+            f"/api/accounting/journal-entries/vat-return/?company={self.company.pk}"
+            "&date_from=2026-04-01&date_to=2026-04-30"
+        )
+        self.assertEqual(april.status_code, 200, april.data)
+        self.assertEqual(april.data["output_tax"], "14.0000")
+        self.assertEqual(
+            april.data["ledger_reconciliation"]["output_tax_difference"], "0.0000",
+        )
