@@ -64,6 +64,16 @@ class AssetComponentSerializer(serializers.ModelSerializer):
         obj.save()
         return obj
 
+    def update(self, instance, validated_data):
+        for field, value in validated_data.items():
+            setattr(instance, field, value)
+        try:
+            instance.full_clean()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+        instance.save()
+        return instance
+
 
 class AssetInsurancePolicySerializer(serializers.ModelSerializer):
     class Meta:
@@ -124,7 +134,8 @@ class _AssetControlViewSet(viewsets.ModelViewSet):
         serializer.save()
 
     def perform_update(self, serializer):
-        self._check_write(serializer.instance.asset)
+        asset = serializer.validated_data.get("asset", serializer.instance.asset)
+        self._check_write(asset)
         serializer.save()
 
 
