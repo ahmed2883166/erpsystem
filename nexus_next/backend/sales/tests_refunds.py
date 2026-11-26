@@ -615,3 +615,65 @@ class CustomerRefundTests(APITestCase):
         statement_types = {row["document_type"] for row in statement.data["rows"]}
         self.assertIn("receipt_batch", statement_types)
         self.assertIn("customer_refund", statement_types)
+
+    def test_reversed_advance_refund_still_reduces_available_balance_before_its_reversal_date(self):
+        batch = self._create_posted_advance("REFUND-ADV-ASOF", "50")
+        first = self._create_refund(
+            "REFUND-ADV-ASOF-FIRST", amount="20",
+            source_batch=batch["id"], date="2026-03-13",
+        )
+        self.assertEqual(first.status_code, 201, first.data)
+        posted = self.client.post(
+            f"/api/sales-documents/refunds/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        reversed_first = self.client.post(
+            f"/api/sales-documents/refunds/{first.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_first.status_code, 200, reversed_first.data)
+
+        # Although the first refund is now reversed, it was still effective on March 13.
+        # A second refund backdated to March 13 must therefore not exceed the remaining 30.
+        second = self._create_refund(
+            "REFUND-ADV-ASOF-SECOND", amount="31",
+            source_batch=batch["id"], date="2026-03-13",
+        )
+        self.assertEqual(second.status_code, 201, second.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/refunds/{second.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+    def test_customer_credit_balance_keeps_refund_effective_until_actual_reversal_date(self):
+        invoice = self._create_posted_invoice("REFUND-INV-ASOF-CREDIT")
+        sales_return = self._create_posted_return(
+            invoice, "REFUND-RET-ASOF-CREDIT", receipt_amount="150",
+        )
+        first = self._create_refund(
+            "REFUND-RET-ASOF-FIRST", amount="20",
+            source_return=sales_return["id"], date="2026-03-13",
+        )
+        self.assertEqual(first.status_code, 201, first.data)
+        posted_first = self.client.post(
+            f"/api/sales-documents/refunds/{first.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_first.status_code, 200, posted_first.data)
+        reversed_first = self.client.post(
+            f"/api/sales-documents/refunds/{first.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_first.status_code, 200, reversed_first.data)
+
+        # This unpaid invoice consumes the customer's remaining credit.
+        self._create_posted_invoice("REFUND-INV-ASOF-OPEN")
+        second = self._create_refund(
+            "REFUND-RET-ASOF-SECOND", amount="31",
+            source_return=sales_return["id"], date="2026-03-13",
+        )
+        self.assertEqual(second.status_code, 201, second.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/refunds/{second.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)

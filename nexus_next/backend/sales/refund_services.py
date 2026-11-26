@@ -38,16 +38,22 @@ def _customer_credit_balance(company_id, customer_id, as_of):
         Decimal("0"),
     )
     batch_paid = CustomerReceiptBatch.objects.filter(
-        company_id=company_id, customer_id=customer_id,
-        status=CustomerReceiptBatch.Status.POSTED, receipt_date__lte=as_of,
+        company_id=company_id, customer_id=customer_id, receipt_date__lte=as_of,
+    ).filter(
+        Q(status=CustomerReceiptBatch.Status.POSTED)
+        | Q(status=CustomerReceiptBatch.Status.REVERSED, reversal_date__gt=as_of)
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
     returned = SalesReturn.objects.filter(
-        company_id=company_id, invoice__customer_id=customer_id,
-        status=SalesReturn.Status.POSTED, return_date__lte=as_of,
+        company_id=company_id, invoice__customer_id=customer_id, return_date__lte=as_of,
+    ).filter(
+        Q(status=SalesReturn.Status.POSTED)
+        | Q(status=SalesReturn.Status.REVERSED, reversal_date__gt=as_of)
     ).aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
     refunded = CustomerRefund.objects.filter(
-        company_id=company_id, customer_id=customer_id,
-        status=CustomerRefund.Status.POSTED, refund_date__lte=as_of,
+        company_id=company_id, customer_id=customer_id, refund_date__lte=as_of,
+    ).filter(
+        Q(status=CustomerRefund.Status.POSTED)
+        | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=as_of)
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
     reversal_journals = JournalEntry.objects.filter(
         reversal_of_id=OuterRef("journal_entry_id"),
@@ -120,14 +126,17 @@ def post_customer_refund(refund_id, user):
                 source.company, source.invoice.delivery.warehouse,
             ).pk
         posted_refunds = source.refunds.filter(
-            status=CustomerRefund.Status.POSTED,
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
         ).exclude(pk=refund.pk)
         latest_refund_date = posted_refunds.order_by("-refund_date").values_list("refund_date", flat=True).first()
         if latest_refund_date and refund.refund_date < latest_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق عن نفس المردود.")
         latest_invoice_refund_date = CustomerRefund.objects.filter(
             source_return__invoice_id=source.invoice_id,
-            status=CustomerRefund.Status.POSTED,
+        ).filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
         ).exclude(pk=refund.pk).order_by("-refund_date").values_list("refund_date", flat=True).first()
         if latest_invoice_refund_date and refund.refund_date < latest_invoice_refund_date:
             raise ValidationError("تاريخ رد المبلغ لا يجوز أن يسبق آخر رد سابق على نفس الفاتورة.")
@@ -176,12 +185,17 @@ def post_customer_refund(refund_id, user):
         ).first()
         if latest_allocation and refund.refund_date < latest_allocation:
             raise ValidationError("تاريخ رد الدفعة المقدمة لا يجوز أن يسبق آخر تخصيص لها.")
-        latest_refund_date = source.refunds.filter(
-            status=CustomerRefund.Status.POSTED,
-        ).exclude(pk=refund.pk).order_by("-refund_date").values_list("refund_date", flat=True).first()
+        active_refunds = source.refunds.filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
+        ).exclude(pk=refund.pk)
+        latest_refund_date = active_refunds.order_by(
+            "-refund_date", "-id",
+        ).values_list("refund_date", flat=True).first()
         if latest_refund_date and refund.refund_date < latest_refund_date:
             raise ValidationError("تاريخ رد الدفعة المقدمة لا يجوز أن يسبق آخر رد سابق لها.")
-        available = source.unallocated_amount
+        refunded_as_of = active_refunds.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        available = max(source.amount - source.allocated_amount - refunded_as_of, Decimal("0"))
         source_label = f"الدفعة المقدمة {source.receipt_number}"
 
     if refund.refund_date < source_date:
