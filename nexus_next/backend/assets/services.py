@@ -220,7 +220,15 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         if destination_days > 0:
             segments.append((current_branch, destination_days))
     else:
-        segments.append((asset.branch, elapsed_days))
+        # A transfer can be approved before an older depreciation period is posted.
+        # In that case, use the source branch recorded by the first future movement,
+        # not the asset's current branch, which already reflects the later transfer.
+        future_transfer = asset.movements.filter(
+            status="approved", movement_type="branch_transfer",
+            movement_date__gt=period_date,
+        ).select_related("from_branch").order_by("movement_date", "id").first()
+        period_branch = future_transfer.from_branch if future_transfer else asset.branch
+        segments.append((period_branch, elapsed_days))
 
     if sum(days for _, days in segments) != elapsed_days:
         raise ValidationError("توزيع أيام الإهلاك على الفروع غير متوازن؛ أوقف الترحيل وراجع تواريخ النقل.")
