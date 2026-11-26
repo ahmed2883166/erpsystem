@@ -165,6 +165,8 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
         self._check_write(order.company_id)
         if order.status not in (PurchaseOrder.Status.DRAFT, PurchaseOrder.Status.CONFIRMED):
             raise ValidationError("لا يمكن إلغاء أمر شراء بدأ استلامه أو اكتمل استلامه.")
+        if order.service_acceptances.exists():
+            raise ValidationError("لا يمكن إلغاء أمر شراء له محضر استلام خدمة؛ عالج محضر الخدمة أولًا.")
         if order.receipts.exists() or order.lines.filter(received_quantity__gt=0).exists():
             raise ValidationError("لا يمكن إلغاء أمر شراء له إذن استلام أو كمية مستلمة؛ استخدم مستند تسوية مستقلًا.")
         updated = PurchaseOrder.objects.filter(
@@ -1551,12 +1553,19 @@ class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
     @action(detail=True, methods=("post",))
     @transaction.atomic
     def accept(self, request, pk=None):
-        document = PurchaseServiceAcceptance.objects.select_for_update().select_related(
-            "order__warehouse"
-        ).get(pk=self.get_object().pk)
+        document = PurchaseServiceAcceptance.objects.select_for_update().get(pk=self.get_object().pk)
+        order = PurchaseOrder.objects.select_for_update().select_related("warehouse").get(
+            pk=document.order_id
+        )
         self._check_write(document.company_id)
-        if not _purchase_warehouse_accessible(request.user, document.order.warehouse):
+        if not _purchase_warehouse_accessible(request.user, order.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+        if order.status not in (
+            PurchaseOrder.Status.CONFIRMED,
+            PurchaseOrder.Status.PARTIALLY_RECEIVED,
+            PurchaseOrder.Status.RECEIVED,
+        ):
+            raise ValidationError("لا يمكن اعتماد محضر خدمة لأمر شراء ملغي أو غير معتمد.")
         if document.status != PurchaseServiceAcceptance.Status.DRAFT:
             raise ValidationError("محضر الخدمة ليس مسودة.")
         lines = list(document.lines.select_related("order_line__product"))
