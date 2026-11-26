@@ -2,11 +2,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { salesApi, type SalesDocumentTemplate } from "./api";
 
 type Props = { companyId:number|null };
-type DocumentType = "quotation" | "invoice";
+type DocumentType = SalesDocumentTemplate["document_type"];
 type Style = SalesDocumentTemplate["style"];
 
 const documentLabels:Record<DocumentType,string> = {
-  quotation:"عروض الأسعار", invoice:"فواتير المبيعات",
+  quotation:"عروض الأسعار", invoice:"فواتير المبيعات", delivery:"أذون تسليم", receipt:"سندات قبض", return:"مردود مبيعات",
+  purchase_req:"طلبات الاحتياج", purchase_rfq:"طلبات عروض الأسعار", supplier_quote:"عروض الموردين", purchase_order:"أوامر الشراء",
+  service_accept:"محاضر إنجاز الخدمات", purchase_receipt:"أذون استلام المشتريات", purchase_invoice:"فواتير الموردين",
+  supplier_payment:"سندات صرف الموردين", supplier_return:"مرتجعات الموردين", supplier_refund:"استردادات الموردين",
 };
 
 export default function DocumentTemplatesPanel({companyId}:Props) {
@@ -36,7 +39,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
     setForm({name:"",style:"classic",accent_color:"#1F4E79",show_tax_number:true,show_discount:true,show_tax:true,show_bank_details:false,bank_details:"",language:"ar",font_scale:"normal",footer_text:"شكراً لتعاملكم معنا",is_default:false});
   };
   const edit=(row:SalesDocumentTemplate)=>{
-    if(row.document_type!=="invoice"&&row.document_type!=="quotation")return;
+    setDocumentType(row.document_type);
     setEditingId(row.id);setDocumentType(row.document_type);
     setForm({
       name:row.name,style:row.style,accent_color:row.config.accent_color||"#1F4E79",
@@ -75,7 +78,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
   const visible=rows.filter(row=>row.document_type===documentType);
 
   return <section className="work-panel">
-    <div className="work-panel-head"><div><h2>قوالب الطباعة</h2><p>كل شركة تختار شكلًا مستقلًا لعروض الأسعار وفواتير المبيعات.</p></div></div>
+    <div className="work-panel-head"><div><h2>قوالب الطباعة</h2><p>كل شركة تختار قالبًا مستقلًا لكل نوع مستند في المبيعات والمشتريات.</p></div></div>
     {error&&<div className="error-banner">{error}</div>}
     {!companyId&&<div className="table-empty">اختر شركة لإدارة قوالبها.</div>}
     {companyId&&<>
@@ -104,7 +107,7 @@ export default function DocumentTemplatesPanel({companyId}:Props) {
       <div className="document-template-preview-grid">
         {(["classic","modern","compact"] as Style[]).map(style=><div className={`document-template-preview ${style}`} key={style} style={{borderTopColor:form.accent_color}}>
           <strong>{style==="classic"?"Classic":style==="modern"?"Modern":"Compact"}</strong>
-          <div className="document-template-preview-company">اسم الشركة</div><div className="document-template-preview-line">فاتورة مبيعات / عرض سعر</div>
+          <div className="document-template-preview-company">اسم الشركة</div><div className="document-template-preview-line">{documentLabels[documentType]}</div>
           <div className="document-template-preview-line">العميل: عميل تجريبي</div><div className="document-template-preview-table">الصنف　　 الكمية　　 السعر　　 الإجمالي</div>
           <div className="document-template-preview-total">الإجمالي: 1,250.00</div>
           <small>{form.footer_text||" "}</small>

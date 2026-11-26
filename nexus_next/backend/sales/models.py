@@ -536,6 +536,16 @@ class SalesDocumentTemplate(models.Model):
         DELIVERY = "delivery", "إذن تسليم"
         RECEIPT = "receipt", "سند قبض"
         RETURN = "return", "مردود مبيعات"
+        PURCHASE_REQ = "purchase_req", "طلب احتياج"
+        PURCHASE_RFQ = "purchase_rfq", "طلب عروض أسعار"
+        SUPPLIER_QUOTE = "supplier_quote", "عرض مورد"
+        PURCHASE_ORDER = "purchase_order", "أمر شراء"
+        SERVICE_ACCEPT = "service_accept", "محضر إنجاز خدمة"
+        PURCHASE_RECEIPT = "purchase_receipt", "إذن استلام مشتريات"
+        PURCHASE_INVOICE = "purchase_invoice", "فاتورة مورد"
+        SUPPLIER_PAYMENT = "supplier_payment", "سند صرف مورد"
+        SUPPLIER_RETURN = "supplier_return", "مرتجع مورد"
+        SUPPLIER_REFUND = "supplier_refund", "استرداد من مورد"
 
     class Style(models.TextChoices):
         CLASSIC = "classic", "Classic"

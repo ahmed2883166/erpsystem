@@ -1750,6 +1750,16 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(second.status_code, 201, second.data)
         self.assertFalse(SalesDocumentTemplate.objects.get(pk=first.data["id"]).is_default)
         self.assertTrue(SalesDocumentTemplate.objects.get(pk=second.data["id"]).is_default)
+        purchase_template = self.client.post("/api/sales-documents/document-templates/", {
+            "company": self.company.pk, "document_type": "purchase_invoice",
+            "name": "Supplier Invoice Modern", "style": "modern", "is_default": True,
+            "config": {"accent_color": "#345678", "show_tax": True},
+        }, format="json")
+        self.assertEqual(purchase_template.status_code, 201, purchase_template.data)
+        self.assertEqual(purchase_template.data["document_type"], "purchase_invoice")
+        listed = self.client.get(f"/api/sales-documents/document-templates/?company={self.company.pk}&document_type=purchase_invoice")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual([row["id"] for row in listed.data], [purchase_template.data["id"]])
 
         self.client.force_authenticate(self.user)
         denied = self.client.post("/api/sales-documents/document-templates/", {

@@ -967,7 +967,7 @@ const postDraft = async (entry: Journal) => {
           {active === "customers" && <Suspense fallback={panelFallback}><CustomersPanel companyId={companyId} /></Suspense>}
           {active === "sales-workflow" && <Suspense fallback={panelFallback}><SalesPanel companyId={companyId} /></Suspense>}
           {active === "suppliers" && <Suspense fallback={panelFallback}><SuppliersPanel companyId={companyId} /></Suspense>}
-          {active === "purchasing" && <Suspense fallback={panelFallback}><PurchasingPanel companyId={companyId} activityAssignments={selectedCompany?.activity_assignments} primaryActivity={selectedCompany?.activity} /></Suspense>}
+          {active === "purchasing" && <Suspense fallback={panelFallback}><PurchasingPanel companyId={companyId} company={selectedCompany} activityAssignments={selectedCompany?.activity_assignments} primaryActivity={selectedCompany?.activity} /></Suspense>}
           {active === "inventory" && <Suspense fallback={panelFallback}><InventoryPanel companyId={companyId} currency={selectedCompany?.base_currency_code || ""} activityAssignments={selectedCompany?.activity_assignments} primaryActivity={selectedCompany?.activity} /></Suspense>}
           {active === "treasury" && companyId !== null && <Suspense fallback={panelFallback}><TreasuryPanel companyId={companyId} /></Suspense>}
           {active === "fixed-assets" && <Suspense fallback={panelFallback}><FixedAssetsPanel companyId={companyId} /></Suspense>}
