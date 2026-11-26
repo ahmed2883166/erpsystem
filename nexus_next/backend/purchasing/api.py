@@ -1546,6 +1546,11 @@ class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
         lines = list(document.lines.select_related("order_line__product"))
         if not lines:
             raise ValidationError("محضر الخدمة لا يحتوي على بنود.")
+        # Serialize approvals for each PO line so concurrent acceptance documents
+        # cannot approve more than the contracted service quantity.
+        list(PurchaseOrderLine.objects.select_for_update().filter(
+            pk__in=[line.order_line_id for line in lines],
+        ).order_by("pk"))
         for line in lines:
             line.full_clean()
         PurchaseServiceAcceptance.objects.filter(
