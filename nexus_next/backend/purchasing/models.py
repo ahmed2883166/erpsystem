@@ -987,3 +987,57 @@ class PurchaseServiceAcceptanceLine(models.Model):
         ).exclude(acceptance_id=self.acceptance_id).aggregate(total=models.Sum("quantity"))["total"] or Decimal("0")
         if accepted_before + self.quantity > self.order_line.quantity:
             raise ValidationError({"quantity": "كمية الخدمة المعتمدة تتجاوز كمية أمر الشراء المتبقية."})
+
+class PurchaseDocumentTemplate(models.Model):
+    """قوالب طباعة متعددة ومستقلة لكل شركة ونوع مستند مشتريات."""
+
+    class DocumentType(models.TextChoices):
+        ORDER = "purchase_order", "أمر شراء"
+        RECEIPT = "purchase_receipt", "إذن استلام"
+        INVOICE = "purchase_invoice", "فاتورة مورد"
+        RETURN = "supplier_return", "مرتجع مورد"
+        PAYMENT = "supplier_payment", "سند صرف"
+        REFUND = "supplier_refund", "استرداد مورد"
+
+    class Style(models.TextChoices):
+        CLASSIC = "classic", "Classic"
+        MODERN = "modern", "Modern"
+        COMPACT = "compact", "Compact"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="purchase_document_templates")
+    document_type = models.CharField(max_length=24, choices=DocumentType.choices)
+    name = models.CharField(max_length=80)
+    style = models.CharField(max_length=12, choices=Style.choices, default=Style.CLASSIC)
+    config = models.JSONField(default=dict, blank=True)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("document_type", "-is_default", "name")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "document_type", "name"),
+                name="uq_purchase_template_company_type_name",
+            ),
+            models.UniqueConstraint(
+                fields=("company", "document_type"),
+                condition=models.Q(is_default=True),
+                name="uq_purchase_template_default_type",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("company", "document_type", "is_active"),
+                name="purchase_template_co_type_idx",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.style not in self.Style.values:
+            raise ValidationError({"style": "نمط القالب غير صالح."})
+        if not isinstance(self.config, dict):
+            raise ValidationError({"config": "إعدادات القالب يجب أن تكون كائن إعدادات."})
+
