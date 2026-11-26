@@ -234,6 +234,8 @@ def _depreciate_asset_components(asset, period_date, year, user=None, units_prod
                 {"account": component.accumulated_depreciation_account, "debit": 0, "credit": amount, "description": f"{asset.name_ar} - {component.name_ar}"},
             ])
         if total_amount <= 0:
+            if is_partial_period:
+                return Decimal("0")
             raise ValidationError("لا يوجد قسط إهلاك مستحق للمكونات في التاريخ المحدد.")
         entry = _post_entry(
             asset, year, f"FA-COMP-DEP-{asset.pk}-{period_date:%Y%m}", period_date,
