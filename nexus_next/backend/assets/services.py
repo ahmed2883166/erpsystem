@@ -805,7 +805,7 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     net_impairment = impairment_total - reversal_total
     remaining = max(Decimal("0"), asset.original_cost - posted_total - net_impairment - asset.salvage_value)
 
-    if elapsed_days and remaining:
+    if elapsed_days and remaining and not active_components:
         if asset.depreciation_method == FixedAsset.Method.STRAIGHT_LINE:
             if latest_measurement_date >= asset.depreciation_start_date:
                 dep_at_measurement = asset.depreciations.filter(journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=latest_measurement_date).aggregate(total=Sum("amount"))["total"] or Decimal("0")
