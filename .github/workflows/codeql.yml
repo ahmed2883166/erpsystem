@@ -5,10 +5,12 @@ on:
     branches:
       - work/nexus-django-react-rebuild
       - feature/purchasing-completion
+      - work/admrail-owner-toolkit-integration-2026-11-26
   pull_request:
     branches:
       - work/nexus-django-react-rebuild
       - feature/inventory-completion
+      - work/admrail-main-consolidation-2026-11-25
   schedule:
     - cron: "23 4 * * 1"
 
