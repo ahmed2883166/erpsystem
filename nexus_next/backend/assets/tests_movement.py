@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 
 from accounting.models import ChartOfAccount
 from assets.models import AssetMovement, FixedAsset
-from assets.services import depreciate_asset
+from assets.services import depreciate_asset, record_asset_impairment
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
 from hr.models import Employee
 from treasury.models import TreasuryAccount
@@ -235,4 +235,26 @@ class AssetMovementWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(AssetMovement.objects.filter(document_number="AM-FUTURE-01").exists())
+
+    def test_historical_impairment_after_transfer_posts_to_branch_at_event_date(self):
+        requested = self.client.post("/api/assets/asset-movements/", {
+            "asset": self.asset.pk, "movement_type": "branch_transfer",
+            "movement_date": "2026-02-15", "to_branch": self.target_branch.pk,
+            "to_custodian": "مسؤول فرع غرب", "document_number": "AM-HIST-IMP-01",
+        }, format="json")
+        self.assertEqual(requested.status_code, 201, requested.data)
+        self.client.force_authenticate(self.manager)
+        approved = self.client.post(
+            f"/api/assets/asset-movements/{requested.data['id']}/approve/", {}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+
+        depreciate_asset(self.asset.pk, date(2026, 2, 10), self.year.pk, self.manager)
+        impairment_expense = self._account("6200", "مصروف انخفاض القيمة", "expense")
+        accumulated_impairment = self._account("1580", "مجمع انخفاض القيمة", "asset")
+        impairment = record_asset_impairment(
+            self.asset.pk, date(2026, 2, 10), Decimal("100000"),
+            impairment_expense.pk, accumulated_impairment.pk, self.year.pk, self.manager,
+        )
+        self.assertEqual(impairment.journal_entry.branch_id, self.branch.pk)
 
