@@ -7,7 +7,7 @@ from django.db import DatabaseError, connection, transaction
 from django.db.models import Sum
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from django.test import TransactionTestCase
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
@@ -3278,6 +3278,10 @@ class PurchasingWorkflowTests(APITestCase):
 
 
 class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
+    def setUp(self):
+        self.client = APIClient()
+        PurchasingWorkflowTests.setUp(self)
+
     def test_supplier_return_posting_owns_its_database_transaction(self):
         if connection.vendor != "postgresql":
             self.skipTest("This transaction-boundary regression specifically targets PostgreSQL row locking.")
