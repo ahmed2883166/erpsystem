@@ -1287,8 +1287,21 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             raise ValidationError("لا يمكن عكس سند قبض غير مرحّل.")
         if receipt.journal_entry.status != JournalEntry.Status.POSTED:
             raise ValidationError("القيد المرتبط بسند القبض ليس مرحّلًا.")
+        entry_date_raw = request.data.get("entry_date")
+        try:
+            entry_date = parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
+        except (TypeError, ValueError):
+            entry_date = None
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
         later_receipts = CustomerReceipt.objects.filter(
-            invoice_id=receipt.invoice_id, status=CustomerReceipt.Status.POSTED
+            invoice_id=receipt.invoice_id,
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(
+                status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=entry_date,
+            )
         ).filter(
             Q(receipt_date__gt=receipt.receipt_date)
             | Q(receipt_date=receipt.receipt_date, pk__gt=receipt.pk)
@@ -1297,7 +1310,9 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
             raise ValidationError("يجب عكس أحدث سند قبض على الفاتورة أولًا.")
         if CustomerRefund.objects.filter(
             source_return__invoice_id=receipt.invoice_id,
-            status=CustomerRefund.Status.POSTED,
+        ).filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=entry_date)
         ).exists():
             raise ValidationError("يجب عكس ردود المبالغ المرتبطة بمردودات الفاتورة أولًا قبل عكس سند قبضها.")
         if FxSubledgerRevaluation.objects.filter(
@@ -1305,15 +1320,9 @@ class CustomerReceiptViewSet(SalesBaseViewSet):
         ).filter(
             Q(journal_entry__isnull=True)
             | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+            | Q(journal_entry__reversal_entry__entry_date__gt=entry_date)
         ).exists():
             raise ValidationError("لا يمكن عكس سند قبض لفاتورة لها إعادة تقييم عملة سارية؛ راجع تسلسل التسويات وإعادة التقييم أولًا.")
-        entry_date_raw = request.data.get("entry_date")
-        try:
-            entry_date = parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
-        except (TypeError, ValueError):
-            entry_date = None
-        if not entry_date:
-            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
         cash_account_id = receipt.payment_account_id or receipt.journal_entry.lines.filter(
             description="استلام نقدية/تحويل من العميل",
         ).values_list("account_id", flat=True).first()

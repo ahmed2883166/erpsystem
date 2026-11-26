@@ -214,7 +214,13 @@ def post_customer_receipt(receipt_id, user):
     if receipt.company_id != invoice.company_id or receipt.customer_id != invoice.customer_id:
         raise ValidationError("بيانات السند لا تطابق فاتورة العميل.")
     if CustomerReceipt.objects.filter(
-        invoice=invoice, status=CustomerReceipt.Status.POSTED,
+        invoice=invoice,
+    ).filter(
+        Q(status=CustomerReceipt.Status.POSTED)
+        | Q(
+            status=CustomerReceipt.Status.REVERSED,
+            journal_entry__reversal_entry__entry_date__gt=receipt.receipt_date,
+        )
     ).filter(
         Q(receipt_date__gt=receipt.receipt_date)
         | Q(receipt_date=receipt.receipt_date, pk__gt=receipt.pk)
@@ -246,8 +252,13 @@ def post_customer_receipt(receipt_id, user):
         from accounting.fx_subledger_services import open_fx_invoice_balances
         from accounting.models import FxSubledgerRevaluation
         if CustomerReceipt.objects.filter(
-            invoice=invoice, status=CustomerReceipt.Status.POSTED,
-            receipt_date__gt=receipt.receipt_date,
+            invoice=invoice, receipt_date__gt=receipt.receipt_date,
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(
+                status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=receipt.receipt_date,
+            )
         ).exists() or FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__gte=receipt.receipt_date,
         ).filter(
@@ -282,8 +293,13 @@ def post_customer_receipt(receipt_id, user):
         )):
             raise ValidationError("لا يمكن استخدام بيانات عملة أجنبية مع فاتورة بالعملة الأساسية.")
         paid = CustomerReceipt.objects.filter(
-            invoice=invoice, status=CustomerReceipt.Status.POSTED,
-            receipt_date__lte=receipt.receipt_date,
+            invoice=invoice, receipt_date__lte=receipt.receipt_date,
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(
+                status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=receipt.receipt_date,
+            )
         ).exclude(pk=receipt.pk).aggregate(total=Sum("amount"))["total"] or Decimal("0")
         returned = SalesReturn.objects.filter(
             invoice=invoice, return_date__lte=receipt.receipt_date,

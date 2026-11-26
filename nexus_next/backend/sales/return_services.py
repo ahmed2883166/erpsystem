@@ -46,6 +46,7 @@ def post_sales_return(return_id, user):
     ).filter(
         Q(journal_entry__isnull=True)
         | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+        | Q(journal_entry__reversal_entry__entry_date__gt=sales_return.return_date)
     ).exists():
         raise ValidationError("لا يمكن ترحيل مردود فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if invoice.delivery_id and (
@@ -71,8 +72,14 @@ def post_sales_return(return_id, user):
     for line in lines:
         original = originals[line.invoice_line_id]
         already_returned = SalesReturn.objects.filter(
-            invoice_id=invoice.pk, status=SalesReturn.Status.POSTED,
+            invoice_id=invoice.pk,
             lines__invoice_line_id=original.pk,
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(
+                status=SalesReturn.Status.REVERSED,
+                reversal_date__gt=sales_return.return_date,
+            )
         ).exclude(pk=sales_return.pk).aggregate(total=Sum("lines__quantity"))["total"] or Decimal("0")
         if already_returned + line.quantity > original.quantity:
             remaining = max(original.quantity - already_returned, Decimal("0"))
@@ -192,13 +199,17 @@ def reverse_sales_return(return_id, user, entry_date):
         raise ValidationError("لا يمكن عكس إلا مردود مبيعات مرحّل.")
     if document.reversal_journal_entry_id or document.reversal_stock_movement_id:
         raise ValidationError("تم عكس مردود المبيعات من قبل.")
-    if document.refunds.filter(status=CustomerRefund.Status.POSTED).exists():
+    if document.refunds.filter(
+        Q(status=CustomerRefund.Status.POSTED)
+        | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=entry_date)
+    ).exists():
         raise ValidationError("يجب عكس رد المبلغ المرتبط بمردود المبيعات أولًا قبل عكس المردود.")
     if document.invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
         sales_invoice=document.invoice,
     ).filter(
         Q(journal_entry__isnull=True)
         | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+        | Q(journal_entry__reversal_entry__entry_date__gt=entry_date)
     ).exists():
         raise ValidationError("لا يمكن عكس مردود فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if entry_date < document.return_date:

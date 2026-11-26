@@ -1064,6 +1064,19 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
         self.assertEqual(reversed_return.data["status"], "reversed")
+        backdated_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk, "invoice": invoice.data["id"],
+            "return_number": "RET-003-BACKDATED", "return_date": "2026-03-13",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1.1",
+            }],
+        }, format="json")
+        self.assertEqual(backdated_return.status_code, 201, backdated_return.data)
+        rejected_backdated_return = self.client.post(
+            f"/api/sales-documents/returns/{backdated_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected_backdated_return.status_code, 400, rejected_backdated_return.data)
+        self.assertIn("تتجاوز الكمية المباعة", str(rejected_backdated_return.data))
         invoice_after_reversal = self.client.get(
             f"/api/sales-documents/invoices/{invoice.data['id']}/"
         )
@@ -1394,6 +1407,131 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(blocked_reversal.status_code, 400, blocked_reversal.data)
 
+    def test_reversed_foreign_receipt_remains_in_fx_balance_until_reversal_date(self):
+        delivery_id, line_id = self._create_delivery("DEL-FX-REVERSED-ASOF")
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2026, 3, 10), rate=Decimal("50"),
+        )
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-FX-REVERSED-ASOF",
+            "invoice_date": "2026-03-10",
+            "transaction_currency": usd.pk, "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": line_id, "transaction_unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        receipt = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "invoice": invoice_id, "receipt_number": "RC-FX-REVERSED-ASOF",
+            "receipt_date": "2026-03-11", "method": "cash",
+            "amount": "1000", "transaction_currency": usd.pk,
+            "transaction_amount": "20", "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+        }, format="json")
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        posted_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+        reversed_receipt = self.client.post(
+            f"/api/sales-documents/receipts/{receipt.data['id']}/reverse/",
+            {"entry_date": "2026-03-12"}, format="json",
+        )
+        self.assertEqual(reversed_receipt.status_code, 200, reversed_receipt.data)
+
+        from accounting.fx_subledger_services import open_fx_invoice_balances
+        invoice_obj = SalesInvoice.objects.get(pk=invoice_id)
+        self.assertEqual(
+            open_fx_invoice_balances(
+                invoice_obj, direction="receivable", as_of=date(2026, 3, 11),
+            ),
+            (Decimal("180.0000"), Decimal("9000.0000"), Decimal("9000.0000")),
+        )
+        self.assertEqual(
+            open_fx_invoice_balances(
+                invoice_obj, direction="receivable", as_of=date(2026, 3, 12),
+            ),
+            (Decimal("200.0000"), Decimal("10000.0000"), Decimal("10000.0000")),
+        )
+
+        overpaid = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "invoice": invoice_id, "receipt_number": "RC-FX-REVERSED-ASOF-OVER",
+            "receipt_date": "2026-03-11", "method": "cash",
+            "amount": "9050", "transaction_currency": usd.pk,
+            "transaction_amount": "181", "exchange_rate": "50",
+            "exchange_rate_date": "2026-03-10",
+        }, format="json")
+        self.assertEqual(overpaid.status_code, 201, overpaid.data)
+        rejected = self.client.post(
+            f"/api/sales-documents/receipts/{overpaid.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+    def test_reversing_receipt_respects_later_receipt_until_its_actual_reversal_date(self):
+        delivery_id, line_id = self._create_delivery("DEL-REV-ORDER")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk,
+            "delivery": delivery_id, "invoice_number": "INV-REV-ORDER",
+            "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice_id}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        receipt_ids = []
+        for number, receipt_date in (
+            ("RC-REV-ORDER-1", "2026-03-11"),
+            ("RC-REV-ORDER-2", "2026-03-12"),
+        ):
+            receipt = self.client.post("/api/sales-documents/receipts/", {
+                "company": self.company.pk, "customer": self.customer.pk,
+                "invoice": invoice_id, "receipt_number": number,
+                "receipt_date": receipt_date, "method": "cash", "amount": "50",
+            }, format="json")
+            self.assertEqual(receipt.status_code, 201, receipt.data)
+            posted = self.client.post(
+                f"/api/sales-documents/receipts/{receipt.data['id']}/post/", {}, format="json",
+            )
+            self.assertEqual(posted.status_code, 200, posted.data)
+            receipt_ids.append(receipt.data["id"])
+
+        reversed_latest = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_ids[1]}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_latest.status_code, 200, reversed_latest.data)
+
+        blocked_earlier = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_ids[0]}/reverse/",
+            {"entry_date": "2026-03-13"}, format="json",
+        )
+        self.assertEqual(blocked_earlier.status_code, 400, blocked_earlier.data)
+        self.assertIn("أحدث سند قبض", str(blocked_earlier.data))
+
+        allowed_after_latest_reversal = self.client.post(
+            f"/api/sales-documents/receipts/{receipt_ids[0]}/reverse/",
+            {"entry_date": "2026-03-15"}, format="json",
+        )
+        self.assertEqual(
+            allowed_after_latest_reversal.status_code, 200, allowed_after_latest_reversal.data,
+        )
+
     def test_latest_customer_receipt_can_be_reversed_with_linked_journal(self):
         delivery_id, line_id = self._create_delivery("DEL-REV-001")
         invoice = self.client.post("/api/sales-documents/invoices/", {
@@ -1426,6 +1564,26 @@ class SalesWorkflowTests(APITestCase):
         )
         self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
         self.assertEqual(reversed_response.data["status"], "reversed")
+        from sales.refund_services import _customer_credit_balance
+        self.assertEqual(
+            _customer_credit_balance(self.company.pk, self.customer.pk, date(2026, 3, 11)),
+            Decimal("128.0000"),
+        )
+        self.assertEqual(
+            _customer_credit_balance(self.company.pk, self.customer.pk, date(2026, 3, 12)),
+            Decimal("228.0000"),
+        )
+        backdated_overpayment = self.client.post("/api/sales-documents/receipts/", {
+            "company": self.company.pk, "customer": self.customer.pk, "invoice": invoice_id,
+            "receipt_number": "RC-REV-001-BACKDATED", "receipt_date": "2026-03-11",
+            "method": "cash", "amount": "129",
+        }, format="json")
+        self.assertEqual(backdated_overpayment.status_code, 201, backdated_overpayment.data)
+        rejected_backdated = self.client.post(
+            f"/api/sales-documents/receipts/{backdated_overpayment.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(rejected_backdated.status_code, 400, rejected_backdated.data)
         reversal_id = reversed_response.data["reversal_journal_entry"]
         original = JournalEntry.objects.get(pk=original_entry_id)
         reversal = JournalEntry.objects.get(pk=reversal_id)

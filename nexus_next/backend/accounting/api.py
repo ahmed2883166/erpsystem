@@ -595,6 +595,10 @@ class JournalEntryViewSet(AccountingViewSet):
             or TreasuryFxRevaluation.objects.filter(journal_entry=original).exists()
         ):
             raise ValidationError("لا يمكن عكس قيد خزينة أو إعادة تقييم خزينة من زر العكس العام؛ استخدم إجراء التصحيح داخل وحدة الخزينة حتى يتحدث رصيد العملة والمستند المرتبط.")
+        entry_date_raw = request.data.get("entry_date")
+        entry_date = parse_date(entry_date_raw) if entry_date_raw else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
         fx_revaluation = None
         if original.source_type == JournalEntry.Source.FX_REVALUATION:
             fx_revaluation = FxSubledgerRevaluation.objects.select_for_update().filter(journal_entry=original).first()
@@ -604,34 +608,48 @@ class JournalEntryViewSet(AccountingViewSet):
                 from sales.models import CustomerReceipt
                 later_settlements = CustomerReceipt.objects.filter(
                     invoice_id=fx_revaluation.sales_invoice_id,
-                    status=CustomerReceipt.Status.POSTED,
                     receipt_date__gte=fx_revaluation.revaluation_date,
+                ).filter(
+                    Q(status=CustomerReceipt.Status.POSTED)
+                    | Q(
+                        status=CustomerReceipt.Status.REVERSED,
+                        journal_entry__reversal_entry__entry_date__gt=entry_date,
+                    )
                 ).exists()
                 later_revaluations = FxSubledgerRevaluation.objects.filter(
                     sales_invoice_id=fx_revaluation.sales_invoice_id,
                     revaluation_date__gt=fx_revaluation.revaluation_date,
-                ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
+                ).filter(
+                    Q(journal_entry__isnull=True)
+                    | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+                    | Q(journal_entry__reversal_entry__entry_date__gt=entry_date)
+                ).exists()
             else:
                 from purchasing.models import SupplierPayment
                 later_settlements = SupplierPayment.objects.filter(
                     invoice_id=fx_revaluation.purchase_invoice_id,
-                    status=SupplierPayment.Status.POSTED,
                     payment_date__gte=fx_revaluation.revaluation_date,
+                ).filter(
+                    Q(status=SupplierPayment.Status.POSTED)
+                    | Q(
+                        status=SupplierPayment.Status.REVERSED,
+                        journal_entry__reversal_entry__entry_date__gt=entry_date,
+                    )
                 ).exists()
                 later_revaluations = FxSubledgerRevaluation.objects.filter(
                     purchase_invoice_id=fx_revaluation.purchase_invoice_id,
                     revaluation_date__gt=fx_revaluation.revaluation_date,
-                ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
+                ).filter(
+                    Q(journal_entry__isnull=True)
+                    | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+                    | Q(journal_entry__reversal_entry__entry_date__gt=entry_date)
+                ).exists()
             if later_settlements or later_revaluations:
                 raise ValidationError("لا يمكن عكس إعادة تقييم لها تسوية لاحقة أو إعادة تقييم أحدث؛ صحح التسلسل من آخر حدث إلى أوله.")
         elif original.source_type != JournalEntry.Source.MANUAL:
             raise ValidationError("عكس القيود التشغيلية أو الافتتاحية أو الإقفالية غير متاح من زر العكس العام؛ استخدم إجراء الإلغاء أو التصحيح داخل الوحدة المصدر.")
         if JournalEntry.objects.filter(reversal_of=original).exists():
             raise ValidationError("تم إنشاء قيد عكسي لهذا القيد من قبل.")
-        entry_date_raw = request.data.get("entry_date")
-        entry_date = parse_date(entry_date_raw) if entry_date_raw else timezone.localdate()
-        if not entry_date:
-            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
         if entry_date < original.entry_date:
             raise ValidationError({"entry_date": "تاريخ القيد العكسي لا يجوز أن يسبق تاريخ القيد الأصلي."})
         fiscal_year = FiscalYear.objects.filter(

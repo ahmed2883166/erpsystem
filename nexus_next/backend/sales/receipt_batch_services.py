@@ -12,7 +12,7 @@ from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
 from sales.models import (
     CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation,
-    SalesInvoice, SalesReturn,
+    CustomerRefund, SalesInvoice, SalesReturn,
 )
 from treasury.models import TreasuryAccount
 
@@ -251,9 +251,18 @@ def reverse_customer_receipt_batch(batch_id, user, entry_date):
         raise ValidationError("القيد المرتبط بسند القبض المجمع ليس مرحّلًا.")
     if entry_date < batch.receipt_date:
         raise ValidationError("تاريخ العكس لا يجوز أن يسبق تاريخ سند القبض.")
-    if batch.refunds.filter(status="posted").exists():
+    if batch.refunds.filter(
+        Q(status=CustomerRefund.Status.POSTED)
+        | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=entry_date)
+    ).exists():
         raise ValidationError("يجب عكس رد المبلغ المرتبط بالدفعة المقدمة أولًا قبل عكس سند القبض.")
-    if batch.allocations.filter(invoice__returns__refunds__status="posted").exists():
+    if batch.allocations.filter(
+        Q(invoice__returns__refunds__status=CustomerRefund.Status.POSTED)
+        | Q(
+            invoice__returns__refunds__status=CustomerRefund.Status.REVERSED,
+            invoice__returns__refunds__reversal_date__gt=entry_date,
+        )
+    ).exists():
         raise ValidationError("يجب عكس ردود المبالغ الممولة من تخصيصات هذا السند أولًا قبل عكس سند القبض.")
 
     allocations = list(batch.allocations.select_related("invoice"))
