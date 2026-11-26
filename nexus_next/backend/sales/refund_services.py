@@ -312,14 +312,18 @@ def reverse_customer_refund(refund_id, user, entry_date):
     if refund.source_return_id:
         later_refunds = CustomerRefund.objects.filter(
             source_return_id=refund.source_return_id,
-            status=CustomerRefund.Status.POSTED,
             refund_date__gt=refund.refund_date,
+        ).filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=entry_date)
         ).exclude(pk=refund.pk)
     else:
         later_refunds = CustomerRefund.objects.filter(
             source_receipt_batch_id=refund.source_receipt_batch_id,
-            status=CustomerRefund.Status.POSTED,
             refund_date__gt=refund.refund_date,
+        ).filter(
+            Q(status=CustomerRefund.Status.POSTED)
+            | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=entry_date)
         ).exclude(pk=refund.pk)
     if later_refunds.exists():
         raise ValidationError("يجب عكس أحدث رد مبلغ عن نفس المستند أولًا.")
@@ -337,7 +341,9 @@ def reverse_customer_refund(refund_id, user, entry_date):
         active_revaluation = TreasuryFxRevaluation.objects.filter(
             account_id=original.source_account_id,
             revaluation_date__gte=original.transaction_date,
-            reversal_journal_entry__isnull=True,
+        ).filter(
+            Q(reversal_journal_entry__isnull=True)
+            | Q(reversal_journal_entry__entry_date__gt=entry_date)
         ).exists()
         if later_movement or active_revaluation:
             raise ValidationError(
