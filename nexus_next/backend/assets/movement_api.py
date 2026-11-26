@@ -166,12 +166,12 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
         movement = self.get_object()
         self._review(movement.company_id)
         with transaction.atomic():
-            movement = AssetMovement.objects.select_for_update().select_related(
+            movement = AssetMovement.objects.select_for_update(of=("self",)).select_related(
                 "asset", "to_branch", "to_employee",
             ).get(pk=movement.pk)
             if movement.status != AssetMovement.Status.PENDING:
                 raise ValidationError("مستند الحركة تمت مراجعته بالفعل.")
-            asset = FixedAsset.objects.select_for_update().get(pk=movement.asset_id)
+            asset = FixedAsset.objects.select_for_update(of=("self",)).get(pk=movement.asset_id)
             if asset.status != FixedAsset.Status.ACTIVE:
                 raise ValidationError("لا يمكن اعتماد حركة لأصل تم استبعاده.")
             if not movement.to_branch.is_active:
@@ -212,7 +212,7 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
         if not note:
             raise ValidationError({"review_note": "سبب رفض الحركة مطلوب."})
         with transaction.atomic():
-            movement = AssetMovement.objects.select_for_update().get(pk=movement.pk)
+            movement = AssetMovement.objects.select_for_update(of=("self",)).get(pk=movement.pk)
             if movement.status != AssetMovement.Status.PENDING:
                 raise ValidationError("مستند الحركة تمت مراجعته بالفعل.")
             movement.status = AssetMovement.Status.REJECTED
