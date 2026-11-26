@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class FixedAssetViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
     serializer_class = FixedAssetSerializer
-    queryset = FixedAsset.objects.select_related("company", "branch", "asset_account",
+    queryset = FixedAsset.objects.select_related("company", "branch", "custodian_employee", "asset_account",
         "accumulated_depreciation_account", "depreciation_expense_account",
         "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction", "vendor_invoice").prefetch_related("depreciations", "impairments", "impairment_reversals", "vendor_invoice__payments").all()
 

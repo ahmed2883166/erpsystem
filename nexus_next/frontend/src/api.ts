@@ -987,7 +987,7 @@ export const importBankStatementCsv = async (id: number, file: File): Promise<{i
 
 
 export type FixedAsset = {
-  id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;
+  id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; custodian_employee: number | null; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;
   acquisition_date: string; depreciation_start_date: string; original_cost: string; acquisition_net_amount: string|null; recoverable_tax_amount:string; nonrecoverable_tax_amount:string; acquisition_tax_code:number|null; salvage_value: string;
   useful_life_months: number; depreciation_method: "straight_line"; asset_account: number;
   accumulated_depreciation_account: number; depreciation_expense_account: number;
@@ -996,6 +996,16 @@ export type FixedAsset = {
   vendor_invoice_id: number | null; vendor_invoice_status: "draft" | "posted" | null;
   vendor_payments: {id:number;payment_number:string;payment_date:string;amount:string;status:"draft"|"posted"|"reversed";journal_entry:number|null}[];
   accumulated_depreciation: string; accumulated_impairment?:string; net_book_value: string; created_at: string;
+};
+export type AssetMovement = {
+  id:number; company:number; asset:number; asset_code:string; asset_name:string;
+  movement_type:"branch_transfer"|"custody_change"|"location_change"; movement_date:string;
+  from_branch:number; from_branch_name:string; to_branch:number; to_branch_name:string;
+  from_employee:number|null; from_employee_name:string|null; to_employee:number|null; to_employee_name:string|null;
+  from_custodian:string; to_custodian:string; from_location:string; to_location:string;
+  document_number:string; notes:string; status:"pending"|"approved"|"rejected";
+  requested_by:number; requested_by_name:string; reviewed_by:number|null; reviewed_by_name:string|null;
+  reviewed_at:string|null; review_note:string; created_at:string;
 };
 export type AssetSchedule = { asset_id: number; original_cost: string; accumulated_depreciation: string; accumulated_impairment:string; net_book_value: string;
   rows: { id: number; asset: number; period_date: string; amount: string; is_partial_period: boolean; journal_entry: number; created_at: string }[];
@@ -1026,6 +1036,20 @@ export type AssetDepreciationRunResult = {
 };
 // واجهات الأصول الثابتة: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const fixedAssetsApi = {
+  // مستندات نقل الأصول وتغيير العهدة والموقع.
+  movements: (companyId:number) => request<AssetMovement[]>(`/api/assets/asset-movements/?company=${companyId}`),
+  createMovement: async (payload:{asset:number;movement_type:AssetMovement["movement_type"];movement_date:string;to_branch?:number;to_employee?:number|null;to_custodian?:string;to_location?:string;document_number:string;notes?:string}) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<AssetMovement>("/api/assets/asset-movements/", {method:"POST",body:JSON.stringify(payload)});
+  },
+  approveMovement: async (id:number, review_note:string) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<AssetMovement>(`/api/assets/asset-movements/${id}/approve/`, {method:"POST",body:JSON.stringify({review_note})});
+  },
+  rejectMovement: async (id:number, review_note:string) => {
+    await request<{detail:string}>("/api/csrf/");
+    return request<AssetMovement>(`/api/assets/asset-movements/${id}/reject/`, {method:"POST",body:JSON.stringify({review_note})});
+  },
   // جلب سجل الأصول الثابتة للشركة.
   list: (companyId: number) => request<FixedAsset[]>(`/api/assets/fixed-assets/?company=${companyId}`),
   // جلب سجل الأصول الثابتة في تاريخ محدد.
