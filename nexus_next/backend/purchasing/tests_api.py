@@ -2823,6 +2823,30 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(quotation.status_code, 201, quotation.data)
         self.assertEqual(quotation.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
 
+        approver = get_user_model().objects.create_user(
+            username="service-procurement-approver", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=approver, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(approver)
+        awarded = self.client.post(f"/api/purchasing/rfqs/{rfq.data['id']}/award/", {
+            "quotation": quotation.data["id"],
+            "reason": "أفضل سعر وشروط تنفيذ مناسبة",
+        }, format="json")
+        self.assertEqual(awarded.status_code, 200, awarded.data)
+
+        converted = self.client.post(f"/api/purchasing/rfqs/{rfq.data['id']}/convert-award/", {
+            "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-RFQ-001",
+            "order_date": today.isoformat(),
+            "expected_date": (today + timedelta(days=5)).isoformat(),
+        }, format="json")
+        self.assertEqual(converted.status_code, 201, converted.data)
+        service_order = self.client.get(f"/api/purchasing/orders/{converted.data['purchase_order_id']}/")
+        self.assertEqual(service_order.status_code, 200, service_order.data)
+        self.assertEqual(service_order.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
 
     def test_service_purchase_order_requires_service_acceptance_without_stock_receipt(self):
         service = Product.objects.create(
