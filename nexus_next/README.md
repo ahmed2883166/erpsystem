@@ -23,7 +23,7 @@ Set-ExecutionPolicy -Scope Process Bypass
 ```
 If no administrator exists, the startup helper opens a separate PowerShell window to create one. The application connects to the existing PostgreSQL Windows service; it does not install Docker, create or reset a database, or open LAN access. Both application servers are bound to localhost only.
 
-For the Windows trial ZIP, prerequisites, first company setup, and data-safety instructions, see [TRIAL-QUICKSTART.md](TRIAL-QUICKSTART.md). To build a clean ZIP locally, run `.scripts\package-trial.ps1`.
+For the Windows trial ZIP, prerequisites, first company setup, and data-safety instructions, see [TRIAL-QUICKSTART.md](TRIAL-QUICKSTART.md). To build a clean ZIP locally, run `scripts\package-trial.ps1`.
 
 See [docs/architecture.md](docs/architecture.md) and [backend/README.md](backend/README.md) for details.
 
