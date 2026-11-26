@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from rest_framework.test import APITestCase
 
-from accounting.models import AccountRole, ChartOfAccount, JournalLine
+from accounting.models import AccountRole, ChartOfAccount, JournalLine, TaxCode
 from companies.models import Currency, ExchangeRate, FiscalYear
 from inventory.models import Product, StockBalance
 from treasury.models import TreasuryAccount, TreasuryTransaction
@@ -679,8 +679,6 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(rejected.status_code, 400, rejected.data)
 
     def test_vat_report_reconciles_sales_return_and_later_reversal_in_their_own_periods(self):
-        from sales.models import TaxCode
-
         tax_code = TaxCode.objects.create(
             company=self.company, country="EG", code="VAT-RETURN-14",
             name_ar="ضريبة مردودات", category=TaxCode.Category.STANDARD,
