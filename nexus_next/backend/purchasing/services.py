@@ -1123,6 +1123,7 @@ def reverse_supplier_refund(refund_id, user, entry_date):
     return document
 
 
+@transaction.atomic
 def post_supplier_return(return_id, user):
     """ترحيل مرتجع المورد من مصدر الاستلام الأصلي مع تسوية المورد والضريبة والمخزون."""
     document = SupplierReturn.objects.select_for_update(of=("self",)).select_related(

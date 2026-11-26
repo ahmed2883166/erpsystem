@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Sum
 from rest_framework.exceptions import ValidationError as DRFValidationError
+from django.test import TransactionTestCase
 from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine, TaxCode
@@ -3157,3 +3158,18 @@ class PurchasingWorkflowTests(APITestCase):
         )
         self.assertEqual(on_invoice_date.data["gl_reconciliation"]["difference"], "0.0000")
         self.assertTrue(on_invoice_date.data["gl_reconciliation"]["reconciled"])
+
+
+
+class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
+    def test_supplier_return_posting_owns_its_database_transaction(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("This transaction-boundary regression specifically targets PostgreSQL row locking.")
+
+        from purchasing.services import post_supplier_return
+
+        # Outside an enclosing TestCase transaction, select_for_update must still
+        # run inside the service's own atomic block. A missing ID reaches DoesNotExist;
+        # without the service transaction PostgreSQL raises TransactionManagementError.
+        with self.assertRaises(SupplierReturn.DoesNotExist):
+            post_supplier_return(-1, user=None)
