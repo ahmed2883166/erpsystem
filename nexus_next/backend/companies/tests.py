@@ -4,7 +4,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from .access import accessible_branches, accessible_companies, can_access_branch
-from .models import Branch, Company, CompanyActivity, Currency, FiscalYear
+from .models import Branch, Company, Currency, FiscalYear
 from .serializers import CompanySerializer
 
 class CompanyFoundationTests(TestCase):
