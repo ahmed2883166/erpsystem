@@ -24,20 +24,38 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
     """Return open foreign balance, historical carrying and current book carrying."""
     if direction == "receivable":
         settlements = CustomerReceipt.objects.filter(
-            invoice=invoice, status=CustomerReceipt.Status.POSTED,
-            receipt_date__lte=as_of,
+            invoice=invoice, receipt_date__lte=as_of,
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(
+                status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=as_of,
+            )
         )
         latest = FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__lte=as_of,
-        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).order_by("-revaluation_date", "-pk").first()
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+            | Q(journal_entry__reversal_entry__entry_date__gt=as_of)
+        ).order_by("-revaluation_date", "-pk").first()
     else:
         settlements = SupplierPayment.objects.filter(
-            invoice=invoice, status=SupplierPayment.Status.POSTED,
-            payment_date__lte=as_of,
+            invoice=invoice, payment_date__lte=as_of,
+        ).filter(
+            Q(status=SupplierPayment.Status.POSTED)
+            | Q(
+                status=SupplierPayment.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=as_of,
+            )
         )
         latest = FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__lte=as_of,
-        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).order_by("-revaluation_date", "-pk").first()
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+            | Q(journal_entry__reversal_entry__entry_date__gt=as_of)
+        ).order_by("-revaluation_date", "-pk").first()
 
     foreign_used = _sum(settlements, "transaction_amount")
     historical_used = _sum(settlements, "historical_carrying_base_amount")
@@ -94,8 +112,8 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
                     reversal_date__gt=latest.revaluation_date,
                     reversal_date__lte=as_of,
                 ),
-                "grand_total",
-            )
+                "transaction_grand_total",
+            ) * latest.rate
         else:
             reversed_before_latest = _sum(
                 SupplierReturn.objects.filter(
@@ -105,8 +123,8 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
                     reversal_date__gt=latest.revaluation_date,
                     reversal_date__lte=as_of,
                 ),
-                "grand_total",
-            )
+                "transaction_grand_total",
+            ) * latest.rate
         current_remaining = (
             latest.new_carrying_amount - current_used_after
             - returned_current + reversed_before_latest
@@ -123,10 +141,10 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
 
 def _branch_and_year(invoice, direction, entry_date):
     if direction == "receivable":
-        from sales.services import _branch_and_year as resolver
-        return resolver(invoice.delivery, entry_date)
-    from purchasing.services import _branch_and_year as resolver
-    return resolver(invoice.receipt, entry_date)
+        from sales.services import _branch_and_year_for_invoice as resolver
+        return resolver(invoice, entry_date)
+    from purchasing.services import _branch_and_year_for_invoice
+    return _branch_and_year_for_invoice(invoice, entry_date)
 
 
 @transaction.atomic
@@ -134,12 +152,12 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
     """Revalue the outstanding AR/AP amount and post unrealized FX gain/loss."""
     if direction == "receivable":
         invoice = SalesInvoice.objects.select_for_update(of=("self",)).select_related(
-            "company", "transaction_currency", "delivery__warehouse",
+            "company", "transaction_currency", "delivery__warehouse", "branch",
         ).get(pk=invoice_id)
         invoice_model = SalesInvoice
     elif direction == "payable":
         invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
-            "company", "transaction_currency", "receipt__warehouse",
+            "company", "transaction_currency", "branch", "receipt__warehouse",
         ).get(pk=invoice_id)
         invoice_model = PurchaseInvoice
     else:
@@ -154,56 +172,60 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
     if FxSubledgerRevaluation.objects.filter(
         **({"sales_invoice": invoice} if direction == "receivable" else {"purchase_invoice": invoice}),
         revaluation_date=revaluation_date,
-    ).filter(
-        # سجل بلا قيد (فرق صفر — NEW-7-1) أو سجل معكوس لا يمنع تقييمًا
-        # جديدًا في نفس التاريخ: لم يغيّر شيئًا اقتصاديًا.
-        Q(journal_entry__isnull=False),
-        ~Q(journal_entry__status=JournalEntry.Status.REVERSED),
     ).exists():
         raise ValidationError("تمت إعادة تقييم هذه الفاتورة في التاريخ المحدد بالفعل.")
 
     if direction == "receivable":
         later_settlements = CustomerReceipt.objects.filter(
-            invoice=invoice, status=CustomerReceipt.Status.POSTED,
-            receipt_date__gte=revaluation_date,
+            invoice=invoice, receipt_date__gte=revaluation_date,
+        ).filter(
+            Q(status=CustomerReceipt.Status.POSTED)
+            | Q(
+                status=CustomerReceipt.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=revaluation_date,
+            )
         ).exists()
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             sales_invoice=invoice, revaluation_date__gt=revaluation_date,
-        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
-        # نظير payable: مرتجع لاحق (بتاريخ الإنشاء) يمنع التقييم بأثر رجعي.
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+            | Q(journal_entry__reversal_entry__entry_date__gt=revaluation_date)
+        ).exists()
         later_returns = SalesReturn.objects.filter(
             invoice=invoice,
-            status__in=(SalesReturn.Status.POSTED, SalesReturn.Status.REVERSED),
             return_date__gte=revaluation_date,
-        ).exists()
-        # عكس مرتجع بتاريخ لاحق لتاريخ التقييم حدث لاحق أيضًا: مرتجع
-        # أُنشئ قبل التاريخ وعُكس بعده كان ساريًا حينها، فالتقييم بينهما
-        # يترك الرصيد الجاري منحرفًا (NEW-6-3 — مثال الـ 800 جنيه).
-        later_return_reversals = SalesReturn.objects.filter(
-            invoice=invoice,
-            status=SalesReturn.Status.REVERSED,
-            reversal_date__gte=revaluation_date,
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(
+                status=SalesReturn.Status.REVERSED,
+                reversal_date__gt=revaluation_date,
+            )
         ).exists()
     else:
         later_settlements = SupplierPayment.objects.filter(
-            invoice=invoice, status=SupplierPayment.Status.POSTED,
-            payment_date__gte=revaluation_date,
+            invoice=invoice, payment_date__gte=revaluation_date,
+        ).filter(
+            Q(status=SupplierPayment.Status.POSTED)
+            | Q(
+                status=SupplierPayment.Status.REVERSED,
+                journal_entry__reversal_entry__entry_date__gt=revaluation_date,
+            )
         ).exists()
         later_revaluations = FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__gt=revaluation_date,
-        ).filter(Q(journal_entry__isnull=True) | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)).exists()
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+            | Q(journal_entry__reversal_entry__entry_date__gt=revaluation_date)
+        ).exists()
         later_returns = SupplierReturn.objects.filter(
             invoice=invoice,
             status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),
             return_date__gte=revaluation_date,
         ).exists()
-        later_return_reversals = SupplierReturn.objects.filter(
-            invoice=invoice,
-            status=SupplierReturn.Status.REVERSED,
-            reversal_date__gte=revaluation_date,
-        ).exists()
-    if later_settlements or later_revaluations or later_returns or later_return_reversals:
-        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو مرتجعًا أو عكس مرتجع أو إعادة تقييم مرحّلة.")
+    if later_settlements or later_revaluations or later_returns:
+        raise ValidationError("لا يمكن إعادة تقييم تاريخ يسبق تسوية أو مرتجعًا أو إعادة تقييم مرحّلة.")
 
     approved = ExchangeRate.objects.filter(
         company=invoice.company, currency=invoice.transaction_currency,
@@ -263,23 +285,6 @@ def revalue_fx_invoice(*, direction, invoice_id, revaluation_date, rate_date, ra
             detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
             raise ValidationError(detail) from exc
 
-    if not difference:
-        # فرق صفر: لا ننشئ سجل تقييم بلا قيد؛ فكل الحراس تعتبر غياب القيد
-        # دليل نشاط، فيحظر السجلُ المردوداتِ والتسويات إلى الأبد دون أي
-        # مسار لعكسه (NEW-7-1؛ وهو أيضًا أصل NEW-3-12). نعيد نسخة غير
-        # محفوظة بنفس القيم حتى يبقى عقد الاستجابة كما هو
-        # (id: null وdifference: 0 وjournal_entry: null) — والواجهة لا
-        # تستخدم القيمة المرجعة أصلًا (SalesPanel يعيد تحميل السجل).
-        return FxSubledgerRevaluation(
-            company=invoice.company,
-            sales_invoice=invoice if direction == "receivable" else None,
-            purchase_invoice=invoice if direction == "payable" else None,
-            revaluation_date=revaluation_date, rate_date=rate_date, rate=approved.rate,
-            foreign_balance=remaining_foreign,
-            previous_carrying_amount=previous_carrying,
-            new_carrying_amount=new_carrying,
-            difference=difference, journal_entry=None, created_by=user,
-        )
     record = FxSubledgerRevaluation.objects.create(
         company=invoice.company,
         sales_invoice=invoice if direction == "receivable" else None,
