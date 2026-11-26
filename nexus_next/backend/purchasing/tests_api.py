@@ -531,6 +531,56 @@ class PurchasingWorkflowTests(APITestCase):
                 JournalEntry.objects.filter(entry_number=f"PUR-PAY-{stored.pk}").exists()
             )
 
+    def test_backdated_supplier_payment_respects_later_treasury_withdrawals(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-BACKDATED-TREASURY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        account = ChartOfAccount.objects.create(
+            company=self.company, code="1192", name_ar="بنك بحركة لاحقة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-FUTURE",
+            name_ar="بنك بحركة لاحقة", currency_code="EGP",
+            opening_balance=Decimal("100"),
+        )
+        later_withdrawal = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=treasury_account, counter_account=ChartOfAccount.objects.get(
+                company=self.company, code="6000",
+            ),
+            kind=TreasuryTransaction.Kind.PAYMENT, document_number="TR-FUTURE-001",
+            transaction_date=date(2026, 3, 20), amount=Decimal("90"),
+            description="سحب بنكي لاحق",
+        )
+        from treasury.services import post_treasury_transaction
+        post_treasury_transaction(later_withdrawal.pk, self.user)
+
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "payment_number": "PAY-BACKDATED-001",
+            "payment_date": "2026-03-15", "method": "bank",
+            "payment_account": account.pk, "amount": "20.0000",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        rejected = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        stored = SupplierPayment.objects.get(pk=payment.data["id"])
+        self.assertEqual(stored.status, SupplierPayment.Status.DRAFT)
+        self.assertIsNone(stored.journal_entry_id)
+
     def test_supplier_payment_rejects_treasury_account_from_another_branch(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         invoice = self.client.post("/api/purchasing/invoices/", {
