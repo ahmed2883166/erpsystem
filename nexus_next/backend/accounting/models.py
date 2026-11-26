@@ -108,7 +108,7 @@ class AccountRole(models.Model):
             ),
             models.UniqueConstraint(
                 fields=("company", "role", "activity"), condition=Q(activity__isnull=False),
-                name="uq_account_role_company_activity",
+                name="uq_acct_role_co_activity",
             ),
         ]
         verbose_name = "ربط دور حسابي"
