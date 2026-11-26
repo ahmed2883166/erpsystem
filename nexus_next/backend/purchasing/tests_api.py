@@ -3448,6 +3448,42 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             PurchaseOrder.Status.CONFIRMED,
         )
 
+    def test_service_invoice_must_use_the_acceptance_order_branch(self):
+        service = Product.objects.create(
+            company=self.company, unit=self.unit, code="SVC-BRANCH-1",
+            name_ar="خدمة مرتبطة بفرع", product_type=Product.ProductType.SERVICE,
+            stock_class=None, purchase_price=Decimal("750"),
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-BRANCH-1", "order_date": "2026-03-10",
+            "lines": [{"product": service.pk, "quantity": "1", "unit_price": "750", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        confirmed = self.client.post(f"/api/purchasing/orders/{order.data['id']}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk, "order": order.data["id"], "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-BRANCH-1", "acceptance_date": "2026-03-11",
+            "lines": [{"order_line": order.data["line_items"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(acceptance.status_code, 201, acceptance.data)
+        other_branch = Branch.objects.create(
+            company=self.company, code="BR-SVC-OTHER", name_ar="فرع مختلف",
+        )
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "service_acceptance": acceptance.data["id"],
+            "branch": other_branch.pk, "invoice_number": "EXP-SVC-WRONG-BRANCH",
+            "invoice_date": "2026-03-12",
+            "lines": [{
+                "description": "خدمة في فرع مختلف", "expense_account": expense.pk,
+                "billed_quantity": "1", "unit_price": "750", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 400, invoice.data)
+
     def test_service_acceptance_cannot_be_accepted_after_order_is_cancelled(self):
         service = Product.objects.create(
             company=self.company, unit=self.unit, code="SVC-CANCEL-2",
