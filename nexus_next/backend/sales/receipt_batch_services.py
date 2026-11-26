@@ -12,7 +12,7 @@ from audit.models import AuditEvent
 from companies.access import resolve_warehouse_branch
 from sales.models import (
     CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation,
-    SalesInvoice, SalesReturn,
+    CustomerRefund, SalesInvoice, SalesReturn,
 )
 from treasury.models import TreasuryAccount
 
