@@ -146,6 +146,13 @@ export type SupplierQuotation = {
   total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
 };
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
+export type PurchaseDocumentTemplate = {
+  id:number; company:number; company_name:string;
+  document_type:"purchase_order"|"purchase_receipt"|"purchase_invoice"|"supplier_return"|"supplier_payment"|"supplier_refund";
+  name:string; style:"classic"|"modern"|"compact";
+  config:{accent_color?:string;show_logo?:boolean;show_tax_number?:boolean;show_discount?:boolean;show_tax?:boolean;show_bank_details?:boolean;bank_details?:string;footer_text?:string;language?:"ar"|"en"|"bilingual";font_scale?:"small"|"normal"|"large"};
+  is_default:boolean;is_active:boolean;created_at:string;updated_at:string;
+};
 export type PurchaseInvoice = {
   id:number; company:number; supplier:number; supplier_name:string; activity:number|null;
   invoice_type:"inventory"|"direct_expense"; service_acceptance:number|null; service_acceptance_number:string|null;
@@ -218,6 +225,11 @@ export type SupplierAging = {
 };
 // واجهات المشتريات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const purchasingApi = {
+  documentTemplates: (companyId:number) => request<PurchaseDocumentTemplate[]>(`/api/purchasing/document-templates/?company=${companyId}&ordering=document_type,name`),
+  createDocumentTemplate: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PurchaseDocumentTemplate>("/api/purchasing/document-templates/", {method:"POST",body:JSON.stringify(payload)}); },
+  updateDocumentTemplate: async (id:number,payload:Partial<PurchaseDocumentTemplate>) => { await request<{detail:string}>("/api/csrf/"); return request<PurchaseDocumentTemplate>(`/api/purchasing/document-templates/${id}/`, {method:"PATCH",body:JSON.stringify(payload)}); },
+  deactivateDocumentTemplate: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<void>(`/api/purchasing/document-templates/${id}/`, {method:"DELETE"}); },
+
   requisitions: (companyId: number) => request<PurchaseRequisition[]>(`/api/purchasing/requisitions/?company=${companyId}&ordering=-request_date`),
   createRequisition: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>("/api/purchasing/requisitions/", { method: "POST", body: JSON.stringify(payload) }); },
   submitRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/submit/`, { method: "POST" }); },
