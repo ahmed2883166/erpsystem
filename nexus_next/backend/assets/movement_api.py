@@ -104,9 +104,9 @@ class AssetMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"to_employee": "لا يمكن تسليم عهدة لموظف غير نشط."})
         if attrs["movement_date"] < asset.acquisition_date:
             raise serializers.ValidationError({"movement_date": "تاريخ الحركة لا يسبق تاريخ اقتناء الأصل."})
-        if _has_posted_financial_activity_on_or_after(asset, attrs["movement_date"]):
+        if movement_type == AssetMovement.MovementType.BRANCH_TRANSFER and _has_posted_financial_activity_on_or_after(asset, attrs["movement_date"]):
             raise serializers.ValidationError({
-                "movement_date": "لا يمكن تأريخ النقل في أو قبل تاريخ إهلاك أو انخفاض قيمة مرحّل؛ عالج القيود أولًا.",
+                "movement_date": "لا يمكن تأريخ نقل الفرع في أو قبل تاريخ إهلاك أو انخفاض قيمة مرحّل؛ عالج القيود أولًا.",
             })
         latest = asset.movements.filter(status=AssetMovement.Status.APPROVED).order_by("-movement_date", "-id").first()
         if latest and attrs["movement_date"] < latest.movement_date:
@@ -196,8 +196,11 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
             asset = FixedAsset.objects.select_for_update(of=("self",)).get(pk=movement.asset_id)
             if asset.status != FixedAsset.Status.ACTIVE:
                 raise ValidationError("لا يمكن اعتماد حركة لأصل تم استبعاده.")
-            if _has_posted_financial_activity_on_or_after(asset, movement.movement_date):
-                raise ValidationError("تم ترحيل حركة مالية بتاريخ الحركة أو بعدها؛ لا يمكن اعتماد نقل بأثر رجعي.")
+            if (
+                movement.movement_type == AssetMovement.MovementType.BRANCH_TRANSFER
+                and _has_posted_financial_activity_on_or_after(asset, movement.movement_date)
+            ):
+                raise ValidationError("تم ترحيل حركة مالية بتاريخ النقل أو بعدها؛ لا يمكن اعتماد نقل فرع بأثر رجعي.")
             if not movement.to_branch.is_active:
                 raise ValidationError("لا يمكن اعتماد الحركة إلى فرع موقوف.")
             if movement.to_employee_id and (
