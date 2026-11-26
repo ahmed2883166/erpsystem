@@ -176,8 +176,12 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
                 raise ValidationError("لا يمكن اعتماد حركة لأصل تم استبعاده.")
             if not movement.to_branch.is_active:
                 raise ValidationError("لا يمكن اعتماد الحركة إلى فرع موقوف.")
-            if movement.to_employee_id and movement.to_employee.status != Employee.Status.ACTIVE:
-                raise ValidationError("الموظف المستلم لم يعد نشطًا؛ حدّث مستند الحركة قبل الاعتماد.")
+            if movement.to_employee_id and (
+                movement.to_employee.status != Employee.Status.ACTIVE
+                or movement.to_employee.company_id != movement.company_id
+                or movement.to_employee.branch_id != movement.to_branch_id
+            ):
+                raise ValidationError("بيانات الموظف المستلم تغيرت أو لم يعد تابعًا للفرع المستلم؛ حدّث مستند الحركة قبل الاعتماد.")
             if (
                 asset.branch_id != movement.from_branch_id
                 or asset.custodian_employee_id != movement.from_employee_id
