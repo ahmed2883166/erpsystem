@@ -28,11 +28,26 @@ ACCOUNT_ROLE_NATURES = {
 }
 
 
-def get_account_for_role(company, role):
-    """إرجاع الحساب التفصيلي النشط المرتبط بدور محاسبي داخل الشركة."""
+def get_account_for_role(company, role, activity=None):
+    """Return an activity-specific account role, falling back to the legacy company mapping."""
     from .models import AccountRole
+    from companies.models import CompanyActivity
 
-    assignment = AccountRole.objects.select_related("account").filter(company=company, role=role).first()
+    activity_code = getattr(activity, "activity", activity)
+    assignment = None
+    if activity_code:
+        activity_assignment = CompanyActivity.objects.filter(
+            company=company, activity=activity_code, is_active=True,
+        ).first()
+        if not activity_assignment:
+            raise ValidationError(f"النشاط ({activity_code}) غير مفعّل لهذه الشركة.")
+        assignment = AccountRole.objects.select_related("account").filter(
+            company=company, role=role, activity=activity_assignment,
+        ).first()
+    if assignment is None:
+        assignment = AccountRole.objects.select_related("account").filter(
+            company=company, role=role, activity__isnull=True,
+        ).first()
     if not assignment:
         raise ValidationError(f"يجب ربط دور الحساب ({role}) في إعدادات الشركة.")
     account = assignment.account
