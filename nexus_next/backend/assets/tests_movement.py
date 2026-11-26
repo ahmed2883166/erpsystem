@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from accounting.models import ChartOfAccount, JournalEntry
+from accounting.models import ChartOfAccount
 from assets.models import AssetMovement, FixedAsset
 from assets.services import depreciate_asset
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
