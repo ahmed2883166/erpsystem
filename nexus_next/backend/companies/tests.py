@@ -4,7 +4,8 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from .access import accessible_branches, accessible_companies, can_access_branch
-from .models import Branch, Company, Currency, FiscalYear
+from .models import Branch, Company, CompanyActivity, Currency, FiscalYear
+from .serializers import CompanySerializer
 
 class CompanyFoundationTests(TestCase):
     def setUp(self):
@@ -18,6 +19,39 @@ class CompanyFoundationTests(TestCase):
         self.assertEqual(self.company.country, "EG")
         self.assertEqual(len(Company.Country.choices), 2)
         self.assertNotIn("manufacturing", dict(Company.Activity.choices))
+
+    def test_company_serializer_preserves_multiple_activities_and_soft_disables_removed_ones(self):
+        serializer = CompanySerializer(data={
+            "code": "MULTI-ACT", "name_ar": "شركة متعددة الأنشطة",
+            "country": Company.Country.EGYPT, "activity": Company.Activity.COMMERCIAL,
+            "activities": [
+                Company.Activity.COMMERCIAL,
+                Company.Activity.SERVICE,
+                Company.Activity.MEDICAL,
+            ],
+            "base_currency": self.egp.pk,
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        company = serializer.save()
+        self.assertSetEqual(
+            set(company.activity_assignments.filter(is_active=True).values_list("activity", flat=True)),
+            {"commercial", "service", "medical"},
+        )
+
+        update = CompanySerializer(
+            company, data={"activities": ["commercial", "medical"]}, partial=True
+        )
+        self.assertTrue(update.is_valid(), update.errors)
+        update.save()
+        self.assertSetEqual(
+            set(company.activity_assignments.filter(is_active=True).values_list("activity", flat=True)),
+            {"commercial", "medical"},
+        )
+        self.assertFalse(
+            company.activity_assignments.get(activity="service").is_active
+        )
+        self.assertNotIn("transport", dict(Company.Activity.choices))
+        self.assertNotIn("contracting", dict(Company.Activity.choices))
 
     def test_branch_code_is_unique_per_company(self):
         Branch.objects.create(company=self.company, code="MAIN", name_ar="الرئيسي")
