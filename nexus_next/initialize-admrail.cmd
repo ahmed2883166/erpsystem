@@ -60,8 +60,10 @@ if errorlevel 1 (
 if errorlevel 1 goto :failed
 
 echo.
-echo Initial setup completed. Start the application with run-admrail.cmd.
-echo The application listens on 127.0.0.1:8000 only.
+echo Initial setup completed.
+echo Portable LAN package: start Admrail-Control-Center.cmd to manage Admrail and owner tools.
+echo Source checkout: use start-local.ps1 for localhost development only.
+echo Do not expose the development server to the LAN.
 pause
 exit /b 0
 
