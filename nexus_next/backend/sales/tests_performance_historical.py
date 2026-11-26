@@ -67,5 +67,5 @@ class SalesPerformanceHistoricalReturnTests(APITestCase):
         )
         self.assertEqual(through_reversal.status_code, 200, through_reversal.data)
         self.assertEqual(through_reversal.data["totals"]["return_count"], 0)
-        self.assertEqual(through_reversal.data["totals"]["return_total"], "0.0000")
+        self.assertEqual(through_reversal.data["totals"]["return_total"], "0")
         self.assertEqual(through_reversal.data["totals"]["net_sales"], "200.0000")
