@@ -13,6 +13,24 @@ from hr.models import Employee
 from .models import AssetMovement, FixedAsset
 
 
+def _has_posted_financial_activity_on_or_after(asset, movement_date):
+    """Prevent retroactive transfers that would reclassify already-posted financial events."""
+    return (
+        asset.depreciations.filter(
+            period_date__gte=movement_date,
+            journal_entry__status="posted",
+        ).exists()
+        or asset.impairments.filter(
+            impairment_date__gte=movement_date,
+            journal_entry__status="posted",
+        ).exists()
+        or asset.impairment_reversals.filter(
+            reversal_date__gte=movement_date,
+            journal_entry__status="posted",
+        ).exists()
+    )
+
+
 class AssetMovementSerializer(serializers.ModelSerializer):
     asset_code = serializers.CharField(source="asset.code", read_only=True)
     asset_name = serializers.CharField(source="asset.name_ar", read_only=True)
@@ -86,6 +104,10 @@ class AssetMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"to_employee": "لا يمكن تسليم عهدة لموظف غير نشط."})
         if attrs["movement_date"] < asset.acquisition_date:
             raise serializers.ValidationError({"movement_date": "تاريخ الحركة لا يسبق تاريخ اقتناء الأصل."})
+        if _has_posted_financial_activity_on_or_after(asset, attrs["movement_date"]):
+            raise serializers.ValidationError({
+                "movement_date": "لا يمكن تأريخ النقل في أو قبل تاريخ إهلاك أو انخفاض قيمة مرحّل؛ عالج القيود أولًا.",
+            })
         latest = asset.movements.filter(status=AssetMovement.Status.APPROVED).order_by("-movement_date", "-id").first()
         if latest and attrs["movement_date"] < latest.movement_date:
             raise serializers.ValidationError({"movement_date": "تاريخ الحركة يجب ألا يسبق آخر حركة معتمدة للأصل."})
@@ -174,6 +196,8 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
             asset = FixedAsset.objects.select_for_update(of=("self",)).get(pk=movement.asset_id)
             if asset.status != FixedAsset.Status.ACTIVE:
                 raise ValidationError("لا يمكن اعتماد حركة لأصل تم استبعاده.")
+            if _has_posted_financial_activity_on_or_after(asset, movement.movement_date):
+                raise ValidationError("تم ترحيل حركة مالية بتاريخ الحركة أو بعدها؛ لا يمكن اعتماد نقل بأثر رجعي.")
             if not movement.to_branch.is_active:
                 raise ValidationError("لا يمكن اعتماد الحركة إلى فرع موقوف.")
             if movement.to_employee_id and (
