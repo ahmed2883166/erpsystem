@@ -5,9 +5,10 @@ from rest_framework.test import APITestCase
 
 from accounting.models import AccountRole, ChartOfAccount, JournalLine
 from companies.models import Currency, ExchangeRate, FiscalYear
-from inventory.models import Product
+from inventory.models import Product, StockBalance
 from treasury.models import TreasuryAccount, TreasuryTransaction
 from treasury.services import post_treasury_transaction
+from sales.models import CustomerReceiptBatch
 
 
 class CustomerRefundTests(APITestCase):
@@ -456,3 +457,161 @@ class CustomerRefundTests(APITestCase):
         position.refresh_from_db()
         self.assertEqual(position.foreign_amount, Decimal("100.0000"))
         self.assertEqual(position.carrying_base_amount, Decimal("4800.0000"))
+
+
+    def test_order_partial_deliveries_invoices_batch_receipt_return_and_refund_acceptance(self):
+        """Connect order fulfilment, invoicing, batch settlement, return and cash refund."""
+        order = self.client.post("/api/sales-documents/orders/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "warehouse": self.warehouse.pk,
+            "order_number": "E2E-ORDER-REFUND-001",
+            "order_date": "2026-03-10",
+            "lines": [{
+                "product": self.product.pk, "quantity": "5",
+                "unit_price": "100", "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_line_id = order.data["order_lines"][0]["id"]
+        confirmed = self.client.post(
+            f"/api/sales-documents/orders/{order.data['id']}/confirm/", {}, format="json",
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        deliveries = []
+        for number, quantity, delivery_date in (
+            ("E2E-ORDER-DEL-1", "2", "2026-03-11"),
+            ("E2E-ORDER-DEL-2", "3", "2026-03-12"),
+        ):
+            created_delivery = self.client.post("/api/sales-documents/deliveries/", {
+                "company": self.company.pk,
+                "customer": self.customer.pk,
+                "warehouse": self.warehouse.pk,
+                "order": order.data["id"],
+                "delivery_number": number,
+                "delivery_date": delivery_date,
+                "lines": [{
+                    "product": self.product.pk, "quantity": quantity,
+                    "order_line": order_line_id,
+                }],
+            }, format="json")
+            self.assertEqual(created_delivery.status_code, 201, created_delivery.data)
+            posted_delivery = self.client.post(
+                f"/api/sales-documents/deliveries/{created_delivery.data['id']}/post/",
+                {}, format="json",
+            )
+            self.assertEqual(posted_delivery.status_code, 200, posted_delivery.data)
+            deliveries.append(created_delivery.data)
+
+        current_order = self.client.get(f"/api/sales-documents/orders/{order.data['id']}/")
+        self.assertEqual(current_order.status_code, 200, current_order.data)
+        self.assertEqual(current_order.data["status"], "delivered")
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity,
+            Decimal("0.0000"),
+        )
+
+        invoices = []
+        for index, (delivery, invoice_date) in enumerate(zip(
+            deliveries, ("2026-03-11", "2026-03-12"),
+        ), start=1):
+            created_invoice = self.client.post("/api/sales-documents/invoices/", {
+                "company": self.company.pk,
+                "customer": self.customer.pk,
+                "delivery": delivery["id"],
+                "invoice_number": f"E2E-ORDER-INV-{index}",
+                "invoice_date": invoice_date,
+                "lines": [{
+                    "delivery_line": delivery["line_items"][0]["id"],
+                    "unit_price": "100",
+                    "tax_rate": "0",
+                }],
+            }, format="json")
+            self.assertEqual(created_invoice.status_code, 201, created_invoice.data)
+            posted_invoice = self.client.post(
+                f"/api/sales-documents/invoices/{created_invoice.data['id']}/post/",
+                {}, format="json",
+            )
+            self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+            invoices.append(created_invoice.data)
+
+        self.assertEqual(invoices[0]["grand_total"], "200.0000")
+        self.assertEqual(invoices[1]["grand_total"], "300.0000")
+
+        batch = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "branch": self.branch.pk,
+            "receipt_number": "E2E-ORDER-BATCH-001",
+            "receipt_date": "2026-03-13",
+            "method": "cash",
+            "payment_account": self.cash_account.pk,
+            "amount": "500",
+            "allocations": [
+                {"invoice": invoices[0]["id"], "amount": "200"},
+                {"invoice": invoices[1]["id"], "amount": "300"},
+            ],
+        }, format="json")
+        self.assertEqual(batch.status_code, 201, batch.data)
+        posted_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_batch.status_code, 200, posted_batch.data)
+        batch_model = CustomerReceiptBatch.objects.get(pk=batch.data["id"])
+        self._assert_balanced(batch_model.journal_entry_id)
+
+        for invoice in invoices:
+            current_invoice = self.client.get(
+                f"/api/sales-documents/invoices/{invoice['id']}/",
+            )
+            self.assertEqual(current_invoice.status_code, 200, current_invoice.data)
+            self.assertEqual(current_invoice.data["balance_due"], "0.0000")
+
+        created_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoices[1]["id"],
+            "return_number": "E2E-ORDER-RETURN-001",
+            "return_date": "2026-03-14",
+            "lines": [{
+                "invoice_line": invoices[1]["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(created_return.status_code, 201, created_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{created_return.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["grand_total"], "100.0000")
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity,
+            Decimal("1.0000"),
+        )
+
+        refund = self._create_refund(
+            "E2E-ORDER-REFUND-001", amount="100",
+            source_return=posted_return.data["id"], date="2026-03-15",
+        )
+        self.assertEqual(refund.status_code, 201, refund.data)
+        posted_refund = self.client.post(
+            f"/api/sales-documents/refunds/{refund.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_refund.status_code, 200, posted_refund.data)
+        self.assertEqual(posted_refund.data["amount"], "100.0000")
+        refund_treasury = TreasuryTransaction.objects.get(
+            pk=posted_refund.data["treasury_transaction"],
+        )
+        self._assert_balanced(refund_treasury.journal_entry_id)
+
+        statement = self.client.get(
+            f"/api/sales-documents/invoices/customer-statement/?company={self.company.pk}"
+            f"&customer={self.customer.pk}&date_from=2026-03-10&date_to=2026-03-15"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        statement_types = {row["document_type"] for row in statement.data["rows"]}
+        self.assertIn("receipt_batch", statement_types)
+        self.assertIn("customer_refund", statement_types)
