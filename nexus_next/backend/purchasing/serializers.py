@@ -28,7 +28,7 @@ class ReceiptLineInputSerializer(serializers.Serializer):
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
-        if product.product_type != Product.ProductType.GOODS or not product.is_active:
+        if product.product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not product.is_active:
             raise serializers.ValidationError("اختر صنفًا مخزنيًا نشطًا.")
         if product.track_expiry and not attrs.get("expiry_date"):
             raise serializers.ValidationError({"expiry_date": "تاريخ الصلاحية مطلوب لهذا الصنف."})
@@ -60,7 +60,7 @@ class PurchaseReceiptSerializer(serializers.ModelSerializer):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "quantity": str(line.quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type, "quantity": str(line.quantity),
             "unit_cost": str(line.unit_cost), "cost_amount": str(line.cost_amount),
             "expiry_date": line.expiry_date.isoformat() if line.expiry_date else None,
         } for line in obj.stock_movement.lines.select_related("product").all()]
@@ -795,7 +795,7 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         """تجهيز تفاصيل الأصناف المرتبطة بالمستند بصيغة مناسبة للواجهة."""
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "quantity": str(line.quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type, "quantity": str(line.quantity),
             "received_quantity": str(line.received_quantity), "remaining_quantity": str(line.remaining_quantity),
             "unit_price": str(line.unit_price), "tax_rate": str(line.tax_rate),
         } for line in obj.lines.select_related("product").all()]
@@ -836,8 +836,8 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"lines": "أضف صنفًا واحدًا على الأقل."})
         for line in lines:
             product = line["product"]
-            if not company or product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
-                raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
+            if not company or product.company_id != company.pk or product.product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not product.is_active:
+                raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا أو خدمات نشطة تابعة للشركة."})
         return attrs
 
     @transaction.atomic
@@ -1026,7 +1026,7 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
     def get_line_items(self, obj):
         return [{
             "id": line.pk, "product": line.product_id, "product_code": line.product.code,
-            "product_name": line.product.name_ar, "requested_quantity": str(line.requested_quantity),
+            "product_name": line.product.name_ar, "product_type": line.product.product_type, "requested_quantity": str(line.requested_quantity),
             "estimated_unit_price": str(line.estimated_unit_price) if line.estimated_unit_price is not None else None,
             "notes": line.notes,
         } for line in obj.lines.select_related("product").all()]
@@ -1046,8 +1046,8 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
         if lines is not None:
             for line in lines:
                 product = line["product"]
-                if not company or product.company_id != company.pk or product.product_type != Product.ProductType.GOODS or not product.is_active:
-                    raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة تابعة للشركة."})
+                if not company or product.company_id != company.pk or product.product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not product.is_active:
+                    raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا أو خدمات نشطة تابعة للشركة."})
         if attrs.get("required_date") and attrs.get("request_date", self.instance.request_date if self.instance else None) and attrs["required_date"] < attrs.get("request_date", self.instance.request_date if self.instance else None):
             raise serializers.ValidationError({"required_date": "تاريخ الاحتياج لا يمكن أن يسبق تاريخ الطلب."})
         return attrs
@@ -1098,7 +1098,7 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
         read_only_fields = ("status", "line_items", "supplier_list", "awarded_quotation", "converted_order", "award_reason", "awarded_by", "awarded_at", "created_at")
 
     def get_line_items(self, obj):
-        return [{"id": x.pk, "product": x.product_id, "product_code": x.product.code, "product_name": x.product.name_ar, "quantity": str(x.quantity), "notes": x.notes} for x in obj.lines.select_related("product")]
+        return [{"id": x.pk, "product": x.product_id, "product_code": x.product.code, "product_name": x.product.name_ar, "product_type": x.product.product_type, "quantity": str(x.quantity), "notes": x.notes} for x in obj.lines.select_related("product")]
 
     def get_supplier_list(self, obj):
         return [{"id": x.supplier_id, "code": x.supplier.code, "name": x.supplier.name_ar, "status": x.status} for x in obj.invitations.select_related("supplier")]
@@ -1115,8 +1115,8 @@ class PurchaseRFQSerializer(serializers.ModelSerializer):
         product_ids = [x["product"].pk for x in lines]
         if len(product_ids) != len(set(product_ids)):
             raise serializers.ValidationError({"lines": "لا تكرر الصنف داخل طلب العروض؛ اجمع الكمية في بند واحد."})
-        if any(x["product"].company_id != company.pk or x["product"].product_type != Product.ProductType.GOODS or not x["product"].is_active for x in lines):
-            raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا مخزنية نشطة من نفس الشركة."})
+        if any(x["product"].company_id != company.pk or x["product"].product_type not in (Product.ProductType.GOODS, Product.ProductType.SERVICE) or not x["product"].is_active for x in lines):
+            raise serializers.ValidationError({"lines": "كل البنود يجب أن تكون أصنافًا أو خدمات نشطة من نفس الشركة."})
         source = attrs.get("source_requisition")
         if source:
             if source.company_id != company.pk or source.status != "approved":
@@ -1172,7 +1172,7 @@ class SupplierQuotationSerializer(serializers.ModelSerializer):
         return net, tax, net + tax
 
     def get_line_items(self, obj):
-        return [{"id": x.pk, "rfq_line": x.rfq_line_id, "product_code": x.rfq_line.product.code, "product_name": x.rfq_line.product.name_ar, "quantity": str(x.rfq_line.quantity), "unit_price": str(x.unit_price), "discount_percent": str(x.discount_percent), "tax_rate": str(x.tax_rate), "net_amount": str(x.net_amount), "tax_amount": str(x.tax_amount), "total_amount": str(x.total_amount)} for x in obj.lines.select_related("rfq_line__product")]
+        return [{"id": x.pk, "rfq_line": x.rfq_line_id, "product_code": x.rfq_line.product.code, "product_name": x.rfq_line.product.name_ar, "product_type": x.rfq_line.product.product_type, "quantity": str(x.rfq_line.quantity), "unit_price": str(x.unit_price), "discount_percent": str(x.discount_percent), "tax_rate": str(x.tax_rate), "net_amount": str(x.net_amount), "tax_amount": str(x.tax_amount), "total_amount": str(x.total_amount)} for x in obj.lines.select_related("rfq_line__product")]
 
     def get_total_before_tax(self, obj):
         return str(self._totals(obj)[0])
