@@ -630,7 +630,7 @@ class CustomerRefundTests(APITestCase):
         self.assertEqual(posted_net(AccountRole.Role.INVENTORY), Decimal("40.0000"))
         self.assertEqual(posted_net(AccountRole.Role.COGS), Decimal("160.0000"))
         self.assertEqual(
-            posted_net(AccountRole.Role.SALES) - posted_net(AccountRole.Role.SALES_RETURNS),
+            posted_net(AccountRole.Role.SALES) + posted_net(AccountRole.Role.SALES_RETURNS),
             Decimal("-400.0000"),
         )
 
