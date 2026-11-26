@@ -243,7 +243,7 @@ const renderNode = (item: Account, depth = 0, ancestors: ReadonlySet<number> = n
         <span className={`account-tree-kind ${item.is_group ? "group-kind" : "detail-kind"}`}>{item.is_group ? "▦" : "◦"}</span>
         <span className="account-tree-code" dir="ltr">{item.code}</span>
         <span className="account-tree-name">{item.name_ar}</span>
-        <span className="account-role-chips">{mappedRoles.map(role => <span className="account-role-chip" key={role.id}>{roleNames[role.role] || role.role}</span>)}</span>
+        <span className="account-role-chips">{mappedRoles.map(role => <span className="account-role-chip" key={role.id}>{roleNames[role.role] || role.role}{role.activity_code ? ` · ${{commercial:"تجاري",service:"خدمي",medical:"طبي",restaurants:"مطاعم",industrial:"صناعي"}[role.activity_code] || role.activity_code}` : " · عام"}</span>)}</span>
         <span className={`account-tree-type ${item.is_group ? "group-type" : "detail-type"}`}>{item.is_group ? "مجموعة" : "تفصيلي"}</span>
         <span className={`account-tree-status ${item.is_active ? "active" : "inactive"}`}>{item.is_active ? "نشط" : "موقوف"}</span>
       </div>
