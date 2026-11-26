@@ -14,7 +14,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from suppliers.models import Supplier
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, PurchaseServiceAcceptance, PurchaseServiceAcceptanceLine, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, PurchaseServiceAcceptance, PurchaseServiceAcceptanceLine, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine, PurchaseDocumentTemplate
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -1300,3 +1300,52 @@ class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
             item.full_clean()
             item.save()
         return document
+
+class PurchaseDocumentTemplateSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name_ar", read_only=True)
+
+    class Meta:
+        model = PurchaseDocumentTemplate
+        fields = (
+            "id", "company", "company_name", "document_type", "name", "style",
+            "config", "is_default", "is_active", "created_at", "updated_at",
+        )
+        read_only_fields = ("created_at", "updated_at")
+        validators = []
+
+    def validate_config(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("إعدادات القالب يجب أن تكون كائنًا.")
+        allowed = {
+            "accent_color", "show_logo", "show_tax_number", "show_discount",
+            "show_tax", "show_bank_details", "bank_details", "footer_text",
+            "language", "font_scale",
+        }
+        unknown = set(value) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                "توجد إعدادات غير مدعومة: " + ", ".join(sorted(unknown))
+            )
+        color = value.get("accent_color")
+        if color is not None and (
+            not isinstance(color, str) or len(color) not in (4, 7)
+            or not color.startswith("#")
+            or any(ch not in "0123456789abcdefABCDEF" for ch in color[1:])
+        ):
+            raise serializers.ValidationError(
+                {"accent_color": "أدخل لونًا بصيغة HEX مثل #1F4E79."}
+            )
+        if value.get("language", "ar") not in ("ar", "en", "bilingual"):
+            raise serializers.ValidationError({"language": "لغة الطباعة غير مدعومة."})
+        if value.get("font_scale", "normal") not in ("small", "normal", "large"):
+            raise serializers.ValidationError({"font_scale": "حجم الخط غير مدعوم."})
+        for field in ("bank_details", "footer_text"):
+            if field in value and (
+                not isinstance(value[field], str) or len(value[field]) > 500
+            ):
+                raise serializers.ValidationError({field: "النص يجب ألا يتجاوز 500 حرف."})
+        for flag in ("show_logo", "show_tax_number", "show_discount", "show_tax", "show_bank_details"):
+            if flag in value and not isinstance(value[flag], bool):
+                raise serializers.ValidationError({flag: "القيمة يجب أن تكون نعم أو لا."})
+        return value
+
