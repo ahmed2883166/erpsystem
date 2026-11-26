@@ -27,6 +27,15 @@ def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines
     return post_journal(entry.pk, actor=user)
 
 
+def _branch_for_asset_date(asset, event_date):
+    """Return the branch occupied on an event date using approved movement history."""
+    future_transfer = asset.movements.filter(
+        status="approved", movement_type="branch_transfer",
+        movement_date__gt=event_date,
+    ).select_related("from_branch").order_by("movement_date", "id").first()
+    return future_transfer.from_branch if future_transfer else asset.branch
+
+
 @transaction.atomic
 def acquire_asset(asset_id, fiscal_year_id, user=None):
     """إثبات اقتناء الأصل وتكلفته في الحسابات والسنة المالية المحددة."""
@@ -223,12 +232,7 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
         # A transfer can be approved before an older depreciation period is posted.
         # In that case, use the source branch recorded by the first future movement,
         # not the asset's current branch, which already reflects the later transfer.
-        future_transfer = asset.movements.filter(
-            status="approved", movement_type="branch_transfer",
-            movement_date__gt=period_date,
-        ).select_related("from_branch").order_by("movement_date", "id").first()
-        period_branch = future_transfer.from_branch if future_transfer else asset.branch
-        segments.append((period_branch, elapsed_days))
+        segments.append((_branch_for_asset_date(asset, period_date), elapsed_days))
 
     if sum(days for _, days in segments) != elapsed_days:
         raise ValidationError("توزيع أيام الإهلاك على الفروع غير متوازن؛ أوقف الترحيل وراجع تواريخ النقل.")
@@ -348,7 +352,7 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
         f"إثبات انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}", [
             {"account": expense_account, "debit": loss, "credit": 0, "description": f"خسارة انخفاض قيمة {asset.name_ar}"},
             {"account": contra_account, "debit": 0, "credit": loss, "description": f"مجمع انخفاض قيمة {asset.name_ar}"},
-        ], user,
+        ], user, branch=_branch_for_asset_date(asset, impairment_date),
     )
     impairment = AssetImpairment(
         asset=asset, impairment_date=impairment_date,
@@ -494,6 +498,7 @@ def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, revers
     entry = _post_entry(
         asset, year, f"FA-IMPR-{asset.pk}-{reversal_date:%Y%m%d}", reversal_date,
         f"عكس انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}", lines, user,
+        branch=_branch_for_asset_date(asset, reversal_date),
     )
     reversal = AssetImpairmentReversal(
         asset=asset, reversal_date=reversal_date,
@@ -536,6 +541,10 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     ).get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("الأصل غير نشط أو لم يتم إثبات اقتنائه.")
+    if asset.movements.filter(
+        status="approved", movement_type="branch_transfer", movement_date__gt=disposal_date,
+    ).exists():
+        raise ValidationError("لا يمكن استبعاد الأصل بتاريخ يسبق نقل فرع معتمد؛ راجع التسلسل الزمني للحركات.")
     proceeds = round_currency_amount(proceeds, asset.company.base_currency)
     if disposal_date < asset.depreciation_start_date:
         raise ValidationError("تاريخ الاستبعاد يسبق بداية الإهلاك.")
