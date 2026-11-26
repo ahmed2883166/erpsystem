@@ -3468,6 +3468,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             "lines": [{"order_line": order.data["line_items"][0]["id"], "quantity": "1"}],
         }, format="json")
         self.assertEqual(acceptance.status_code, 201, acceptance.data)
+        self.assertEqual(acceptance.data["branch"], self.branch.pk)
         other_branch = Branch.objects.create(
             company=self.company, code="BR-SVC-OTHER", name_ar="فرع مختلف",
         )
