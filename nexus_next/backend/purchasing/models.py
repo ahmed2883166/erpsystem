@@ -88,6 +88,10 @@ class PurchaseInvoice(models.Model):
         related_name="purchase_invoices",
     )
     invoice_type = models.CharField(max_length=20, choices=InvoiceType.choices, default=InvoiceType.INVENTORY)
+    service_acceptance = models.OneToOneField(
+        "PurchaseServiceAcceptance", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="supplier_invoice",
+    )
     receipt = models.ForeignKey(PurchaseReceipt, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices")
     branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="purchase_invoices")
     invoice_number = models.CharField(max_length=80)
@@ -141,6 +145,16 @@ class PurchaseInvoice(models.Model):
             raise ValidationError({"receipt": "إذن الاستلام لا يتبع المورد والشركة المحددين."})
         if self.branch_id and self.branch.company_id != self.company_id:
             raise ValidationError({"branch": "الفرع لا يتبع الشركة المحددة."})
+        if self.service_acceptance_id:
+            acceptance = self.service_acceptance
+            if self.invoice_type != self.InvoiceType.DIRECT_EXPENSE:
+                raise ValidationError({"service_acceptance": "محضر إنجاز الخدمة يرتبط بفاتورة خدمات ومصروفات مباشرة فقط."})
+            if acceptance.status != PurchaseServiceAcceptance.Status.ACCEPTED:
+                raise ValidationError({"service_acceptance": "لا يمكن ربط الفاتورة إلا بمحضر إنجاز خدمة معتمد."})
+            if acceptance.company_id != self.company_id or acceptance.supplier_id != self.supplier_id:
+                raise ValidationError({"service_acceptance": "محضر الإنجاز لا يتبع نفس الشركة والمورد."})
+            if acceptance.acceptance_date > self.invoice_date:
+                raise ValidationError({"service_acceptance": "تاريخ الفاتورة لا يسبق تاريخ اعتماد إنجاز الخدمة."})
         if self.invoice_type == self.InvoiceType.INVENTORY and not self.receipt_id:
             raise ValidationError({"receipt": "فاتورة المشتريات المخزنية تتطلب إذن استلام."})
         if self.invoice_type == self.InvoiceType.INVENTORY and self.branch_id:
