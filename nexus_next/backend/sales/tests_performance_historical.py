@@ -37,7 +37,7 @@ class SalesPerformanceHistoricalReturnTests(APITestCase):
             "return_date": "2026-03-12",
             "lines": [{
                 "invoice_line": invoice.data["invoice_lines"][0]["id"],
-                "quantity": "1",
+                "quantity": "2",
             }],
         }, format="json")
         self.assertEqual(sales_return.status_code, 201, sales_return.data)
@@ -58,7 +58,7 @@ class SalesPerformanceHistoricalReturnTests(APITestCase):
         )
         self.assertEqual(historical.status_code, 200, historical.data)
         self.assertEqual(historical.data["totals"]["return_count"], 1)
-        self.assertEqual(historical.data["totals"]["return_total"], "100.0000")
+        self.assertEqual(historical.data["totals"]["return_total"], "200.0000")
         self.assertEqual(historical.data["totals"]["net_sales"], "0.0000")
 
         through_reversal = self.client.get(
@@ -68,4 +68,4 @@ class SalesPerformanceHistoricalReturnTests(APITestCase):
         self.assertEqual(through_reversal.status_code, 200, through_reversal.data)
         self.assertEqual(through_reversal.data["totals"]["return_count"], 0)
         self.assertEqual(through_reversal.data["totals"]["return_total"], "0.0000")
-        self.assertEqual(through_reversal.data["totals"]["net_sales"], "100.0000")
+        self.assertEqual(through_reversal.data["totals"]["net_sales"], "200.0000")
