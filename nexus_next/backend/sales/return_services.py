@@ -72,8 +72,14 @@ def post_sales_return(return_id, user):
     for line in lines:
         original = originals[line.invoice_line_id]
         already_returned = SalesReturn.objects.filter(
-            invoice_id=invoice.pk, status=SalesReturn.Status.POSTED,
+            invoice_id=invoice.pk,
             lines__invoice_line_id=original.pk,
+        ).filter(
+            Q(status=SalesReturn.Status.POSTED)
+            | Q(
+                status=SalesReturn.Status.REVERSED,
+                reversal_date__gt=sales_return.return_date,
+            )
         ).exclude(pk=sales_return.pk).aggregate(total=Sum("lines__quantity"))["total"] or Decimal("0")
         if already_returned + line.quantity > original.quantity:
             remaining = max(original.quantity - already_returned, Decimal("0"))
