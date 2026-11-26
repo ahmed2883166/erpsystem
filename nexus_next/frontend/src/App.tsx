@@ -645,7 +645,7 @@ export default function App() {
   const [trialBalanceFrom, setTrialBalanceFrom] = useState(new Date().getFullYear()+"-01-01");
   const [trialBalanceTo, setTrialBalanceTo] = useState(localISODate());
   const [trialBalanceSearch, setTrialBalanceSearch] = useState("");
-  const [excludeClosingEntries, setExcludeClosingEntries] = useState(false);
+  const [excludeClosingEntries, setExcludeClosingEntries] = useState(true);
   const [customerAging, setCustomerAging] = useState<CustomerAging | null>(null);
   const [supplierAging, setSupplierAging] = useState<SupplierAging | null>(null);
   const [agingLoading, setAgingLoading] = useState(false);
