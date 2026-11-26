@@ -82,6 +82,50 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(receipt_journal.status, JournalEntry.Status.POSTED)
         return receipt_id, receipt_line_id
 
+    def test_draft_purchase_receipt_lines_can_be_replaced_and_order_reservation_is_recalculated(self):
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "order_number": "PO-RECEIPT-EDIT", "order_date": "2026-03-01",
+            "lines": [{"product": self.product.pk, "quantity": "10", "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_id = order.data["id"]
+        order_line_id = order.data["line_items"][0]["id"]
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        created = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-PO-EDIT", "receipt_date": "2026-03-05",
+            "lines": [{
+                "product": self.product.pk, "quantity": "4", "unit_cost": "100",
+                "purchase_order_line": order_line_id,
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        receipt_id = created.data["id"]
+
+        updated = self.client.patch(f"/api/purchasing/receipts/{receipt_id}/", {
+            "receipt_date": "2026-03-06",
+            "lines": [{
+                "product": self.product.pk, "quantity": "6", "unit_cost": "100",
+                "purchase_order_line": order_line_id,
+            }],
+        }, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["line_items"][0]["quantity"], "6.0000")
+        self.assertEqual(updated.data["receipt_date"], "2026-03-06")
+        self.assertEqual(
+            PurchaseOrderReceiptLine.objects.filter(order_line_id=order_line_id).aggregate(
+                total=Sum("quantity")
+            )["total"],
+            Decimal("6"),
+        )
+        movement = StockMovement.objects.get(movement_number="PR-GR-PO-EDIT")
+        self.assertEqual(movement.movement_date, date(2026, 3, 6))
+        self.assertEqual(movement.lines.count(), 1)
+        self.assertEqual(movement.lines.get().quantity, Decimal("6"))
+
     def test_posted_purchase_receipt_update_is_rejected_without_partial_changes(self):
         receipt_id, _ = self._create_and_post_receipt()
         other_supplier = Supplier.objects.create(company=self.company, code="SUP-2", name_ar="مورد آخر")
