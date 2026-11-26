@@ -3042,3 +3042,118 @@ class PurchasingWorkflowTests(APITestCase):
             ).count(),
             2,
         )
+
+
+    def test_partial_payments_and_supplier_return_reconcile_supplier_statement_and_ap(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-PAY-RETURN-001", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        self.assertEqual(posted_invoice.data["grand_total"], "228.0000")
+
+        first_payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-RETURN-001", "payment_date": "2026-03-11",
+            "method": "cash", "amount": "50.0000",
+        }, format="json")
+        self.assertEqual(first_payment.status_code, 201, first_payment.data)
+        first_posted = self.client.post(
+            f"/api/purchasing/payments/{first_payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+
+        returned = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "return_number": "RET-PAY-RETURN-001", "return_date": "2026-03-12",
+            "lines": [{"invoice_line": invoice.data["invoice_lines"][0]["id"], "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(returned.status_code, 201, returned.data)
+        posted_return = self.client.post(
+            f"/api/purchasing/returns/{returned.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+        self.assertEqual(posted_return.data["grand_total"], "114.0000")
+
+        final_payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-RETURN-002", "payment_date": "2026-03-13",
+            "method": "cash", "amount": "64.0000",
+        }, format="json")
+        self.assertEqual(final_payment.status_code, 201, final_payment.data)
+        final_posted = self.client.post(
+            f"/api/purchasing/payments/{final_payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(final_posted.status_code, 200, final_posted.data)
+
+        overpayment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": "PAY-RETURN-003", "payment_date": "2026-03-14",
+            "method": "cash", "amount": "0.0100",
+        }, format="json")
+        self.assertEqual(overpayment.status_code, 201, overpayment.data)
+        rejected = self.client.post(
+            f"/api/purchasing/payments/{overpayment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+
+        invoice_data = self.client.get(f"/api/purchasing/invoices/{invoice_id}/").data
+        self.assertEqual(invoice_data["paid_total"], "114.0000")
+        self.assertEqual(invoice_data["balance_due"], "0.0000")
+        statement = self.client.get(
+            "/api/purchasing/invoices/supplier-statement/",
+            {"company": self.company.pk, "supplier": self.supplier.pk,
+             "date_from": "2026-03-01", "date_to": "2026-03-31"},
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["closing_balance"], "0.0000")
+        ap_totals = JournalLine.objects.filter(
+            account__code="2200", entry__company=self.company,
+            entry__status=JournalEntry.Status.POSTED,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        self.assertEqual(ap_totals["debit"], Decimal("228.0000"))
+        self.assertEqual(ap_totals["credit"], Decimal("228.0000"))
+
+    def test_grni_aging_uses_invoice_posting_date_cutoff_and_reconciles_gl(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-GRNI-CUTOFF", "invoice_date": "2026-03-12",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        before_invoice_date = self.client.get(
+            "/api/purchasing/receipts/grni-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-11"},
+        )
+        self.assertEqual(before_invoice_date.status_code, 200, before_invoice_date.data)
+        self.assertEqual(before_invoice_date.data["grand_total"], "200.0000")
+        self.assertEqual(
+            before_invoice_date.data["gl_reconciliation"]["posted_gl_balance"], "200.0000"
+        )
+        self.assertEqual(before_invoice_date.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(before_invoice_date.data["gl_reconciliation"]["reconciled"])
+
+        on_invoice_date = self.client.get(
+            "/api/purchasing/receipts/grni-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-12"},
+        )
+        self.assertEqual(on_invoice_date.status_code, 200, on_invoice_date.data)
+        self.assertEqual(on_invoice_date.data["grand_total"], "0.0000")
+        self.assertEqual(
+            on_invoice_date.data["gl_reconciliation"]["posted_gl_balance"], "0.0000"
+        )
+        self.assertEqual(on_invoice_date.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(on_invoice_date.data["gl_reconciliation"]["reconciled"])
