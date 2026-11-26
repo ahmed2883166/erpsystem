@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
@@ -43,6 +43,9 @@ def post_sales_return(return_id, user):
         raise ValidationError("لا يمكن ترحيل مردود لفاتورة غير مرحلة.")
     if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
         sales_invoice=invoice,
+    ).filter(
+        Q(journal_entry__isnull=True)
+        | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
     ).exists():
         raise ValidationError("لا يمكن ترحيل مردود فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if sales_return.stock_movement.status != StockMovement.Status.DRAFT:
@@ -185,6 +188,9 @@ def reverse_sales_return(return_id, user, entry_date):
         raise ValidationError("تم عكس مردود المبيعات من قبل.")
     if document.invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
         sales_invoice=document.invoice,
+    ).filter(
+        Q(journal_entry__isnull=True)
+        | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
     ).exists():
         raise ValidationError("لا يمكن عكس مردود فاتورة أجنبية بعد إعادة تقييمها؛ اعكس التقييم أولًا.")
     if entry_date < document.return_date:
