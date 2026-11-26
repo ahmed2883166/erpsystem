@@ -116,7 +116,7 @@ export type PurchaseRequisition = {
 
 
 export type PurchaseServiceAcceptance = {
-  id: number; company: number; order: number; order_number: string; supplier: number; supplier_name: string;
+  id: number; company: number; order: number; order_number: string; supplier: number; supplier_name: string; branch: number | null;
   acceptance_number: string; acceptance_date: string; status: "draft" | "accepted" | "rejected"; notes: string;
   accepted_by: number | null; accepted_by_name: string | null; accepted_at: string | null;
   line_items: { id: number; order_line: number; product: number; product_code: string; product_name: string; quantity: string; notes: string }[];
