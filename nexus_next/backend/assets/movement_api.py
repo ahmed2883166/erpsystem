@@ -1,6 +1,7 @@
 """واجهات مستندات نقل الأصول وتغيير العهدة والموقع مع اعتماد مستقل."""
 
-from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework import decorators, mixins, permissions, response, status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -54,8 +55,12 @@ class AssetMovementSerializer(serializers.ModelSerializer):
         employee = attrs.get("to_employee")
         if asset.status != FixedAsset.Status.ACTIVE:
             raise serializers.ValidationError({"asset": "لا يمكن نقل أو تغيير عهدة أصل مستبعد."})
+        if not asset.acquisition_journal_id:
+            raise serializers.ValidationError({"asset": "لا يمكن نقل أصل قبل ترحيل قيد اقتنائه."})
         if target_branch.company_id != asset.company_id:
             raise serializers.ValidationError({"to_branch": "الفرع المستلم يجب أن يتبع نفس الشركة."})
+        if not target_branch.is_active:
+            raise serializers.ValidationError({"to_branch": "لا يمكن تسليم أصل إلى فرع موقوف."})
         if movement_type == AssetMovement.MovementType.BRANCH_TRANSFER:
             if target_branch.pk == asset.branch_id:
                 raise serializers.ValidationError({"to_branch": "اختر فرعًا مختلفًا عن الفرع الحالي."})
@@ -65,6 +70,15 @@ class AssetMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"to_employee": "حدد الموظف أو المسؤول المستلم عند نقل أصل له عهدة حالية."})
         elif target_branch.pk != asset.branch_id:
             raise serializers.ValidationError({"to_branch": "تغيير العهدة أو الموقع لا يغيّر فرع الأصل."})
+        if movement_type == AssetMovement.MovementType.CUSTODY_CHANGE and not (
+            employee or str(attrs.get("to_custodian", "")).strip()
+        ):
+            raise serializers.ValidationError({"to_employee": "حدد الموظف أو اسم المسؤول الذي ستنتقل إليه العهدة."})
+        if movement_type == AssetMovement.MovementType.LOCATION_CHANGE:
+            if not str(attrs.get("to_location", "")).strip():
+                raise serializers.ValidationError({"to_location": "أدخل الموقع الجديد للأصل."})
+            if employee or str(attrs.get("to_custodian", "")).strip():
+                raise serializers.ValidationError("حركة تغيير الموقع لا تقبل بيانات تسليم عهدة.")
         if employee:
             if employee.company_id != asset.company_id or employee.branch_id != target_branch.pk:
                 raise serializers.ValidationError({"to_employee": "الموظف المستلم يجب أن يتبع نفس الشركة والفرع المستلم."})
@@ -72,6 +86,9 @@ class AssetMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"to_employee": "لا يمكن تسليم عهدة لموظف غير نشط."})
         if attrs["movement_date"] < asset.acquisition_date:
             raise serializers.ValidationError({"movement_date": "تاريخ الحركة لا يسبق تاريخ اقتناء الأصل."})
+        latest = asset.movements.filter(status=AssetMovement.Status.APPROVED).order_by("-movement_date", "-id").first()
+        if latest and attrs["movement_date"] < latest.movement_date:
+            raise serializers.ValidationError({"movement_date": "تاريخ الحركة يجب ألا يسبق آخر حركة معتمدة للأصل."})
         if not str(attrs.get("document_number", "")).strip():
             raise serializers.ValidationError({"document_number": "رقم مستند الحركة مطلوب."})
         attrs["to_branch"] = target_branch
@@ -133,8 +150,15 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
             document_number=data["document_number"].strip(), notes=data.get("notes", ""),
             requested_by=request.user,
         )
-        movement.full_clean()
-        movement.save()
+        try:
+            with transaction.atomic():
+                movement.full_clean()
+                movement.save()
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, "message_dict") else getattr(exc, "messages", [str(exc)])
+            raise ValidationError(detail) from None
+        except IntegrityError:
+            raise ValidationError({"document_number": "رقم مستند الحركة مستخدم بالفعل داخل الشركة."}) from None
         return response.Response(self.get_serializer(movement).data, status=status.HTTP_201_CREATED)
 
     @decorators.action(detail=True, methods=("post",))
@@ -148,6 +172,12 @@ class AssetMovementViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, mixin
             if movement.status != AssetMovement.Status.PENDING:
                 raise ValidationError("مستند الحركة تمت مراجعته بالفعل.")
             asset = FixedAsset.objects.select_for_update().get(pk=movement.asset_id)
+            if asset.status != FixedAsset.Status.ACTIVE:
+                raise ValidationError("لا يمكن اعتماد حركة لأصل تم استبعاده.")
+            if not movement.to_branch.is_active:
+                raise ValidationError("لا يمكن اعتماد الحركة إلى فرع موقوف.")
+            if movement.to_employee_id and movement.to_employee.status != Employee.Status.ACTIVE:
+                raise ValidationError("الموظف المستلم لم يعد نشطًا؛ حدّث مستند الحركة قبل الاعتماد.")
             if (
                 asset.branch_id != movement.from_branch_id
                 or asset.custodian_employee_id != movement.from_employee_id

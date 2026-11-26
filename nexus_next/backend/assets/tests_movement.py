@@ -65,6 +65,19 @@ class AssetMovementWorkflowTests(APITestCase):
     def _account(self, code, name, nature):
         return ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
 
+
+    def test_duplicate_document_number_is_rejected_without_creating_second_movement(self):
+        payload = {
+            "asset": self.asset.pk, "movement_type": "branch_transfer",
+            "movement_date": "2026-02-05", "to_branch": self.target_branch.pk,
+            "to_custodian": "مسؤول فرع غرب", "document_number": "AM-DUP-01",
+        }
+        first = self.client.post("/api/assets/asset-movements/", payload, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        second = self.client.post("/api/assets/asset-movements/", payload, format="json")
+        self.assertEqual(second.status_code, 400, second.data)
+        self.assertEqual(AssetMovement.objects.filter(document_number="AM-DUP-01").count(), 1)
+
     def test_branch_transfer_requires_admin_approval_and_keeps_immutable_history(self):
         requested = self.client.post("/api/assets/asset-movements/", {
             "asset": self.asset.pk, "movement_type": "branch_transfer",
