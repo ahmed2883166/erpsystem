@@ -1,8 +1,9 @@
 from rest_framework.routers import DefaultRouter
 
-from .api import PurchaseInvoiceViewSet, PurchaseOrderViewSet, PurchaseReceiptViewSet, PurchaseRequisitionViewSet, PurchaseRFQViewSet, PurchaseServiceAcceptanceViewSet, SupplierQuotationViewSet, SupplierPaymentViewSet, SupplierRefundViewSet, SupplierReturnViewSet
+from .api import PurchaseDocumentTemplateViewSet, PurchaseInvoiceViewSet, PurchaseOrderViewSet, PurchaseReceiptViewSet, PurchaseRequisitionViewSet, PurchaseRFQViewSet, PurchaseServiceAcceptanceViewSet, SupplierQuotationViewSet, SupplierPaymentViewSet, SupplierRefundViewSet, SupplierReturnViewSet
 
 router = DefaultRouter()
+router.register("document-templates", PurchaseDocumentTemplateViewSet, basename="purchase-document-template")
 router.register("orders", PurchaseOrderViewSet, basename="purchase-order")
 router.register("requisitions", PurchaseRequisitionViewSet, basename="purchase-requisition")
 router.register("rfqs", PurchaseRFQViewSet, basename="purchase-rfq")
