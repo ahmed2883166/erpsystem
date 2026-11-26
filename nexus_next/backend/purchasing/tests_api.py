@@ -16,7 +16,7 @@ from inventory.models import Product, StockBalance, StockMovement, StockMovement
 from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
-from treasury.models import TreasuryAccount
+from treasury.models import TreasuryAccount, TreasuryTransaction
 from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, SupplierPayment, SupplierReturn
 
 
@@ -52,6 +52,25 @@ class PurchasingWorkflowTests(APITestCase):
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
             AccountRole.objects.create(company=self.company, role=role, account=account)
+
+        # Fund the default cash/bank accounts so payment workflows exercise
+        # realistic available balances instead of relying on implicit credit.
+        bank_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.BANK
+        ).account
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-MAIN", name_ar="البنك الرئيسي",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
+        cash_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.CASH
+        ).account
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_account,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-MAIN", name_ar="الصندوق الرئيسي",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
 
     def test_unassigned_purchase_warehouse_uses_same_branch_for_validation_and_posting(self):
         from purchasing.services import _branch_and_year
@@ -422,7 +441,8 @@ class PurchasingWorkflowTests(APITestCase):
         )
         from treasury.models import TreasuryAccount
         TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=alternate_bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
+            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP",
+            opening_balance=Decimal("1000"))
         payment_response = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-001", "payment_date": "2026-03-15",
@@ -466,6 +486,100 @@ class PurchasingWorkflowTests(APITestCase):
             JournalEntry.objects.filter(source_type=JournalEntry.Source.PURCHASES, status="posted").count(),
             2,
         )
+
+    def test_supplier_payment_rejects_amount_above_available_cash_or_bank_balance(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-LOW-TREASURY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        for method, code, kind in (
+            ("bank", "1191", TreasuryAccount.Kind.BANK),
+            ("cash", "1091", TreasuryAccount.Kind.CASH),
+        ):
+            account = ChartOfAccount.objects.create(
+                company=self.company, code=code, name_ar=f"خزينة منخفضة {method}",
+                nature=ChartOfAccount.Nature.ASSET,
+            )
+            TreasuryAccount.objects.create(
+                company=self.company, branch=self.branch, account=account, kind=kind,
+                code=f"LOW-{method.upper()}", name_ar=f"خزينة منخفضة {method}",
+                currency_code="EGP", opening_balance=Decimal("10"),
+            )
+            payment = self.client.post("/api/purchasing/payments/", {
+                "company": self.company.pk, "supplier": self.supplier.pk,
+                "invoice": invoice.data["id"], "payment_number": f"PAY-LOW-{method.upper()}",
+                "payment_date": "2026-03-15", "method": method,
+                "payment_account": account.pk, "amount": "20.0000",
+            }, format="json")
+            self.assertEqual(payment.status_code, 201, payment.data)
+            rejected = self.client.post(
+                f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+            )
+            self.assertEqual(rejected.status_code, 400, rejected.data)
+            stored = SupplierPayment.objects.get(pk=payment.data["id"])
+            self.assertEqual(stored.status, SupplierPayment.Status.DRAFT)
+            self.assertIsNone(stored.journal_entry_id)
+            self.assertFalse(
+                JournalEntry.objects.filter(entry_number=f"PUR-PAY-{stored.pk}").exists()
+            )
+
+    def test_backdated_supplier_payment_respects_later_treasury_withdrawals(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-BACKDATED-TREASURY", "invoice_date": "2026-03-10",
+            "lines": [{"receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14"}],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        account = ChartOfAccount.objects.create(
+            company=self.company, code="1192", name_ar="بنك بحركة لاحقة",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        treasury_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-FUTURE",
+            name_ar="بنك بحركة لاحقة", currency_code="EGP",
+            opening_balance=Decimal("100"),
+        )
+        later_withdrawal = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            source_account=treasury_account, counter_account=ChartOfAccount.objects.get(
+                company=self.company, code="6000",
+            ),
+            kind=TreasuryTransaction.Kind.PAYMENT, document_number="TR-FUTURE-001",
+            transaction_date=date(2026, 3, 20), amount=Decimal("90"),
+            description="سحب بنكي لاحق",
+        )
+        from treasury.services import post_treasury_transaction
+        post_treasury_transaction(later_withdrawal.pk, self.user)
+
+        payment = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice.data["id"], "payment_number": "PAY-BACKDATED-001",
+            "payment_date": "2026-03-15", "method": "bank",
+            "payment_account": account.pk, "amount": "20.0000",
+        }, format="json")
+        self.assertEqual(payment.status_code, 201, payment.data)
+        rejected = self.client.post(
+            f"/api/purchasing/payments/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        stored = SupplierPayment.objects.get(pk=payment.data["id"])
+        self.assertEqual(stored.status, SupplierPayment.Status.DRAFT)
+        self.assertIsNone(stored.journal_entry_id)
 
     def test_supplier_payment_rejects_treasury_account_from_another_branch(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
@@ -1317,10 +1431,7 @@ class PurchasingWorkflowTests(APITestCase):
         invoice_id = invoice.data["id"]
         posted_invoice = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
-        from treasury.models import TreasuryAccount
         bank = ChartOfAccount.objects.get(company=self.company, code="1100")
-        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-REV", name_ar="بنك العكس", currency_code="EGP")
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-REV-001", "payment_date": "2026-03-11",

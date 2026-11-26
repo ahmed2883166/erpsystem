@@ -660,6 +660,60 @@ def post_supplier_payment(payment_id, user):
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
+    # Serialize supplier payments with treasury transactions on the same
+    # TreasuryAccount row; a ChartOfAccount-only lock would not prevent a
+    # concurrent treasury withdrawal from spending the same available balance.
+    from treasury.models import TreasuryAccount
+    treasury_account = TreasuryAccount.objects.select_for_update().filter(
+        company_id=payment.company_id, account_id=payment_account.pk,
+    ).first()
+    if treasury_account:
+        opening_balance = (
+            Decimal("0") if treasury_account.opening_journal_entry_id
+            else treasury_account.opening_balance
+        )
+    else:
+        # Legacy/default role accounts may not have a TreasuryAccount record.
+        # Lock the GL account to serialize payments that use this fallback.
+        ChartOfAccount.objects.select_for_update().get(pk=payment_account.pk)
+        opening_balance = Decimal("0")
+
+    balance_movements = JournalLine.objects.filter(
+        account_id=payment_account.pk,
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).values(
+        "entry_id", "entry__entry_date",
+    ).annotate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    ).order_by("entry__entry_date", "entry_id")
+
+    # Existing entries dated on the payment date are already posted before
+    # this payment. Check the balance immediately after this payment, then
+    # after every later posted entry so a backdated payment cannot make a
+    # subsequent withdrawal overdraw the account.
+    cash_balance = opening_balance
+    later_movements = []
+    for movement in balance_movements:
+        change = (
+            (movement["debit"] or Decimal("0"))
+            - (movement["credit"] or Decimal("0"))
+        )
+        if movement["entry__entry_date"] <= payment.payment_date:
+            cash_balance += change
+        else:
+            later_movements.append(change)
+
+    if cash_balance < payment.amount:
+        raise ValidationError(
+            f"لا يمكن ترحيل السداد: الرصيد المتاح بعد احتساب الحركات حتى تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
+        )
+    for change in later_movements:
+        cash_balance += change
+        if cash_balance < payment.amount:
+            raise ValidationError(
+                "لا يمكن ترحيل السداد بأثر رجعي؛ سيؤدي إلى رصيد نقدية/بنك سالب بعد حركة لاحقة مسجلة."
+            )
+
     journal_lines = [
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),
