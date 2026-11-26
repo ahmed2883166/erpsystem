@@ -199,3 +199,13 @@ class AssetMovementWorkflowTests(APITestCase):
         self.assertTrue(reconciliation.data["is_reconciled"], reconciliation.data)
         self.assertEqual(reconciliation.data["difference_count"], 0)
 
+    def test_backdated_transfer_is_rejected_after_depreciation_is_posted(self):
+        depreciate_asset(self.asset.pk, date(2026, 2, 28), self.year.pk, self.user)
+        response = self.client.post("/api/assets/asset-movements/", {
+            "asset": self.asset.pk, "movement_type": "branch_transfer",
+            "movement_date": "2026-02-15", "to_branch": self.target_branch.pk,
+            "to_custodian": "مسؤول فرع غرب", "document_number": "AM-BACKDATE-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(AssetMovement.objects.filter(document_number="AM-BACKDATE-01").exists())
+
