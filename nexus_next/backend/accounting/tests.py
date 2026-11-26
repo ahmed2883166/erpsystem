@@ -716,10 +716,13 @@ class AccountingApiTests(TestCase):
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_GAIN).account.code, "7210")
         self.assertEqual(AccountRole.objects.get(company=company, role=AccountRole.Role.UNREALIZED_FX_LOSS).account.code, "6160")
 
-    def test_activity_chart_templates_support_transport_and_contracting_primary_activities(self):
+    def test_activity_chart_templates_support_configured_primary_activities(self):
         expected = {
-            "transport": ("إيرادات خدمات النقل والشحن", "تكاليف الرحلات والنقل والشحن"),
-            "contracting": ("إيرادات أعمال المقاولات", "تكاليف المشروعات والمقاولات"),
+            "commercial": ("إيرادات مبيعات البضائع", "تكلفة البضاعة المباعة"),
+            "service": ("إيرادات تقديم الخدمات", "تكلفة تقديم الخدمات"),
+            "medical": ("إيرادات الخدمات الطبية", "تكلفة الخدمات والمستلزمات الطبية"),
+            "restaurants": ("إيرادات المطاعم والمشروبات", "تكلفة الأغذية والمشروبات المباعة"),
+            "industrial": ("إيرادات بيع المنتجات", "تكلفة المنتجات المباعة"),
         }
         for activity, (revenue_name, cost_name) in expected.items():
             company = Company.objects.create(
