@@ -14,6 +14,7 @@ from audit.models import AuditEvent
 from accounting.services import get_account_for_role, post_journal, reverse_operational_journal
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, ExchangeRate, FiscalYear
+from core.money import round_currency_amount
 from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
 from inventory.services import post_stock_movement
 
@@ -276,6 +277,52 @@ def post_purchase_receipt(receipt_id, user):
     return PurchaseReceipt.objects.select_related("stock_movement", "journal_entry").get(pk=receipt.pk)
 
 
+def _validate_service_acceptance_invoice_amounts(invoice, lines):
+    """Match a linked service invoice to the accepted quantities and PO value."""
+    acceptance = invoice.service_acceptance
+    if not acceptance:
+        return
+    acceptance = type(acceptance).objects.select_for_update().get(pk=acceptance.pk)
+    if acceptance.status != "accepted":
+        raise ValidationError("لا يمكن ترحيل فاتورة مرتبطة بمحضر خدمة غير معتمد.")
+    acceptance_lines = list(
+        acceptance.lines.select_related("order_line", "order_line__product")
+        .select_for_update()
+        .order_by("pk")
+    )
+    if not acceptance_lines:
+        raise ValidationError("محضر إنجاز الخدمة المرتبط لا يحتوي على بنود معتمدة.")
+    expected_net = Decimal("0")
+    expected_tax = Decimal("0")
+    for accepted_line in acceptance_lines:
+        order_line = accepted_line.order_line
+        if order_line.product.product_type != Product.ProductType.SERVICE:
+            raise ValidationError("محضر الإنجاز يحتوي على بند غير خدمي.")
+        if order_line.unit_price <= 0:
+            raise ValidationError(
+                "يجب تحديد سعر موجب لبنود الخدمة في أمر الشراء قبل مطابقة فاتورة المورد."
+            )
+        line_net = (accepted_line.quantity * order_line.unit_price).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP,
+        )
+        expected_net += line_net
+        expected_tax += round_currency_amount(
+            line_net * order_line.tax_rate / Decimal("100"),
+            invoice.company.base_currency,
+        )
+    actual_net = sum((line.net_amount for line in lines), Decimal("0"))
+    actual_tax = sum((line.tax_amount for line in lines), Decimal("0"))
+    tolerance = Decimal("0.0002") * max(len(lines), len(acceptance_lines), 1)
+    if abs(actual_net - expected_net) > tolerance:
+        raise ValidationError(
+            f"صافي فاتورة الخدمة ({actual_net}) لا يطابق قيمة الكميات المعتمدة بأمر الشراء ({expected_net})."
+        )
+    if abs(actual_tax - expected_tax) > tolerance:
+        raise ValidationError(
+            f"ضريبة فاتورة الخدمة ({actual_tax}) لا تطابق ضريبة بنود أمر الشراء المعتمدة ({expected_tax})."
+        )
+
+
 def _post_direct_expense_purchase_invoice(invoice, user):
     """Post a non-stock supplier invoice to expense accounts, input VAT and AP."""
     branch = invoice.branch
@@ -299,6 +346,7 @@ def _post_direct_expense_purchase_invoice(invoice, user):
         (line.tax_amount for line in lines if not line.tax_code_id or line.tax_code.input_tax_recoverable),
         Decimal("0"),
     ).quantize(Decimal("0.0001"))
+    _validate_service_acceptance_invoice_amounts(invoice, lines)
     if net_amount <= 0 or tax_amount < 0:
         raise ValidationError("يجب أن تكون قيمة الفاتورة موجبة والضريبة غير سالبة.")
 
