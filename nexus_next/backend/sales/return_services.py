@@ -42,7 +42,7 @@ def post_sales_return(return_id, user):
     if invoice.status != SalesInvoice.Status.POSTED:
         raise ValidationError("لا يمكن ترحيل مردود لفاتورة غير مرحلة.")
     if invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
-        sales_invoice=invoice, revaluation_date__lte=sales_return.return_date,
+        sales_invoice=invoice,
     ).filter(
         Q(journal_entry__isnull=True)
         | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
@@ -199,7 +199,7 @@ def reverse_sales_return(return_id, user, entry_date):
     ).exists():
         raise ValidationError("يجب عكس رد المبلغ المرتبط بمردود المبيعات أولًا قبل عكس المردود.")
     if document.invoice.transaction_currency_id and FxSubledgerRevaluation.objects.filter(
-        sales_invoice=document.invoice, revaluation_date__lte=entry_date,
+        sales_invoice=document.invoice,
     ).filter(
         Q(journal_entry__isnull=True)
         | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
