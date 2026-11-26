@@ -660,6 +660,29 @@ def post_supplier_payment(payment_id, user):
     if payable.pk == payment_account.pk:
         raise ValidationError("حساب الموردين وحساب الصندوق/البنك يجب أن يكونا مختلفين.")
 
+    # فحص رصيد حساب الدفع قبل إنشاء القيد حتى لا ينتج رصيد خزينة/بنك
+    # سالب بصمت (NEW-7-2) — نفس معادلة فحص عكس استرداد المورد (:882-897):
+    # قيود مرحّلة حتى تاريخ السداد + الرصيد الافتتاحي بلا قيد افتتاحي.
+    # وقفل صف الحساب يمنع سباق سدادين متزامنين من نفس الحساب.
+    ChartOfAccount.objects.select_for_update().get(pk=payment_account.pk)
+    cash_totals = JournalLine.objects.filter(
+        account_id=payment_account.pk,
+        entry__entry_date__lte=payment.payment_date,
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).aggregate(
+        debit=Sum("debit"), credit=Sum("credit"),
+    )
+    from treasury.models import TreasuryAccount
+    opening_balance = TreasuryAccount.objects.filter(
+        company_id=payment.company_id, account_id=payment_account.pk,
+        opening_journal_entry__isnull=True,
+    ).aggregate(total=Sum("opening_balance"))["total"] or Decimal("0")
+    cash_balance = opening_balance + (cash_totals["debit"] or Decimal("0")) - (cash_totals["credit"] or Decimal("0"))
+    if cash_balance < payment.amount:
+        raise ValidationError(
+            f"لا يمكن ترحيل السداد: رصيد حساب الخزينة/البنك في تاريخ السداد ({cash_balance}) أقل من المبلغ ({payment.amount})."
+        )
+
     journal_lines = [
         JournalLine(account=payable, description="تخفيض مستحقات المورد بالقيمة الدفترية", debit=carrying_amount, credit=0),
         JournalLine(account=payment_account, description="صرف نقدي/بنكي للمورد", debit=0, credit=payment.amount),

@@ -52,6 +52,24 @@ class PurchasingWorkflowTests(APITestCase):
         for role, (code, name, nature) in roles.items():
             account = ChartOfAccount.objects.create(company=self.company, code=code, name_ar=name, nature=nature)
             AccountRole.objects.create(company=self.company, role=role, account=account)
+        # Fund the default bank/cash accounts so supplier-payment tests post
+        # from a realistic balance (NEW-7-2 rejects payments above the balance).
+        bank_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.BANK
+        ).account
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_account,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-MAIN", name_ar="البنك الرئيسي",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
+        cash_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.CASH
+        ).account
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_account,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-MAIN", name_ar="الصندوق الرئيسي",
+            currency_code="EGP", opening_balance=Decimal("100000"),
+        )
 
     def test_unassigned_purchase_warehouse_uses_same_branch_for_validation_and_posting(self):
         from purchasing.services import _branch_and_year
@@ -422,7 +440,8 @@ class PurchasingWorkflowTests(APITestCase):
         )
         from treasury.models import TreasuryAccount
         TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=alternate_bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP")
+            kind=TreasuryAccount.Kind.BANK, code="BANK-2", name_ar="البنك الفرعي", currency_code="EGP",
+            opening_balance=Decimal("1000"))
         payment_response = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-001", "payment_date": "2026-03-15",
@@ -1317,10 +1336,7 @@ class PurchasingWorkflowTests(APITestCase):
         invoice_id = invoice.data["id"]
         posted_invoice = self.client.post(f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json")
         self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
-        from treasury.models import TreasuryAccount
         bank = ChartOfAccount.objects.get(company=self.company, code="1100")
-        TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=bank,
-            kind=TreasuryAccount.Kind.BANK, code="BANK-REV", name_ar="بنك العكس", currency_code="EGP")
         payment = self.client.post("/api/purchasing/payments/", {
             "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
             "payment_number": "PAY-REV-001", "payment_date": "2026-03-11",
