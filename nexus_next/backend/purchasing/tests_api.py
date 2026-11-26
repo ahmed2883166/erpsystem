@@ -17,7 +17,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, SupplierPayment, SupplierReturn
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -2822,3 +2822,67 @@ class PurchasingWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(quotation.status_code, 201, quotation.data)
         self.assertEqual(quotation.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+
+    def test_service_purchase_order_requires_service_acceptance_without_stock_receipt(self):
+        service = Product.objects.create(
+            company=self.company,
+            unit=self.unit,
+            code="SVC-002",
+            name_ar="تنظيف وصيانة",
+            product_type=Product.ProductType.SERVICE,
+            stock_class=None,
+            purchase_price=Decimal("750"),
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-002",
+            "order_date": date.today().isoformat(),
+            "lines": [{
+                "product": service.pk,
+                "quantity": "2",
+                "unit_price": "750",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_id = order.data["id"]
+        order_line_id = order.data["line_items"][0]["id"]
+        self.assertEqual(order.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        movements_before = StockMovement.objects.count()
+        stock_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-SVC-002",
+            "receipt_date": date.today().isoformat(),
+            "lines": [{"product": service.pk, "quantity": "1", "unit_cost": "750"}],
+        }, format="json")
+        self.assertEqual(stock_receipt.status_code, 400, stock_receipt.data)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk,
+            "order": order_id,
+            "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-002",
+            "acceptance_date": date.today().isoformat(),
+            "notes": "تم تنفيذ الخدمة بالكامل",
+            "lines": [{"order_line": order_line_id, "quantity": "2"}],
+        }, format="json")
+        self.assertEqual(acceptance.status_code, 201, acceptance.data)
+        accepted = self.client.post(
+            f"/api/purchasing/service-acceptances/{acceptance.data['id']}/accept/",
+            {},
+            format="json",
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(accepted.data["status"], PurchaseServiceAcceptance.Status.ACCEPTED)
+        self.assertEqual(accepted.data["line_items"][0]["quantity"], "2.0000")
+        self.assertEqual(StockMovement.objects.count(), movements_before)
