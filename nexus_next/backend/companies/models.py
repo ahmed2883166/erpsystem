@@ -58,6 +58,30 @@ class Company(models.Model):
         return f"{self.code} - {self.name_ar}"
 
 
+class CompanyActivity(models.Model):
+    """نشاط تشغيلي مفعّل للشركة؛ يحتفظ Company.activity بالنشاط الأساسي للتوافق."""
+
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name="activity_assignments"
+    )
+    activity = models.CharField(max_length=24, choices=Company.Activity.choices)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("activity",)
+        indexes = [models.Index(fields=("company", "is_active"), name="company_activity_active_idx")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("company", "activity"), name="uq_company_enabled_activity"
+            ),
+        ]
+        verbose_name = "نشاط شركة"
+        verbose_name_plural = "أنشطة الشركات"
+
+    def __str__(self):
+        return f"{self.company.code} - {self.get_activity_display()}"
+
+
 class ExchangeRate(models.Model):
     """سعر وحدة واحدة من العملة الأجنبية بوحدات العملة الأساسية للشركة."""
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="exchange_rates")
