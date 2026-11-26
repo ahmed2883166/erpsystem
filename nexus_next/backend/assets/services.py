@@ -556,7 +556,7 @@ def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, revers
 
 
 @transaction.atomic
-def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None):
+def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_year_id, user=None, units_produced=None):
     """إثبات بيع الأصل أو استبعاده ومعالجة النقدية ومجمع الإهلاك والربح أو الخسارة."""
     from treasury.models import TreasuryAccount, TreasuryTransaction
 
@@ -645,26 +645,37 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     remaining = max(Decimal("0"), asset.original_cost - posted_total - net_impairment - asset.salvage_value)
 
     if elapsed_days and remaining:
-        if latest_measurement_date >= asset.depreciation_start_date:
-            dep_at_measurement = asset.depreciations.filter(
-                journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=latest_measurement_date,
-            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-            loss_at_measurement = asset.impairments.filter(
-                journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=latest_measurement_date,
-            ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
-            reversal_at_measurement = asset.impairment_reversals.filter(
-                journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=latest_measurement_date,
-            ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
-            carrying_at_measurement = asset.original_cost - dep_at_measurement - loss_at_measurement + reversal_at_measurement
-            life_used_days = max(0, (latest_measurement_date - asset.depreciation_start_date).days + 1)
-            remaining_life_days = max(1, asset.useful_life_months * 30 - life_used_days)
-            revised_basis = max(Decimal("0"), carrying_at_measurement - asset.salvage_value)
-            daily_rate = revised_basis / Decimal(remaining_life_days)
+        if asset.depreciation_method == FixedAsset.Method.STRAIGHT_LINE:
+            if latest_measurement_date >= asset.depreciation_start_date:
+                dep_at_measurement = asset.depreciations.filter(journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=latest_measurement_date).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+                loss_at_measurement = asset.impairments.filter(journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=latest_measurement_date).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+                reversal_at_measurement = asset.impairment_reversals.filter(journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=latest_measurement_date).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+                carrying_at_measurement = asset.original_cost - dep_at_measurement - loss_at_measurement + reversal_at_measurement
+                life_used_days = max(0, (latest_measurement_date - asset.depreciation_start_date).days + 1)
+                remaining_life_days = max(1, asset.useful_life_months * 30 - life_used_days)
+                revised_basis = max(Decimal("0"), carrying_at_measurement - asset.salvage_value)
+                partial_amount = round_currency_amount(revised_basis / Decimal(remaining_life_days) * Decimal(elapsed_days), asset.company.base_currency)
+            else:
+                partial_amount = round_currency_amount(asset.depreciable_amount / Decimal(asset.useful_life_months * 30) * Decimal(elapsed_days), asset.company.base_currency)
+        elif asset.depreciation_method == FixedAsset.Method.DECLINING_BALANCE:
+            if not asset.declining_rate_percentage or not (0 < asset.declining_rate_percentage <= 100):
+                raise ValidationError("معدل القسط المتناقص غير محدد أو خارج النطاق.")
+            partial_amount = round_currency_amount((asset.original_cost - posted_total - net_impairment) * asset.declining_rate_percentage / Decimal("100") * Decimal(elapsed_days) / Decimal("365"), asset.company.base_currency)
+        elif asset.depreciation_method == FixedAsset.Method.UNITS_OF_PRODUCTION:
+            if not asset.production_units_total:
+                raise ValidationError("إجمالي وحدات الإنتاج المقدرة غير محدد.")
+            try:
+                units_produced = int(units_produced)
+            except (TypeError, ValueError):
+                raise ValidationError("أدخل وحدات الإنتاج الفعلية حتى تاريخ الاستبعاد.") from None
+            used_units = asset.depreciations.filter(journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=disposal_date).aggregate(total=Sum("units_produced"))["total"] or 0
+            remaining_units = asset.production_units_total - used_units
+            if units_produced <= 0 or units_produced > remaining_units:
+                raise ValidationError("وحدات الإنتاج حتى الاستبعاد غير صحيحة أو تتجاوز الوحدات المتبقية.")
+            partial_amount = round_currency_amount(remaining * Decimal(units_produced) / Decimal(remaining_units), asset.company.base_currency)
         else:
-            daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
-        partial_amount = min(remaining, round_currency_amount(
-            daily_rate * Decimal(elapsed_days), asset.company.base_currency,
-        ))
+            raise ValidationError("طريقة إهلاك الأصل غير مدعومة.")
+        partial_amount = min(remaining, partial_amount)
         if partial_amount > 0:
             partial_entry = _post_entry(
                 asset, year, f"FA-DEP-PART-{asset.pk}-{disposal_date:%Y%m%d}", disposal_date,
@@ -676,7 +687,9 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
             )
             AssetDepreciation.objects.create(
                 asset=asset, period_date=disposal_date, amount=partial_amount,
-                is_partial_period=True, journal_entry=partial_entry,
+                is_partial_period=True,
+                units_produced=units_produced if asset.depreciation_method == FixedAsset.Method.UNITS_OF_PRODUCTION else None,
+                journal_entry=partial_entry,
             )
 
     accumulated = asset.depreciations.filter(
