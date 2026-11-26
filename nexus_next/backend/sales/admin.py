@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesInvoiceLine
+from .models import CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesDelivery, SalesInvoice, SalesInvoiceLine
 
 
 class SalesInvoiceLineInline(admin.TabularInline):
@@ -29,3 +29,37 @@ class CustomerReceiptAdmin(admin.ModelAdmin):
     list_display = ("receipt_number", "company", "customer", "invoice", "receipt_date", "amount", "status")
     list_filter = ("company", "status", "receipt_date", "method")
     search_fields = ("receipt_number", "customer__name_ar", "invoice__invoice_number")
+
+
+@admin.register(CustomerReceiptBatch)
+class CustomerReceiptBatchAdmin(admin.ModelAdmin):
+    list_display = ("receipt_number", "company", "customer", "branch", "receipt_date", "amount", "status")
+    list_filter = ("company", "branch", "status", "receipt_date", "method")
+    search_fields = ("receipt_number", "customer__name_ar", "reference")
+    readonly_fields = tuple(field.name for field in CustomerReceiptBatch._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CustomerReceiptBatchAllocation)
+class CustomerReceiptBatchAllocationAdmin(admin.ModelAdmin):
+    list_display = ("batch", "invoice", "amount", "created_at")
+    list_filter = ("batch__company", "batch__receipt_date")
+    search_fields = ("batch__receipt_number", "invoice__invoice_number")
+    readonly_fields = tuple(field.name for field in CustomerReceiptBatchAllocation._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

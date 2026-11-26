@@ -16,7 +16,7 @@ from inventory.models import StockMovement
 from inventory.services import post_stock_movement
 from approvals.snapshots import invoice_discount_snapshot
 
-from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn
+from .models import CustomerReceipt, SalesDelivery, SalesInvoice, SalesReturn, SalesOrder, SalesDeliveryAllocation
 
 
 def _account(company, role):
@@ -38,6 +38,21 @@ def _branch_and_year(delivery, entry_date):
         raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ المستند.")
     return branch, year
 
+def _branch_and_year_for_invoice(invoice, entry_date):
+    """Resolve branch for either a stock-backed invoice or a direct service invoice."""
+    if invoice.delivery_id:
+        return _branch_and_year(invoice.delivery, entry_date)
+    branch = invoice.branch
+    if not branch or branch.company_id != invoice.company_id or not branch.is_active:
+        raise ValidationError("حدد فرعًا نشطًا تابعًا للشركة لفاتورة الخدمة.")
+    year = FiscalYear.objects.filter(
+        company=invoice.company, status=FiscalYear.Status.OPEN,
+        start_date__lte=entry_date, end_date__gte=entry_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ المستند.")
+    return branch, year
+
 
 @transaction.atomic
 def post_sales_delivery(delivery_id, user):
@@ -52,7 +67,20 @@ def post_sales_delivery(delivery_id, user):
     if not delivery.warehouse.is_active or delivery.warehouse.company_id != delivery.company_id:
         raise ValidationError("المخزن موقوف أو لا يتبع الشركة.")
     post_stock_movement(delivery.stock_movement_id, user)
-    return SalesDelivery.objects.select_related("stock_movement").get(pk=delivery.pk)
+    if delivery.order_id:
+        order = SalesOrder.objects.select_for_update().get(pk=delivery.order_id)
+        complete = True
+        for order_line in order.lines.all():
+            posted_quantity = SalesDeliveryAllocation.objects.filter(
+                order_line=order_line,
+                delivery__stock_movement__status=StockMovement.Status.POSTED,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if posted_quantity < order_line.quantity:
+                complete = False
+                break
+        order.status = SalesOrder.Status.DELIVERED if complete else SalesOrder.Status.PARTIALLY_DELIVERED
+        order.save(update_fields=("status", "updated_at"))
+    return SalesDelivery.objects.select_related("stock_movement", "order").get(pk=delivery.pk)
 
 
 @transaction.atomic
@@ -86,12 +114,25 @@ def post_sales_invoice(invoice_id, user):
         ):
             raise ValidationError("تجاوزت الفاتورة حد الخصم أو قيمة الفاتورة المعتمد؛ يلزم اعتماد مدير الشركة لآخر نسخة قبل الترحيل.")
     delivery = invoice.delivery
-    if delivery.stock_movement.status != StockMovement.Status.POSTED:
-        raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
-    lines = list(invoice.lines.select_related("delivery_line", "delivery_line__product"))
-    expected = list(delivery.stock_movement.lines.all())
-    if not lines or len(lines) != len(expected) or {x.delivery_line_id for x in lines} != {x.pk for x in expected}:
-        raise ValidationError("أصناف الفاتورة لا تطابق إذن التسليم.")
+    lines = list(invoice.lines.select_related("delivery_line", "product"))
+    if not lines:
+        raise ValidationError("لا توجد بنود في فاتورة المبيعات.")
+    if delivery:
+        if invoice.invoice_date < delivery.delivery_date:
+            raise ValidationError("تاريخ الفاتورة لا يجوز أن يسبق تاريخ إذن التسليم.")
+        if delivery.stock_movement.status != StockMovement.Status.POSTED:
+            raise ValidationError("لا يمكن ترحيل الفاتورة قبل ترحيل إذن التسليم.")
+        expected = list(delivery.stock_movement.lines.all())
+        if len(lines) != len(expected) or {x.delivery_line_id for x in lines} != {x.pk for x in expected}:
+            raise ValidationError("أصناف الفاتورة لا تطابق إذن التسليم.")
+        if any(not line.delivery_line_id or line.product.product_type != "goods" for line in lines):
+            raise ValidationError("فاتورة التسليم يجب أن تحتوي على أصناف مخزنية مطابقة للإذن.")
+    else:
+        if not invoice.branch_id or any(
+            line.delivery_line_id or line.product.product_type != "service"
+            for line in lines
+        ):
+            raise ValidationError("فاتورة الخدمة يجب أن تحتوي على خدمات فقط وترتبط بفرع نشط.")
     net = sum((line.net_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     tax = sum((line.tax_amount for line in lines), Decimal("0")).quantize(Decimal("0.0001"))
     total = net + tax
@@ -114,8 +155,8 @@ def post_sales_invoice(invoice_id, user):
                 rate_date=invoice.exchange_rate_date, document_date=invoice.invoice_date,
                 approved_rate=approved.rate,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر التحقق من سعر الصرف لفاتورة المبيعات؛ راجع بيانات العملة والسعر المعتمد.") from None
         if abs(expected_base - total) > Decimal("0.0002") * max(len(lines), 1):
             raise ValidationError("قيمة الفاتورة بالعملة الأساسية لا تطابق إجماليها الأجنبي وسعر الصرف.")
         invoice.transaction_net_total = foreign_net
@@ -130,7 +171,7 @@ def post_sales_invoice(invoice_id, user):
     roles = [receivable, sales] + ([vat_output] if vat_output else [])
     if len({x.pk for x in roles}) != len(roles):
         raise ValidationError("يجب ربط حسابات العملاء والمبيعات وضريبة المخرجات بحسابات مختلفة.")
-    branch, year = _branch_and_year(delivery, invoice.invoice_date)
+    branch, year = _branch_and_year_for_invoice(invoice, invoice.invoice_date)
     entry = JournalEntry.objects.create(
         company=invoice.company, branch=branch, fiscal_year=year,
         entry_number=f"SALE-INV-{invoice.pk}", entry_date=invoice.invoice_date,
@@ -168,6 +209,8 @@ def post_customer_receipt(receipt_id, user):
     invoice = SalesInvoice.objects.select_for_update().get(pk=receipt.invoice_id)
     if invoice.status != SalesInvoice.Status.POSTED:
         raise ValidationError("لا يمكن قبض فاتورة غير مرحلة.")
+    if receipt.receipt_date < invoice.invoice_date:
+        raise ValidationError("تاريخ سند القبض لا يجوز أن يسبق تاريخ فاتورة المبيعات.")
     if receipt.company_id != invoice.company_id or receipt.customer_id != invoice.customer_id:
         raise ValidationError("بيانات السند لا تطابق فاتورة العميل.")
     if CustomerReceipt.objects.filter(
@@ -195,8 +238,8 @@ def post_customer_receipt(receipt_id, user):
                 rate_date=receipt.exchange_rate_date, document_date=receipt.receipt_date,
                 approved_rate=approved.rate,
             )
-        except (ValueError, TypeError) as exc:
-            raise ValidationError(str(exc)) from exc
+        except (ValueError, TypeError):
+            raise ValidationError("تعذر التحقق من سعر الصرف لسند تحصيل العميل.") from None
         if expected_amount != receipt.amount:
             raise ValidationError("مبلغ التحصيل الأساسي لا يطابق المبلغ الأجنبي مضروبًا في سعر الصرف.")
         from accounting.fx_settlement import allocate_carrying_base_amount, calculate_realized_fx
@@ -228,8 +271,8 @@ def post_customer_receipt(receipt_id, user):
             realized_gain, realized_loss = calculate_realized_fx(
                 "receivable", historical_carrying, settlement.settlement_base_amount,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
+        except ValueError:
+            raise ValidationError("تعذر احتساب تسوية العملة لتحصيل العميل.") from None
         carrying_amount = settlement.carrying_base_amount
         unrealized_adjustment = carrying_amount - historical_carrying
     else:
@@ -261,7 +304,7 @@ def post_customer_receipt(receipt_id, user):
     cash = receipt.payment_account or _account(receipt.company, cash_role)
     if cash.company_id != receipt.company_id or cash.nature != "asset" or not cash.is_active or cash.is_group or not cash.allow_posting:
         raise ValidationError("حساب التحصيل يجب أن يكون حساب خزينة/بنك نشطًا وقابلًا للترحيل تابعًا للشركة.")
-    branch, year = _branch_and_year(invoice.delivery, receipt.receipt_date)
+    branch, year = _branch_and_year_for_invoice(invoice, receipt.receipt_date)
     if receipt.payment_account_id:
         from treasury.models import TreasuryAccount
         expected_kind = TreasuryAccount.Kind.CASH if receipt.method == CustomerReceipt.Method.CASH else TreasuryAccount.Kind.BANK
