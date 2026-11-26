@@ -11,7 +11,7 @@ from accounting.models import AccountRole, JournalEntry, JournalLine
 from accounting.services import get_account_for_role, post_journal
 from companies.models import FiscalYear
 from core.money import round_currency_amount
-from .models import FixedAsset, AssetDepreciation, AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment
+from .models import FixedAsset, AssetDepreciation, AssetComponentDepreciation, AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment
 
 
 
@@ -128,8 +128,130 @@ def acquire_asset(asset_id, fiscal_year_id, user=None):
     raise ValidationError("لم يتم إنشاء حركة خزينة للاقتناء؛ راجع ربط حساب البنك أو الخزينة.")
 
 
+def _depreciate_asset_components(asset, period_date, year, user=None, units_produced_by_component=None):
+    """Calculate all significant component charges and post one balanced asset-period journal."""
+    components = list(asset.components.filter(status="active").order_by("pk"))
+    if not components:
+        raise ValidationError("لا توجد مكونات نشطة للأصل.")
+    total_component_cost = sum((component.original_cost for component in components), Decimal("0"))
+    if total_component_cost != asset.original_cost:
+        raise ValidationError("يجب توزيع كامل تكلفة الأصل على مكوناته قبل تشغيل إهلاك المكونات.")
+    if asset.depreciations.exists() and not AssetComponentDepreciation.objects.filter(component__asset=asset).exists():
+        raise ValidationError("لا يمكن تحويل أصل له إهلاك مرحّل سابقًا إلى إهلاك بالمكونات؛ يلزم اعتماد تسوية تحويل مستقلة أولًا.")
+    last_depreciation = asset.depreciations.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
+    ).order_by("-period_date", "-pk").first()
+    latest_impairment = asset.impairments.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=period_date,
+    ).order_by("-impairment_date", "-pk").first()
+    latest_reversal = asset.impairment_reversals.filter(
+        journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=period_date,
+    ).order_by("-reversal_date", "-pk").first()
+    latest_measurement_date = max(
+        latest_impairment.impairment_date if latest_impairment else asset.depreciation_start_date - timedelta(days=1),
+        latest_reversal.reversal_date if latest_reversal else asset.depreciation_start_date - timedelta(days=1),
+    )
+    previous_date = max(
+        last_depreciation.period_date if last_depreciation else asset.depreciation_start_date - timedelta(days=1),
+        latest_measurement_date,
+    )
+    elapsed_days = (period_date - previous_date).days
+    if elapsed_days <= 0:
+        raise ValidationError("تاريخ الإهلاك يجب أن يكون بعد آخر إهلاك أو اختبار انخفاض قيمة.")
+    if asset.movements.filter(
+        status="approved", movement_type="branch_transfer",
+        movement_date__gt=previous_date, movement_date__lte=period_date,
+    ).exists():
+        raise ValidationError("يجب تشغيل إهلاك المكونات قبل نقل الأصل بين الفروع؛ لا يمكن توزيع قيد المكونات على فترة نقل غير مفصّلة.")
+    try:
+        units_map = units_produced_by_component or {}
+        posted_impairments = asset.impairments.filter(
+            journal_entry__status=JournalEntry.Status.POSTED, impairment_date__lte=period_date,
+        ).aggregate(total=Sum("impairment_loss"))["total"] or Decimal("0")
+        posted_reversals = asset.impairment_reversals.filter(
+            journal_entry__status=JournalEntry.Status.POSTED, reversal_date__lte=period_date,
+        ).aggregate(total=Sum("reversal_amount"))["total"] or Decimal("0")
+        net_impairment = posted_impairments - posted_reversals
+        component_amounts = []
+        journal_lines = []
+        total_amount = Decimal("0")
+        for component in components:
+            component_depreciated = component.depreciations.filter(
+                journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
+            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+            allocated_impairment = net_impairment * component.original_cost / total_component_cost
+            carrying = max(Decimal("0"), component.original_cost - component_depreciated - allocated_impairment)
+            remaining = max(Decimal("0"), carrying - component.salvage_value)
+            if remaining <= 0:
+                continue
+            component_units = None
+            if component.depreciation_method == FixedAsset.Method.STRAIGHT_LINE:
+                if latest_measurement_date >= asset.depreciation_start_date:
+                    life_used_days = max(0, (latest_measurement_date - asset.depreciation_start_date).days + 1)
+                    remaining_life_days = max(1, component.useful_life_months * 30 - life_used_days)
+                    basis = max(Decimal("0"), carrying - component.salvage_value)
+                    amount = round_currency_amount(basis * Decimal(elapsed_days) / Decimal(remaining_life_days), asset.company.base_currency)
+                else:
+                    amount = round_currency_amount(
+                        (component.original_cost - component.salvage_value) * Decimal(elapsed_days)
+                        / Decimal(component.useful_life_months * 30), asset.company.base_currency,
+                    )
+            elif component.depreciation_method == FixedAsset.Method.DECLINING_BALANCE:
+                if not component.declining_rate_percentage or not (0 < component.declining_rate_percentage <= 100):
+                    raise ValidationError(f"معدل الإهلاك المتناقص غير محدد للمكوّن {component.code}.")
+                amount = round_currency_amount(
+                    carrying * component.declining_rate_percentage / Decimal("100")
+                    * Decimal(elapsed_days) / Decimal("365"), asset.company.base_currency,
+                )
+            elif component.depreciation_method == FixedAsset.Method.UNITS_OF_PRODUCTION:
+                try:
+                    component_units = int(units_map.get(str(component.pk), units_map.get(component.pk)))
+                except (TypeError, ValueError):
+                    raise ValidationError(f"أدخل وحدات الإنتاج الفعلية للمكوّن {component.code}.") from None
+                if not component.production_units_total or component_units <= 0:
+                    raise ValidationError(f"وحدات الإنتاج للمكوّن {component.code} غير صحيحة.")
+                used_units = component.depreciations.filter(
+                    journal_entry__status=JournalEntry.Status.POSTED,
+                    period_date__lte=period_date,
+                ).aggregate(total=Sum("units_produced"))["total"] or 0
+                remaining_units = component.production_units_total - used_units
+                if component_units > remaining_units:
+                    raise ValidationError(f"وحدات الإنتاج للمكوّن {component.code} تتجاوز الوحدات المتبقية.")
+                amount = round_currency_amount(remaining * Decimal(component_units) / Decimal(remaining_units), asset.company.base_currency)
+            else:
+                raise ValidationError(f"طريقة الإهلاك غير مدعومة للمكوّن {component.code}.")
+            amount = min(amount, remaining)
+            if amount <= 0:
+                continue
+            component_amounts.append((component, amount, component_units))
+            total_amount += amount
+            journal_lines.extend([
+                {"account": component.depreciation_expense_account, "debit": amount, "credit": 0, "description": f"{asset.name_ar} - {component.name_ar}"},
+                {"account": component.accumulated_depreciation_account, "debit": 0, "credit": amount, "description": f"{asset.name_ar} - {component.name_ar}"},
+            ])
+        if total_amount <= 0:
+            raise ValidationError("لا يوجد قسط إهلاك مستحق للمكونات في التاريخ المحدد.")
+        entry = _post_entry(
+            asset, year, f"FA-COMP-DEP-{asset.pk}-{period_date:%Y%m}", period_date,
+            f"إهلاك مكونات الأصل: {asset.name_ar} - {period_date:%Y-%m}",
+            journal_lines, user, branch=_branch_for_asset_date(asset, period_date),
+        )
+        AssetDepreciation.objects.create(
+            asset=asset, period_date=period_date, amount=total_amount,
+            is_partial_period=False, journal_entry=entry,
+        )
+        for component, amount, component_units in component_amounts:
+            AssetComponentDepreciation.objects.create(
+                component=component, period_date=period_date, amount=amount,
+                units_produced=component_units, journal_entry=entry,
+            )
+        return total_amount
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("تعذر احتساب إهلاك المكونات؛ راجع معدلات الإهلاك ووحدات الإنتاج.") from exc
+
+
 @transaction.atomic
-def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None, units_produced=None):
+def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None, units_produced=None, units_produced_by_component=None):
     """احتساب وترحيل إهلاك الأصل عن الفترة حتى تاريخها المحدد."""
     if isinstance(period_date, str):
         period_date = dateparse.parse_date(period_date)
@@ -154,6 +276,11 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None, units_pro
         raise ValidationError("حدد سنة مالية مفتوحة وصحيحة للشركة.") from None
     if not (year.start_date <= period_date <= year.end_date):
         raise ValidationError("تاريخ الإهلاك خارج السنة المالية المفتوحة.")
+    if asset.components.filter(status="active").exists():
+        return _depreciate_asset_components(
+            asset, period_date, year, user,
+            units_produced_by_component=units_produced_by_component,
+        )
     last_depreciation = asset.depreciations.filter(
         journal_entry__status=JournalEntry.Status.POSTED, period_date__lte=period_date,
     ).order_by("-period_date", "-pk").first()
