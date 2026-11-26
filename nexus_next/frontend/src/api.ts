@@ -148,8 +148,8 @@ export type SupplierQuotation = {
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
 export type PurchaseInvoice = {
   id:number; company:number; supplier:number; supplier_name:string; activity:number|null;
-  invoice_type:"inventory"|"direct_expense"; branch:number|null; branch_name:string|null;
-  receipt:number|null; receipt_number:string|null; invoice_number:string; invoice_date:string;
+  invoice_type:"inventory"|"direct_expense"; service_acceptance:number|null; service_acceptance_number:string|null;
+  branch:number|null; branch_name:string|null; receipt:number|null; receipt_number:string|null; invoice_number:string; invoice_date:string;
   transaction_currency:number|null; exchange_rate:string|null; exchange_rate_date:string|null;
   transaction_net_total:string|null; transaction_tax_total:string|null; transaction_grand_total:string|null;
   status:"draft"|"posted"; net_total:string; tax_total:string; grand_total:string; paid_total:string; balance_due:string;
