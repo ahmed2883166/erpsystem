@@ -1045,7 +1045,10 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         ).exists()
         if later_payments:
             raise ValidationError("يجب عكس أحدث سند صرف على الفاتورة أولًا.")
-        if FxSubledgerRevaluation.objects.filter(purchase_invoice_id=payment.invoice_id).exists():
+        if FxSubledgerRevaluation.objects.filter(purchase_invoice_id=payment.invoice_id).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
+        ).exists():
             raise ValidationError("لا يمكن عكس سند صرف لفاتورة لها سجل إعادة تقييم عملة؛ راجع تسلسل التسويات وإعادة التقييم أولًا.")
         entry_date_raw = request.data.get("entry_date")
         try:
