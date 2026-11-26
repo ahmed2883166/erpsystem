@@ -16,6 +16,8 @@ class FixedAsset(models.Model):
 
     class Method(models.TextChoices):
         STRAIGHT_LINE = "straight_line", "القسط الثابت"
+        DECLINING_BALANCE = "declining_balance", "القسط المتناقص"
+        UNITS_OF_PRODUCTION = "units_of_production", "وحدات الإنتاج"
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="fixed_assets")
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="fixed_assets")
@@ -51,7 +53,9 @@ class FixedAsset(models.Model):
     )
     salvage_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
     useful_life_months = models.PositiveIntegerField()
-    depreciation_method = models.CharField(max_length=20, choices=Method.choices, default=Method.STRAIGHT_LINE)
+    depreciation_method = models.CharField(max_length=24, choices=Method.choices, default=Method.STRAIGHT_LINE)
+    declining_rate_percentage = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    production_units_total = models.PositiveBigIntegerField(null=True, blank=True)
     asset_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_costs")
     accumulated_depreciation_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_accumulated")
     depreciation_expense_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_expenses")
@@ -136,6 +140,7 @@ class AssetDepreciation(models.Model):
     period_date = models.DateField()
     amount = models.DecimalField(max_digits=20, decimal_places=4)
     is_partial_period = models.BooleanField(default=False)
+    units_produced = models.PositiveBigIntegerField(null=True, blank=True)
     journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name="asset_depreciation")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -496,3 +501,109 @@ class AssetMovement(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("لا يمكن حذف مستند حركة أصل؛ استخدم مستندًا عكسيًا معتمدًا عند الحاجة.")
+
+
+class AssetComponent(models.Model):
+    """مكوّن جوهري من الأصل له تكلفة وعمر وطريقة إهلاك مستقلة ضمن سجل الأصل الأم."""
+    class Status(models.TextChoices):
+        ACTIVE = "active", "نشط"
+        DISPOSED = "disposed", "مستبعد"
+
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="components")
+    code = models.CharField(max_length=40)
+    name_ar = models.CharField(max_length=180)
+    original_cost = models.DecimalField(max_digits=20, decimal_places=4)
+    salvage_value = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    useful_life_months = models.PositiveIntegerField()
+    depreciation_method = models.CharField(max_length=24, choices=FixedAsset.Method.choices, default=FixedAsset.Method.STRAIGHT_LINE)
+    declining_rate_percentage = models.DecimalField(max_digits=7, decimal_places=4, null=True, blank=True)
+    production_units_total = models.PositiveBigIntegerField(null=True, blank=True)
+    asset_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_component_costs")
+    accumulated_depreciation_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_component_accumulated")
+    depreciation_expense_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="fixed_asset_component_expenses")
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("code",)
+        constraints = [
+            models.UniqueConstraint(fields=("asset", "code"), name="uq_asset_component_code"),
+            models.CheckConstraint(condition=Q(original_cost__gt=0), name="ck_asset_component_cost_positive"),
+            models.CheckConstraint(condition=Q(salvage_value__gte=0), name="ck_asset_component_salvage_nonnegative"),
+            models.CheckConstraint(condition=Q(useful_life_months__gt=0), name="ck_asset_component_life_positive"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.salvage_value > self.original_cost:
+            raise ValidationError({"salvage_value": "القيمة التخريدية للمكوّن لا تتجاوز تكلفته."})
+        for field in ("asset_account", "accumulated_depreciation_account", "depreciation_expense_account"):
+            account = getattr(self, field, None)
+            if account and account.company_id != self.asset.company_id:
+                raise ValidationError({field: "حساب المكوّن يجب أن يتبع شركة الأصل."})
+        if self.depreciation_method == FixedAsset.Method.DECLINING_BALANCE:
+            if not self.declining_rate_percentage or not (0 < self.declining_rate_percentage <= 100):
+                raise ValidationError({"declining_rate_percentage": "أدخل معدل قسط متناقص أكبر من صفر وحتى 100%."})
+        elif self.declining_rate_percentage is not None:
+            raise ValidationError({"declining_rate_percentage": "معدل القسط المتناقص يستخدم مع طريقته فقط."})
+        if self.depreciation_method == FixedAsset.Method.UNITS_OF_PRODUCTION and not self.production_units_total:
+            raise ValidationError({"production_units_total": "حدد إجمالي وحدات الإنتاج المقدرة."})
+
+
+class AssetInsurancePolicy(models.Model):
+    """وثيقة تأمين الأصل كسجل رقابي لا ينشئ قيدًا محاسبيًا تلقائيًا."""
+    class Status(models.TextChoices):
+        ACTIVE = "active", "سارية"
+        EXPIRED = "expired", "منتهية"
+        CANCELLED = "cancelled", "ملغاة"
+
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="insurance_policies")
+    policy_number = models.CharField(max_length=100)
+    insurer_name = models.CharField(max_length=180)
+    coverage_description = models.TextField(blank=True)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    insured_value = models.DecimalField(max_digits=20, decimal_places=4)
+    premium_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    document_reference = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.ACTIVE)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-end_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("asset", "policy_number"), name="uq_asset_insurance_policy"),
+            models.CheckConstraint(condition=Q(end_date__gte=models.F("start_date")), name="ck_asset_insurance_dates"),
+            models.CheckConstraint(condition=Q(insured_value__gte=0), name="ck_asset_insured_value_nonnegative"),
+            models.CheckConstraint(condition=Q(premium_amount__gte=0), name="ck_asset_insurance_premium_nonnegative"),
+        ]
+
+
+class AssetPhysicalInventory(models.Model):
+    """محضر جرد فعلي للأصل ومقارنة موقعه وعهدته وحالته دون أثر مالي تلقائي."""
+    class Result(models.TextChoices):
+        MATCHED = "matched", "مطابق"
+        LOCATION_MISMATCH = "location_mismatch", "اختلاف موقع"
+        CUSTODIAN_MISMATCH = "custodian_mismatch", "اختلاف عهدة"
+        CONDITION_ISSUE = "condition_issue", "ملاحظة حالة"
+        NOT_FOUND = "not_found", "غير موجود"
+
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="physical_inventory")
+    count_date = models.DateField()
+    expected_location = models.CharField(max_length=180, blank=True)
+    counted_location = models.CharField(max_length=180, blank=True)
+    expected_custodian = models.CharField(max_length=180, blank=True)
+    counted_custodian = models.CharField(max_length=180, blank=True)
+    result = models.CharField(max_length=24, choices=Result.choices)
+    condition_notes = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    counted_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="asset_inventory_counts")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-count_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("asset", "count_date"), name="uq_asset_physical_count_date"),
+        ]
+
