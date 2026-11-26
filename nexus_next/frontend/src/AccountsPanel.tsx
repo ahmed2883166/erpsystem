@@ -3,12 +3,13 @@
  * يستقبل بيانات الشركة والنشاط والحسابات، ويبلغ الشاشة الرئيسية عند تحديث الدليل.
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { accountRoleApi, api, type Account, type AccountRole, type AccountTemplateInfo, type AccountImportPreview, type AccountImportResult } from "./api";
+import { accountRoleApi, api, type Account, type AccountRole, type AccountTemplateInfo, type AccountImportPreview, type AccountImportResult, type Company } from "./api";
 
 type Props = {
   companyId: number | null;
   companyName: string;
   activity?: string;
+  activityAssignments?: NonNullable<Company["activity_assignments"]>;
   accounts: Account[];
   onRefresh: () => Promise<void>;
 };
@@ -67,7 +68,7 @@ const natureFilters = [
 ];
 
 // شاشة دليل الحسابات: بناء العرض الشجري وإدارة الحسابات وربط الأدوار والاستيراد.
-export default function AccountsPanel({ companyId, companyName, activity, accounts, onRefresh }: Props) {
+export default function AccountsPanel({ companyId, companyName, activity, activityAssignments, accounts, onRefresh }: Props) {
   const [roles, setRoles] = useState<AccountRole[]>([]);
   const [template, setTemplate] = useState<AccountTemplateInfo | null>(null);
   const [search, setSearch] = useState("");
@@ -81,6 +82,7 @@ export default function AccountsPanel({ companyId, companyName, activity, accoun
   const [importPreview, setImportPreview] = useState<AccountImportPreview | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [roleSelections, setRoleSelections] = useState<Record<string, number>>({});
+  const [selectedActivityId, setSelectedActivityId] = useState("");
   const [savingRole, setSavingRole] = useState<string | null>(null);
 
   // تحميل بيانات القوالب والأدوار اللازمة لإعداد دليل الحسابات.
@@ -106,6 +108,13 @@ const loadMeta = async () => {
       .catch(reason => { if (alive) setError(reason instanceof Error ? reason.message : "تعذر تحميل إعدادات دليل الحسابات."); });
     return () => { alive = false; };
   }, [companyId]);
+
+  useEffect(() => {
+    const preferred = activityAssignments?.find((item) => item.is_active && item.activity === activity)
+      || activityAssignments?.find((item) => item.is_active);
+    setSelectedActivityId(preferred ? String(preferred.id) : "");
+    setRoleSelections({});
+  }, [companyId, activity, activityAssignments]);
 
   useEffect(() => {
     setExpanded(new Set(accounts.filter(item => item.is_group).map(item => item.id)));
@@ -180,16 +189,18 @@ const applyTemplate = async () => {
   // حفظ ربط الدور المحاسبي بالحساب المحدد لاستخدامه في الترحيل والتقارير.
 const saveRoleMapping = async (role: string) => {
     if (!companyId || savingRole) return;
-    const accountId = roleSelections[role];
+    const selectionKey = `${selectedActivityId || "company"}:${role}`;
+    const accountId = roleSelections[selectionKey];
     const account = accounts.find(item => item.id === accountId);
     if (!account || account.is_group || !account.allow_posting || !account.is_active) {
       setError("اختر حسابًا تفصيليًا نشطًا وقابلًا للترحيل."); return;
     }
-    const current = roles.find(item => item.role === role);
+    const activityId = selectedActivityId ? Number(selectedActivityId) : null;
+    const current = roles.find(item => item.role === role && item.activity === activityId);
     setSavingRole(role); setError(""); setNotice("");
     try {
-      if (current) await accountRoleApi.update(current.id, { account: accountId });
-      else await accountRoleApi.create({ company: companyId, role, account: accountId });
+      if (current) await accountRoleApi.update(current.id, { account: accountId, activity: activityId });
+      else await accountRoleApi.create({ company: companyId, role, account: accountId, activity: activityId });
       await loadMeta();
       setNotice(`تم حفظ ربط «${roleNames[role] || role}» بالحساب ${account.code} - ${account.name_ar}.`);
     } catch (reason) {
@@ -305,18 +316,27 @@ const renderNode = (item: Account, depth = 0, ancestors: ReadonlySet<number> = n
     <section className="account-role-manager">
       <div className="account-role-manager-heading">
         <div><h3>إدارة ربط الأدوار المحاسبية</h3><p>اختَر الحساب الفعلي لكل وظيفة محاسبية. تغيير الربط لا يغيّر أكواد الحسابات أو القيود السابقة.</p></div>
-        <span>{roles.length} / {Object.keys(roleNames).length} مربوط</span>
+        <span>{roles.filter(item => item.activity === (selectedActivityId ? Number(selectedActivityId) : null)).length} / {Object.keys(roleNames).length} مربوط لهذا النطاق</span>
       </div>
+      <label className="account-role-activity-filter">النشاط المحاسبي
+        <select value={selectedActivityId} onChange={event => setSelectedActivityId(event.target.value)}>
+          <option value="">ربط عام للشركة (افتراضي)</option>
+          {(activityAssignments || []).filter(item => item.is_active).map(item => <option key={item.id} value={item.id}>{{commercial:"تجاري",service:"خدمي",medical:"طبي",restaurants:"مطاعم",industrial:"صناعي"}[item.activity]}</option>)}
+        </select>
+      </label>
       <div className="account-role-manager-grid">
         {Object.entries(roleNames).map(([role, label]) => {
-          const current = roles.find(item => item.role === role);
-          const selected = roleSelections[role] ?? current?.account ?? 0;
+          const activityId = selectedActivityId ? Number(selectedActivityId) : null;
+          const current = roles.find(item => item.role === role && item.activity === activityId);
+          const inherited = activityId !== null ? roles.find(item => item.role === role && item.activity === null) : undefined;
+          const selectionKey = `${selectedActivityId || "company"}:${role}`;
+          const selected = roleSelections[selectionKey] ?? current?.account ?? inherited?.account ?? 0;
           const eligible = accounts.filter(item => item.is_active && !item.is_group && item.allow_posting && (!roleNatures[role] || item.nature === roleNatures[role]));
           const selectedAccount = accounts.find(item => item.id === selected);
           const changed = Boolean(selected && selected !== current?.account);
           return <div className="account-role-manager-row" key={role}>
-            <div className="account-role-manager-label"><strong>{label}</strong><small>{current ? `مرتبط حاليًا: ${current.account_code}` : "غير مربوط بعد"}</small></div>
-            <select value={selected || ""} onChange={event => setRoleSelections(previous => ({...previous, [role]: Number(event.target.value)}))}>
+            <div className="account-role-manager-label"><strong>{label}</strong><small>{current ? `مرتبط حاليًا: ${current.account_code}` : inherited ? `افتراضي الشركة: ${inherited.account_code}` : "غير مربوط بعد"}</small></div>
+            <select value={selected || ""} onChange={event => setRoleSelections(previous => ({...previous, [selectionKey]: Number(event.target.value)}))}>
               <option value="">اختر حسابًا تفصيليًا</option>
               {eligible.map(account => <option key={account.id} value={account.id}>{account.code} — {account.name_ar}</option>)}
             </select>
@@ -326,7 +346,7 @@ const renderNode = (item: Account, depth = 0, ancestors: ReadonlySet<number> = n
           </div>;
         })}
       </div>
-      <small className="account-role-manager-footnote">لا يمكن ربط حساب من شركة أخرى أو حساب تجميعي أو موقوف. لا يتم إنشاء ربط مكرر للدور نفسه.</small>
+      <small className="account-role-manager-footnote">لا يمكن ربط حساب من شركة أخرى أو حساب تجميعي أو موقوف. يمكن ربط الدور مرة واحدة لكل نشاط، مع الاحتفاظ بربط عام احتياطي للشركة.</small>
     </section>
 
     <div className="account-tree-toolbar">
