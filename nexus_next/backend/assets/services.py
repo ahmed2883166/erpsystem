@@ -16,15 +16,24 @@ from .models import FixedAsset, AssetDepreciation, AssetImpairment, AssetPurchas
 
 
 
-def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines, user=None):
-    """إنشاء وترحيل قيد محاسبي مرتبط بحركة الأصل الثابت."""
+def _post_entry(asset, fiscal_year, entry_number, entry_date, description, lines, user=None, branch=None):
+    """إنشاء وترحيل قيد محاسبي مرتبط بحركة الأصل الثابت وعلى فرعه الفعلي وقت الحدث."""
     entry = JournalEntry.objects.create(
-        company=asset.company, branch=asset.branch, fiscal_year=fiscal_year,
+        company=asset.company, branch=branch or asset.branch, fiscal_year=fiscal_year,
         entry_number=entry_number, entry_date=entry_date, description=description,
         source_type=JournalEntry.Source.ASSETS, created_by=user,
     )
     JournalLine.objects.bulk_create([JournalLine(entry=entry, **line) for line in lines])
     return post_journal(entry.pk, actor=user)
+
+
+def _branch_for_asset_date(asset, event_date):
+    """Return the branch occupied on an event date using approved movement history."""
+    future_transfer = asset.movements.filter(
+        status="approved", movement_type="branch_transfer",
+        movement_date__gt=event_date,
+    ).select_related("from_branch").order_by("movement_date", "id").first()
+    return future_transfer.from_branch if future_transfer else asset.branch
 
 
 @transaction.atomic
@@ -196,12 +205,64 @@ def depreciate_asset(asset_id, period_date, fiscal_year_id, user=None):
     else:
         daily_rate = asset.depreciable_amount / Decimal(asset.useful_life_months * 30)
     amount = min(round_currency_amount(daily_rate * Decimal(elapsed_days), asset.company.base_currency), remaining)
-    entry = _post_entry(asset, year, f"FA-DEP-{asset.pk}-{period_date:%Y%m}", period_date,
-        f"إهلاك الأصل: {asset.name_ar} - {period_date:%Y-%m}", [
-            {"account": asset.depreciation_expense_account, "debit": amount, "credit": 0, "description": asset.name_ar},
-            {"account": asset.accumulated_depreciation_account, "debit": 0, "credit": amount, "description": asset.name_ar},
-        ], user)
-    AssetDepreciation.objects.create(asset=asset, period_date=period_date, amount=amount, journal_entry=entry)
+
+    # Allocate the period across the branches actually occupied by the asset.
+    # A transfer is effective on its movement date: the source branch receives
+    # depreciation through the preceding day; the destination starts on that date.
+    transfers = list(asset.movements.filter(
+        status="approved", movement_type="branch_transfer",
+        movement_date__gt=previous_date, movement_date__lte=period_date,
+    ).select_related("from_branch", "to_branch").order_by("movement_date", "id"))
+    segments = []
+    if transfers:
+        current_branch = transfers[0].from_branch
+        cursor_date = previous_date
+        for movement in transfers:
+            if movement.from_branch_id != current_branch.pk:
+                raise ValidationError("تسلسل فروع حركات الأصل غير متطابق؛ أوقف الإهلاك وراجع سجل النقل.")
+            source_days = (movement.movement_date - cursor_date).days - 1
+            if source_days > 0:
+                segments.append((current_branch, source_days))
+            current_branch = movement.to_branch
+            cursor_date = movement.movement_date - timedelta(days=1)
+        destination_days = (period_date - cursor_date).days
+        if destination_days > 0:
+            segments.append((current_branch, destination_days))
+    else:
+        # A transfer can be approved before an older depreciation period is posted.
+        # In that case, use the source branch recorded by the first future movement,
+        # not the asset's current branch, which already reflects the later transfer.
+        segments.append((_branch_for_asset_date(asset, period_date), elapsed_days))
+
+    if sum(days for _, days in segments) != elapsed_days:
+        raise ValidationError("توزيع أيام الإهلاك على الفروع غير متوازن؛ أوقف الترحيل وراجع تواريخ النقل.")
+
+    allocated = Decimal("0")
+    for index, (branch, days) in enumerate(segments, start=1):
+        if index == len(segments):
+            segment_amount = amount - allocated
+        else:
+            segment_amount = min(
+                round_currency_amount(amount * Decimal(days) / Decimal(elapsed_days), asset.company.base_currency),
+                amount - allocated,
+            )
+        if segment_amount <= 0:
+            continue
+        allocated += segment_amount
+        suffix = f"-B{index:02d}" if len(segments) > 1 else ""
+        entry = _post_entry(
+            asset, year, f"FA-DEP-{asset.pk}-{period_date:%Y%m}{suffix}", period_date,
+            f"إهلاك الأصل: {asset.name_ar} - {period_date:%Y-%m} - {branch.name_ar}", [
+                {"account": asset.depreciation_expense_account, "debit": segment_amount, "credit": 0, "description": asset.name_ar},
+                {"account": asset.accumulated_depreciation_account, "debit": 0, "credit": segment_amount, "description": asset.name_ar},
+            ], user, branch=branch,
+        )
+        AssetDepreciation.objects.create(
+            asset=asset, period_date=period_date, amount=segment_amount,
+            is_partial_period=len(segments) > 1, journal_entry=entry,
+        )
+    if allocated != amount:
+        raise ValidationError("مجموع مخصصات إهلاك الفروع لا يساوي قسط الإهلاك المحسوب.")
     return amount
 
 
@@ -291,7 +352,7 @@ def record_asset_impairment(asset_id, impairment_date, recoverable_amount, impai
         f"إثبات انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}", [
             {"account": expense_account, "debit": loss, "credit": 0, "description": f"خسارة انخفاض قيمة {asset.name_ar}"},
             {"account": contra_account, "debit": 0, "credit": loss, "description": f"مجمع انخفاض قيمة {asset.name_ar}"},
-        ], user,
+        ], user, branch=_branch_for_asset_date(asset, impairment_date),
     )
     impairment = AssetImpairment(
         asset=asset, impairment_date=impairment_date,
@@ -437,6 +498,7 @@ def reverse_asset_impairment(asset_id, reversal_date, recoverable_amount, revers
     entry = _post_entry(
         asset, year, f"FA-IMPR-{asset.pk}-{reversal_date:%Y%m%d}", reversal_date,
         f"عكس انخفاض قيمة الأصل وفق IAS 36: {asset.name_ar}", lines, user,
+        branch=_branch_for_asset_date(asset, reversal_date),
     )
     reversal = AssetImpairmentReversal(
         asset=asset, reversal_date=reversal_date,
@@ -479,6 +541,10 @@ def dispose_asset(asset_id, disposal_date, proceeds, cash_account_id, fiscal_yea
     ).get(pk=asset_id)
     if asset.status != FixedAsset.Status.ACTIVE or not asset.acquisition_journal_id:
         raise ValidationError("الأصل غير نشط أو لم يتم إثبات اقتنائه.")
+    if asset.movements.filter(
+        status="approved", movement_type="branch_transfer", movement_date__gt=disposal_date,
+    ).exists():
+        raise ValidationError("لا يمكن استبعاد الأصل بتاريخ يسبق نقل فرع معتمد؛ راجع التسلسل الزمني للحركات.")
     proceeds = round_currency_amount(proceeds, asset.company.base_currency)
     if disposal_date < asset.depreciation_start_date:
         raise ValidationError("تاريخ الاستبعاد يسبق بداية الإهلاك.")

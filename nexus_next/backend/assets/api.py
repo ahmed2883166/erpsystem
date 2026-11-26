@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class FixedAssetViewSet(viewsets.ModelViewSet):
     permission_classes = (permissions.IsAuthenticated,)
     serializer_class = FixedAssetSerializer
-    queryset = FixedAsset.objects.select_related("company", "branch", "asset_account",
+    queryset = FixedAsset.objects.select_related("company", "branch", "custodian_employee", "asset_account",
         "accumulated_depreciation_account", "depreciation_expense_account",
         "acquisition_counter_account", "disposal_gain_loss_account", "disposal_loss_account", "acquisition_journal", "acquisition_treasury_transaction", "disposal_treasury_transaction", "vendor_invoice").prefetch_related("depreciations", "impairments", "impairment_reversals", "vendor_invoice__payments").all()
 
@@ -416,8 +416,8 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         if not as_of or not date_from or not date_to or date_from > date_to:
             raise ValidationError("حدد تاريخ مطابقة وفترة إهلاك صحيحة.")
         assets = assets.filter(acquisition_date__lte=as_of, acquisition_journal__status=JournalEntry.Status.POSTED)
-        branch_ids = list(assets.values_list("branch_id", flat=True).distinct())
         company_id = int(request.query_params["company"])
+        asset_journal_ids = set()
         expected_cost = defaultdict(Decimal)
         expected_accum = defaultdict(Decimal)
         expected_impairment = defaultdict(Decimal)
@@ -429,6 +429,10 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             account_objects[asset.asset_account_id] = asset.asset_account
             account_objects[asset.accumulated_depreciation_account_id] = asset.accumulated_depreciation_account
             account_objects[asset.depreciation_expense_account_id] = asset.depreciation_expense_account
+            if asset.acquisition_journal_id:
+                asset_journal_ids.add(asset.acquisition_journal_id)
+            if asset.disposal_journal_id:
+                asset_journal_ids.add(asset.disposal_journal_id)
             disposed_by_date = bool(asset.disposed_at and asset.disposed_at <= as_of)
             if not disposed_by_date:
                 expected_cost[asset.asset_account_id] += asset.original_cost
@@ -438,9 +442,13 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                     Decimal("0"),
                 )
             for dep in asset.depreciations.all():
-                if date_from <= dep.period_date <= date_to and dep.journal_entry.status == JournalEntry.Status.POSTED:
-                    expected_depreciation_expense[asset.depreciation_expense_account_id] += dep.amount
+                if dep.journal_entry.status == JournalEntry.Status.POSTED:
+                    asset_journal_ids.add(dep.journal_entry_id)
+                    if date_from <= dep.period_date <= date_to:
+                        expected_depreciation_expense[asset.depreciation_expense_account_id] += dep.amount
             for impairment in asset.impairments.all():
+                if impairment.journal_entry.status == JournalEntry.Status.POSTED:
+                    asset_journal_ids.add(impairment.journal_entry_id)
                 account_objects[impairment.accumulated_impairment_account_id] = impairment.accumulated_impairment_account
                 account_objects[impairment.impairment_expense_account_id] = impairment.impairment_expense_account
                 if not disposed_by_date and impairment.impairment_date <= as_of and impairment.journal_entry.status == JournalEntry.Status.POSTED:
@@ -452,6 +460,8 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 if date_from <= impairment.impairment_date <= date_to and impairment.journal_entry.status == JournalEntry.Status.POSTED:
                     expected_impairment_expense[impairment.impairment_expense_account_id] += impairment.impairment_loss
             for reversal in asset.impairment_reversals.all():
+                if reversal.journal_entry.status == JournalEntry.Status.POSTED:
+                    asset_journal_ids.add(reversal.journal_entry_id)
                 account_objects[reversal.reversal_income_account_id] = reversal.reversal_income_account
                 if date_from <= reversal.reversal_date <= date_to and reversal.journal_entry.status == JournalEntry.Status.POSTED:
                     expected_impairment_reversal_income[reversal.reversal_income_account_id] += reversal.reversal_amount
@@ -462,8 +472,8 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
         ).values_list("journal_entry_id", flat=True))
         account_ids = list(account_objects)
         ledger = JournalLine.objects.filter(
-            entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
-            entry__entry_date__lte=as_of, entry__branch_id__in=branch_ids,
+            entry_id__in=asset_journal_ids, entry__company_id=company_id,
+            entry__status=JournalEntry.Status.POSTED, entry__entry_date__lte=as_of,
             account_id__in=account_ids,
         ).values("account_id").annotate(debit=Sum("debit"), credit=Sum("credit"))
         actual = {row["account_id"]: row for row in ledger}
@@ -497,9 +507,10 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
                 for asset in assets for item in asset.impairments.all()
             ):
                 expense_lines = JournalLine.objects.filter(
-                    entry__company_id=company_id, entry__status=JournalEntry.Status.POSTED,
+                    entry_id__in=asset_journal_ids, entry__company_id=company_id,
+                    entry__status=JournalEntry.Status.POSTED,
                     entry__entry_date__gte=date_from, entry__entry_date__lte=date_to,
-                    entry__branch_id__in=branch_ids, account_id=account_id,
+                    account_id=account_id,
                 ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
                 expected_dep = expected_depreciation_expense[account_id]
                 expected_imp = expected_impairment_expense[account_id]
@@ -531,7 +542,7 @@ class FixedAssetViewSet(viewsets.ModelViewSet):
             "impairment_reversal_income_accounts": reversal_income_rows,
             "is_reconciled": all(Decimal(row["difference"]) == 0 for row in all_rows),
             "difference_count": sum(1 for row in all_rows if Decimal(row["difference"]) != 0),
-            "note": "المطابقة تقارن سجل الأصول والقيود المرحلة، بما فيها مجمع انخفاض القيمة ومصروفه. أي فروق تحتاج مراجعة قبل تعديل القيود أو بيانات الأصول.",
+            "note": "المطابقة تربط قيود كل أصل بسجله عبر جميع الفروع التي تحرك بينها؛ لذلك لا تستبعد قيد الاقتناء أو الإهلاك التاريخي لمجرد انتقال الأصل إلى فرع آخر. هذه مطابقة سجل الأصول مع الأستاذ وليست ميزان مراجعة مستقلًا لكل فرع.",
         })
 
     @decorators.action(detail=True, methods=("post",))

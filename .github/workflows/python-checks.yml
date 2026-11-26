@@ -3,11 +3,10 @@ name: Python checks
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+# Legacy NEXUS/root Python test workflow retained for manual diagnostics only.
+# AdmRail ERP v2 CI is the required automatic validation workflow.
 on:
-  push:
-    branches: [main, feature/company-setup-currency-tax-activity, work/phase7-bootstrap-ux, work/postgresql-native-rebuild]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 jobs:
   checks:
     runs-on: ubuntu-latest

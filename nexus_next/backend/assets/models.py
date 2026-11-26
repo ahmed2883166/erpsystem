@@ -34,6 +34,7 @@ class FixedAsset(models.Model):
     description = models.TextField(blank=True)
     location = models.CharField(max_length=180, blank=True)
     custodian = models.CharField(max_length=180, blank=True)
+    custodian_employee = models.ForeignKey("hr.Employee", null=True, blank=True, on_delete=models.PROTECT, related_name="fixed_assets_custodied")
     serial_number = models.CharField(max_length=100, blank=True)
     warranty_end_date = models.DateField(null=True, blank=True)
     supplier_name = models.CharField(max_length=180, blank=True)
@@ -79,6 +80,8 @@ class FixedAsset(models.Model):
         super().clean()
         if self.branch_id and self.branch.company_id != self.company_id:
             raise ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        if self.custodian_employee_id and (self.custodian_employee.company_id != self.company_id or self.custodian_employee.branch_id != self.branch_id):
+            raise ValidationError({"custodian_employee": "الموظف المسؤول يجب أن يتبع نفس الشركة والفرع."})
         if self.salvage_value > self.original_cost:
             raise ValidationError({"salvage_value": "القيمة التخريدية لا يمكن أن تتجاوز التكلفة."})
         if self.nonrecoverable_tax_amount < 0 or self.recoverable_tax_amount < 0:
@@ -414,3 +417,82 @@ class AssetSupplierPayment(models.Model):
         if self.status in (self.Status.POSTED, self.Status.REVERSED):
             raise ValidationError("لا يمكن حذف سند سداد مرحّل.")
         return super().delete(*args, **kwargs)
+
+
+
+class AssetMovement(models.Model):
+    """مستند معتمد يحفظ التاريخ الكامل لنقل الأصل أو تغيير عهدته وموقعه."""
+
+    class MovementType(models.TextChoices):
+        BRANCH_TRANSFER = "branch_transfer", "نقل بين الفروع"
+        CUSTODY_CHANGE = "custody_change", "تغيير العهدة"
+        LOCATION_CHANGE = "location_change", "تغيير الموقع"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "بانتظار الاعتماد"
+        APPROVED = "approved", "معتمد"
+        REJECTED = "rejected", "مرفوض"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="asset_movements")
+    asset = models.ForeignKey(FixedAsset, on_delete=models.PROTECT, related_name="movements")
+    movement_type = models.CharField(max_length=24, choices=MovementType.choices)
+    movement_date = models.DateField()
+    from_branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="asset_movements_from")
+    to_branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="asset_movements_to")
+    from_employee = models.ForeignKey("hr.Employee", null=True, blank=True, on_delete=models.PROTECT, related_name="asset_movements_from")
+    to_employee = models.ForeignKey("hr.Employee", null=True, blank=True, on_delete=models.PROTECT, related_name="asset_movements_to")
+    from_custodian = models.CharField(max_length=180, blank=True)
+    to_custodian = models.CharField(max_length=180, blank=True)
+    from_location = models.CharField(max_length=180, blank=True)
+    to_location = models.CharField(max_length=180, blank=True)
+    document_number = models.CharField(max_length=80)
+    notes = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    requested_by = models.ForeignKey("accounts.User", on_delete=models.PROTECT, related_name="requested_asset_movements")
+    reviewed_by = models.ForeignKey("accounts.User", null=True, blank=True, on_delete=models.PROTECT, related_name="reviewed_asset_movements")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-movement_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "document_number"), name="uq_asset_movement_company_doc"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "movement_date"), name="asset_move_co_date_idx"),
+            models.Index(fields=("asset", "movement_date"), name="asset_move_asset_date_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.asset_id and self.asset.company_id != self.company_id:
+            raise ValidationError({"asset": "الأصل لا يتبع الشركة المحددة."})
+        for field in ("from_branch", "to_branch"):
+            branch = getattr(self, field, None)
+            if branch and branch.company_id != self.company_id:
+                raise ValidationError({field: "الفرع يجب أن يتبع نفس الشركة."})
+        for field in ("from_employee", "to_employee"):
+            employee = getattr(self, field, None)
+            if employee and employee.company_id != self.company_id:
+                raise ValidationError({field: "الموظف يجب أن يتبع نفس الشركة."})
+        if self.from_employee_id and self.from_employee.branch_id != self.from_branch_id:
+            raise ValidationError({"from_employee": "الموظف السابق يجب أن يتبع فرع الأصل السابق."})
+        if self.to_employee_id and self.to_employee.branch_id != self.to_branch_id:
+            raise ValidationError({"to_employee": "الموظف المستلم يجب أن يتبع الفرع المستلم للأصل."})
+        if self.movement_type == self.MovementType.BRANCH_TRANSFER and self.from_branch_id == self.to_branch_id:
+            raise ValidationError({"to_branch": "اختر فرعًا مختلفًا عن الفرع الحالي."})
+        if self.movement_type != self.MovementType.BRANCH_TRANSFER and self.from_branch_id != self.to_branch_id:
+            raise ValidationError({"to_branch": "تغيير العهدة أو الموقع لا يغيّر فرع الأصل."})
+        if self.asset_id and self.movement_date < self.asset.acquisition_date:
+            raise ValidationError({"movement_date": "تاريخ الحركة لا يسبق تاريخ اقتناء الأصل."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous_status = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
+            if previous_status and previous_status != self.Status.PENDING:
+                raise ValidationError("مستند حركة الأصل بعد مراجعته غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("لا يمكن حذف مستند حركة أصل؛ استخدم مستندًا عكسيًا معتمدًا عند الحاجة.")
