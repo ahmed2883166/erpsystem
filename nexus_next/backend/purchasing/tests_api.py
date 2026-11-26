@@ -17,7 +17,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, SupplierPayment, SupplierReturn
+from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -2754,3 +2754,169 @@ class PurchasingWorkflowTests(APITestCase):
             )["total"],
             Decimal("228.0000"),
         )
+
+
+    def test_service_items_flow_through_requisition_rfq_and_supplier_quotation(self):
+        from datetime import timedelta
+
+        service = Product.objects.create(
+            company=self.company,
+            unit=self.unit,
+            code="SVC-001",
+            name_ar="صيانة دورية",
+            product_type=Product.ProductType.SERVICE,
+            stock_class=None,
+            purchase_price=Decimal("500"),
+        )
+        today = date.today()
+
+        requisition = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk,
+            "request_number": "REQ-SVC-001",
+            "request_date": today.isoformat(),
+            "required_date": (today + timedelta(days=5)).isoformat(),
+            "department": "الصيانة",
+            "purpose": "صيانة دورية للمعدات",
+            "lines": [{
+                "product": service.pk,
+                "requested_quantity": "1",
+                "estimated_unit_price": "500",
+            }],
+        }, format="json")
+        self.assertEqual(requisition.status_code, 201, requisition.data)
+        self.assertEqual(requisition.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+        rfq = self.client.post("/api/purchasing/rfqs/", {
+            "company": self.company.pk,
+            "rfq_number": "RFQ-SVC-001",
+            "issue_date": today.isoformat(),
+            "closing_date": (today + timedelta(days=7)).isoformat(),
+            "terms": "تنفيذ الخدمة بالموقع",
+            "invited_suppliers": [self.supplier.pk],
+            "lines": [{
+                "product": service.pk,
+                "quantity": "1",
+                "notes": "يشمل قطع الغيار الصغيرة",
+            }],
+        }, format="json")
+        self.assertEqual(rfq.status_code, 201, rfq.data)
+        self.assertEqual(rfq.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+        opened = self.client.post(f"/api/purchasing/rfqs/{rfq.data['id']}/open/", {}, format="json")
+        self.assertEqual(opened.status_code, 200, opened.data)
+
+        quotation = self.client.post("/api/purchasing/quotations/", {
+            "rfq": rfq.data["id"],
+            "supplier": self.supplier.pk,
+            "quotation_number": "Q-SVC-001",
+            "quotation_date": today.isoformat(),
+            "valid_until": (today + timedelta(days=10)).isoformat(),
+            "delivery_days": 3,
+            "payment_terms": "بعد اعتماد إنجاز الخدمة",
+            "lines": [{
+                "rfq_line": rfq.data["line_items"][0]["id"],
+                "unit_price": "475",
+                "discount_percent": "0",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(quotation.status_code, 201, quotation.data)
+        self.assertEqual(quotation.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+        approver = get_user_model().objects.create_user(
+            username="service-procurement-approver", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=approver, company=self.company, role="admin", all_branches=True,
+        )
+        self.client.force_authenticate(approver)
+        awarded = self.client.post(f"/api/purchasing/rfqs/{rfq.data['id']}/award/", {
+            "quotation": quotation.data["id"],
+            "reason": "أفضل سعر وشروط تنفيذ مناسبة",
+        }, format="json")
+        self.assertEqual(awarded.status_code, 200, awarded.data)
+
+        converted = self.client.post(f"/api/purchasing/rfqs/{rfq.data['id']}/convert-award/", {
+            "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-RFQ-001",
+            "order_date": today.isoformat(),
+            "expected_date": (today + timedelta(days=5)).isoformat(),
+        }, format="json")
+        self.assertEqual(converted.status_code, 201, converted.data)
+        service_order = self.client.get(f"/api/purchasing/orders/{converted.data['purchase_order_id']}/")
+        self.assertEqual(service_order.status_code, 200, service_order.data)
+        self.assertEqual(service_order.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+
+    def test_service_purchase_order_requires_service_acceptance_without_stock_receipt(self):
+        service = Product.objects.create(
+            company=self.company,
+            unit=self.unit,
+            code="SVC-002",
+            name_ar="تنظيف وصيانة",
+            product_type=Product.ProductType.SERVICE,
+            stock_class=None,
+            purchase_price=Decimal("750"),
+        )
+        order = self.client.post("/api/purchasing/orders/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk,
+            "order_number": "PO-SVC-002",
+            "order_date": date.today().isoformat(),
+            "lines": [{
+                "product": service.pk,
+                "quantity": "2",
+                "unit_price": "750",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(order.status_code, 201, order.data)
+        order_id = order.data["id"]
+        order_line_id = order.data["line_items"][0]["id"]
+        self.assertEqual(order.data["line_items"][0]["product_type"], Product.ProductType.SERVICE)
+
+        confirmed = self.client.post(f"/api/purchasing/orders/{order_id}/confirm/", {}, format="json")
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        movements_before = StockMovement.objects.count()
+        stock_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk,
+            "supplier": self.supplier.pk,
+            "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-SVC-002",
+            "receipt_date": date.today().isoformat(),
+            "lines": [{"product": service.pk, "quantity": "1", "unit_cost": "750"}],
+        }, format="json")
+        self.assertEqual(stock_receipt.status_code, 400, stock_receipt.data)
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk,
+            "order": order_id,
+            "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-002",
+            "acceptance_date": date.today().isoformat(),
+            "notes": "تم تنفيذ الخدمة بالكامل",
+            "lines": [{"order_line": order_line_id, "quantity": "2"}],
+        }, format="json")
+        self.assertEqual(acceptance.status_code, 201, acceptance.data)
+        accepted = self.client.post(
+            f"/api/purchasing/service-acceptances/{acceptance.data['id']}/accept/",
+            {},
+            format="json",
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+        self.assertEqual(accepted.data["status"], PurchaseServiceAcceptance.Status.ACCEPTED)
+        self.assertEqual(accepted.data["line_items"][0]["quantity"], "2.0000")
+        self.assertEqual(StockMovement.objects.count(), movements_before)
+
+        over_acceptance = self.client.post("/api/purchasing/service-acceptances/", {
+            "company": self.company.pk,
+            "order": order_id,
+            "supplier": self.supplier.pk,
+            "acceptance_number": "SA-SVC-OVER",
+            "acceptance_date": date.today().isoformat(),
+            "lines": [{"order_line": order_line_id, "quantity": "1"}],
+        }, format="json")
+        self.assertEqual(over_acceptance.status_code, 400, over_acceptance.data)

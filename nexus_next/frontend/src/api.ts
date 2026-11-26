@@ -100,7 +100,7 @@ export type Customer = {
 export type PurchaseOrder = {
   id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string;
   order_number: string; order_date: string; expected_date: string | null; grand_total: string; approval_status: "pending" | "approved" | "rejected" | "superseded" | null; status: "draft" | "confirmed" | "partially_received" | "received" | "cancelled";
-  notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string;
+  notes: string; line_items: { id: number; product: number; product_code: string; product_name: string; product_type: "goods" | "service"; quantity: string;
     received_quantity: string; remaining_quantity: string; unit_price: string; tax_rate: string }[];
   created_at: string; confirmed_at: string | null;
 };
@@ -110,15 +110,24 @@ export type PurchaseRequisition = {
   status: "draft" | "submitted" | "approved" | "rejected" | "converted" | "cancelled";
   requested_by: number; requested_by_name: string; reviewed_by: number | null; reviewed_by_name: string | null;
   reviewed_at: string | null; review_note: string; converted_order: number | null;
-  line_items: { id: number; product: number; product_code: string; product_name: string;
+  line_items: { id: number; product: number; product_code: string; product_name: string; product_type: "goods" | "service";
     requested_quantity: string; estimated_unit_price: string | null; notes: string }[];
+  created_at: string;
+};
+
+
+export type PurchaseServiceAcceptance = {
+  id: number; company: number; order: number; order_number: string; supplier: number; supplier_name: string;
+  acceptance_number: string; acceptance_date: string; status: "draft" | "accepted" | "rejected"; notes: string;
+  accepted_by: number | null; accepted_by_name: string | null; accepted_at: string | null;
+  line_items: { id: number; order_line: number; product: number; product_code: string; product_name: string; quantity: string; notes: string }[];
   created_at: string;
 };
 
 export type PurchaseRFQ = {
   id: number; company: number; source_requisition: number | null; rfq_number: string; issue_date: string; closing_date: string;
   status: "draft" | "open" | "closed" | "awarded" | "cancelled"; terms: string;
-  line_items: {id:number;product:number;product_code:string;product_name:string;quantity:string;notes:string}[];
+  line_items: {id:number;product:number;product_code:string;product_name:string;product_type:"goods"|"service";quantity:string;notes:string}[];
   supplier_list: {id:number;code:string;name:string;status:string}[];
   awarded_quotation: number | null; converted_order: number | null; award_reason: string; awarded_by: number | null; awarded_at: string | null; created_at: string;
 };
@@ -225,6 +234,9 @@ export const purchasingApi = {
   awardRFQ: async (id:number, quotation:number, reason:string) => { await request<{ detail:string }>("/api/csrf/"); return request<PurchaseRFQ>(`/api/purchasing/rfqs/${id}/award/`, {method:"POST",body:JSON.stringify({quotation,reason})}); },
   convertAward: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<{rfq:PurchaseRFQ;purchase_order_id:number}>(`/api/purchasing/rfqs/${id}/convert-award/`,{method:"POST",body:JSON.stringify(payload)}); },
   createQuotation: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<SupplierQuotation>("/api/purchasing/quotations/", {method:"POST",body:JSON.stringify(payload)}); },
+  serviceAcceptances: (companyId: number) => request<PurchaseServiceAcceptance[]>(`/api/purchasing/service-acceptances/?company=${companyId}&ordering=-acceptance_date`),
+  createServiceAcceptance: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseServiceAcceptance>("/api/purchasing/service-acceptances/", { method: "POST", body: JSON.stringify(payload) }); },
+  acceptServiceAcceptance: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseServiceAcceptance>(`/api/purchasing/service-acceptances/${id}/accept/`, { method: "POST" }); },
   // جلب أوامر الشراء مرتبة حسب تاريخ الأمر للشركة المحددة.
   orders: (companyId: number) => request<PurchaseOrder[]>(`/api/purchasing/orders/?company=${companyId}&ordering=-order_date`),
   // إنشاء أمر شراء جديد وإرسال بياناته إلى الخادم.
