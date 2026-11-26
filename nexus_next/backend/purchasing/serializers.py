@@ -1258,6 +1258,10 @@ class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("status", "accepted_by", "accepted_by_name", "accepted_at", "line_items", "created_at")
 
+    def get_branch(self, obj):
+        branch = resolve_warehouse_branch(obj.company, obj.order.warehouse)
+        return branch.pk if branch else None
+
     def get_line_items(self, obj):
         return [{
             "id": line.pk,
