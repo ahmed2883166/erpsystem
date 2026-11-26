@@ -594,6 +594,9 @@ def post_supplier_payment(payment_id, user):
             payment_date__gt=payment.payment_date,
         ).exists() or FxSubledgerRevaluation.objects.filter(
             purchase_invoice=invoice, revaluation_date__gte=payment.payment_date,
+        ).filter(
+            Q(journal_entry__isnull=True)
+            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
         ).exists() or SupplierReturn.objects.filter(
             invoice=invoice,
             status__in=(SupplierReturn.Status.POSTED, SupplierReturn.Status.REVERSED),

@@ -94,8 +94,8 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
                     reversal_date__gt=latest.revaluation_date,
                     reversal_date__lte=as_of,
                 ),
-                "transaction_grand_total",
-            ) * latest.rate
+                "grand_total",
+            )
         else:
             reversed_before_latest = _sum(
                 SupplierReturn.objects.filter(
@@ -105,8 +105,8 @@ def open_fx_invoice_balances(invoice, *, direction, as_of):
                     reversal_date__gt=latest.revaluation_date,
                     reversal_date__lte=as_of,
                 ),
-                "transaction_grand_total",
-            ) * latest.rate
+                "grand_total",
+            )
         current_remaining = (
             latest.new_carrying_amount - current_used_after
             - returned_current + reversed_before_latest

@@ -128,6 +128,9 @@ def post_treasury_transaction(transaction_id, user=None):
         # التاريخي بعد إقفال التقييم وتصبح القيمة الدفترية اللاحقة غير موثوقة.
         last_revaluation = TreasuryFxRevaluation.objects.filter(
             account_id__in=account_ids, revaluation_date__gte=doc.transaction_date,
+        ).filter(
+            Q(reversal_journal_entry__isnull=True)
+            | Q(reversal_journal_entry__status=JournalEntry.Status.REVERSED)
         ).order_by("-revaluation_date").first()
         if last_revaluation:
             raise ValidationError("تاريخ الحركة يسبق أو يساوي آخر إعادة تقييم؛ استخدم تاريخًا لاحقًا أو اعكس التقييم بإجراء معتمد.")
