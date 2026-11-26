@@ -2083,6 +2083,9 @@ class AccountRoleRuntimeValidationTests(TestCase):
         service_activity = CompanyActivity.objects.create(
             company=self.company, activity=Company.Activity.SERVICE,
         )
+        CompanyActivity.objects.create(
+            company=self.company, activity=Company.Activity.MEDICAL,
+        )
         generic = AccountRole.objects.create(
             company=self.company, role=AccountRole.Role.CASH, account=self.cash,
         )
