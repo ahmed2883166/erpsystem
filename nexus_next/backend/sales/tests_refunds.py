@@ -616,6 +616,24 @@ class CustomerRefundTests(APITestCase):
         self.assertIn("receipt_batch", statement_types)
         self.assertIn("customer_refund", statement_types)
 
+        # Reconcile the entire sales cycle against the posted general ledger:
+        # 5 units issued, 1 returned, all invoices collected, then the return refunded.
+        def posted_net(role):
+            account = AccountRole.objects.get(company=self.company, role=role).account
+            lines = JournalLine.objects.filter(entry__status="posted", account=account)
+            debit = sum(lines.values_list("debit", flat=True), Decimal("0"))
+            credit = sum(lines.values_list("credit", flat=True), Decimal("0"))
+            return debit - credit
+
+        self.assertEqual(posted_net(AccountRole.Role.ACCOUNTS_RECEIVABLE), Decimal("0.0000"))
+        self.assertEqual(posted_net(AccountRole.Role.CASH), Decimal("400.0000"))
+        self.assertEqual(posted_net(AccountRole.Role.INVENTORY), Decimal("40.0000"))
+        self.assertEqual(posted_net(AccountRole.Role.COGS), Decimal("160.0000"))
+        self.assertEqual(
+            posted_net(AccountRole.Role.SALES) - posted_net(AccountRole.Role.SALES_RETURNS),
+            Decimal("-400.0000"),
+        )
+
     def test_reversed_advance_refund_still_reduces_available_balance_before_its_reversal_date(self):
         batch = self._create_posted_advance("REFUND-ADV-ASOF", "50")
         first = self._create_refund(
