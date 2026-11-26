@@ -28,9 +28,20 @@ def _customer_credit_balance(company_id, customer_id, as_of):
         status=SalesInvoice.Status.POSTED, invoice_date__lte=as_of,
     )
     invoice_total = invoices.aggregate(total=Sum("grand_total"))["total"] or Decimal("0")
+    reversal_journals = JournalEntry.objects.filter(
+        reversal_of_id=OuterRef("journal_entry_id"),
+        entry_date__lte=as_of,
+        status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    )
     receipts = CustomerReceipt.objects.filter(
         company_id=company_id, customer_id=customer_id,
-        status=CustomerReceipt.Status.POSTED, receipt_date__lte=as_of,
+        receipt_date__lte=as_of,
+        status__in=(CustomerReceipt.Status.POSTED, CustomerReceipt.Status.REVERSED),
+    ).annotate(
+        _reversed_by_as_of=Exists(reversal_journals),
+    ).filter(
+        Q(status=CustomerReceipt.Status.POSTED)
+        | Q(status=CustomerReceipt.Status.REVERSED, _reversed_by_as_of=False)
     )
     direct_paid = sum(
         (row.carrying_base_amount if row.carrying_base_amount is not None else row.amount
@@ -55,11 +66,6 @@ def _customer_credit_balance(company_id, customer_id, as_of):
         Q(status=CustomerRefund.Status.POSTED)
         | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=as_of)
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
-    reversal_journals = JournalEntry.objects.filter(
-        reversal_of_id=OuterRef("journal_entry_id"),
-        entry_date__lte=as_of,
-        status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
-    )
     fx_rows = FxSubledgerRevaluation.objects.filter(
         company_id=company_id, sales_invoice__customer_id=customer_id,
         revaluation_date__lte=as_of,
@@ -106,7 +112,9 @@ def post_customer_refund(refund_id, user):
     Customer.objects.select_for_update(of=("self",)).get(pk=refund.customer_id)
     latest_customer_refund_date = CustomerRefund.objects.filter(
         company_id=refund.company_id, customer_id=refund.customer_id,
-        status=CustomerRefund.Status.POSTED,
+    ).filter(
+        Q(status=CustomerRefund.Status.POSTED)
+        | Q(status=CustomerRefund.Status.REVERSED, reversal_date__gt=refund.refund_date)
     ).exclude(pk=refund.pk).order_by("-refund_date", "-id").values_list(
         "refund_date", flat=True,
     ).first()
