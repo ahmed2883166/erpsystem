@@ -870,3 +870,41 @@ class FixedAssetWorkflowTests(APITestCase):
         self.assertEqual(count.status_code, 201, count.data)
         self.assertEqual(count.data["counted_by"], self.user.pk)
 
+    def test_component_depreciation_posts_component_rates_and_reconciles_parent_ledger(self):
+        from assets.models import AssetComponent, AssetComponentDepreciation
+
+        created = self.client.post("/api/assets/fixed-assets/", self._payload(), format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        asset_id = created.data["id"]
+        shared_accounts = {
+            "asset_account": self.asset_gl.pk,
+            "accumulated_depreciation_account": self.accum_gl.pk,
+            "depreciation_expense_account": self.expense_gl.pk,
+        }
+        for payload in (
+            {
+                "asset": asset_id, "code": "BODY", "name_ar": "هيكل السيارة",
+                "original_cost": "60000.0000", "salvage_value": "6000.0000",
+                "useful_life_months": 12, "depreciation_method": "straight_line",
+                **shared_accounts,
+            },
+            {
+                "asset": asset_id, "code": "ENGINE", "name_ar": "محرك السيارة",
+                "original_cost": "60000.0000", "salvage_value": "6000.0000",
+                "useful_life_months": 36, "depreciation_method": "declining_balance",
+                "declining_rate_percentage": "25.0000",
+                **shared_accounts,
+            },
+        ):
+            response = self.client.post("/api/assets/asset-components/", payload, format="json")
+            self.assertEqual(response.status_code, 201, response.data)
+        depreciation = self.client.post(f"/api/assets/fixed-assets/{asset_id}/depreciate/", {
+            "period_date": "2026-02-28", "fiscal_year": self.year.pk,
+        }, format="json")
+        self.assertEqual(depreciation.status_code, 201, depreciation.data)
+        self.assertEqual(depreciation.data["depreciation_amount"], Decimal("9554.7945"))
+        self.assertEqual(AssetComponentDepreciation.objects.count(), 2)
+        self.assertEqual(AssetDepreciation.objects.filter(asset_id=asset_id).count(), 1)
+        self.assertEqual(sum((row.amount for row in AssetComponentDepreciation.objects.all()), Decimal("0")), Decimal("9554.7945"))
+        self.assertEqual(AssetComponent.objects.filter(asset_id=asset_id).count(), 2)
+
