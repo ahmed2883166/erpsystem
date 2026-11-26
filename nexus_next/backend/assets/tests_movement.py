@@ -209,3 +209,30 @@ class AssetMovementWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(AssetMovement.objects.filter(document_number="AM-BACKDATE-01").exists())
 
+    def test_historical_depreciation_after_transfer_uses_branch_at_period_date(self):
+        requested = self.client.post("/api/assets/asset-movements/", {
+            "asset": self.asset.pk, "movement_type": "branch_transfer",
+            "movement_date": "2026-02-15", "to_branch": self.target_branch.pk,
+            "to_custodian": "مسؤول فرع غرب", "document_number": "AM-HIST-DEP-01",
+        }, format="json")
+        self.assertEqual(requested.status_code, 201, requested.data)
+        self.client.force_authenticate(self.manager)
+        approved = self.client.post(
+            f"/api/assets/asset-movements/{requested.data['id']}/approve/", {}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+
+        amount = depreciate_asset(self.asset.pk, date(2026, 2, 10), self.year.pk, self.manager)
+        row = self.asset.depreciations.select_related("journal_entry").get()
+        self.assertEqual(amount, Decimal("3200.0000"))
+        self.assertEqual(row.journal_entry.branch_id, self.branch.pk)
+
+    def test_future_dated_asset_movement_is_rejected(self):
+        response = self.client.post("/api/assets/asset-movements/", {
+            "asset": self.asset.pk, "movement_type": "branch_transfer",
+            "movement_date": "2099-01-01", "to_branch": self.target_branch.pk,
+            "to_custodian": "مسؤول فرع غرب", "document_number": "AM-FUTURE-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(AssetMovement.objects.filter(document_number="AM-FUTURE-01").exists())
+
