@@ -495,7 +495,7 @@ class PurchaseRFQLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type != "goods"):
+        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type not in ("goods", "service")):
             raise ValidationError({"product": "الصنف يجب أن يكون مخزنيًا ويتبع شركة طلب العروض."})
 
 
@@ -655,8 +655,8 @@ class PurchaseOrderLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.order.company_id or self.product.product_type != "goods"):
-            raise ValidationError({"product": "اختر صنفًا مخزنيًا تابعًا لشركة أمر الشراء."})
+        if self.product_id and (self.product.company_id != self.order.company_id or self.product.product_type not in ("goods", "service") or not self.product.is_active):
+            raise ValidationError({"product": "اختر صنفًا أو خدمة نشطة تابعة لشركة أمر الشراء."})
         if self.received_quantity > self.quantity:
             raise ValidationError({"received_quantity": "الكمية المستلمة تتجاوز كمية أمر الشراء."})
 
@@ -885,7 +885,7 @@ class PurchaseRequisitionLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.requisition.company_id or self.product.product_type != "goods" or not self.product.is_active):
+        if self.product_id and (self.product.company_id != self.requisition.company_id or self.product.product_type not in ("goods", "service") or not self.product.is_active):
             raise ValidationError({"product": "اختر صنفًا مخزنيًا نشطًا تابعًا لشركة الطلب."})
 
     def save(self, *args, **kwargs):
