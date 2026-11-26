@@ -21,8 +21,8 @@ export default function SalesDocumentPrint({company,invoice,quotation,receipt,re
    setTemplates(available);
    const savedId=saved?.template_id;
    const savedTemplate=savedId?available.find(row=>row.id===savedId):null;
-   const preferred=savedId
-    ?savedTemplate
+   const preferred=saved
+    ?savedId?savedTemplate:null
     :available.find(row=>row.is_default)||available[0];
    setSelectedTemplateId(preferred?String(preferred.id):(saved?"snapshot":""));
   }).catch(()=>{if(active){setTemplates([]);setSelectedTemplateId(saved?"snapshot":"");}});
