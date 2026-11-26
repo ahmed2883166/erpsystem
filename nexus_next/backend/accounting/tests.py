@@ -2103,11 +2103,11 @@ class AccountRoleRuntimeValidationTests(TestCase):
         )
         self.assertEqual(
             self.get_account_for_role(self.company, AccountRole.Role.CASH, "medical").pk,
-            generic.pk,
+            generic.account_id,
         )
         self.assertEqual(
             self.get_account_for_role(self.company, AccountRole.Role.CASH).pk,
-            generic.pk,
+            generic.account_id,
         )
 
     def test_runtime_role_lookup_rejects_disabled_or_unassigned_activity(self):
