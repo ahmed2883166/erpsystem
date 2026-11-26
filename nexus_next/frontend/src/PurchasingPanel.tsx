@@ -108,6 +108,15 @@ const refresh = async () => {
     finally { setBusy(false); }
   };
   useEffect(() => { void refresh(); }, [companyId]);
+  useEffect(() => {
+    const preferred = activityAssignments?.find((item) => item.is_active && item.activity === primaryActivity)
+      || activityAssignments?.find((item) => item.is_active);
+    setInvoiceForm((old) => ({
+      ...old,
+      activity: activityAssignments?.some((item) => item.is_active && String(item.id) === old.activity)
+        ? old.activity : (preferred ? String(preferred.id) : ""),
+    }));
+  }, [companyId, activityAssignments, primaryActivity]);
 
   const receiptLineQuantityForStatus = (receiptId: number, receiptLineId: number, status: "draft" | "posted") => invoices
     .filter((invoice) => invoice.receipt === receiptId && invoice.status === status)
