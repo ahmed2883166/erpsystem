@@ -115,7 +115,9 @@ const refresh = async () => {
     receipt.movement_status === "posted" && receipt.line_items.some((line) => remainingReceiptLineQuantity(receipt, line) > 0)
   );
   const invoiceServiceAcceptances = serviceAcceptances.filter((acceptance) =>
-    acceptance.status === "accepted" && acceptance.supplier === Number(invoiceForm.supplier)
+    acceptance.status === "accepted"
+    && acceptance.supplier === Number(invoiceForm.supplier)
+    && !invoices.some((invoice) => invoice.service_acceptance === acceptance.id)
   );
   const filteredReceipts = receipts.filter((row) => [row.receipt_number, row.supplier_name, row.warehouse_name, row.supplier_delivery_ref].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter((row) => [row.invoice_number, row.supplier_name, row.receipt_number].join(" ").toLowerCase().includes(search.toLowerCase()));
