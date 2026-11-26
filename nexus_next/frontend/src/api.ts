@@ -1002,7 +1002,7 @@ export type AssetComponent = {
   useful_life_months:number;depreciation_method:"straight_line"|"declining_balance"|"units_of_production";
   declining_rate_percentage:string|null;production_units_total:number|null;
   asset_account:number;accumulated_depreciation_account:number;depreciation_expense_account:number;
-  status:"active"|"disposed";created_at:string;
+  status:"active"|"disposed";accumulated_depreciation:string;created_at:string;
 };
 export type AssetInsurancePolicy = {
   id:number;asset:number;policy_number:string;insurer_name:string;coverage_description:string;
