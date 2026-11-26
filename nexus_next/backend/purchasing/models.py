@@ -495,8 +495,8 @@ class PurchaseRFQLine(models.Model):
 
     def clean(self):
         super().clean()
-        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type not in ("goods", "service")):
-            raise ValidationError({"product": "الصنف يجب أن يكون مخزنيًا ويتبع شركة طلب العروض."})
+        if self.product_id and (self.product.company_id != self.rfq.company_id or self.product.product_type not in ("goods", "service") or not self.product.is_active):
+            raise ValidationError({"product": "اختر صنفًا أو خدمة نشطة تابعة لشركة طلب العروض."})
 
 
 class PurchaseRFQInvitation(models.Model):
