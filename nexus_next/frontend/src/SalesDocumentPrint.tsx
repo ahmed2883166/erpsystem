@@ -20,9 +20,10 @@ export default function SalesDocumentPrint({company,invoice,quotation,receipt,re
    const available=rows.filter(row=>row.document_type===type&&row.is_active);
    setTemplates(available);
    const savedId=saved?.template_id;
-   const preferred=(savedId?available.find(row=>row.id===savedId):null)
-    ||available.find(row=>row.is_default)
-    ||available[0];
+   const savedTemplate=savedId?available.find(row=>row.id===savedId):null;
+   const preferred=savedId
+    ?savedTemplate
+    :available.find(row=>row.is_default)||available[0];
    setSelectedTemplateId(preferred?String(preferred.id):(saved?"snapshot":""));
   }).catch(()=>{if(active){setTemplates([]);setSelectedTemplateId(saved?"snapshot":"");}});
   return()=>{active=false;};
