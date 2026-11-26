@@ -104,6 +104,8 @@ class AssetMovementSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"to_employee": "لا يمكن تسليم عهدة لموظف غير نشط."})
         if attrs["movement_date"] < asset.acquisition_date:
             raise serializers.ValidationError({"movement_date": "تاريخ الحركة لا يسبق تاريخ اقتناء الأصل."})
+        if attrs["movement_date"] > timezone.localdate():
+            raise serializers.ValidationError({"movement_date": "لا يمكن اعتماد حركة أصل بتاريخ مستقبلي؛ سجّل الحركة عند تنفيذها."})
         if movement_type == AssetMovement.MovementType.BRANCH_TRANSFER and _has_posted_financial_activity_on_or_after(asset, attrs["movement_date"]):
             raise serializers.ValidationError({
                 "movement_date": "لا يمكن تأريخ نقل الفرع في أو قبل تاريخ إهلاك أو انخفاض قيمة مرحّل؛ عالج القيود أولًا.",
