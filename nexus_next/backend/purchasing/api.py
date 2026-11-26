@@ -46,8 +46,8 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
@@ -236,13 +236,39 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
         serializer.save()
 
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        """قفل إذن الاستلام وحركة المخزون وبنود أمر الشراء قبل تعديل المسودة."""
+        receipt = self.get_object()
+        self._check_write(receipt.company_id)
+        locked = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
+            "stock_movement", "warehouse",
+        ).get(pk=receipt.pk)
+        movement = StockMovement.objects.select_for_update(of=("self",)).get(pk=locked.stock_movement_id)
+        if movement.status != StockMovement.Status.DRAFT:
+            raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل؛ استخدم مستند تسوية مستقلًا.")
+        if PurchaseInvoice.objects.filter(receipt=locked).exists():
+            raise ValidationError("لا يمكن تعديل إذن استلام مرتبط بفاتورة مورد.")
+        order_ids = {locked.purchase_order_id}
+        supplied_order = request.data.get("purchase_order")
+        if supplied_order not in (None, ""):
+            try:
+                order_ids.add(int(supplied_order))
+            except (TypeError, ValueError):
+                raise ValidationError({"purchase_order": "أمر الشراء المحدد غير صالح."}) from None
+        if order_ids - {None}:
+            list(PurchaseOrderLine.objects.select_for_update().filter(
+                order_id__in=order_ids - {None},
+            ).order_by("pk"))
+        return super().update(request, *args, **kwargs)
+
     def perform_update(self, serializer):
-        """حفظ التعديلات المسموح بها بعد إعادة فحص نطاق السجل."""
+        """حفظ تعديلات المسودة بعد إعادة فحص صلاحيات الشركة والفرع."""
         receipt = serializer.instance
         self._check_write(receipt.company_id)
-        if receipt.stock_movement.status != StockMovement.Status.DRAFT:
-            raise ValidationError("إذن الاستلام المرحّل غير قابل للتعديل؛ أنشئ مستند تسوية مستقلًا بدل تغيير حركة المخزون.")
-        raise ValidationError("تعديل إذن الاستلام غير متاح حاليًا؛ أنشئ إذن استلام مسودة جديدًا.")
+        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع المخزن.")
+        serializer.save()
 
     @transaction.atomic
     def perform_destroy(self, instance):
@@ -413,7 +439,7 @@ class PurchaseReceiptViewSet(PurchaseBaseViewSet):
 
 class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     serializer_class = PurchaseInvoiceSerializer
-    queryset = PurchaseInvoice.objects.select_related("company", "supplier", "receipt", "receipt__warehouse", "journal_entry").prefetch_related("lines__receipt_line__product", "payments", "tax_allocations__branch", "tax_allocations__journal_entry")
+    queryset = PurchaseInvoice.objects.select_related("company", "supplier", "activity", "branch", "receipt", "receipt__warehouse", "service_acceptance", "service_acceptance__order__warehouse", "journal_entry").prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__cost_center", "payments", "tax_allocations__branch", "tax_allocations__journal_entry")
     filterset_fields = ("company", "supplier", "status", "invoice_date")
     search_fields = ("invoice_number", "supplier__name_ar", "receipt__receipt_number")
     ordering_fields = ("invoice_date", "invoice_number", "created_at")
@@ -424,47 +450,88 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         qs = self.queryset.filter(company__in=companies)
         branches = accessible_branches(self.request.user)
         defaults = _default_branch_company_ids(self.request.user, companies)
-        return qs.filter(Q(receipt__warehouse__branch__in=branches) | Q(receipt__warehouse__branch__isnull=True, company_id__in=defaults))
+        return qs.filter(
+            Q(branch__in=branches)
+            | Q(receipt__warehouse__branch__in=branches)
+            | Q(branch__isnull=True, receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+        )
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         """حجز إذن الاستلام أثناء التحقق والحفظ لمنع حجز الكمية مرتين بالتزامن."""
         try:
             company_id = int(request.data.get("company"))
-            receipt_id = int(request.data.get("receipt"))
         except (TypeError, ValueError):
-            raise ValidationError({"receipt": "حدد الشركة وإذن الاستلام."}) from None
+            raise ValidationError({"company": "حدد الشركة."}) from None
         self._check_write(company_id)
-        receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
-            "company", "warehouse", "warehouse__branch", "stock_movement",
-        ).filter(pk=receipt_id, company_id=company_id).first()
-        if not receipt:
-            raise ValidationError({"receipt": "إذن الاستلام غير موجود داخل الشركة المحددة."})
-        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
-        # The receipt row lock is held while serializer validation sums all
-        # draft and posted reservations and while the invoice is created.
+        if request.data.get("invoice_type", PurchaseInvoice.InvoiceType.INVENTORY) == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            try:
+                branch_id = int(request.data.get("branch"))
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "حدد فرع فاتورة الخدمات والمصروفات."}) from None
+            branch = Branch.objects.select_for_update().filter(
+                pk=branch_id, company_id=company_id, is_active=True,
+            ).first()
+            if not branch:
+                raise ValidationError({"branch": "الفرع غير موجود أو موقوف داخل الشركة."})
+            if not can_access_branch(request.user, branch.pk, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+            acceptance_id = request.data.get("service_acceptance")
+            if acceptance_id:
+                try:
+                    acceptance_id = int(acceptance_id)
+                except (TypeError, ValueError):
+                    raise ValidationError({"service_acceptance": "محضر إنجاز الخدمة المحدد غير صالح."}) from None
+                acceptance = PurchaseServiceAcceptance.objects.select_for_update().select_related(
+                    "order__warehouse",
+                ).filter(pk=acceptance_id, company_id=company_id).first()
+                if not acceptance:
+                    raise ValidationError({"service_acceptance": "محضر الإنجاز غير موجود داخل الشركة المحددة."})
+                if not _purchase_warehouse_accessible(request.user, acceptance.order.warehouse):
+                    raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر شراء الخدمة.")
+        else:
+            try:
+                receipt_id = int(request.data.get("receipt"))
+            except (TypeError, ValueError):
+                raise ValidationError({"receipt": "حدد إذن الاستلام."}) from None
+            receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
+                "company", "warehouse", "warehouse__branch", "stock_movement",
+            ).filter(pk=receipt_id, company_id=company_id).first()
+            if not receipt:
+                raise ValidationError({"receipt": "إذن الاستلام غير موجود داخل الشركة المحددة."})
+            if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         """حفظ سجل جديد بعد التحقق من الصلاحيات والعلاقات المرتبطة."""
         data = serializer.validated_data
         self._check_write(data["company"].pk)
-        receipt = data["receipt"]
-        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        if data.get("invoice_type", PurchaseInvoice.InvoiceType.INVENTORY) == PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            if not can_access_branch(self.request.user, data["branch"].pk, data["company"].pk):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+            acceptance = data.get("service_acceptance")
+            if acceptance and not _purchase_warehouse_accessible(self.request.user, acceptance.order.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر شراء الخدمة.")
+        else:
+            receipt = data["receipt"]
+            if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
         serializer.save()
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         """قفل الفاتورة وإذن الاستلام قبل فحص حجوزات المسودة عند تعديلها."""
         invoice = self.get_object()
-        locked_invoice = PurchaseInvoice.objects.select_for_update().get(pk=invoice.pk)
-        receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
-            "warehouse", "warehouse__branch",
-        ).get(pk=locked_invoice.receipt_id)
-        if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        locked_invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related("branch").get(pk=invoice.pk)
+        if locked_invoice.receipt_id:
+            receipt = PurchaseReceipt.objects.select_for_update(of=("self",)).select_related(
+                "warehouse", "warehouse__branch",
+            ).get(pk=locked_invoice.receipt_id)
+            if not _purchase_warehouse_accessible(request.user, receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        elif not locked_invoice.branch_id or not can_access_branch(request.user, locked_invoice.branch_id, locked_invoice.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         return super().update(request, *args, **kwargs)
 
     def perform_update(self, serializer):
@@ -473,20 +540,25 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         self._check_write(invoice.company_id)
         if invoice.status != PurchaseInvoice.Status.DRAFT:
             raise PermissionDenied("لا يمكن تعديل فاتورة مورد مرحلة.")
-        receipt = invoice.receipt
-        if not _purchase_warehouse_accessible(self.request.user, receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        if invoice.receipt_id:
+            if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
     @transaction.atomic
     def perform_destroy(self, instance):
         """حذف فاتورة مسودة فقط إذا لم تنشئ اعتمادًا أو دفعة أو مردودًا أو قيدًا."""
-        invoice = PurchaseInvoice.objects.select_for_update().select_related(
-            "company", "receipt__warehouse"
+        invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
+            "company", "branch", "receipt__warehouse"
         ).get(pk=instance.pk)
         self._check_write(invoice.company_id)
-        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        if invoice.receipt_id:
+            if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        elif not invoice.branch_id or not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if invoice.status != PurchaseInvoice.Status.DRAFT or invoice.journal_entry_id:
             raise ValidationError("لا يمكن حذف فاتورة مورد مرحلة أو مرتبطة بقيد.")
         if (
@@ -505,7 +577,10 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
     def revalue(self, request, pk=None):
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
+        if invoice.branch_id:
+            if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         revaluation_date = parse_date(request.data.get("revaluation_date", ""))
         rate_date = parse_date(request.data.get("rate_date", ""))
@@ -721,9 +796,9 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
         invoices = self.get_queryset().filter(
             company_id=company_id, status=PurchaseInvoice.Status.POSTED, invoice_date__lte=as_of
-        ).select_related("supplier", "receipt__warehouse").prefetch_related("payments", "returns")
+        ).select_related("supplier", "branch", "receipt__warehouse").prefetch_related("payments", "returns")
         if branch_id:
-            invoices = invoices.filter(receipt__warehouse__branch_id=branch_id)
+            invoices = invoices.filter(Q(branch_id=branch_id) | Q(receipt__warehouse__branch_id=branch_id))
         suppliers = {}
         for invoice in invoices:
             paid = sum(
@@ -826,8 +901,14 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         invoice = self.get_object()
         self._check_write(invoice.company_id)
-        if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        if invoice.branch_id:
+            if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif invoice.receipt_id:
+            if not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع إذن الاستلام.")
+        else:
+            raise ValidationError("فاتورة المورد لا تحتوي على فرع أو إذن استلام صالح.")
         invoice = post_purchase_invoice(invoice.pk, request.user)
         return Response(self.get_serializer(invoice).data, status=status.HTTP_200_OK)
 
@@ -851,8 +932,9 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
         branches = accessible_branches(self.request.user)
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(
-            Q(invoice__receipt__warehouse__branch__in=branches)
-            | Q(invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+            Q(invoice__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
         )
 
     def create(self, request, *args, **kwargs):
@@ -874,27 +956,6 @@ class SupplierReturnViewSet(PurchaseBaseViewSet):
     def perform_update(self, serializer):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل مرتجع المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
-
-    @transaction.atomic
-    def perform_destroy(self, instance):
-        """حذف مرتجع مورد مسودة فقط مع حذف بنوده وحركته المخزنية المسودة."""
-        document = SupplierReturn.objects.select_for_update().select_related(
-            "company", "invoice", "invoice__receipt__warehouse", "stock_movement",
-        ).get(pk=instance.pk)
-        self._check_write(document.company_id)
-        if not _purchase_warehouse_accessible(self.request.user, document.invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
-        if document.status != SupplierReturn.Status.DRAFT or document.journal_entry_id:
-            raise ValidationError("لا يمكن حذف مرتجع مورد مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
-        if document.refunds.exists():
-            raise ValidationError("لا يمكن حذف مرتجع له استرداد؛ احذف مسودة الاسترداد أولًا.")
-        movement = StockMovement.objects.select_for_update().get(pk=document.stock_movement_id)
-        if movement.status != StockMovement.Status.DRAFT:
-            raise ValidationError("لا يمكن حذف مرتجع حركته المخزنية مرحّلة؛ استخدم إجراء العكس المعتمد.")
-        for line in document.lines.select_for_update():
-            line.delete()
-        document.delete()
-        movement.delete()
 
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
@@ -963,22 +1024,6 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل استرداد المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
 
-    @transaction.atomic
-    def perform_destroy(self, instance):
-        """حذف استرداد مورد مسودة بلا قيد."""
-        document = SupplierRefund.objects.select_for_update().select_related(
-            "company", "return_document", "return_document__invoice",
-            "return_document__invoice__receipt__warehouse",
-        ).get(pk=instance.pk)
-        self._check_write(document.company_id)
-        if not _purchase_warehouse_accessible(
-            self.request.user, document.return_document.invoice.receipt.warehouse,
-        ):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
-        if document.status != SupplierRefund.Status.DRAFT or document.journal_entry_id:
-            raise ValidationError("لا يمكن حذف استرداد مورد مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
-        document.delete()
-
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         document = self.get_object()
@@ -1008,7 +1053,8 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
     queryset = SupplierPayment.objects.select_related(
-        "company", "supplier", "invoice", "journal_entry", "journal_entry__reversal_entry"
+        "company", "supplier", "invoice", "invoice__branch", "invoice__receipt__warehouse",
+        "journal_entry", "journal_entry__reversal_entry"
     ).all()
     filterset_fields = ("company", "supplier", "invoice", "status", "payment_date", "method")
     search_fields = ("payment_number", "reference", "supplier__name_ar", "invoice__invoice_number")
@@ -1021,8 +1067,9 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         branches = accessible_branches(self.request.user)
         defaults = _default_branch_company_ids(self.request.user, companies)
         return qs.filter(
-            Q(invoice__receipt__warehouse__branch__in=branches)
-            | Q(invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+            Q(invoice__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
         )
 
     def create(self, request, *args, **kwargs):
@@ -1039,7 +1086,10 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         data = serializer.validated_data
         self._check_write(data["company"].pk)
         invoice = data["invoice"]
-        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+        if invoice.branch_id:
+            if not can_access_branch(self.request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         serializer.save()
 
@@ -1048,25 +1098,15 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         self._check_write(serializer.instance.company_id)
         raise ValidationError("تعديل سند الصرف غير متاح؛ أنشئ سندًا جديدًا إذا كان مسودة.")
 
-    @transaction.atomic
-    def perform_destroy(self, instance):
-        """حذف سند صرف مسودة بلا قيد."""
-        payment = SupplierPayment.objects.select_for_update().select_related(
-            "company", "invoice", "invoice__receipt__warehouse",
-        ).get(pk=instance.pk)
-        self._check_write(payment.company_id)
-        if not _purchase_warehouse_accessible(self.request.user, payment.invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
-        if payment.status != SupplierPayment.Status.DRAFT or payment.journal_entry_id:
-            raise ValidationError("لا يمكن حذف سند صرف مرحّل أو مرتبط بقيد؛ استخدم إجراء العكس المعتمد.")
-        payment.delete()
-
     @action(detail=True, methods=("post",))
     def post(self, request, pk=None):
         """ترحيل المستند أو تنفيذ إجراء الترحيل المرتبط به."""
         payment = self.get_object()
         self._check_write(payment.company_id)
-        if not _purchase_warehouse_accessible(request.user, payment.invoice.receipt.warehouse):
+        if payment.invoice.branch_id:
+            if not can_access_branch(request.user, payment.invoice.branch_id, payment.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(request.user, payment.invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         payment = post_supplier_payment(payment.pk, request.user)
         return Response(self.get_serializer(payment).data, status=status.HTTP_200_OK)
@@ -1076,12 +1116,14 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
     def reverse(self, request, pk=None):
         """عكس آخر سند صرف مرحّل بقيد عكسي كامل مع حماية تسلسل التسويات."""
         payment = SupplierPayment.objects.select_for_update(of=("self",)).select_related(
-            "invoice", "invoice__receipt__warehouse", "journal_entry"
+            "invoice", "invoice__branch", "invoice__receipt__warehouse", "journal_entry"
         ).get(pk=self.get_object().pk)
         self._check_write(payment.company_id)
-        invoice = PurchaseInvoice.objects.select_for_update().select_related("receipt__warehouse").get(pk=payment.invoice_id)
-        warehouse = invoice.receipt.warehouse
-        if not _purchase_warehouse_accessible(request.user, warehouse):
+        invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related("branch", "receipt__warehouse").get(pk=payment.invoice_id)
+        if invoice.branch_id:
+            if not can_access_branch(request.user, invoice.branch_id, invoice.company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
+        elif not _purchase_warehouse_accessible(request.user, invoice.receipt.warehouse):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الفاتورة.")
         if payment.status != SupplierPayment.Status.POSTED or not payment.journal_entry_id:
             raise ValidationError("لا يمكن عكس سند صرف غير مرحّل.")
@@ -1095,10 +1137,7 @@ class SupplierPaymentViewSet(PurchaseBaseViewSet):
         ).exists()
         if later_payments:
             raise ValidationError("يجب عكس أحدث سند صرف على الفاتورة أولًا.")
-        if FxSubledgerRevaluation.objects.filter(purchase_invoice_id=payment.invoice_id).filter(
-            Q(journal_entry__isnull=True)
-            | ~Q(journal_entry__status=JournalEntry.Status.REVERSED)
-        ).exists():
+        if FxSubledgerRevaluation.objects.filter(purchase_invoice_id=payment.invoice_id).exists():
             raise ValidationError("لا يمكن عكس سند صرف لفاتورة لها سجل إعادة تقييم عملة؛ راجع تسلسل التسويات وإعادة التقييم أولًا.")
         entry_date_raw = request.data.get("entry_date")
         try:
@@ -1463,3 +1502,79 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
         PurchaseRequisition.objects.filter(pk=requisition.pk, status=requisition.status).update(status=PurchaseRequisition.Status.CANCELLED)
         requisition.refresh_from_db()
         return Response(self.get_serializer(requisition).data)
+
+
+class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
+    serializer_class = PurchaseServiceAcceptanceSerializer
+    filterset_fields = ("company", "order", "supplier", "status", "acceptance_date")
+    queryset = PurchaseServiceAcceptance.objects.select_related(
+        "company", "order", "order__warehouse", "supplier", "accepted_by",
+    ).prefetch_related("lines__order_line__product")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return self.queryset.filter(company__in=companies).filter(
+            Q(order__warehouse__branch__in=branches)
+            | Q(order__warehouse__branch__isnull=True, company_id__in=defaults)
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        order = serializer.validated_data["order"]
+        self._check_write(order.company_id)
+        if not _purchase_warehouse_accessible(self.request.user, order.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("لا يعدل محضر الخدمة؛ احذف المسودة وأنشئ محضرًا جديدًا.")
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        document = PurchaseServiceAcceptance.objects.select_for_update().get(pk=instance.pk)
+        self._check_write(document.company_id)
+        if document.status != PurchaseServiceAcceptance.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف محضر خدمة معتمد أو مرفوض.")
+        document.lines.all().delete()
+        document.delete()
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def accept(self, request, pk=None):
+        document = PurchaseServiceAcceptance.objects.select_for_update().select_related(
+            "order__warehouse"
+        ).get(pk=self.get_object().pk)
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(request.user, document.order.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع أمر الشراء.")
+        if document.status != PurchaseServiceAcceptance.Status.DRAFT:
+            raise ValidationError("محضر الخدمة ليس مسودة.")
+        lines = list(document.lines.select_related("order_line__product"))
+        if not lines:
+            raise ValidationError("محضر الخدمة لا يحتوي على بنود.")
+        # Serialize approvals for each PO line so concurrent acceptance documents
+        # cannot approve more than the contracted service quantity.
+        list(PurchaseOrderLine.objects.select_for_update().filter(
+            pk__in=[line.order_line_id for line in lines],
+        ).order_by("pk"))
+        for line in lines:
+            line.full_clean()
+        PurchaseServiceAcceptance.objects.filter(
+            pk=document.pk, status=PurchaseServiceAcceptance.Status.DRAFT,
+        ).update(
+            status=PurchaseServiceAcceptance.Status.ACCEPTED,
+            accepted_by=request.user,
+            accepted_at=timezone.now(),
+        )
+        document.refresh_from_db()
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
