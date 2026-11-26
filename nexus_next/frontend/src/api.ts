@@ -3,7 +3,7 @@
  * توحّد مسارات الطلبات ومعالجة الاستجابات المستخدمة في شاشات النظام.
  */
 export type Currency = { id: number; code: string; name_ar: string; name_en: string; symbol: string; decimal_places: number; is_active: boolean };
-export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; activities?: ("commercial" | "service" | "medical" | "restaurants" | "industrial")[]; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
+export type Company = { id: number; code: string; name_ar: string; name_en?: string; country: "EG" | "SA"; activity?: "commercial" | "service" | "medical" | "restaurants" | "industrial"; activities?: ("commercial" | "service" | "medical" | "restaurants" | "industrial")[]; activity_assignments?: { id: number; activity: "commercial" | "service" | "medical" | "restaurants" | "industrial"; is_active: boolean }[]; base_currency: number; base_currency_code: string; tax_registration_number?: string; address?: string; phone?: string; email?: string; is_active?: boolean; created_at?: string; updated_at?: string };
 export type Branch = { id: number; company: number; company_code?: string; code: string; name_ar: string; address?: string; phone?: string; is_head_office?: boolean; is_active: boolean; created_at?: string };
 export type CompanyMembership = { id: number; company: number; company_code: string; user: number; username: string; display_name?: string; role: "admin" | "accountant" | "viewer"; all_branches: boolean; branches: number[]; is_active: boolean; created_at: string };
 export type CompanyUserLookup = { id: number; username: string; display_name: string };
@@ -763,7 +763,7 @@ export const stockApi = {
 };
 
 
-export type AccountRole = { id: number; company: number; role: string; account: number; account_code: string; activity: number | null };
+export type AccountRole = { id: number; company: number; role: string; account: number; account_code: string; activity: number | null; activity_code?: Company["activity"] | null };
 // واجهات أدوار الحسابات: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const accountRoleApi = {
   // جلب أدوار الحسابات المعرفة للشركة.
