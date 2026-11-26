@@ -4,7 +4,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from .access import accessible_branches, accessible_companies, can_access_branch
-from .models import Branch, Company, Currency, FiscalYear
+from .models import Branch, Company, CompanyMembership, Currency, FiscalYear, PlatformOwner
 from .serializers import CompanySerializer
 
 class CompanyFoundationTests(TestCase):
@@ -114,6 +114,88 @@ class CompanySetupApiTests(APITestCase):
             "code": "AED", "name_ar": "درهم"
         }, format="json")
         self.assertEqual(response.status_code, 403)
+
+
+class PlatformOwnerCompanyCreationApiTests(APITestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_superuser(
+            username="platform-owner-create",
+            email="platform-owner-create@example.test",
+            password="AdmRail-Owner-Password-2026!",
+        )
+        PlatformOwner.objects.create(user=self.owner)
+        self.egp = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.client.force_authenticate(self.owner)
+
+    def payload(self, username="new-company-manager"):
+        return {
+            "company": {
+                "code": "OWNER-MULTI-ACT",
+                "name_ar": "شركة المالك متعددة الأنشطة",
+                "country": "EG",
+                "activity": "commercial",
+                "activities": ["commercial", "service", "medical"],
+                "base_currency": self.egp.pk,
+                "is_active": True,
+            },
+            "manager": {
+                "username": username,
+                "display_name": "مدير الشركة",
+                "email": f"{username}@example.test",
+                "password": "AdmRail-Manager-Password-2026!",
+            },
+        }
+
+    def test_owner_creates_company_with_multiple_activities_and_manager_atomically(self):
+        response = self.client.post(
+            "/api/setup/companies/create-with-admin/",
+            self.payload(),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+
+        company = Company.objects.get(code="OWNER-MULTI-ACT")
+        self.assertSetEqual(
+            set(company.activity_assignments.filter(is_active=True).values_list("activity", flat=True)),
+            {"commercial", "service", "medical"},
+        )
+        manager = get_user_model().objects.get(username="new-company-manager")
+        membership = CompanyMembership.objects.get(company=company, user=manager)
+        self.assertEqual(membership.role, CompanyMembership.Role.ADMIN)
+        self.assertTrue(membership.all_branches)
+        self.assertTrue(membership.is_active)
+        self.assertFalse(manager.is_superuser)
+        self.assertFalse(manager.is_staff)
+        self.assertFalse(CompanyMembership.objects.filter(company=company, user=self.owner).exists())
+        self.assertEqual(Branch.objects.filter(company=company, is_head_office=True).count(), 1)
+
+    def test_duplicate_manager_username_does_not_create_company(self):
+        get_user_model().objects.create_user(
+            username="already-used-manager",
+            password="AdmRail-Existing-Password-2026!",
+        )
+        response = self.client.post(
+            "/api/setup/companies/create-with-admin/",
+            self.payload(username="already-used-manager"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Company.objects.filter(code="OWNER-MULTI-ACT").exists())
+
+    def test_regular_user_cannot_create_company_and_manager(self):
+        regular_user = get_user_model().objects.create_user(
+            username="not-platform-owner",
+            password="AdmRail-Regular-Password-2026!",
+        )
+        self.client.force_authenticate(regular_user)
+        response = self.client.post(
+            "/api/setup/companies/create-with-admin/",
+            self.payload(username="blocked-manager"),
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Company.objects.filter(code="OWNER-MULTI-ACT").exists())
 
 
 from django.core.management import call_command
