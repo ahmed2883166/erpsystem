@@ -14,7 +14,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from suppliers.models import Supplier
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, PurchaseServiceAcceptance, PurchaseServiceAcceptanceLine, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -1211,3 +1211,77 @@ class SupplierQuotationSerializer(serializers.ModelSerializer):
         SupplierQuotationLine.objects.bulk_create([SupplierQuotationLine(quotation=quotation, **line) for line in lines])
         PurchaseRFQInvitation.objects.filter(rfq=quotation.rfq, supplier=quotation.supplier).update(status=PurchaseRFQInvitation.Status.QUOTED)
         return quotation
+
+
+class PurchaseServiceAcceptanceLineInputSerializer(serializers.Serializer):
+    order_line = serializers.PrimaryKeyRelatedField(queryset=PurchaseOrderLine.objects.select_related("order", "product"))
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=4, min_value=Decimal("0.0001"))
+    notes = serializers.CharField(required=False, allow_blank=True, max_length=250)
+
+
+class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
+    lines = PurchaseServiceAcceptanceLineInputSerializer(many=True, write_only=True)
+    line_items = serializers.SerializerMethodField()
+    supplier_name = serializers.CharField(source="supplier.name_ar", read_only=True)
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    accepted_by_name = serializers.CharField(source="accepted_by.get_full_name", read_only=True, allow_null=True)
+
+    class Meta:
+        model = PurchaseServiceAcceptance
+        fields = (
+            "id", "company", "order", "order_number", "supplier", "supplier_name",
+            "acceptance_number", "acceptance_date", "status", "notes", "accepted_by",
+            "accepted_by_name", "accepted_at", "lines", "line_items", "created_at",
+        )
+        read_only_fields = ("status", "accepted_by", "accepted_by_name", "accepted_at", "line_items", "created_at")
+
+    def get_line_items(self, obj):
+        return [{
+            "id": line.pk,
+            "order_line": line.order_line_id,
+            "product": line.order_line.product_id,
+            "product_code": line.order_line.product.code,
+            "product_name": line.order_line.product.name_ar,
+            "quantity": str(line.quantity),
+            "notes": line.notes,
+        } for line in obj.lines.select_related("order_line__product")]
+
+    def validate(self, attrs):
+        company = attrs["company"]
+        order = attrs["order"]
+        supplier = attrs["supplier"]
+        lines = attrs["lines"]
+        if order.company_id != company.pk or order.supplier_id != supplier.pk:
+            raise serializers.ValidationError({"order": "أمر الشراء والمورد يجب أن يتبعا الشركة المحددة."})
+        if order.status not in (PurchaseOrder.Status.CONFIRMED, PurchaseOrder.Status.PARTIALLY_RECEIVED, PurchaseOrder.Status.RECEIVED):
+            raise serializers.ValidationError({"order": "لا يمكن استلام خدمة قبل اعتماد أمر الشراء."})
+        if not lines:
+            raise serializers.ValidationError({"lines": "أضف بند خدمة واحدًا على الأقل."})
+        seen = set()
+        requested_by_line = {}
+        for line in lines:
+            order_line = line["order_line"]
+            if order_line.order_id != order.pk or order_line.product.product_type != Product.ProductType.SERVICE:
+                raise serializers.ValidationError({"lines": "محضر الخدمة يقبل بنود الخدمات التابعة لأمر الشراء فقط."})
+            if order_line.pk in seen:
+                raise serializers.ValidationError({"lines": "لا تكرر بند الخدمة داخل المحضر."})
+            seen.add(order_line.pk)
+            requested_by_line[order_line.pk] = line["quantity"]
+        for line_id, quantity in requested_by_line.items():
+            accepted = PurchaseServiceAcceptanceLine.objects.filter(
+                order_line_id=line_id,
+                acceptance__status=PurchaseServiceAcceptance.Status.ACCEPTED,
+            ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if accepted + quantity > PurchaseOrderLine.objects.get(pk=line_id).quantity:
+                raise serializers.ValidationError({"lines": "كمية الخدمة تتجاوز الكمية المتبقية في أمر الشراء."})
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lines = validated_data.pop("lines")
+        document = PurchaseServiceAcceptance.objects.create(**validated_data)
+        for line in lines:
+            item = PurchaseServiceAcceptanceLine(acceptance=document, **line)
+            item.full_clean()
+            item.save()
+        return document
