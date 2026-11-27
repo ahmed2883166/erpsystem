@@ -7,7 +7,7 @@ from rest_framework.test import APITestCase
 from accounting.models import ChartOfAccount, JournalEntry, JournalLine
 from accounting.services import post_journal
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import CashCommitment, CashCommitmentOccurrence, CashCommitmentPayment, CashCommitmentSchedule
+from treasury.models import CashCommitment, CashCommitmentOccurrence
 
 
 class CashCommitmentApiTests(APITestCase):
