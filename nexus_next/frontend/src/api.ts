@@ -510,7 +510,7 @@ export const treasuryApi = {
   commitments: (companyId:number) => request<CashCommitment[]>(`/api/treasury/commitments/?company=${companyId}&ordering=due_date`),
 
   pettyCashFunds: (companyId:number) => request<PettyCashFund[]>(`/api/treasury/petty-cash-funds/?company=${companyId}`),
-  pettyCashExpenses: (companyId:number) => request<PettyCashExpense[]>(`/api/treasury/petty-cash-expenses/?fund__company=${companyId}`),
+  pettyCashExpenses: (companyId:number) => request<PettyCashExpense[]>(`/api/treasury/petty-cash-expenses/?company=${companyId}`),
   createPettyCashFund: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashFund>("/api/treasury/petty-cash-funds/",{method:"POST",body:JSON.stringify(payload)}); },
   createPettyCashExpense: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>("/api/treasury/petty-cash-expenses/",{method:"POST",body:JSON.stringify(payload)}); },
   pettyCashBalance: (id:number) => request<{fund:number;as_of:string;authorized_amount:string;book_balance:string;unsettled_expenses:string;available_for_expenses:string}>(`/api/treasury/petty-cash-funds/${id}/balance/`),
