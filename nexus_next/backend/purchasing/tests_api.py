@@ -374,7 +374,7 @@ class PurchasingWorkflowTests(APITestCase):
         )
         receipt = self.client.get(f"/api/purchasing/receipts/{receipt_id}/")
         self.assertEqual(receipt.status_code, 200, receipt.data)
-        self.assertIsNone(receipt.data["journal_entry"])
+        self.assertIsNone(receipt.data["journal_number"])
 
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
