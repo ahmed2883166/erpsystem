@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
 from accounting.models import ChartOfAccount
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, PettyCashFund, PettyCashExpense, PettyCashCount, PettyCashSettlement, PettyCashTransfer
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, PettyCashFund, PettyCashExpense, PettyCashCount
 
 
 class TreasuryAccountSerializer(serializers.ModelSerializer):
