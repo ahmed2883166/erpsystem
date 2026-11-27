@@ -294,6 +294,18 @@ def _validate_service_acceptance_invoice_amounts(invoice, lines):
         raise ValidationError("محضر إنجاز الخدمة المرتبط لا يحتوي على بنود معتمدة.")
     expected_net = Decimal("0")
     expected_tax = Decimal("0")
+    expected_quantity = sum(
+        (accepted_line.quantity for accepted_line in acceptance_lines),
+        Decimal("0"),
+    )
+    actual_quantity = sum(
+        (line.billed_quantity for line in lines),
+        Decimal("0"),
+    )
+    if actual_quantity != expected_quantity:
+        raise ValidationError(
+            f"كمية فاتورة الخدمة ({actual_quantity}) لا تطابق الكمية المعتمدة بمحضر إنجاز الخدمة ({expected_quantity})."
+        )
     for accepted_line in acceptance_lines:
         order_line = accepted_line.order_line
         if order_line.product.product_type != Product.ProductType.SERVICE:
