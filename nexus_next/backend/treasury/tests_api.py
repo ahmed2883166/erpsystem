@@ -1883,3 +1883,32 @@ class PettyCashWorkflowTests(APITestCase):
         closed = self.client.post(f"/api/treasury/petty-cash-funds/{fund_id}/close/", {}, format="json")
         self.assertEqual(closed.status_code, 400, closed.data)
         self.assertEqual(PettyCashFund.objects.get(pk=fund_id).status, PettyCashFund.Status.ACTIVE)
+
+
+    def test_receipt_attachment_upload_and_authorized_download(self):
+        fund_id = self._create_fund()
+        upload = SimpleUploadedFile(
+            "receipt.pdf", b"%PDF-1.4\n% petty cash receipt test\n%%EOF",
+            content_type="application/pdf",
+        )
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02", "description": "مصروف بمرفق",
+            "amount": "20", "expense_account": self.expense_gl.pk, "receipt_file": upload,
+        }, format="multipart")
+        self.assertEqual(expense.status_code, 201, expense.data)
+        self.assertTrue(PettyCashExpense.objects.get(pk=expense.data["id"]).receipt_file)
+        submitted = self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json")
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        download = self.client.get(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/receipt/")
+        self.assertEqual(download.status_code, 200)
+        self.assertIn(b"%PDF-1.4", b"".join(download.streaming_content))
+
+    def test_receipt_attachment_rejects_unsupported_file_type(self):
+        fund_id = self._create_fund()
+        upload = SimpleUploadedFile("receipt.exe", b"MZ-invalid", content_type="application/octet-stream")
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02", "description": "مرفق غير مسموح",
+            "amount": "20", "expense_account": self.expense_gl.pk, "receipt_file": upload,
+        }, format="multipart")
+        self.assertEqual(expense.status_code, 400, expense.data)
+        self.assertFalse(PettyCashExpense.objects.exists())
