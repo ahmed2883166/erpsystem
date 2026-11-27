@@ -125,3 +125,45 @@ class CashCommitmentApiTests(APITestCase):
         self.assertEqual(second.status_code, 200, second.data)
         self.assertEqual(second.data["generated"], 0)
         self.assertEqual(CashCommitment.objects.filter(company=self.company).count(), 4)
+
+    def test_reversal_journal_restores_commitment_balance(self):
+        response = self._create_commitment()
+        self.assertEqual(response.status_code, 201, response.data)
+        commitment_id = response.data["id"]
+        original = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CMT-PAY-REV-001", entry_date=date(2026, 11, 20),
+            description="سداد الالتزام", source_type=JournalEntry.Source.MANUAL,
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=original, account=self.payable, debit=Decimal("250"), credit=0),
+            JournalLine(entry=original, account=self.bank, debit=0, credit=Decimal("250")),
+        ])
+        post_journal(original.pk)
+        payment = self.client.post(
+            f"/api/treasury/commitments/{commitment_id}/record-payment/",
+            {"payment_date": "2026-11-20", "amount": "250", "journal_entry": original.pk},
+            format="json",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        reversal = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="CMT-PAY-REV-002", entry_date=date(2026, 11, 21),
+            description="عكس سداد الالتزام", source_type=JournalEntry.Source.MANUAL,
+            reversal_of=original,
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=reversal, account=self.bank, debit=Decimal("250"), credit=0),
+            JournalLine(entry=reversal, account=self.payable, debit=0, credit=Decimal("250")),
+        ])
+        post_journal(reversal.pk)
+        reversed_payment = self.client.post(
+            f"/api/treasury/commitments/{commitment_id}/reverse-payment/",
+            {"payment_id": payment.data["id"], "reversal_journal_entry": reversal.pk},
+            format="json",
+        )
+        self.assertEqual(reversed_payment.status_code, 200, reversed_payment.data)
+        commitment = self.client.get(f"/api/treasury/commitments/{commitment_id}/")
+        self.assertEqual(commitment.data["paid_base_amount"], "0.0000")
+        self.assertEqual(commitment.data["remaining_base_amount"], "1000.0000")
+        self.assertEqual(commitment.data["status"], "open")
