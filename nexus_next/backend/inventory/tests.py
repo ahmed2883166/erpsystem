@@ -801,24 +801,24 @@ class StockTransferLifecycleTests(StockPostingServiceTests):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.destination_branch = Branch.objects.create(
-            company=cls.company, code="BR-02", name_ar="فرع الاختبار الثاني",
-        )
-        cls.destination_warehouse = Warehouse.objects.create(
-            company=cls.company, branch=cls.destination_branch,
-            code="WH-02", name_ar="مخزن الفرع الثاني",
-        )
-        cls.clearing_account = cls._account(
-            "2300", "تسوية بين الفروع", ChartOfAccount.Nature.LIABILITY,
-        )
-        AccountRole.objects.create(
-            company=cls.company,
-            role=AccountRole.Role.INTER_BRANCH_CLEARING,
-            account=cls.clearing_account,
-        )
 
     def _transfer(self, number="TRF-001", quantity="10"):
         from .models import StockTransfer, StockTransferLine
+        self.destination_branch = Branch.objects.create(
+            company=self.company, code="TRF-BR", name_ar="فرع اختبار التحويل",
+        )
+        self.destination_warehouse = Warehouse.objects.create(
+            company=self.company, branch=self.destination_branch,
+            code="TRF-WH", name_ar="مخزن اختبار التحويل",
+        )
+        clearing = self._account(
+            "2390", "تسوية تحويل بين الفروع", ChartOfAccount.Nature.LIABILITY,
+        )
+        AccountRole.objects.get_or_create(
+            company=self.company,
+            role=AccountRole.Role.INTER_BRANCH_CLEARING,
+            defaults={"account": clearing},
+        )
         transfer = StockTransfer.objects.create(
             company=self.company,
             transfer_number=number,
