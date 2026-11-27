@@ -1943,7 +1943,7 @@ class PettyCashWorkflowTests(APITestCase):
         upload = SimpleUploadedFile("receipt.exe", b"MZ-invalid", content_type="application/octet-stream")
         expense = self.client.post("/api/treasury/petty-cash-expenses/", {
             "fund": fund_id, "expense_date": "2026-03-02", "description": "مرفق غير مسموح",
-            "amount": "20", "expense_account": self.expense_gl.pk, "receipt_file": upload,
+            "amount": "20", "expense_account": self.expense_gl.pk, "receipt_upload": upload,
         }, format="multipart")
         self.assertEqual(expense.status_code, 400, expense.data)
         self.assertFalse(PettyCashExpense.objects.exists())
