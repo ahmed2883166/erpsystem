@@ -1886,6 +1886,8 @@ class CashCommitmentViewSet(TreasuryBaseViewSet):
         ).first()
         if not journal:
             raise ValidationError({"journal_entry": "يجب اختيار قيد يومية مرحّل تابع للشركة."})
+        if journal.reversal_of_id:
+            raise ValidationError({"journal_entry": "لا يمكن ربط قيد عكسي باعتباره سدادًا أصليًا."})
         if journal.entry_date != payment_date:
             raise ValidationError({"payment_date": "تاريخ السداد يجب أن يطابق تاريخ قيد اليومية."})
         lines = list(JournalLine.objects.filter(entry=journal).select_related("account"))
@@ -1923,6 +1925,8 @@ class CashCommitmentViewSet(TreasuryBaseViewSet):
         ).first()
         if not reversal:
             raise ValidationError({"reversal_journal_entry": "اختر قيد عكس مرحّل تابع للشركة."})
+        if reversal.reversal_of_id != payment.journal_entry_id:
+            raise ValidationError({"reversal_journal_entry": "القيد المحدد ليس القيد العكسي المباشر لدفعة الالتزام."})
         lines = list(JournalLine.objects.filter(entry=reversal))
         credit_total = sum((line.credit for line in lines), Decimal("0"))
         debit_total = sum((line.debit for line in lines), Decimal("0"))
