@@ -906,7 +906,7 @@ const postInvoice = async (id: number) => {
     </div>}
     {tab === "aging" && agingView === "landed-cost" && <div className="inventory-form">
       <div className="inventory-form-row"><label>من تاريخ<input type="date" value={landedCostReportFrom} onChange={e=>{setLandedCostReportFrom(e.target.value);setLandedCostReport(null);}}/></label><label>إلى تاريخ<input type="date" value={landedCostReportTo} onChange={e=>{setLandedCostReportTo(e.target.value);setLandedCostReport(null);}}/></label></div>
-      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadLandedCostReport()}>{busy?"جارٍ التحميل…":"عرض تسوية تكاليف الشراء"}</button></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadLandedCostReport()}>{busy?"جارٍ التحميل…":"عرض تسوية تكاليف الشراء"}</button>{landedCostReport && <a className="subtle-button" href={`/api/purchasing/landed-costs/export-excel/?company=${companyId}${landedCostReportFrom? `&date_from=${landedCostReportFrom}`:""}${landedCostReportTo? `&date_to=${landedCostReportTo}`:""}`}>تصدير Excel</a>}</div>
       {landedCostReport && <div className="inventory-wide">
         <div className="stock-card-summary">
           <div><span>إجمالي التكلفة الموزعة</span><strong>{money(landedCostReport.totals.allocated)}</strong></div>
