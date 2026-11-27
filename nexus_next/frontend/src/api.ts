@@ -446,6 +446,7 @@ export const treasuryApi = {
   // ترحيل حركة الخزينة المحددة.
   postTransaction: async (id: number) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/post/`, {method:"POST"}); },
   reverseTransaction: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
+  reverseTransaction: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
   // جلب تقرير التدفقات النقدية بالطريقة غير المباشرة مع فلتر الفرع.
   directCashFlow: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => {
     const q = new URLSearchParams({company:String(companyId), date_from:dateFrom, date_to:dateTo});
