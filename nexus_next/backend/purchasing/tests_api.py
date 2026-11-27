@@ -4234,7 +4234,7 @@ class PurchaseReceiptConcurrencyTests(TransactionTestCase):
         self.client = APIClient()
         PurchasingWorkflowTests.setUp(self)
 
-    def test_concurrent_receipts_cannot_over_receive_the_same_purchase_order_line(self):
+    def test_concurrent_receipts_respect_reserved_purchase_order_quantity(self):
         if connection.vendor != "postgresql":
             self.skipTest("Concurrent row-locking regression requires PostgreSQL.")
 
@@ -4250,17 +4250,29 @@ class PurchaseReceiptConcurrencyTests(TransactionTestCase):
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
 
         receipt_ids = []
-        for number in ("GR-CONCURRENT-A", "GR-CONCURRENT-B"):
+        for number, quantity in (("GR-CONCURRENT-A", "6"), ("GR-CONCURRENT-B", "4")):
             receipt = self.client.post("/api/purchasing/receipts/", {
                 "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
                 "purchase_order": order_id, "receipt_number": number, "receipt_date": "2026-03-10",
                 "lines": [{
-                    "product": self.product.pk, "quantity": "6", "unit_cost": "100",
+                    "product": self.product.pk, "quantity": quantity, "unit_cost": "100",
                     "purchase_order_line": order_line_id,
                 }],
             }, format="json")
             self.assertEqual(receipt.status_code, 201, receipt.data)
             receipt_ids.append(receipt.data["id"])
+
+        # The draft-receipt reservation must reject any additional quantity
+        # before posting, while the two valid receipts are posted concurrently.
+        excess = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "purchase_order": order_id, "receipt_number": "GR-CONCURRENT-EXCESS", "receipt_date": "2026-03-10",
+            "lines": [{
+                "product": self.product.pk, "quantity": "1", "unit_cost": "100",
+                "purchase_order_line": order_line_id,
+            }],
+        }, format="json")
+        self.assertEqual(excess.status_code, 400, excess.data)
 
         barrier = threading.Barrier(2)
 
@@ -4280,17 +4292,15 @@ class PurchaseReceiptConcurrencyTests(TransactionTestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(post_receipt, receipt_ids))
 
-        self.assertEqual(sum(status == 200 for status, _ in results), 1, results)
-        self.assertEqual(sum(status == 400 for status, _ in results), 1, results)
+        self.assertEqual([status for status, _ in results].count(200), 2, results)
         order_line = PurchaseOrderReceiptLine.objects.filter(order_line_id=order_line_id).aggregate(
             total=Sum("quantity")
         )["total"]
-        self.assertEqual(order_line, Decimal("6"))
+        self.assertEqual(order_line, Decimal("10"))
         posted_receipts = StockMovement.objects.filter(
             movement_number__in=("PR-GR-CONCURRENT-A", "PR-GR-CONCURRENT-B"),
             status=StockMovement.Status.POSTED,
         ).count()
-        self.assertEqual(posted_receipts, 1)
+        self.assertEqual(posted_receipts, 2)
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
-        self.assertEqual(balance.quantity, Decimal("6"))
-
+        self.assertEqual(balance.quantity, Decimal("10"))
