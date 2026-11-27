@@ -46,7 +46,7 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import LandedCostDocument, PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
 from .serializers import LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_landed_cost_document, reverse_landed_cost_document, post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
