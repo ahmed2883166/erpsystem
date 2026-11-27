@@ -387,7 +387,7 @@ export type TreasuryFxRevaluation = {
 export type TreasuryTransaction = {
   id: number; company: number; branch: number; fiscal_year: number; source_account: number; source_name: string;
   destination_account: number | null; destination_name: string; counter_account: number | null; counter_account_code: string;
-  kind: "receipt" | "payment" | "transfer"; status: "draft" | "posted" | "void"; document_number: string;
+  kind: "receipt" | "payment" | "transfer"; status: "draft" | "posted" | "void" | "reversed"; document_number: string;
   transaction_date: string; amount: string; description: string; reference: string; journal_entry: number | null;
   journal_number: string; transaction_currency: number|null; transaction_amount: string|null; exchange_rate: string|null; exchange_rate_date: string|null; carrying_amount: string|null; cash_flow_category: "operating" | "investing" | "financing"; created_at: string; posted_at: string | null;
 };
@@ -445,6 +445,7 @@ export const treasuryApi = {
   reverseRevaluation: async (accountId:number,revaluationId:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<{id:number;status:"reversed";reversal_journal_number:string}>(`/api/treasury/accounts/${accountId}/reverse-revaluation/`,{method:"POST",body:JSON.stringify({revaluation_id:revaluationId,...(entryDate?{entry_date:entryDate}:{})})}); },
   // ترحيل حركة الخزينة المحددة.
   postTransaction: async (id: number) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/post/`, {method:"POST"}); },
+  reverseTransaction: async (id:number,entryDate?:string) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryTransaction>(`/api/treasury/transactions/${id}/reverse/`, {method:"POST",body:JSON.stringify(entryDate?{entry_date:entryDate}:{})}); },
   // جلب تقرير التدفقات النقدية بالطريقة غير المباشرة مع فلتر الفرع.
   directCashFlow: (companyId: number, dateFrom: string, dateTo: string, branch?: number) => {
     const q = new URLSearchParams({company:String(companyId), date_from:dateFrom, date_to:dateTo});
