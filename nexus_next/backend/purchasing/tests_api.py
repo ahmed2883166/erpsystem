@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import DatabaseError, connection, transaction
@@ -340,6 +341,40 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertFalse(StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists())
         self.assertFalse(JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).exists())
+
+    def test_receipt_posting_rolls_back_inventory_and_journal_when_later_step_fails(self):
+        created = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-ROLLBACK", "receipt_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "quantity": "2", "unit_cost": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        receipt_id = created.data["id"]
+        movement = StockMovement.objects.get(movement_number="PR-GR-ROLLBACK")
+
+        original_post = post_stock_movement
+
+        def post_then_fail(*args, **kwargs):
+            original_post(*args, **kwargs)
+            raise RuntimeError("simulated failure after inventory and journal posting")
+
+        with patch("purchasing.services.post_stock_movement", side_effect=post_then_fail):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    f"/api/purchasing/receipts/{receipt_id}/post/", {}, format="json"
+                )
+
+        movement.refresh_from_db()
+        self.assertEqual(movement.status, StockMovement.Status.DRAFT)
+        self.assertFalse(
+            StockBalance.objects.filter(product=self.product, warehouse=self.warehouse).exists()
+        )
+        self.assertFalse(
+            JournalEntry.objects.filter(source_type=JournalEntry.Source.INVENTORY).exists()
+        )
+        receipt = self.client.get(f"/api/purchasing/receipts/{receipt_id}/")
+        self.assertEqual(receipt.status_code, 200, receipt.data)
+        self.assertIsNone(receipt.data["journal_entry"])
 
     def test_receipt_posts_inventory_and_grni_once_then_invoice_clears_grni(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
