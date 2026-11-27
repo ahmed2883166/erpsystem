@@ -3677,6 +3677,7 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.assertEqual(source_balance.inventory_value, Decimal("100.0000"))
         self.assertEqual(source_balance.average_cost, Decimal("100.000000"))
         self.assertEqual(source_invoice.journal_entry.status, JournalEntry.Status.POSTED)
+        allocation.source_journal_entry.refresh_from_db()
         self.assertEqual(allocation.source_journal_entry.status, JournalEntry.Status.REVERSED)
 
     def test_landed_cost_cannot_exceed_unallocated_direct_expense_line(self):
