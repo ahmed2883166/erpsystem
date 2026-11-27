@@ -5,7 +5,7 @@ from io import BytesIO
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -1053,7 +1053,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             )
             invoice_count = invoices.count()
             return_count = returns.count()
-        sales_cost = amount(invoice_lines.aggregate(total=Sum("delivery_line__cost_amount"))["total"])
+        allocated_sales_cost = ExpressionWrapper(\n            F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),\n            output_field=DecimalField(max_digits=20, decimal_places=4),\n        )\n        sales_cost = amount(invoice_lines.aggregate(total=Sum(allocated_sales_cost))["total"])
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
         sales_net = amount(sales_totals["net"])
         returned_net = amount(return_totals["net"])
@@ -1065,7 +1065,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         ).annotate(
             invoice_count=Count("invoice_id", distinct=True),
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+            discount=Sum("discount_amount"), cost=Sum(allocated_sales_cost),
         )
         customer_returns = return_lines.values(
             "sales_return__invoice__customer_id",
