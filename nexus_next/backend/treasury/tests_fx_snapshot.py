@@ -310,6 +310,28 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(destination_position.foreign_amount, Decimal("0.0000"))
         self.assertEqual(destination_position.carrying_base_amount, Decimal("0.0000"))
 
+    def test_foreign_transaction_reversal_uses_posting_order_not_backdated_document_date(self):
+        original = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-POST-ORDER",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"), rate_date=date(2026, 3, 2),
+        )
+        post_treasury_transaction(original.pk)
+        later_posted_backdated = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-POST-ORDER-LATER",
+            amount=Decimal("600"), rate=Decimal("30"),
+            foreign_amount=Decimal("20"), rate_date=date(2026, 3, 1),
+        )
+        post_treasury_transaction(later_posted_backdated.pk)
+
+        with self.assertRaises(ValidationError):
+            reverse_treasury_transaction(
+                transaction_id=original.pk, entry_date=date(2026, 3, 3),
+            )
+        original.refresh_from_db()
+        self.assertEqual(original.status, TreasuryTransaction.Status.POSTED)
+        self.assertFalse(original.reversal_journal_entry_id)
+
     def test_foreign_transaction_reversal_requires_later_revaluation_to_be_reversed_first(self):
         self.setUp_fx_roles()
         receipt = self.make_postable_transaction(
