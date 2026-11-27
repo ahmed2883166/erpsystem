@@ -200,6 +200,75 @@ class TreasuryWorkflowTests(APITestCase):
         linked.refresh_from_db()
         self.assertEqual(linked.status, TreasuryTransaction.Status.POSTED)
 
+    def test_standalone_base_currency_receipt_reversal_updates_document_and_journal(self):
+        created = self._create(document_number="TR-REV-RECEIPT-001")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json")
+        self.assertEqual(posted.status_code, 200, posted.data)
+        original = JournalEntry.objects.get(pk=posted.data["journal_entry"])
+        reversed_response = self.client.post(
+            f"/api/treasury/transactions/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-16"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        self.assertEqual(reversed_response.data["status"], TreasuryTransaction.Status.REVERSED)
+        self.assertTrue(reversed_response.data["reversal_journal_number"])
+        original.refresh_from_db()
+        self.assertEqual(original.status, JournalEntry.Status.REVERSED)
+        reversal = JournalEntry.objects.get(pk=reversed_response.data["reversal_journal_entry"])
+        self.assertEqual(reversal.reversal_of_id, original.pk)
+        self.assertEqual(reversal.status, JournalEntry.Status.POSTED)
+        duplicate = self.client.post(
+            f"/api/treasury/transactions/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-17"}, format="json",
+        )
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+        cash_flow = self.client.get(f"/api/treasury/transactions/cash-flow/?company={self.company.pk}")
+        self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
+        self.assertEqual(cash_flow.data["rows"], [])
+
+    def test_treasury_reversal_rejects_foreign_currency_and_linked_operational_documents(self):
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        foreign_gl = ChartOfAccount.objects.create(company=self.company, code="1198", name_ar="بنك دولار", nature=ChartOfAccount.Nature.ASSET)
+        foreign = TreasuryAccount.objects.create(company=self.company, branch=self.branch, account=foreign_gl, kind="bank", code="BANK-REV-USD", name_ar="بنك دولار", currency_code="USD")
+        fx_rate = ExchangeRate.objects.create(company=self.company, currency=usd, rate_date=date(2026, 3, 15), rate=Decimal("50"))
+        foreign_entry = JournalEntry.objects.create(company=self.company, branch=self.branch, fiscal_year=self.year, entry_number="TR-REV-USD-JE", entry_date=date(2026, 3, 15), description="قيد حركة أجنبية", source_type=JournalEntry.Source.MANUAL)
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=foreign_entry, account=foreign_gl, debit=Decimal("500"), credit=0),
+            JournalLine(entry=foreign_entry, account=self.revenue_gl, debit=0, credit=Decimal("500")),
+        ])
+        post_journal(foreign_entry.pk)
+        foreign_doc = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year, source_account=foreign,
+            counter_account=self.revenue_gl, kind=TreasuryTransaction.Kind.RECEIPT,
+            status=TreasuryTransaction.Status.POSTED, document_number="TR-REV-USD",
+            transaction_date=date(2026, 3, 15), amount=Decimal("500"), transaction_currency=usd,
+            transaction_amount=Decimal("10"), exchange_rate=fx_rate.rate, exchange_rate_date=fx_rate.rate_date,
+            description="حركة أجنبية", journal_entry=foreign_entry,
+        )
+        rejected_fx = self.client.post(f"/api/treasury/transactions/{foreign_doc.pk}/reverse/", {"entry_date": "2026-03-16"}, format="json")
+        self.assertEqual(rejected_fx.status_code, 400, rejected_fx.data)
+        operational = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year, entry_number="TR-REV-LINKED-001",
+            entry_date=date(2026, 3, 15), description="حركة بنك مرتبطة بمبيعات", source_type=JournalEntry.Source.SALES,
+        )
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=operational, account=self.cash_gl, debit=Decimal("75"), credit=0),
+            JournalLine(entry=operational, account=self.revenue_gl, debit=0, credit=Decimal("75")),
+        ])
+        post_journal(operational.pk)
+        linked = TreasuryTransaction.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year, source_account=self.cash,
+            counter_account=self.revenue_gl, kind=TreasuryTransaction.Kind.RECEIPT,
+            status=TreasuryTransaction.Status.POSTED, document_number="TR-REV-LINKED",
+            transaction_date=date(2026, 3, 15), amount=Decimal("75"), description="مرآة حركة مبيعات",
+            journal_entry=operational,
+        )
+        rejected_linked = self.client.post(f"/api/treasury/transactions/{linked.pk}/reverse/", {"entry_date": "2026-03-16"}, format="json")
+        self.assertEqual(rejected_linked.status_code, 400, rejected_linked.data)
+        linked.refresh_from_db()
+        self.assertEqual(linked.status, TreasuryTransaction.Status.POSTED)
+
     def test_foreign_currency_treasury_draft_requires_exchange_rate_snapshot(self):
         foreign_gl = ChartOfAccount.objects.create(
             company=self.company, code="1120", name_ar="بنك بالدولار",
