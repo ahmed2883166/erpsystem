@@ -71,7 +71,10 @@ def _parse_bank_statement(upload, statement_date):
     rows = []
     if extension in ("csv", "txt"):
         text = raw.decode("utf-8-sig")
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        try:
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
         reader = csv.DictReader(io.StringIO(text), dialect=dialect)
         if not reader.fieldnames:
             raise ValueError("الملف لا يحتوي على عناوين أعمدة.")
@@ -108,10 +111,11 @@ def _parse_bank_statement(upload, statement_date):
         for row in values:
             if not row or not any(v is not None and str(v).strip() for v in row):
                 continue
-            get = lambda index: row[index] if index is not None and index < len(row) else ""
+            def get_value(index):
+                return row[index] if index is not None and index < len(row) else ""
             rows.append(_statement_row(
-                _parse_statement_date(get(date_index)), _parse_statement_amount(get(amount_index)),
-                get(desc_index), get(ref_index),
+                _parse_statement_date(get_value(date_index)), _parse_statement_amount(get_value(amount_index)),
+                get_value(desc_index), get_value(ref_index),
             ))
         workbook.close()
     elif extension in ("ofx", "qfx"):
@@ -1206,7 +1210,8 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             "rows": [{
                 "date": row["transaction_date"], "amount": str(row["amount"]),
                 "description": row["description"], "reference": row["reference"],
-            } for row in fresh],
+            } for row in fresh[:100]],
+            "rows_truncated": len(fresh) > 100,
         })
 
     @transaction.atomic
@@ -1214,9 +1219,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     def confirm_import(self, request, pk=None):
         """حفظ الحركات الجديدة فقط بعد إعادة فحص التكرار تحت قفل الحساب."""
         recon = self.get_object()
-        list(BankReconciliation.objects.select_for_update().filter(
-            bank_account_id=recon.bank_account_id
-        ).order_by("pk").values_list("pk", flat=True))
+        TreasuryAccount.objects.select_for_update().get(pk=recon.bank_account_id)
         recon.refresh_from_db()
         _, fresh, duplicates = self._preview_statement_upload(request, recon)
         if not fresh:
