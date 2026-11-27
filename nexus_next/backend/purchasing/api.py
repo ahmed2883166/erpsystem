@@ -1304,6 +1304,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
             company_id=company_id, is_active=True,
         ).order_by("-is_head_office", "code").first()
         grouped = {}
+        included_invoice_ids = set()
         for invoice in invoices.order_by("invoice_date", "invoice_number"):
             warehouse = invoice.receipt.warehouse if invoice.receipt_id else None
             branch = invoice.branch or (warehouse.branch if warehouse else None) or default_branch
@@ -1379,6 +1380,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                     row["tax_amount"] += line.tax_amount
                 row["invoice_count"].add(invoice.pk)
                 row["line_count"] += 1
+                included_invoice_ids.add(invoice.pk)
 
         rows = []
         totals = {
@@ -1401,7 +1403,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
             totals["tax_amount"] += Decimal(row["tax_amount"])
             totals["line_count"] += row["line_count"]
             rows.append(row)
-        totals["invoice_count"] = len({invoice.pk for invoice in invoices})
+        totals["invoice_count"] = len(included_invoice_ids)
         inventory_nonrecoverable_tax = sum((
             allocation.inventory_amount + allocation.cogs_amount + allocation.adjustment_loss_amount
             for invoice in invoices
