@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast } from "./api";
+import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -12,8 +12,14 @@ const money = (v: string | number) => formatMoney(v);
 
 // شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
-  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity">("transactions");
-  const [liquidity,setLiquidity]=useState<TreasuryLiquiditySummary|null>(null);
+  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity"|"commitments">("transactions");
+  const [liquidity,setLiquidity]=useState<TreasuryLiquiditySummary|null>(null);\n  const [commitments,setCommitments]=useState<CashCommitment[]>([]);
+  const [commitmentSchedules,setCommitmentSchedules]=useState<CashCommitmentSchedule[]>([]);
+  const [commitmentForm,setCommitmentForm]=useState({branch:"",commitment_type:"tax" as CashCommitment["commitment_type"],title:"",period_label:"",amount:"",currency_code:"",exchange_rate:"1",due_date:today(),payable_account:"",notes:""});
+  const [scheduleForm,setScheduleForm]=useState({branch:"",title:"",amount:"",currency_code:"",exchange_rate:"1",frequency:"monthly" as CashCommitmentSchedule["frequency"],next_due_date:today(),end_date:"",payable_account:"",notes:""});
+  const [scheduleThrough,setScheduleThrough]=useState(today());
+  const [paymentForms,setPaymentForms]=useState<Record<number,{amount:string;journal_entry:string;payment_date:string}>>({});
+
   const [forecast,setForecast]=useState<TreasuryLiquidityForecast|null>(null);
   const [forecastDays,setForecastDays]=useState(90);
   const [accounts,setAccounts]=useState<TreasuryAccount[]>([]);
@@ -49,10 +55,10 @@ export default function TreasuryPanel({companyId}: Props) {
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
-      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid,forecastData]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId),treasuryApi.liquidityForecast(companyId,forecastDays)]);
+      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid,forecastData,commitmentRows,scheduleRows]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId),treasuryApi.liquidityForecast(companyId,forecastDays),treasuryApi.commitments(companyId),treasuryApi.commitmentSchedules(companyId)]);
       const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"";
-      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);setForecast(forecastData);
-      setAcc(old=>({...old,currency_code:companyBase}));
+      setAccounts(a);setTransactions(t);setCheques(ch);setCommitments(commitmentRows);setCommitmentSchedules(scheduleRows);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);setForecast(forecastData);
+      setAcc(old=>({...old,currency_code:companyBase}));\n      setCommitmentForm(old=>({...old,currency_code:old.currency_code||companyBase,payable_account:old.payable_account||String(g.find(v=>v.nature==="liability"&&!v.is_group&&v.is_active)?.id||"")}));\n      setScheduleForm(old=>({...old,currency_code:old.currency_code||companyBase,payable_account:old.payable_account||String(g.find(v=>v.nature==="liability"&&!v.is_group&&v.is_active)?.id||"")}));
       setReval(old=>({...old,account:old.account||String(a.find(v=>v.is_active&&v.currency_code!==companyBase)?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||"")}));
       setDoc(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),source_account:old.source_account||String(a.find(v=>v.is_active)?.id||"")}));
       setRec(old=>({...old,bank_account:old.bank_account||String(a.find(v=>v.kind==="bank"&&v.is_active)?.id||"")}));
