@@ -8,8 +8,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch
-from sales.api import SalesBaseViewSet
-from sales.models import CustomerReceiptBatch
+from sales.api import SalesBaseViewSet, _document_template_snapshot
+from sales.models import CustomerReceiptBatch, SalesDocumentTemplate
 from sales.receipt_batch_serializers import CustomerReceiptBatchSerializer
 from sales.receipt_batch_services import (
     allocate_customer_receipt_batch, post_customer_receipt_batch,
@@ -64,6 +64,10 @@ class CustomerReceiptBatchViewSet(SalesBaseViewSet):
     def post(self, request, pk=None):
         batch = self.get_object()
         self._check_batch_write_access(batch)
+        batch.print_template_snapshot = _document_template_snapshot(
+            batch.company, SalesDocumentTemplate.DocumentType.RECEIPT,
+        )
+        batch.save(update_fields=("print_template_snapshot",))
         batch = post_customer_receipt_batch(batch.pk, request.user)
         return Response(self.get_serializer(batch).data, status=status.HTTP_200_OK)
 
