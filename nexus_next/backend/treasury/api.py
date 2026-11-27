@@ -522,7 +522,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             company_id=company_id,
             status__in=(
                 PayrollCycle.Status.APPROVED, PayrollCycle.Status.POSTED,
-                PayrollCycle.Status.PAYMENT_PENDING,
+                PayrollCycle.Status.PAYMENT_PENDING, PayrollCycle.Status.PAID,
             ),
             payment_date__lte=end_date,
         ).prefetch_related("postings__payment_treasury_transaction")
