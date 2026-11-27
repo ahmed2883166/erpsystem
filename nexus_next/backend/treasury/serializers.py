@@ -430,6 +430,8 @@ class CashCommitmentScheduleSerializer(serializers.ModelSerializer):
         read_only_fields = ("interval_months", "anchor_day", "base_amount", "created_at", "updated_at")
 
     def validate(self, attrs):
+        if self.instance and set(attrs) == {"active"}:
+            return attrs
         company = attrs.get("company", getattr(self.instance, "company", None))
         branch = attrs.get("branch", getattr(self.instance, "branch", None))
         account = attrs.get("payable_account", getattr(self.instance, "payable_account", None))
