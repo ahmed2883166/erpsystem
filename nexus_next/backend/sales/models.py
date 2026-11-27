@@ -308,8 +308,8 @@ class SalesInvoiceLine(models.Model):
         if self.delivery_line_id:
             if self.delivery_line.product_id != self.product_id or self.product.product_type != Product.ProductType.GOODS:
                 raise ValidationError({"delivery_line": "بند التسليم يجب أن يطابق صنفًا مخزنيًا."})
-            if self.quantity > self.delivery_line.quantity:
-                raise ValidationError({"quantity": "كمية الفاتورة لا يجوز أن تتجاوز كمية بند إذن التسليم."})
+            if self.quantity <= 0 or self.quantity > self.delivery_line.quantity:
+                raise ValidationError({"quantity": "كمية الفاتورة يجب أن تكون أكبر من صفر ولا تتجاوز كمية بند إذن التسليم."})
         elif self.product.product_type != Product.ProductType.SERVICE:
             raise ValidationError({"product": "الفوترة المباشرة متاحة للخدمات فقط."})
         if self.invoice.transaction_currency_id:
