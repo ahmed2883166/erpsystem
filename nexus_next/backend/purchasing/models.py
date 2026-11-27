@@ -1109,6 +1109,8 @@ class LandedCostAllocation(models.Model):
             return
         source = self.source_invoice_line
         receipt = self.receipt_line
+        if self.basis != self.Basis.MANUAL:
+            raise ValidationError({"basis": "التوزيع الآلي غير متاح حاليًا؛ استخدم التوزيع اليدوي لكل بند استلام."})
         if source.invoice_id != self.document.source_invoice_id:
             raise ValidationError({"source_invoice_line": "بند المصروف لا يتبع فاتورة المصدر المحددة."})
         if source.invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE or not source.expense_account_id:
