@@ -1386,6 +1386,14 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
                 })
             if source_line.invoice_id != invoice.pk or not source_line.expense_account_id:
                 raise serializers.ValidationError({"allocations": "كل بند مصدر يجب أن يكون بند مصروف تابعًا لفاتورة المصدر."})
+            account = source_line.expense_account
+            if (
+                not account.is_active or account.is_group or not account.allow_posting
+                or account.nature != ChartOfAccount.Nature.EXPENSE
+            ):
+                raise serializers.ValidationError({
+                    "allocations": "حساب بند المصروف يجب أن يكون حساب مصروف تفصيليًا نشطًا ويسمح بالترحيل."
+                })
             if receipt_line.movement.company_id != company.pk or receipt_line.movement.status != StockMovement.Status.POSTED:
                 raise serializers.ValidationError({"allocations": "كل بند استلام يجب أن يكون مرحّلًا ويتبع الشركة."})
             if receipt_line.product.product_type != Product.ProductType.GOODS:
