@@ -13,10 +13,10 @@ from treasury.models import (TreasuryAccount, TreasuryTransaction, TreasuryFxRev
                              PettyCashExpense, PettyCashCount)
 from treasury.services import (
     post_treasury_transaction, revalue_treasury_fx_account,
-    reverse_treasury_fx_revaluation,
+    reverse_treasury_fx_revaluation, reverse_treasury_transaction,
 )
 from .models import AccountRole, ChartOfAccount, CostCenter, JournalEntry, JournalLine, TaxCode
-from .services import post_journal
+from .services import post_journal, reverse_operational_journal
 
 
 class PostingEngineTests(TestCase):
@@ -380,6 +380,89 @@ class DirectCashFlowApiTests(TestCase):
         self.assertEqual(result.data["non_cash_investing_transactions"], [])
         self.assertEqual(result.data["uncategorized_counterparty_transactions"], [])
 
+    def test_direct_cash_flow_keeps_treasury_reversal_in_its_own_reporting_period(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="DIRECT-REV-CF", name_ar="شركة اختبار عكس الخزينة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="REV-HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash = ChartOfAccount.objects.create(
+            company=company, code="1001", name_ar="البنك", nature="asset",
+        )
+        revenue = ChartOfAccount.objects.create(
+            company=company, code="4001", name_ar="الإيرادات", nature="revenue",
+        )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3001", name_ar="رأس المال", nature="equity",
+        )
+        opening = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="REV-CF-OPEN", entry_date=date(2026, 1, 1),
+            description="رصيد افتتاحي", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening, account=cash, debit=Decimal("500"))
+        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("500"))
+        post_journal(opening.pk)
+        bank = TreasuryAccount.objects.create(
+            company=company, branch=branch, account=cash,
+            kind=TreasuryAccount.Kind.BANK, code="REV-CF-BANK",
+            name_ar="البنك", currency_code="EGP",
+        )
+        user = User.objects.create_user(username="direct_reversal_reader", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+
+        receipt = TreasuryTransaction.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            source_account=bank, counter_account=revenue,
+            kind=TreasuryTransaction.Kind.RECEIPT,
+            document_number="REV-CF-RECEIPT", transaction_date=date(2026, 1, 15),
+            amount=Decimal("100"), description="تحصيل عميل",
+            cash_flow_category=TreasuryTransaction.CashFlowCategory.OPERATING,
+        )
+        post_treasury_transaction(receipt.pk, user)
+        reverse_treasury_transaction(
+            transaction_id=receipt.pk, entry_date=date(2026, 2, 15), user=user,
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=user)
+        january = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(january.status_code, 200, january.data)
+        jan_operating = next(
+            row for row in january.data["sections"]
+            if row["category"] == TreasuryTransaction.CashFlowCategory.OPERATING
+        )
+        self.assertEqual(jan_operating["cash_receipts"], Decimal("100.0000"))
+        self.assertEqual(january.data["ledger_cash_change"], Decimal("100.0000"))
+        self.assertEqual(january.data["reconciliation_difference"], Decimal("0.0000"))
+
+        february = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+        self.assertEqual(february.status_code, 200, february.data)
+        feb_operating = next(
+            row for row in february.data["sections"]
+            if row["category"] == TreasuryTransaction.CashFlowCategory.OPERATING
+        )
+        self.assertEqual(feb_operating["cash_payments"], Decimal("100.0000"))
+        self.assertEqual(february.data["opening_cash_balance"], Decimal("600.0000"))
+        self.assertEqual(february.data["net_change_in_cash"], Decimal("-100.0000"))
+        self.assertEqual(february.data["ledger_cash_change"], Decimal("-100.0000"))
+        self.assertEqual(february.data["closing_cash_balance"], Decimal("500.0000"))
+        self.assertEqual(february.data["reconciliation_difference"], Decimal("0.0000"))
+
     def test_direct_cash_flow_reports_fx_effect_separately_and_scopes_it_to_branch(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
@@ -707,6 +790,39 @@ class DirectCashFlowApiTests(TestCase):
         self.assertEqual(result.data["ledger_closing_cash_balance"], Decimal("445.0000"))
         self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
         self.assertEqual(result.data["closing_balance_difference"], Decimal("0.0000"))
+
+        reverse_operational_journal(
+            settlement_entry.pk, user, date(2026, 2, 2),
+            expected_source=JournalEntry.Source.MANUAL,
+        )
+        reverse_operational_journal(
+            count_entry.pk, user, date(2026, 2, 3),
+            expected_source=JournalEntry.Source.MANUAL,
+        )
+
+        january_after_reversals = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(january_after_reversals.status_code, 200, january_after_reversals.data)
+        self.assertEqual(january_after_reversals.data["net_change_in_cash"], Decimal("-55.0000"))
+        self.assertEqual(january_after_reversals.data["reconciliation_difference"], Decimal("0.0000"))
+
+        february_reversals = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-02-01&date_to=2026-02-28"
+        )
+        self.assertEqual(february_reversals.status_code, 200, february_reversals.data)
+        feb_operating = next(
+            row for row in february_reversals.data["sections"]
+            if row["category"] == TreasuryTransaction.CashFlowCategory.OPERATING
+        )
+        self.assertEqual(feb_operating["cash_receipts"], Decimal("55.0000"))
+        self.assertEqual(february_reversals.data["opening_cash_balance"], Decimal("445.0000"))
+        self.assertEqual(february_reversals.data["net_change_in_cash"], Decimal("55.0000"))
+        self.assertEqual(february_reversals.data["ledger_cash_change"], Decimal("55.0000"))
+        self.assertEqual(february_reversals.data["closing_cash_balance"], Decimal("500.0000"))
+        self.assertEqual(february_reversals.data["reconciliation_difference"], Decimal("0.0000"))
 
 
 
