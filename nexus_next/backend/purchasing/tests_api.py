@@ -4304,3 +4304,113 @@ class PurchaseReceiptConcurrencyTests(TransactionTestCase):
         self.assertEqual(posted_receipts, 2)
         balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
         self.assertEqual(balance.quantity, Decimal("10"))
+
+
+class PurchaseInvoiceIntegrityTests(TransactionTestCase):
+    def setUp(self):
+        self.client = APIClient()
+        PurchasingWorkflowTests.setUp(self)
+
+    def test_invoice_posting_rolls_back_posted_journal_when_later_step_fails(self):
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-ATOMIC-ROLLBACK", "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        invoice_id = invoice.data["id"]
+        journal_count_before = JournalEntry.objects.count()
+
+        from purchasing import services as purchasing_services
+        original_post_journal = purchasing_services.post_journal
+
+        def post_then_fail(entry_id, actor=None):
+            original_post_journal(entry_id, actor=actor)
+            raise DRFValidationError("Injected failure after journal posting.")
+
+        with patch("purchasing.services.post_journal", side_effect=post_then_fail):
+            response = self.client.post(
+                f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json",
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        saved_invoice = PurchaseInvoice.objects.get(pk=invoice_id)
+        self.assertEqual(saved_invoice.status, PurchaseInvoice.Status.DRAFT)
+        self.assertIsNone(saved_invoice.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count_before)
+        self.assertFalse(JournalEntry.objects.filter(
+            entry_number=f"PUR-INV-{invoice_id}",
+        ).exists())
+        self.assertEqual(
+            StockBalance.objects.get(product=self.product, warehouse=self.warehouse).quantity,
+            Decimal("2"),
+        )
+
+    def test_concurrent_partial_invoices_serialize_grni_consumption(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("Concurrent invoice row-locking regression requires PostgreSQL.")
+
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
+        invoice_ids = []
+        for number in ("INV-CONCURRENT-PART-A", "INV-CONCURRENT-PART-B"):
+            invoice = self.client.post("/api/purchasing/invoices/", {
+                "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+                "invoice_number": number, "invoice_date": "2026-03-10",
+                "lines": [{
+                    "receipt_line": receipt_line_id, "billed_quantity": "1",
+                    "unit_price": "100", "tax_rate": "14",
+                }],
+            }, format="json")
+            self.assertEqual(invoice.status_code, 201, invoice.data)
+            invoice_ids.append(invoice.data["id"])
+
+        barrier = threading.Barrier(2)
+
+        def post_invoice(invoice_id):
+            from django.db import close_old_connections
+            close_old_connections()
+            client = APIClient()
+            user = get_user_model().objects.get(pk=self.user.pk)
+            client.force_authenticate(user)
+            barrier.wait(timeout=10)
+            try:
+                response = client.post(
+                    f"/api/purchasing/invoices/{invoice_id}/post/", {}, format="json",
+                )
+                return response.status_code, response.data
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(post_invoice, invoice_ids))
+
+        self.assertEqual([status for status, _ in results].count(200), 2, results)
+        posted_invoices = list(PurchaseInvoice.objects.filter(pk__in=invoice_ids))
+        self.assertEqual(
+            {invoice.status for invoice in posted_invoices},
+            {PurchaseInvoice.Status.POSTED},
+        )
+        self.assertEqual(
+            PurchaseInvoiceLine.objects.filter(
+                receipt_line_id=receipt_line_id,
+                invoice__status=PurchaseInvoice.Status.POSTED,
+            ).aggregate(total=Sum("billed_quantity"))["total"],
+            Decimal("2"),
+        )
+        self.assertEqual(
+            JournalEntry.objects.filter(
+                source_type=JournalEntry.Source.PURCHASES, status=JournalEntry.Status.POSTED,
+            ).count(),
+            2,
+        )
+        grni = self.client.get(
+            "/api/purchasing/receipts/grni-aging/",
+            {"company": self.company.pk, "as_of": "2026-03-10"},
+        )
+        self.assertEqual(grni.status_code, 200, grni.data)
+        self.assertEqual(grni.data["grand_total"], "0.0000")
+        self.assertEqual(grni.data["gl_reconciliation"]["difference"], "0.0000")
+        self.assertTrue(grni.data["gl_reconciliation"]["reconciled"])
