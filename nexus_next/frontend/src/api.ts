@@ -497,6 +497,7 @@ export const treasuryApi = {
   reverseCommitmentPayment: async (id:number,paymentId:number,reversalJournalEntry:number) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitmentPayment>(`/api/treasury/commitments/${id}/reverse-payment/`,{method:"POST",body:JSON.stringify({payment_id:paymentId,reversal_journal_entry:reversalJournalEntry})}); },
   commitmentSchedules: (companyId:number) => request<CashCommitmentSchedule[]>(`/api/treasury/commitment-schedules/?company=${companyId}`),
   createCommitmentSchedule: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitmentSchedule>("/api/treasury/commitment-schedules/",{method:"POST",body:JSON.stringify(payload)}); },
+  setCommitmentScheduleActive: async (id:number,active:boolean) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitmentSchedule>(`/api/treasury/commitment-schedules/${id}/`,{method:"PATCH",body:JSON.stringify({active})}); },
   generateCommitmentSchedule: async (id:number,throughDate:string) => { await request<{detail:string}>("/api/csrf/"); return request<{generated:number;next_due_date:string;active:boolean}>(`/api/treasury/commitment-schedules/${id}/generate/`,{method:"POST",body:JSON.stringify({through_date:throughDate})}); },
   // جلب سجل الشيكات الواردة والصادرة للشركة.
   cheques: (companyId:number) => request<TreasuryCheque[]>(`/api/treasury/cheques/?company=${companyId}&ordering=due_date`),
