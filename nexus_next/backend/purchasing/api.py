@@ -314,6 +314,56 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             "rows": rows,
         })
 
+    @action(detail=False, methods=("get",), url_path="matching-report-export-excel")
+    def matching_report_export_excel(self, request):
+        """تصدير تقرير مطابقة أوامر الشراء والاستلام والفواتير إلى Excel."""
+        report_data = self.matching_report(request).data
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "مطابقة المشتريات"
+        fields = [
+            ("order_number", "أمر الشراء"), ("order_date", "التاريخ"),
+            ("supplier_name", "المورد"), ("warehouse_name", "المخزن"),
+            ("branch_name", "الفرع"), ("product_code", "كود الصنف"),
+            ("product_name", "الصنف"), ("ordered_quantity", "الكمية المطلوبة"),
+            ("received_quantity", "الكمية المستلمة"), ("invoiced_quantity", "الكمية المفوترة"),
+            ("returned_quantity", "الكمية المرتجعة"),
+            ("uninvoiced_received_quantity", "مستلم غير مفوتر"),
+            ("unreceived_quantity", "غير مستلم"), ("overinvoiced_quantity", "مفوتر بالزيادة"),
+            ("order_unit_price", "سعر أمر الشراء"), ("expected_order_value", "قيمة الأمر"),
+            ("invoiced_net_amount", "صافي الفاتورة"), ("price_variance", "فرق السعر"),
+            ("receipt_numbers", "أذون الاستلام"), ("invoice_numbers", "فواتير المورد"),
+        ]
+        sheet.append([label for _, label in fields])
+        for row in report_data["rows"]:
+            values = []
+            for key, _ in fields:
+                value = row.get(key, "")
+                if isinstance(value, list):
+                    value = "، ".join(str(item) for item in value)
+                if value is None:
+                    value = ""
+                if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\\t", "\\r")):
+                    value = "'" + value
+                values.append(value)
+            sheet.append(values)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column in sheet.columns:
+            width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 36)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = (
+            f'attachment; filename="purchase-matching-report-{report_data["company"]}.xlsx"'
+        )
+        return response_file
+
 
 class PurchaseReceiptViewSet(PurchaseBaseViewSet):
     serializer_class = PurchaseReceiptSerializer
