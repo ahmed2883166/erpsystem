@@ -1970,6 +1970,14 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
         self._write(schedule.company_id)
         if schedule.occurrences.filter(commitment__isnull=False).exists():
             raise ValidationError("لا يمكن تعديل جدول بعد توليد استحقاقاته؛ أوقفه وأنشئ جدولًا جديدًا.")
+        company = serializer.validated_data.get("company", schedule.company)
+        if company.pk != schedule.company_id:
+            raise ValidationError("لا يمكن نقل جدول دوري بين الشركات.")
+        branch = serializer.validated_data.get("branch", schedule.branch)
+        if branch and not can_access_branch(self.request.user, branch.pk, schedule.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الجدول.")
+        if not branch and not has_company_wide_branch_access(self.request.user, schedule.company_id):
+            raise PermissionDenied("تعديل الجدول إلى نطاق عام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         serializer.save()
 
     @transaction.atomic
