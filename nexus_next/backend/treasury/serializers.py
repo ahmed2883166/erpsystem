@@ -164,16 +164,50 @@ class TreasuryTransactionSerializer(serializers.ModelSerializer):
 
 
 class BankStatementLineSerializer(serializers.ModelSerializer):
-    matched_document = serializers.CharField(source="matched_transaction.document_number", read_only=True, default="")
-    matched_amount = serializers.DecimalField(source="matched_transaction.amount", max_digits=20, decimal_places=4, read_only=True, default=None)
+    matched_document = serializers.SerializerMethodField()
+    matched_amount = serializers.SerializerMethodField()
+    remaining_amount = serializers.SerializerMethodField()
+    allocations = serializers.SerializerMethodField()
     adjustment_document = serializers.CharField(source="adjustment_transaction.document_number", read_only=True, default="")
     adjustment_status = serializers.CharField(source="adjustment_transaction.status", read_only=True, default="")
 
     class Meta:
         model = BankStatementLine
-        fields = ("id", "reconciliation", "line_number", "transaction_date", "description", "reference",
-                  "amount", "matched_transaction", "matched_document", "matched_amount", "adjustment_transaction", "adjustment_document", "adjustment_status", "matched_at")
-        read_only_fields = ("matched_transaction", "adjustment_transaction", "matched_at")
+        fields = (
+            "id", "reconciliation", "line_number", "transaction_date", "description",
+            "reference", "amount", "matched_transaction", "matched_document",
+            "matched_amount", "remaining_amount", "allocations", "adjustment_transaction",
+            "adjustment_document", "adjustment_status", "matched_at",
+        )
+        read_only_fields = (
+            "matched_transaction", "matched_at", "matched_document", "matched_amount",
+            "remaining_amount", "allocations", "adjustment_transaction",
+        )
+
+    def get_allocations(self, obj):
+        return [{
+            "id": allocation.pk,
+            "transaction_id": allocation.transaction_id,
+            "document_number": allocation.transaction.document_number,
+            "transaction_date": allocation.transaction.transaction_date,
+            "allocated_amount": str(allocation.amount),
+        } for allocation in obj.allocations.select_related("transaction").all()]
+
+    def get_matched_amount(self, obj):
+        return str(sum((item.amount for item in obj.allocations.all()), Decimal("0.0000")))
+
+    def get_remaining_amount(self, obj):
+        return str(max(Decimal("0.0000"), abs(obj.amount) - sum(
+            (item.amount for item in obj.allocations.all()), Decimal("0.0000")
+        )))
+
+    def get_matched_document(self, obj):
+        documents = list(obj.allocations.select_related("transaction").values_list(
+            "transaction__document_number", flat=True
+        )[:3])
+        if documents:
+            return "، ".join(documents) + ("…" if obj.allocations.count() > 3 else "")
+        return obj.matched_transaction.document_number if obj.matched_transaction_id else ""
 
     def validate(self, attrs):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""

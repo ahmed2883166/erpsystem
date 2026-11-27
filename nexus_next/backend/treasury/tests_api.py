@@ -977,3 +977,137 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(approved.status_code, 200, approved.data)
         approval.refresh_from_db()
         self.assertEqual(approval.decided_by_id, independent_manager.pk)
+
+    def _posted_bank_receipt(self, number, amount, movement_date="2026-03-10"):
+        created = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.bank.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": number, "transaction_date": movement_date,
+            "amount": str(amount), "description": number,
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/treasury/transactions/{created.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return created.data
+
+    def _bank_reconciliation(self, number, closing):
+        created = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk,
+            "statement_number": number, "statement_date": "2026-03-31",
+            "opening_balance": "0.0000", "closing_balance": str(closing),
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        return created.data
+
+    def _bank_line(self, recon_id, number, amount, movement_date="2026-03-10"):
+        created = self.client.post(
+            f"/api/treasury/reconciliations/{recon_id}/add_line/",
+            {"line_number": number, "transaction_date": movement_date, "amount": str(amount)},
+            format="json",
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        return created.data
+
+    def _allocate(self, recon_id, line_id, transaction_id, amount):
+        return self.client.post(
+            f"/api/treasury/reconciliations/{recon_id}/match/",
+            {"line_id": line_id, "transaction_id": transaction_id, "amount": str(amount)},
+            format="json",
+        )
+
+    def test_bank_reconciliation_many_transactions_to_one_statement_line(self):
+        first = self._posted_bank_receipt("BANK-GROUP-100", "100.0000")
+        second = self._posted_bank_receipt("BANK-GROUP-150", "150.0000")
+        recon = self._bank_reconciliation("ST-GROUP-250", "250.0000")
+        line = self._bank_line(recon["id"], 1, "250.0000")
+
+        one = self._allocate(recon["id"], line["id"], first["id"], "100.0000")
+        self.assertEqual(one.status_code, 200, one.data)
+        two = self._allocate(recon["id"], line["id"], second["id"], "150.0000")
+        self.assertEqual(two.status_code, 200, two.data)
+        self.assertEqual(len(two.data["allocations"]), 2)
+        self.assertEqual(two.data["remaining_amount"], "0.0000")
+        summary = self.client.get(
+            f"/api/treasury/reconciliations/{recon['id']}/summary/"
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["matched_lines"], 1)
+        self.assertEqual(summary.data["unmatched_lines"], 0)
+        self.assertEqual(summary.data["unexplained_difference"], "0.0000")
+        completed = self.client.post(
+            f"/api/treasury/reconciliations/{recon['id']}/reconcile/", {}, format="json"
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertEqual(completed.data["status"], "reconciled")
+
+    def test_bank_reconciliation_one_transaction_to_multiple_statement_lines(self):
+        transaction = self._posted_bank_receipt("BANK-SPLIT-250", "250.0000")
+        recon = self._bank_reconciliation("ST-SPLIT-250", "250.0000")
+        first_line = self._bank_line(recon["id"], 1, "100.0000")
+        second_line = self._bank_line(recon["id"], 2, "150.0000")
+
+        first = self._allocate(recon["id"], first_line["id"], transaction["id"], "100.0000")
+        self.assertEqual(first.status_code, 200, first.data)
+        second = self._allocate(recon["id"], second_line["id"], transaction["id"], "150.0000")
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(second.data["remaining_amount"], "0.0000")
+        summary = self.client.get(
+            f"/api/treasury/reconciliations/{recon['id']}/summary/"
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["matched_lines"], 2)
+        self.assertEqual(summary.data["unmatched_lines"], 0)
+        self.assertEqual(summary.data["outstanding_total"], "0.0000")
+        completed = self.client.post(
+            f"/api/treasury/reconciliations/{recon['id']}/reconcile/", {}, format="json"
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+
+    def test_bank_reconciliation_prevents_overallocation_and_shows_partial_balances(self):
+        transaction = self._posted_bank_receipt("BANK-PARTIAL-150", "150.0000")
+        recon = self._bank_reconciliation("ST-PARTIAL-200", "200.0000")
+        line = self._bank_line(recon["id"], 1, "200.0000")
+        second_transaction = self._posted_bank_receipt("BANK-PARTIAL-200", "200.0000")
+        partial = self._allocate(recon["id"], line["id"], transaction["id"], "100.0000")
+        self.assertEqual(partial.status_code, 200, partial.data)
+        self.assertEqual(partial.data["matched_amount"], "100.0000")
+        self.assertEqual(partial.data["remaining_amount"], "100.0000")
+
+        over_transaction = self._allocate(recon["id"], line["id"], transaction["id"], "100.0000")
+        self.assertEqual(over_transaction.status_code, 400, over_transaction.data)
+        self.assertIn("المتبقي", str(over_transaction.data))
+        over_line = self._allocate(recon["id"], line["id"], second_transaction["id"], "100.0001")
+        self.assertEqual(over_line.status_code, 400, over_line.data)
+
+        summary = self.client.get(
+            f"/api/treasury/reconciliations/{recon['id']}/summary/"
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["unmatched_lines"], 1)
+        self.assertEqual(summary.data["unmatched_statement_total"], "100.0000")
+        self.assertEqual(summary.data["outstanding_total"], "250.0000")
+        self.assertEqual(summary.data["unexplained_difference"], "0.0000")
+        cannot_close = self.client.post(
+            f"/api/treasury/reconciliations/{recon['id']}/reconcile/", {}, format="json"
+        )
+        self.assertEqual(cannot_close.status_code, 400, cannot_close.data)
+
+    def test_bank_reconciliation_reports_timing_difference_without_adjusting_entry(self):
+        transaction = self._posted_bank_receipt(
+            "BANK-TIMING-050", "50.0000", movement_date="2026-03-10",
+        )
+        recon = self._bank_reconciliation("ST-TIMING-000", "0.0000")
+        summary = self.client.get(
+            f"/api/treasury/reconciliations/{recon['id']}/summary/"
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["outstanding_total"], "50.0000")
+        outstanding = summary.data["outstanding_transactions"]
+        self.assertEqual(len(outstanding), 1)
+        self.assertEqual(outstanding[0]["id"], transaction["id"])
+        self.assertEqual(outstanding[0]["timing_difference_days"], 21)
+        self.assertEqual(summary.data["unexplained_difference"], "0.0000")
+        self.assertEqual(JournalEntry.objects.count(), 1)
+
