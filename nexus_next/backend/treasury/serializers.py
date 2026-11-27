@@ -505,6 +505,10 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"petty_cash_account": "حساب العهدة يجب أن يكون أصلًا."})
         if funding and petty and funding.pk == petty.pk:
             raise serializers.ValidationError("حساب التمويل يجب أن يختلف عن حساب العهدة.")
+        if funding and (not funding.is_active or funding.account.nature != ChartOfAccount.Nature.ASSET):
+            raise serializers.ValidationError({"funding_account": "حساب التمويل يجب أن يكون خزينة نشطة من طبيعة الأصول."})
+        if petty and not petty.is_active:
+            raise serializers.ValidationError({"petty_cash_account": "حساب العهدة يجب أن يكون نشطًا."})
         if custodian and not custodian.is_active:
             raise serializers.ValidationError({"custodian": "أمين العهدة يجب أن يكون مستخدمًا نشطًا."})
         authorized = attrs.get("authorized_amount", getattr(self.instance, "authorized_amount", None))
