@@ -1777,6 +1777,13 @@ class CashCommitmentViewSet(TreasuryBaseViewSet):
 
     def get_queryset(self):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            branches = accessible_branches(self.request.user)
+            company_wide_ids = [
+                company_id for company_id in qs.values_list("company_id", flat=True).distinct()
+                if has_company_wide_branch_access(self.request.user, company_id)
+            ]
+            qs = qs.filter(models.Q(branch__in=branches) | models.Q(branch__isnull=True, company_id__in=company_wide_ids))
         branch = self.request.query_params.get("branch")
         if branch:
             if not branch.isdigit():
@@ -1794,6 +1801,8 @@ class CashCommitmentViewSet(TreasuryBaseViewSet):
         branch = serializer.validated_data.get("branch")
         if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية إدارة الالتزامات في هذا الفرع.")
+        if not branch and not has_company_wide_branch_access(self.request.user, company.pk):
+            raise PermissionDenied("إنشاء التزام عام بلا فرع يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -1925,7 +1934,15 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
     filterset_fields = ("company", "branch", "frequency", "active")
 
     def get_queryset(self):
-        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            branches = accessible_branches(self.request.user)
+            company_wide_ids = [
+                company_id for company_id in qs.values_list("company_id", flat=True).distinct()
+                if has_company_wide_branch_access(self.request.user, company_id)
+            ]
+            qs = qs.filter(models.Q(branch__in=branches) | models.Q(branch__isnull=True, company_id__in=company_wide_ids))
+        return qs
 
     def perform_create(self, serializer):
         company = serializer.validated_data["company"]
@@ -1934,6 +1951,8 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
         branch = serializer.validated_data.get("branch")
         if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
             raise PermissionDenied("لا تملك صلاحية إدارة الجدول الدوري في هذا الفرع.")
+        if not branch and not has_company_wide_branch_access(self.request.user, company.pk):
+            raise PermissionDenied("إنشاء جدول عام بلا فرع يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
@@ -1949,6 +1968,7 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
         """توليد الاستحقاقات حتى تاريخ محدد مع منع تكرار أي شهر."""
         from calendar import monthrange
         from datetime import date as date_type
+        from companies.models import ExchangeRate
         schedule = self.get_object()
         self._write(schedule.company_id)
         if schedule.branch_id and not can_access_branch(request.user, schedule.branch_id, schedule.company_id):
@@ -1965,12 +1985,22 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
                 schedule=schedule, due_date=next_due,
             )
             if created:
+                occurrence_rate = schedule.exchange_rate
+                if schedule.currency_code != schedule.company.base_currency.code:
+                    approved_rate = ExchangeRate.objects.filter(
+                        company=schedule.company, currency__code=schedule.currency_code,
+                        rate_date=next_due,
+                    ).order_by("-id").first()
+                    if not approved_rate:
+                        raise ValidationError({"through_date": "لا يوجد سعر صرف معتمد بتاريخ " + next_due.isoformat() + " للعملة " + schedule.currency_code + "."})
+                    occurrence_rate = approved_rate.rate
+                occurrence_base_amount = (schedule.amount * occurrence_rate).quantize(Decimal("0.0001"))
                 commitment = CashCommitment.objects.create(
                     company=schedule.company, branch=schedule.branch,
                     commitment_type=CashCommitment.Kind.RECURRING_EXPENSE,
                     title=schedule.title, period_label=next_due.strftime("%Y-%m"),
                     amount=schedule.amount, currency_code=schedule.currency_code,
-                    exchange_rate=schedule.exchange_rate, base_amount=schedule.base_amount,
+                    exchange_rate=occurrence_rate, base_amount=occurrence_base_amount,
                     due_date=next_due, payable_account=schedule.payable_account,
                     origin_type="recurring_schedule_occurrence", origin_id=occurrence.pk,
                     notes=schedule.notes, created_by=request.user,
