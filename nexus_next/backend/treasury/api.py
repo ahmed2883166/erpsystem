@@ -134,7 +134,8 @@ def _parse_bank_statement(upload, statement_date):
                 _parse_statement_date(posted.group(0) if posted else _ofx_tag(block, "DTPOSTED")),
                 _parse_statement_amount(_ofx_tag(block, "TRNAMT")),
                 _ofx_tag(block, "MEMO") or _ofx_tag(block, "NAME"), _ofx_tag(block, "FITID"),
-            ))        if not rows:
+            ))
+        if not rows:
             raise ValueError("لم يتم العثور على حركات STMTTRN في ملف OFX.")
     elif extension in ("mt940", "sta", "940"):
         text = raw.decode("utf-8-sig", errors="replace")
