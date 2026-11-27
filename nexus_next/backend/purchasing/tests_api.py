@@ -3666,6 +3666,14 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.assertEqual(clearing_debit, Decimal("10.0000"))
         self.assertEqual(clearing_credit, Decimal("10.0000"))
 
+        report = self.client.get(
+            f"/api/purchasing/landed-costs/report/?company={self.company.pk}",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["totals"]["allocated"], "20.0000")
+        self.assertEqual(report.data["totals"]["inventory"], "10.0000")
+        self.assertEqual(report.data["totals"]["cogs"], "10.0000")
+
         reversed_response = self.client.post(
             f"/api/purchasing/landed-costs/{document.pk}/reverse/",
             {"entry_date": "2026-03-20"}, format="json",
@@ -3679,6 +3687,12 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.assertEqual(source_invoice.journal_entry.status, JournalEntry.Status.POSTED)
         allocation.source_journal_entry.refresh_from_db()
         self.assertEqual(allocation.source_journal_entry.status, JournalEntry.Status.REVERSED)
+        reversed_report = self.client.get(
+            f"/api/purchasing/landed-costs/report/?company={self.company.pk}",
+        )
+        self.assertEqual(reversed_report.status_code, 200, reversed_report.data)
+        self.assertEqual(reversed_report.data["totals"]["allocated"], "0")
+        self.assertEqual(reversed_report.data["totals"]["reversed"], "20.0000")
 
     def test_landed_cost_cannot_exceed_unallocated_direct_expense_line(self):
         _, receipt_line_id = self._create_and_post_receipt()
