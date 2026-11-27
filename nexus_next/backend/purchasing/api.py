@@ -1404,7 +1404,10 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         totals["invoice_count"] = len({invoice.pk for invoice in invoices})
         inventory_nonrecoverable_tax = sum((
             allocation.inventory_amount + allocation.cogs_amount + allocation.adjustment_loss_amount
-            for invoice in invoices for allocation in invoice.tax_allocations.all()
+            for invoice in invoices
+            for allocation in invoice.tax_allocations.all()
+            if (not branch_id or allocation.branch_id == branch_id)
+            and can_access_branch(request.user, allocation.branch_id, company_id)
         ), Decimal("0"))
         totals["inventory_nonrecoverable_tax"] = inventory_nonrecoverable_tax
         totals["nonrecoverable_tax"] += inventory_nonrecoverable_tax
