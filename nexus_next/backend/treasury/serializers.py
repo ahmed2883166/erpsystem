@@ -409,7 +409,7 @@ class CashCommitmentSerializer(serializers.ModelSerializer):
         if bool(origin_type) != (origin_id is not None):
             raise serializers.ValidationError({"origin_id": "مرجع المصدر يجب أن يحتوي النوع والمعرف معًا."})
         if company and origin_type and origin_id is not None:
-            duplicate = CashCommitment.objects.filter(company=company, origin_type=origin_type, origin_id=origin_id).exclude(status=CashCommitment.Status.VOID)
+            duplicate = CashCommitment.objects.filter(company=company, origin_type=origin_type, origin_id=origin_id)
             if self.instance:
                 duplicate = duplicate.exclude(pk=self.instance.pk)
             if duplicate.exists():
