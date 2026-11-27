@@ -9,7 +9,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -115,6 +115,60 @@ class TreasuryWorkflowTests(APITestCase):
         )
         self.assertEqual(posted.status_code, 200, posted.data)
         self.assertEqual(JournalEntry.objects.filter(pk=entry.pk).count(), 1)
+
+    def test_foreign_treasury_opening_balance_posts_fx_snapshot_and_initializes_position(self):
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        ExchangeRate.objects.create(
+            company=self.company, currency=usd,
+            rate_date=date(2025, 12, 31), rate=Decimal("30"),
+        )
+        retained = ChartOfAccount.objects.create(
+            company=self.company, code="3000", name_ar="الأرباح المحتجزة",
+            nature=ChartOfAccount.Nature.EQUITY,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
+        )
+        opening_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك دولار افتتاحي",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        created = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": opening_gl.pk,
+            "kind": "bank", "code": "BANK-USD-OPEN", "name_ar": "بنك دولار افتتاحي",
+            "currency_code": "USD", "opening_balance": "150000",
+            "opening_foreign_amount": "5000", "opening_exchange_rate": "30",
+            "opening_exchange_rate_date": "2025-12-31",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(created.data["opening_foreign_amount"], "5000.0000")
+        self.assertEqual(created.data["opening_balance"], "150000.0000")
+        entry = JournalEntry.objects.get(pk=created.data["opening_journal_entry"])
+        bank_line = entry.lines.get(account=opening_gl)
+        self.assertEqual(bank_line.debit, Decimal("150000.0000"))
+        self.assertEqual(bank_line.transaction_amount, Decimal("5000.0000"))
+        self.assertEqual(bank_line.transaction_currency, usd)
+        self.assertEqual(bank_line.exchange_rate, Decimal("30"))
+        self.assertEqual(entry.lines.get(account=retained).credit, Decimal("150000.0000"))
+        position = TreasuryFxPosition.objects.get(account_id=created.data["id"])
+        self.assertEqual(position.foreign_amount, Decimal("5000.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("150000.0000"))
+
+    def test_foreign_treasury_opening_balance_rejects_unapproved_rate(self):
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        opening_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1121", name_ar="بنك دولار غير معتمد",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        response = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": opening_gl.pk,
+            "kind": "bank", "code": "BANK-USD-BAD", "name_ar": "بنك دولار",
+            "currency_code": "USD", "opening_balance": "150000",
+            "opening_foreign_amount": "5000", "opening_exchange_rate": "30",
+            "opening_exchange_rate_date": "2025-12-31",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(TreasuryAccount.objects.filter(code="BANK-USD-BAD").exists())
 
     def test_receipt_posts_balanced_journal_and_is_idempotent(self):
         response = self._create()
