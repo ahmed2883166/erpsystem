@@ -644,7 +644,8 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(adjustment.data["transaction"]["kind"], "payment")
         self.assertEqual(adjustment.data["transaction"]["status"], "draft")
         self.assertEqual(adjustment.data["line"]["adjustment_document"], adjustment.data["transaction"]["document_number"])
-        self.assertEqual(JournalEntry.objects.count(), 0)
+        # Only the earlier funding receipt is posted; the adjustment remains a draft.
+        self.assertEqual(JournalEntry.objects.count(), 1)
 
         posted = self.client.post(
             f"/api/treasury/transactions/{adjustment.data['transaction']['id']}/post/",
