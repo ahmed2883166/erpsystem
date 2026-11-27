@@ -152,6 +152,29 @@ class DeliveryLineInputSerializer(serializers.Serializer):
     expiry_date = serializers.DateField(required=False, allow_null=True)
     order_line = serializers.PrimaryKeyRelatedField(queryset=SalesOrderLine.objects.select_related("order"), required=False, allow_null=True)
 
+    def _validate_delivery_quantities(self, lines, exclude_invoice_id=None):
+        """تحقق من الكميات المفوترة والمحجوزة لكل بند تسليم."""
+        for line in lines:
+            delivery_line = line.get("delivery_line")
+            if not delivery_line:
+                continue
+            quantity = line.get("quantity")
+            if quantity is None:
+                quantity = delivery_line.quantity
+            if quantity <= 0 or quantity > delivery_line.quantity:
+                raise serializers.ValidationError({
+                    "lines": f"كمية الفاتورة للصنف {delivery_line.product.code} يجب أن تكون أكبر من صفر ولا تتجاوز كمية التسليم."
+                })
+            prior = SalesInvoiceLine.objects.filter(delivery_line_id=delivery_line.pk)
+            if exclude_invoice_id:
+                prior = prior.exclude(invoice_id=exclude_invoice_id)
+            invoiced = prior.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+            if invoiced + quantity > delivery_line.quantity:
+                remaining = delivery_line.quantity - invoiced
+                raise serializers.ValidationError({
+                    "lines": f"الكمية المتبقية للفوترة للصنف {delivery_line.product.code} هي {remaining} فقط."
+                })
+
     def validate(self, attrs):
         """التحقق من صحة المدخلات واتساق العلاقات قبل قبول بيانات المستند."""
         product = attrs["product"]
@@ -737,8 +760,15 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         if delivery:
             expected = set(delivery.stock_movement.lines.values_list("id", flat=True))
             supplied = [line.get("delivery_line").pk for line in lines if line.get("delivery_line")]
-            if len(supplied) != len(lines) or not supplied or set(supplied) != expected or len(supplied) != len(expected):
-                raise serializers.ValidationError({"lines": "يجب إدخال كل أصناف إذن التسليم مرة واحدة دون حذف أو تكرار."})
+            if (
+                len(supplied) != len(lines) or not supplied
+                or len(supplied) != len(set(supplied))
+                or not set(supplied).issubset(expected)
+            ):
+                raise serializers.ValidationError({"lines": "اختر بنودًا صحيحة من إذن التسليم دون تكرار."})
+            self._validate_delivery_quantities(
+                lines, exclude_invoice_id=instance.pk if instance else None
+            )
         else:
             for line in lines:
                 product = line.get("product")
@@ -823,6 +853,17 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
         """إنشاء المستند وبنوده داخل معاملة ذرية لضمان اتساق البيانات."""
         from approvals.models import DiscountApprovalPolicy
         lines = validated_data.pop("lines")
+        delivery = validated_data.get("delivery")
+        if delivery:
+            line_ids = [line["delivery_line"].pk for line in lines]
+            locked_lines = list(
+                StockMovementLine.objects.select_for_update()
+                .filter(pk__in=line_ids, movement_id=delivery.stock_movement_id)
+                .order_by("pk")
+            )
+            if len(locked_lines) != len(set(line_ids)):
+                raise serializers.ValidationError({"lines": "بعض بنود الفاتورة لا تتبع إذن التسليم المحدد."})
+            self._validate_delivery_quantities(lines)
         invoice = SalesInvoice.objects.create(**validated_data, created_by=self.context["request"].user)
         policy = DiscountApprovalPolicy.objects.filter(company=invoice.company).first()
         discount_limits = [
@@ -887,6 +928,16 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("لا يمكن تعديل فاتورة مبيعات مرحلة.")
         lines = validated_data.pop("lines", None)
         if lines is not None:
+            if instance.delivery_id:
+                line_ids = [line["delivery_line"].pk for line in lines if line.get("delivery_line")]
+                locked_lines = list(
+                    StockMovementLine.objects.select_for_update()
+                    .filter(pk__in=line_ids, movement_id=instance.delivery.stock_movement_id)
+                    .order_by("pk")
+                )
+                if len(locked_lines) != len(set(line_ids)):
+                    raise serializers.ValidationError({"lines": "بعض بنود الفاتورة لا تتبع إذن التسليم المحدد."})
+                self._validate_delivery_quantities(lines, exclude_invoice_id=instance.pk)
             existing = list(instance.lines.order_by("id"))
             if len(existing) != len(lines):
                 raise serializers.ValidationError({"lines": "لا يمكن إضافة أو حذف بنود من فاتورة موجودة؛ أنشئ الفاتورة من جديد قبل الترحيل."})
@@ -896,7 +947,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
                 if delivery_line is not None:
                     line.delivery_line = delivery_line
                     line.product = delivery_line.product
-                    line.quantity = delivery_line.quantity
+                    line.quantity = data.get("quantity", line.quantity)
                 else:
                     if product is not None:
                         line.product = product
