@@ -2076,6 +2076,12 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(branch__in=accessible_branches(self.request.user))
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            if not company_id.isdigit():
+                raise ValidationError({"company": "الشركة المحددة غير صحيحة."})
+            self._scope(int(company_id))
+            qs = qs.filter(company_id=int(company_id))
         branch = self.request.query_params.get("branch")
         if branch:
             if not branch.isdigit() or not can_access_branch(self.request.user, int(branch)):
@@ -2095,8 +2101,11 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
     def perform_update(self, serializer):
         fund = serializer.instance
         self._write(fund.company_id)
+        if "status" in serializer.validated_data and serializer.validated_data["status"] == PettyCashFund.Status.CLOSED:
+            if self._balance(fund) != 0 or fund.expenses.filter(status=PettyCashExpense.Status.DRAFT).exists():
+                raise ValidationError("لا يمكن إغلاق عهدة بها رصيد أو مصروفات غير مسواة.")
         if fund.transfers.exists() or fund.expenses.exists():
-            for field in ("company", "branch", "funding_account", "petty_cash_account", "authorized_amount"):
+            for field in ("company", "branch", "custodian", "funding_account", "petty_cash_account", "authorized_amount"):
                 if field in serializer.validated_data and getattr(serializer.validated_data[field], "pk", serializer.validated_data[field]) != getattr(fund, f"{field}_id", getattr(fund, field)):
                     raise ValidationError({field: "لا يمكن تغيير بيانات تأسيس العهدة بعد بدء حركتها."})
         serializer.save()
@@ -2176,6 +2185,8 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
             raise ValidationError({"detail": "أدخل مبلغًا موجبًا وتاريخ حركة صحيحًا."})
         if amount > fund.authorized_amount:
             raise ValidationError({"amount": "لا يجوز صرف عهدة تأسيسية تتجاوز الحد المعتمد."})
+        if self._balance(fund) != 0:
+            raise ValidationError({"amount": "يجب أن يكون رصيد حساب العهدة صفرًا قبل الصرف التأسيسي."})
         doc = self._transfer(fund, amount, PettyCashTransfer.Kind.INITIAL, movement_date, request.user)
         return response.Response({"transfer_id": doc.pk, "document_number": doc.document_number, "journal_entry": doc.journal_entry_id, "amount": amount}, status=status.HTTP_201_CREATED)
 
@@ -2194,6 +2205,8 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         if not amount.is_finite() or amount <= 0 or not movement_date:
             raise ValidationError({"detail": "أدخل مبلغًا موجبًا وتاريخ حركة صحيحًا."})
         settlements = list(fund.settlements.select_for_update().filter(total_amount__gt=models.F("replenished_amount")).order_by("settlement_date", "id"))
+        if any(item.settlement_date > movement_date for item in settlements):
+            raise ValidationError({"transaction_date": "تاريخ التغذية لا يجوز أن يسبق تاريخ التسوية."})
         outstanding = sum((item.total_amount - item.replenished_amount for item in settlements), Decimal("0"))
         if outstanding <= 0 or amount != outstanding:
             raise ValidationError({"amount": f"قيمة التغذية يجب أن تساوي إجمالي التسويات غير المغذاة ({outstanding})."})
@@ -2228,6 +2241,9 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         settlement_date = dateparse.parse_date(str(request.data.get("settlement_date", "")))
         if not settlement_date or any(item.expense_date > settlement_date for item in expenses):
             raise ValidationError({"settlement_date": "تاريخ التسوية غير صحيح أو يسبق تاريخ أحد المصروفات."})
+        missing_receipts = [item.pk for item in expenses if not item.receipt_number.strip()]
+        if missing_receipts:
+            raise ValidationError({"expense_ids": f"يجب إدخال رقم إيصال أو مستند لكل مصروف قبل التسوية: {missing_receipts}."})
         total = sum((item.amount for item in expenses), Decimal("0"))
         if self._balance(fund) < total:
             raise ValidationError({"expense_ids": "رصيد العهدة الدفتري لا يكفي لتسوية المصروفات المحددة."})
