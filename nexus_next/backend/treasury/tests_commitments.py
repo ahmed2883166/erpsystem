@@ -125,6 +125,23 @@ class CashCommitmentApiTests(APITestCase):
         self.assertEqual(second.status_code, 200, second.data)
         self.assertEqual(second.data["generated"], 0)
         self.assertEqual(CashCommitment.objects.filter(company=self.company).count(), 4)
+        paused = self.client.patch(
+            f"/api/treasury/commitment-schedules/{schedule_id}/",
+            {"active": False}, format="json",
+        )
+        self.assertEqual(paused.status_code, 200, paused.data)
+        self.assertFalse(paused.data["active"])
+        rejected_edit = self.client.patch(
+            f"/api/treasury/commitment-schedules/{schedule_id}/",
+            {"amount": "6000"}, format="json",
+        )
+        self.assertEqual(rejected_edit.status_code, 400, rejected_edit.data)
+        resumed = self.client.patch(
+            f"/api/treasury/commitment-schedules/{schedule_id}/",
+            {"active": True}, format="json",
+        )
+        self.assertEqual(resumed.status_code, 200, resumed.data)
+        self.assertTrue(resumed.data["active"])
 
     def test_reversal_journal_restores_commitment_balance(self):
         response = self._create_commitment()
