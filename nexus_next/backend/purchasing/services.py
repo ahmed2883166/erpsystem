@@ -1776,6 +1776,21 @@ def post_landed_cost_document(document_id, user):
     document.posted_by = user
     document.posted_at = timezone.now()
     document.save(update_fields=("status", "posted_by", "posted_at"))
+    AuditEvent.objects.create(
+        actor=user, company=invoice.company, branch=source_branch,
+        action=AuditEvent.Action.ACTION, resource="purchasing.landed_cost.posted",
+        object_id=str(document.pk), http_method="POST", status_code=200, succeeded=True,
+        metadata={
+            "document_number": document.document_number,
+            "source_invoice_id": invoice.pk,
+            "total_amount": str(document.total_amount),
+            "allocation_count": len(allocations),
+            "journal_entry_ids": sorted({
+                allocation.source_journal_entry_id
+                for allocation, _ in prepared if allocation.source_journal_entry_id
+            }),
+        },
+    )
     return document
 
 
@@ -1933,5 +1948,18 @@ def reverse_landed_cost_document(document_id, user, entry_date):
         status=LandedCostDocument.Status.REVERSED,
         reversal_journal_entry=first_reversal,
         reversed_at=timezone.now(),
+    )
+    AuditEvent.objects.create(
+        actor=user, company=document.company,
+        branch=allocations[0].source_journal_entry.branch,
+        action=AuditEvent.Action.ACTION, resource="purchasing.landed_cost.reversed",
+        object_id=str(document.pk), http_method="POST", status_code=200, succeeded=True,
+        metadata={
+            "document_number": document.document_number,
+            "reversal_date": entry_date.isoformat(),
+            "reversal_journal_entry_ids": sorted(
+                reversal.pk for reversal in reversal_by_original.values()
+            ),
+        },
     )
     return LandedCostDocument.objects.get(pk=document.pk)
