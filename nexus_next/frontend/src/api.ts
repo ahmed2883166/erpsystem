@@ -1102,6 +1102,13 @@ export type BankReconciliation = { id: number; company: number; bank_account: nu
 export type BankStatementLine = { id: number; reconciliation: number; line_number: number; transaction_date: string; description: string; reference: string; amount: string; matched_transaction: number | null; matched_document: string; matched_amount: string; remaining_amount: string; allocations: {id:number;transaction_id:number;document_number:string;transaction_date:string;allocated_amount:string}[]; adjustment_transaction: number | null; adjustment_document: string; adjustment_status: string; matched_at: string | null };
 export type BankReconciliationSummary = { reconciliation: BankReconciliation; statement_calculated: string; statement_difference: string; book_balance: string; outstanding_total: string; unmatched_statement_total: string; expected_book_balance: string; unexplained_difference: string; matched_lines: number; unmatched_lines: number; lines: BankStatementLine[]; outstanding_transactions: { id: number; date: string; document_number: string; description: string; amount: string; original_amount:string; allocated_amount:string; remaining_amount:string; timing_difference_days:number }[] };
 // واجهات التسوية البنكية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
+export type BankStatementImportPreview = {
+  file_name:string; total:number; new_count:number; duplicate_count:number;
+  rows:{date:string;amount:string;description:string;reference:string}[]; rows_truncated?:boolean;
+  duplicates:{date:string;amount:string;description:string;reference:string}[];
+};
+export type BankStatementImportResult = {imported:number;duplicate_count:number;message:string};
+
 export const bankReconciliationApi = {
   // جلب جلسات التسوية البنكية للشركة مرتبة حسب تاريخ كشف الحساب.
   list: (companyId: number) => request<BankReconciliation[]>(`/api/treasury/reconciliations/?company=${companyId}&ordering=-statement_date`),
@@ -1117,25 +1124,28 @@ export const bankReconciliationApi = {
   match: async (id: number, lineId: number, transactionId: number, amount?:string) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/match/`, { method: "POST", body: JSON.stringify({line_id:lineId,transaction_id:transactionId,...(amount?{amount}:{})}) }); },
   // فك مطابقة سطر كشف البنك من الحركة المرتبطة.
   unmatch: async (id: number, lineId: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/unmatch/`, { method: "POST", body: JSON.stringify({line_id:lineId}) }); },
+  // معاينة ملف كشف البنك قبل الحفظ.
+  previewImport: async (id:number,file:File) => uploadBankStatementFile<BankStatementImportPreview>(id,"preview-import",file),
+  // تأكيد حفظ الحركات الجديدة فقط بعد إعادة فحص التكرار على الخادم.
+  confirmImport: async (id:number,file:File) => uploadBankStatementFile<BankStatementImportResult>(id,"confirm-import",file),
   // اعتماد التسوية البنكية بعد استكمال إجراءات المطابقة.
   reconcile: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>(`/api/treasury/reconciliations/${id}/reconcile/`, { method: "POST" }); },
 };
 
-// رفع كشف البنك بصيغة CSV مع التحقق من الاستجابة وإرجاع عدد السطور المستوردة.
-export const importBankStatementCsv = async (id: number, file: File): Promise<{imported:number;message:string}> => {
+const uploadBankStatementFile = async <T,>(id:number,action:string,file:File):Promise<T> => {
   await request<{detail:string}>("/api/csrf/");
-  const form = new FormData(); form.append("file", file);
-  const response = await fetch(`/api/treasury/reconciliations/${id}/import_csv/`, {
-    method:"POST", credentials:"same-origin", headers:{Accept:"application/json","X-CSRFToken":csrfToken()}, body:form
+  const form=new FormData();form.append("file",file);
+  const response=await fetch(`/api/treasury/reconciliations/${id}/${action}/`,{
+    method:"POST",credentials:"same-origin",
+    headers:{Accept:"application/json","X-CSRFToken":csrfToken()},body:form
   });
-  if (!response.ok) {
-    let message = `تعذر استيراد الملف (HTTP ${response.status}).`;
-    try { const body=await response.json() as Record<string,unknown>; message=Object.entries(body).map(([k,v])=>`${k}: ${Array.isArray(v)?v.join("، "):typeof v==="string"?v:JSON.stringify(v)}`).join(" | ")||message; } catch {}
+  if(!response.ok){
+    let message=`تعذر معالجة كشف البنك (HTTP ${response.status}).`;
+    try{const body=await response.json() as Record<string,unknown>;message=Object.entries(body).map(([k,v])=>`${k}: ${Array.isArray(v)?v.join("، "):typeof v==="string"?v:JSON.stringify(v)}`).join(" | ")||message;}catch{}
     throw new Error(message);
   }
-  return response.json() as Promise<{imported:number;message:string}>;
+  return response.json() as Promise<T>;
 };
-
 
 export type FixedAsset = {
   id: number; company: number; branch: number; code: string; name_ar: string; category: "land"|"building"|"vehicle"|"furniture"|"equipment"|"computers"|"other"; description: string; location: string; custodian: string; custodian_employee: number | null; serial_number: string; warranty_end_date: string|null; supplier_name: string; supplier_invoice: string;

@@ -20,6 +20,160 @@ from .services import (
 )
 from approvals.models import FinancialApprovalRequest
 from approvals.services import refresh_financial_approval
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
+import re
+import zipfile
+
+
+def _parse_statement_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y%m%d", "%y%m%d"):
+        try:
+            return datetime.strptime(raw[:10], fmt).date()
+        except ValueError:
+            continue
+    raise ValueError("تاريخ الحركة غير صحيح.")
+
+
+def _parse_statement_amount(value):
+    raw = str(value or "").strip().replace(" ", "")
+    if "," in raw and "." not in raw and raw.count(",") == 1 and len(raw.rsplit(",", 1)[1]) == 2:
+        raw = raw.replace(",", ".")
+    else:
+        raw = raw.replace(",", "")
+    if raw.upper().endswith("CR"):
+        raw = raw[:-2]
+    if raw.upper().endswith("DR"):
+        raw = "-" + raw[:-2]
+    amount = Decimal(raw)
+    if not amount.is_finite() or amount == 0:
+        raise ValueError("المبلغ يجب أن يكون رقمًا غير صفري.")
+    if amount != amount.quantize(Decimal("0.0001")) or abs(amount) >= Decimal("10000000000000000"):
+        raise ValueError("المبلغ يجب ألا يتجاوز 16 رقمًا صحيحًا وأربع منازل عشرية.")
+    return amount
+
+
+def _statement_row(movement_date, amount, description="", reference=""):
+    return {
+        "transaction_date": movement_date,
+        "amount": amount,
+        "description": str(description or "").strip()[:500],
+        "reference": str(reference or "").strip()[:120],
+    }
+
+
+def _statement_cell(row, index):
+    return row[index] if index is not None and index < len(row) else ""
+
+
+def _ofx_tag(block, name):
+    match = re.search(rf"<{name}>([^<\r\n]+)", block, flags=re.I)
+    return match.group(1).strip() if match else ""
+
+
+def _parse_bank_statement(upload, statement_date):
+    """قراءة CSV/XLSX/OFX/MT940 إلى صفوف موحدة دون حفظها."""
+    filename = (upload.name or "").lower()
+    extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    raw = upload.read()
+    rows = []
+    if extension in ("csv", "txt"):
+        text = raw.decode("utf-8-sig")
+        try:
+            dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        except csv.Error:
+            dialect = csv.excel
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+        if not reader.fieldnames:
+            raise ValueError("الملف لا يحتوي على عناوين أعمدة.")
+        headers = {str(h).strip().lower(): h for h in reader.fieldnames if h}
+        date_key = next((headers[k] for k in ("date", "transaction_date", "التاريخ") if k in headers), None)
+        amount_key = next((headers[k] for k in ("amount", "value", "المبلغ", "القيمة") if k in headers), None)
+        desc_key = next((headers[k] for k in ("description", "details", "البيان", "الوصف") if k in headers), None)
+        ref_key = next((headers[k] for k in ("reference", "ref", "fitid", "المرجع") if k in headers), None)
+        if not date_key or not amount_key:
+            raise ValueError("يجب وجود عمودي date و amount على الأقل.")
+        for row in reader:
+            if not any(str(v or "").strip() for v in row.values()):
+                continue
+            rows.append(_statement_row(
+                _parse_statement_date(row.get(date_key)),
+                _parse_statement_amount(row.get(amount_key)),
+                row.get(desc_key) if desc_key else "",
+                row.get(ref_key) if ref_key else "",
+            ))
+    elif extension == "xlsx":
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        sheet = workbook.active
+        values = sheet.iter_rows(values_only=True)
+        header_row = next(values, None)
+        if not header_row:
+            raise ValueError("ملف Excel فارغ.")
+        headers = {str(v).strip().lower(): i for i, v in enumerate(header_row) if v is not None}
+        date_index = next((headers[k] for k in ("date", "transaction_date", "التاريخ") if k in headers), None)
+        amount_index = next((headers[k] for k in ("amount", "value", "المبلغ", "القيمة") if k in headers), None)
+        desc_index = next((headers[k] for k in ("description", "details", "البيان", "الوصف") if k in headers), None)
+        ref_index = next((headers[k] for k in ("reference", "ref", "المرجع") if k in headers), None)
+        if date_index is None or amount_index is None:
+            raise ValueError("يجب وجود عمودي date و amount على الأقل في Excel.")
+        for row in values:
+            if not row or not any(v is not None and str(v).strip() for v in row):
+                continue
+            rows.append(_statement_row(
+                _parse_statement_date(_statement_cell(row, date_index)),
+                _parse_statement_amount(_statement_cell(row, amount_index)),
+                _statement_cell(row, desc_index), _statement_cell(row, ref_index),
+            ))
+        workbook.close()
+    elif extension in ("ofx", "qfx"):
+        text = raw.decode("utf-8-sig", errors="replace")
+        for block in re.findall(r"<STMTTRN>(.*?)</STMTTRN>", text, flags=re.I | re.S):
+            posted = re.match(r"\d{8}", _ofx_tag(block, "DTPOSTED"))
+            rows.append(_statement_row(
+                _parse_statement_date(posted.group(0) if posted else _ofx_tag(block, "DTPOSTED")),
+                _parse_statement_amount(_ofx_tag(block, "TRNAMT")),
+                _ofx_tag(block, "MEMO") or _ofx_tag(block, "NAME"), _ofx_tag(block, "FITID"),
+            ))
+        if not rows:
+            raise ValueError("لم يتم العثور على حركات STMTTRN في ملف OFX.")
+    elif extension in ("mt940", "sta", "940"):
+        text = raw.decode("utf-8-sig", errors="replace")
+        for block in re.split(r"(?=^:61:)", text, flags=re.M):
+            match = re.search(r"^:61:(\d{6})(?:\d{4})?([CD])([A-Z])?([0-9,]+(?:\.[0-9]+)?)", block, flags=re.M)
+            if not match:
+                continue
+            amount = _parse_statement_amount(match.group(4).replace(",", "."))
+            amount = -abs(amount) if match.group(2) == "D" else abs(amount)
+            ref_match = re.search(r"^:61:.*?//([^\r\n]+)", block, flags=re.M)
+            desc_match = re.search(r"^:86:(.*(?:\n[^:][^\n]*)*)", block, flags=re.M)
+            rows.append(_statement_row(
+                _parse_statement_date(match.group(1)), amount,
+                desc_match.group(1).replace("\n", " ").strip() if desc_match else "",
+                ref_match.group(1).strip() if ref_match else "",
+            ))
+        if not rows:
+            raise ValueError("لم يتم العثور على حركات :61: في ملف MT940.")
+    else:
+        raise ValueError("الصيغ المدعومة: CSV وXLSX وOFX/QFX وMT940.")
+    if not rows:
+        raise ValueError("لم يتم العثور على حركات صالحة داخل الملف.")
+    if len(rows) > 5000:
+        raise ValueError("الحد الأقصى 5000 حركة في الملف الواحد.")
+    for index, row in enumerate(rows, start=1):
+        if row["transaction_date"] > statement_date:
+            raise ValueError(f"تاريخ الحركة في السطر {index} بعد تاريخ كشف البنك.")
+    return rows
+
+
+def _statement_duplicate_key(row):
+    reference = (row.get("reference") or "").strip().casefold()
+    description = (row.get("description") or "").strip().casefold()
+    return (row["transaction_date"], Decimal(row["amount"]).quantize(Decimal("0.0001")), reference or description)
 
 
 def _signed_bank_transaction_amount(doc, bank_account):
@@ -1019,73 +1173,102 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             raise ValidationError("لا يمكن حذف تسوية معتمدة.")
         instance.delete()
 
-    @decorators.action(detail=True, methods=("post",))
-    def import_csv(self, request, pk=None):
-        """استيراد كشف البنك والتحقق من صيغ السطور والتواريخ والمبالغ."""
-        recon = self.get_object()
+    def _preview_statement_upload(self, request, recon):
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("لا يمكن استيراد كشف إلى تسوية معتمدة.")
         if recon.bank_account.branch_id and not can_access_branch(request.user, recon.bank_account.branch_id, recon.company_id):
             raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        if not recon.bank_account.branch_id and not has_company_wide_branch_access(request.user, recon.company_id):
+            raise PermissionDenied("الحساب البنكي العام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
         upload = request.FILES.get("file")
         if not upload:
-            raise ValidationError({"file": "اختر ملف CSV أولًا."})
-        if upload.size > 5 * 1024 * 1024:
-            raise ValidationError({"file": "الحد الأقصى لحجم الملف 5 ميجابايت."})
+            raise ValidationError({"file": "اختر ملف كشف البنك أولًا."})
+        if upload.size > 10 * 1024 * 1024:
+            raise ValidationError({"file": "الحد الأقصى لحجم الملف 10 ميجابايت."})
         try:
-            raw = upload.read().decode("utf-8-sig")
-            dialect = csv.Sniffer().sniff(raw[:4096], delimiters=",;\t")
-            reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
-        except (UnicodeDecodeError, csv.Error):
-            raise ValidationError({"file": "تعذر قراءة الملف. احفظه بصيغة CSV UTF-8."}) from None
-        if not reader.fieldnames:
-            raise ValidationError({"file": "الملف فارغ أو لا يحتوي على عناوين أعمدة."})
-        headers = {str(h).strip().lower(): h for h in reader.fieldnames if h}
-        date_key = next((headers[k] for k in ("date", "transaction_date", "التاريخ") if k in headers), None)
-        amount_key = next((headers[k] for k in ("amount", "value", "المبلغ", "القيمة") if k in headers), None)
-        desc_key = next((headers[k] for k in ("description", "details", "البيان", "الوصف") if k in headers), None)
-        ref_key = next((headers[k] for k in ("reference", "ref", "المرجع") if k in headers), None)
-        if not date_key or not amount_key:
-            raise ValidationError({"file": "يجب أن يحتوي الملف على عمودي date و amount على الأقل؛ ويمكن إضافة description و reference."})
-        parsed = []
-        errors = []
-        for row_no, row in enumerate(reader, start=2):
-            if not any(str(v or "").strip() for v in row.values()):
-                continue
-            if len(parsed) >= 5000:
-                raise ValidationError({"file": "الحد الأقصى 5000 حركة في الملف الواحد."})
-            try:
-                raw_date = str(row.get(date_key, "")).strip()
-                try:
-                    movement_date = date.fromisoformat(raw_date)
-                except ValueError:
-                    movement_date = datetime.strptime(raw_date, "%d/%m/%Y").date()
-                amount = Decimal(str(row.get(amount_key, "")).strip().replace(",", ""))
-                if amount == 0 or not amount.is_finite():
-                    raise ValueError("المبلغ يجب ألا يساوي صفرًا.")
-                if movement_date > recon.statement_date:
-                    raise ValueError("تاريخ الحركة بعد تاريخ كشف البنك.")
-                parsed.append({
-                    "reconciliation": recon,
-                    "line_number": len(parsed) + 1,
-                    "transaction_date": movement_date,
-                    "amount": amount,
-                    "description": str(row.get(desc_key, "") if desc_key else "").strip()[:500],
-                    "reference": str(row.get(ref_key, "") if ref_key else "").strip()[:120],
-                })
-            except (ValueError, InvalidOperation, TypeError):
-                errors.append(f"السطر {row_no}: تاريخ أو مبلغ غير صحيح.")
-        if errors:
-            raise ValidationError({"file": errors[:20]})
-        if not parsed:
-            raise ValidationError({"file": "لم يتم العثور على حركات صالحة للاستيراد."})
-        with transaction.atomic():
-            locked = BankReconciliation.objects.select_for_update().get(pk=recon.pk)
-            if locked.status != BankReconciliation.Status.DRAFT or locked.lines.exists():
-                raise ValidationError("الاستيراد متاح لتسوية مسودة فارغة فقط؛ لا يمكن الكتابة فوق حركات موجودة.")
-            BankStatementLine.objects.bulk_create([BankStatementLine(**item) for item in parsed])
-        return response.Response({"imported": len(parsed), "message": f"تم استيراد {len(parsed)} حركة دون تعديل أي حركات سابقة."}, status=status.HTTP_201_CREATED)
+            parsed = _parse_bank_statement(upload, recon.statement_date)
+        except (UnicodeDecodeError, csv.Error, ValueError, InvalidOperation, zipfile.BadZipFile, InvalidFileException) as exc:
+            raise ValidationError({"file": str(exc) or "تعذر قراءة ملف كشف البنك."}) from None
+        existing = BankStatementLine.objects.filter(
+            reconciliation__bank_account_id=recon.bank_account_id,
+        ).values("transaction_date", "amount", "reference", "description")
+        known = {_statement_duplicate_key(row) for row in existing}
+        duplicates, fresh = [], []
+        for row in parsed:
+            key = _statement_duplicate_key(row)
+            if key in known:
+                duplicates.append(row)
+            else:
+                fresh.append(row)
+                known.add(key)
+        return parsed, fresh, duplicates
+
+    @decorators.action(detail=True, methods=("post",), url_path="preview-import")
+    def preview_import(self, request, pk=None):
+        """معاينة ملف كشف البنك وحصر الحركات المكررة قبل الحفظ."""
+        recon = self.get_object()
+        parsed, fresh, duplicates = self._preview_statement_upload(request, recon)
+        return response.Response({
+            "file_name": request.FILES["file"].name,
+            "total": len(parsed), "new_count": len(fresh), "duplicate_count": len(duplicates),
+            "duplicates": [{
+                "date": row["transaction_date"], "amount": str(row["amount"]),
+                "description": row["description"], "reference": row["reference"],
+            } for row in duplicates[:100]],
+            "rows": [{
+                "date": row["transaction_date"], "amount": str(row["amount"]),
+                "description": row["description"], "reference": row["reference"],
+            } for row in fresh[:100]],
+            "rows_truncated": len(fresh) > 100,
+        })
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="confirm-import")
+    def confirm_import(self, request, pk=None):
+        """حفظ الحركات الجديدة فقط بعد إعادة فحص التكرار تحت قفل الحساب."""
+        recon = self.get_object()
+        TreasuryAccount.objects.select_for_update().get(pk=recon.bank_account_id)
+        recon.refresh_from_db()
+        _, fresh, duplicates = self._preview_statement_upload(request, recon)
+        if not fresh:
+            return response.Response({
+                "imported": 0, "duplicate_count": len(duplicates),
+                "message": f"لم تُضف حركات جديدة؛ تم تجاهل {len(duplicates)} حركة مكررة.",
+            })
+        next_number = (recon.lines.order_by("-line_number").values_list("line_number", flat=True).first() or 0) + 1
+        BankStatementLine.objects.bulk_create([
+            BankStatementLine(
+                reconciliation=recon, line_number=next_number + index,
+                transaction_date=row["transaction_date"], amount=row["amount"],
+                description=row["description"], reference=row["reference"],
+            ) for index, row in enumerate(fresh)
+        ])
+        return response.Response({
+            "imported": len(fresh), "duplicate_count": len(duplicates),
+            "message": f"تم استيراد {len(fresh)} حركة جديدة وتجاهل {len(duplicates)} حركة مكررة.",
+        }, status=status.HTTP_201_CREATED)
+
+    @decorators.action(detail=True, methods=("post",))
+    def import_csv(self, request, pk=None):
+        """مسار توافق قديم لاستيراد CSV؛ تستخدم الواجهة الجديدة المعاينة والتأكيد."""
+        recon = self.get_object()
+        _, fresh, duplicates = self._preview_statement_upload(request, recon)
+        if recon.lines.exists():
+            raise ValidationError("استخدم معاينة الاستيراد ثم تأكيده لإضافة الحركات دون استبدال السطور الحالية.")
+        if not fresh:
+            raise ValidationError("كل الحركات في الملف مكررة بالفعل.")
+        BankStatementLine.objects.bulk_create([
+            BankStatementLine(
+                reconciliation=recon, line_number=index,
+                transaction_date=row["transaction_date"], amount=row["amount"],
+                description=row["description"], reference=row["reference"],
+            ) for index, row in enumerate(fresh, start=1)
+        ])
+        return response.Response({
+            "imported": len(fresh),
+            "message": f"تم استيراد {len(fresh)} حركة وتجاهل {len(duplicates)} مكررة.",
+        }, status=status.HTTP_201_CREATED)
 
     @decorators.action(detail=True, methods=("post",))
     def add_line(self, request, pk=None):

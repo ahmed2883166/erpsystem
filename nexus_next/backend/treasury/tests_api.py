@@ -1,4 +1,7 @@
 from datetime import date
+from io import BytesIO
+
+from openpyxl import Workbook
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -937,6 +940,112 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(imported.status_code, 400)
         self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 0)
 
+
+    def test_bank_statement_preview_and_confirm_skip_existing_and_in_file_duplicates(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "PREVIEW-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "15.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        payload = b"date,amount,description,reference\n2026-03-02,10.00,Deposit,REF-1\n2026-03-02,10.00,Deposit,REF-1\n2026-03-03,5.00,Fee,REF-2\n"
+        preview = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["total"], 3)
+        self.assertEqual(preview.data["new_count"], 2)
+        self.assertEqual(preview.data["duplicate_count"], 1)
+
+        confirmed = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/confirm-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(confirmed.status_code, 201, confirmed.data)
+        self.assertEqual(confirmed.data["imported"], 2)
+        self.assertEqual(confirmed.data["duplicate_count"], 1)
+        self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
+
+        repeated = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/confirm-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertEqual(repeated.data["imported"], 0)
+        self.assertEqual(BankStatementLine.objects.filter(reconciliation_id=recon.data["id"]).count(), 2)
+
+        next_recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "PREVIEW-002",
+            "statement_date": "2026-03-31", "opening_balance": "15.0000", "closing_balance": "15.0000",
+        }, format="json")
+        previous_statement = self.client.post(
+            f"/api/treasury/reconciliations/{next_recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(previous_statement.status_code, 200, previous_statement.data)
+        self.assertEqual(previous_statement.data["new_count"], 0)
+        self.assertEqual(previous_statement.data["duplicate_count"], 3)
+
+    def test_bank_statement_xlsx_import_preview(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "XLSX-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "25.5000",
+        }, format="json")
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["date", "amount", "description", "reference"])
+        sheet.append([date(2026, 3, 2), 25.5, "Excel deposit", "XL-1"])
+        stream = BytesIO()
+        workbook.save(stream)
+        preview = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.xlsx", stream.getvalue(), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            format="multipart",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data["new_count"], 1)
+        self.assertEqual(preview.data["rows"][0]["reference"], "XL-1")
+
+    def test_bank_statement_csv_supports_semicolon_and_decimal_comma(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "CSV-COMMA-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "12.7500",
+        }, format="json")
+        payload = "date;amount;description;reference\n2026-03-04;12,75;Deposit;REF-COMMA\n".encode()
+        preview = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(Decimal(preview.data["rows"][0]["amount"]), Decimal("12.75"))
+
+    def test_bank_statement_ofx_and_mt940_import_preview(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "TEXT-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "125.5000",
+        }, format="json")
+        ofx = b"""OFXHEADER:100\nDATA:OFXSGML\nVERSION:102\n<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST><STMTTRN><TRNTYPE>DEP\n<DTPOSTED>20260302120000\n<TRNAMT>125.50\n<FITID>OFX-1\n<NAME>Deposit\n</STMTTRN></BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>"""
+        ofx_preview = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.ofx", ofx, content_type="application/octet-stream")},
+            format="multipart",
+        )
+        self.assertEqual(ofx_preview.status_code, 200, ofx_preview.data)
+        self.assertEqual(ofx_preview.data["rows"][0]["reference"], "OFX-1")
+        mt940 = b":20:STATEMENT\n:25:ACCOUNT\n:60F:C260301EGP0,00\n:61:260302C125,50NTRFNONREF//MT-1\n:86:Bank deposit\n:62F:C260331EGP125,50\n"
+        mt_preview = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.mt940", mt940, content_type="text/plain")},
+            format="multipart",
+        )
+        self.assertEqual(mt_preview.status_code, 200, mt_preview.data)
+        self.assertEqual(Decimal(mt_preview.data["rows"][0]["amount"]), Decimal("125.50"))
+        self.assertEqual(mt_preview.data["rows"][0]["reference"], "MT-1")
 
     def test_treasury_payment_over_limit_requires_manager_approval(self):
         DiscountApprovalPolicy.objects.create(

@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast } from "./api";
+import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -44,7 +44,8 @@ export default function TreasuryPanel({companyId}: Props) {
   const [adjustmentForm,setAdjustmentForm]=useState({counter_account:"",fiscal_year:"",branch:""});
   const [matchIds,setMatchIds]=useState<Record<number,string>>({});
   const [matchAmounts,setMatchAmounts]=useState<Record<number,string>>({});
-  const [csvFile,setCsvFile]=useState<File|null>(null);
+  const [statementFile,setStatementFile]=useState<File|null>(null);
+  const [statementPreview,setStatementPreview]=useState<BankStatementImportPreview|null>(null);
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
@@ -102,8 +103,10 @@ const addLine=async(e:React.FormEvent)=>{e.preventDefault();if(!selectedRecon)re
     await bankReconciliationApi.addLine(Number(selectedRecon),{line_number:Number(line.line_number),transaction_date:line.transaction_date,description:line.description,reference:line.reference,amount:line.amount});
     setLine(old=>({...old,line_number:String(Number(old.line_number)+1),description:"",reference:"",amount:""}));await refreshSummary(selectedRecon);await load();
   }catch(e){setError((e as Error).message||"تعذر إضافة سطر الكشف.");}finally{setBusy(false);}};
-  // استيراد ملف كشف البنك CSV وتحميل سطوره إلى التسوية المختارة.
-const importCsv=async()=>{if(!selectedRecon||!csvFile)return;setBusy(true);setError("");try{const result=await importBankStatementCsv(Number(selectedRecon),csvFile);setCsvFile(null);setError(result.message);await refreshSummary(selectedRecon);await load();}catch(e){setError((e as Error).message||"تعذر استيراد كشف البنك.");}finally{setBusy(false);}};
+  // معاينة ملف كشف البنك وحصر المكرر قبل السماح بالتأكيد.
+const previewStatement=async()=>{if(!selectedRecon||!statementFile)return;setBusy(true);setError("");setStatementPreview(null);try{setStatementPreview(await bankReconciliationApi.previewImport(Number(selectedRecon),statementFile));}catch(e){setError((e as Error).message||"تعذرت معاينة كشف البنك.");}finally{setBusy(false);}};
+  // تأكيد استيراد الحركات الجديدة فقط؛ الخادم يعيد فحص التكرار قبل الحفظ.
+const confirmStatementImport=async()=>{if(!selectedRecon||!statementFile||!statementPreview)return;setBusy(true);setError("");try{const result=await bankReconciliationApi.confirmImport(Number(selectedRecon),statementFile);setError(result.message);setStatementFile(null);setStatementPreview(null);await refreshSummary(selectedRecon);await load();}catch(e){setError((e as Error).message||"تعذر تأكيد استيراد كشف البنك.");}finally{setBusy(false);}};
   // مطابقة سطر كشف البنك مع حركة خزينة مسجلة.
 const match=async(lineId:number)=>{if(!selectedRecon||!matchIds[lineId]||!matchAmounts[lineId])return;setBusy(true);setError("");try{await bankReconciliationApi.match(Number(selectedRecon),lineId,Number(matchIds[lineId]),matchAmounts[lineId]);setMatchAmounts(old=>({...old,[lineId]:""}));await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذرت المطابقة.");}finally{setBusy(false);}};
   // إنشاء مسودة سند قبض/صرف مقابل رسوم البنك أو الفوائد أو أي حركة غير مسجلة.
@@ -248,7 +251,21 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
           <div><small>حركات دفترية معلقة</small><strong>{money(summary.outstanding_total)}</strong></div>
           <div><small>الفرق غير المفسر</small><strong>{money(summary.unexplained_difference)}</strong></div>
         </div>
-        {summary.reconciliation.status==="draft"&&<div className="treasury-csv-import"><div><strong>استيراد كشف البنك من CSV</strong><small>UTF-8 · الأعمدة المطلوبة: date, amount · الاختياري: description, reference</small></div><input type="file" accept=".csv,text/csv" onChange={e=>setCsvFile(e.target.files?.[0]||null)}/><button className="primary-button" type="button" disabled={busy||!csvFile||summary.lines.length>0} onClick={()=>void importCsv()}>استيراد الحركات</button>{summary.lines.length>0&&<small>الاستيراد متاح قبل إدخال أي سطور فقط حتى لا يتم استبدال بيانات موجودة.</small>}</div>}
+        {summary.reconciliation.status==="draft"&&<div className="treasury-csv-import">
+          <div><strong>استيراد كشف البنك</strong><small>الصيغ: CSV · Excel XLSX · OFX/QFX · MT940. اختر الملف ثم راجع المعاينة قبل الحفظ.</small></div>
+          <input type="file" accept=".csv,.txt,.xlsx,.ofx,.qfx,.mt940,.sta,.940,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e=>{setStatementFile(e.target.files?.[0]||null);setStatementPreview(null);}}/>
+          <button className="primary-button" type="button" disabled={busy||!statementFile} onClick={()=>void previewStatement()}>معاينة الملف</button>
+          {statementPreview&&<div className="treasury-import-preview">
+            <div className="treasury-summary-grid"><div><small>إجمالي الحركات</small><strong>{statementPreview.total}</strong></div><div><small>حركات جديدة</small><strong>{statementPreview.new_count}</strong></div><div><small>مكررات مستبعدة</small><strong>{statementPreview.duplicate_count}</strong></div></div>
+            <small>الملف: {statementPreview.file_name} — لن يتم حفظ أي حركة قبل الضغط على تأكيد الاستيراد.</small>{statementPreview.rows_truncated&&<small>المعاينة تعرض أول 100 حركة جديدة فقط؛ سيتم فحص الملف كاملًا عند التأكيد.</small>}
+            <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>المبلغ</th><th>البيان</th><th>المرجع</th></tr></thead><tbody>
+              {statementPreview.rows.slice(0,30).map((row,index)=><tr key={index}><td>{row.date}</td><td>{money(row.amount)}</td><td>{row.description}</td><td>{row.reference}</td></tr>)}
+              {!statementPreview.rows.length&&<tr><td colSpan={4}>لا توجد حركات جديدة؛ كل الحركات مكررة.</td></tr>}
+            </tbody></table></div>
+            {statementPreview.duplicates.length>0&&<details><summary>عرض الحركات المكررة المستبعدة ({statementPreview.duplicate_count})</summary><div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>المبلغ</th><th>البيان</th><th>المرجع</th></tr></thead><tbody>{statementPreview.duplicates.slice(0,30).map((row,index)=><tr key={index}><td>{row.date}</td><td>{money(row.amount)}</td><td>{row.description}</td><td>{row.reference}</td></tr>)}</tbody></table></div></details>}
+            <button className="primary-button" type="button" disabled={busy||statementPreview.new_count===0} onClick={()=>void confirmStatementImport()}>تأكيد استيراد {statementPreview.new_count} حركة</button>
+          </div>}
+        </div>}
         {summary.reconciliation.status==="draft"&&<form className="treasury-form" onSubmit={addLine}>
           <label>رقم السطر<input required type="number" min="1" value={line.line_number} onChange={e=>setLine({...line,line_number:e.target.value})}/></label>
           <label>تاريخ الحركة<input required type="date" value={line.transaction_date} onChange={e=>setLine({...line,transaction_date:e.target.value})}/></label>
