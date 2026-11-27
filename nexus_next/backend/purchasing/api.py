@@ -1917,6 +1917,8 @@ class PurchaseRequisitionViewSet(PurchaseBaseViewSet):
             raise ValidationError("المورد والمخزن ورقم الأمر وتاريخه حقول مطلوبة للتحويل.")
         if expected_date and expected_date < order_date:
             raise ValidationError({"expected_date": "تاريخ التوريد المتوقع لا يمكن أن يسبق تاريخ أمر الشراء."})
+        if requisition.lines.filter(estimated_unit_price__isnull=True).exists():
+            raise ValidationError({"lines": "أدخل السعر التقديري لكل بند قبل تحويل طلب الاحتياج إلى أمر شراء."})
         from suppliers.models import Supplier
         from inventory.models import Warehouse
         supplier = Supplier.objects.filter(pk=supplier_id, company_id=requisition.company_id, is_active=True).first()
