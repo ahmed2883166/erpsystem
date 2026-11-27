@@ -3736,3 +3736,61 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         }, format="json")
         self.assertEqual(rejected.status_code, 400, rejected.data)
         self.assertFalse(LandedCostDocument.objects.filter(document_number="LC-OVER-001").exists())
+
+
+    def test_landed_cost_reversal_is_blocked_after_later_stock_consumption(self):
+        _, receipt_line_id = self._create_and_post_receipt()
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        source_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "LC-EXP-LATER-ISSUE", "invoice_date": "2026-03-13",
+            "lines": [{
+                "description": "شحن",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "20.0000",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(source_response.status_code, 201, source_response.data)
+        self.client.post(
+            f"/api/purchasing/invoices/{source_response.data['id']}/post/", {}, format="json",
+        )
+        source_line = PurchaseInvoice.objects.get(pk=source_response.data["id"]).lines.get()
+        created = self.client.post("/api/purchasing/landed-costs/", {
+            "company": self.company.pk,
+            "source_invoice": source_response.data["id"],
+            "document_number": "LC-LATER-ISSUE",
+            "document_date": "2026-03-14",
+            "allocations": [{
+                "source_invoice_line": source_line.pk,
+                "receipt_line": receipt_line_id,
+                "basis": "manual",
+                "amount": "20.0000",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        posted = self.client.post(
+            f"/api/purchasing/landed-costs/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+
+        issue = StockMovement.objects.create(
+            company=self.company, movement_number="LC-LATER-ISSUE-01",
+            movement_type=StockMovement.MovementType.ISSUE, movement_date=date(2026, 3, 16),
+            source_warehouse=self.warehouse, created_by=self.user,
+        )
+        StockMovementLine.objects.create(movement=issue, product=self.product, quantity=Decimal("1"))
+        post_stock_movement(issue.pk, self.user)
+
+        rejected = self.client.post(
+            f"/api/purchasing/landed-costs/{created.data['id']}/reverse/",
+            {"entry_date": "2026-03-20"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        document = LandedCostDocument.objects.get(pk=created.data["id"])
+        self.assertEqual(document.status, LandedCostDocument.Status.POSTED)
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("1"))
+        self.assertEqual(balance.inventory_value, Decimal("110.0000"))
