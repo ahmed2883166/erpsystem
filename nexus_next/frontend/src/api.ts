@@ -366,6 +366,12 @@ export const purchasingApi = {
 };
 
 
+export type TreasuryLiquiditySummary = {
+  company:number; as_of:string; base_currency:string; branch:number|null; scope:string;
+  total_base_balance:string; note:string;
+  accounts:{id:number;code:string;name:string;kind:"cash"|"bank";branch_id:number|null;branch_name:string;
+    currency:string;balance:string;foreign_amount:string|null;base_balance:string;is_foreign:boolean}[];
+};
 export type TreasuryAccount = {
   id: number; company: number; branch: number | null; branch_name: string; account: number;
   account_code: string; account_name: string; kind: "cash" | "bank"; code: string; name_ar: string;
@@ -439,6 +445,13 @@ export type IndirectCashFlowReport = {
 export const treasuryApi = {
   // جلب حسابات الخزينة والبنوك للشركة.
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
+  // جلب المركز النقدي الدفتري الحالي مع عرض الأرصدة الأجنبية الاسمية والقيم الأساسية.
+  liquiditySummary: (companyId:number, asOf?:string, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId)});
+    if(asOf) q.set("as_of",asOf);
+    if(branch) q.set("branch",String(branch));
+    return request<TreasuryLiquiditySummary>(`/api/treasury/accounts/liquidity-summary/?${q.toString()}`);
+  },
   // جلب حركات الخزينة مرتبة من الأحدث.
   transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
   // جلب سجل الشيكات الواردة والصادرة للشركة.

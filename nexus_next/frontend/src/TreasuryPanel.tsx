@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation } from "./api";
+import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -12,7 +12,8 @@ const money = (v: string | number) => formatMoney(v);
 
 // شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
-  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation">("transactions");
+  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity">("transactions");
+  const [liquidity,setLiquidity]=useState<TreasuryLiquiditySummary|null>(null);
   const [accounts,setAccounts]=useState<TreasuryAccount[]>([]);
   const [transactions,setTransactions]=useState<TreasuryTransaction[]>([]);
   const [cheques,setCheques]=useState<TreasuryCheque[]>([]);
@@ -45,9 +46,9 @@ export default function TreasuryPanel({companyId}: Props) {
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
-      const [a,t,ch,b,y,g,rs,cs,xr,companies]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies()]);
+      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId)]);
       const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"";
-      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);
+      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);
       setAcc(old=>({...old,currency_code:companyBase}));
       setReval(old=>({...old,account:old.account||String(a.find(v=>v.is_active&&v.currency_code!==companyBase)?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||"")}));
       setDoc(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),source_account:old.source_account||String(a.find(v=>v.is_active)?.id||"")}));
@@ -133,8 +134,21 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
   return <section className="work-panel treasury-panel">
     <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
     {error&&<div className="error-banner">{error}</div>}
-    <div className="module-tabs"><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
-    {tab==="accounts"?<>
+    <div className="module-tabs"><button className={tab==="liquidity"?"active":""} onClick={()=>setTab("liquidity")}>مركز السيولة</button><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
+    {tab==="liquidity"?<>
+      <div className="treasury-summary-grid">
+        <div><small>إجمالي السيولة الدفترية ({liquidity?.base_currency||baseCurrencyCode})</small><strong>{money(liquidity?.total_base_balance||0)} {liquidity?.base_currency||baseCurrencyCode}</strong></div>
+        <div><small>حسابات الخزائن والبنوك</small><strong>{liquidity?.accounts.length||0}</strong></div>
+        <div><small>تاريخ المركز</small><strong>{liquidity?.as_of||today()}</strong></div>
+        <div><small>نطاق العرض</small><strong>{liquidity?.branch?branches.find(b=>b.id===liquidity.branch)?.name_ar||"فرع محدد":"الفروع المتاحة"}</strong></div>
+      </div>
+      <div className="data-table-wrap"><h3>الأرصدة الحالية حسب الحساب</h3><table><thead><tr><th>الحساب</th><th>النوع</th><th>الفرع</th><th>العملة</th><th>الرصيد الاسمي</th><th>القيمة بالعملة الأساسية</th></tr></thead><tbody>
+        {(liquidity?.accounts||[]).map(row=><tr key={row.id}><td>{row.code} · {row.name}</td><td>{row.kind==="cash"?"خزينة":"بنك"}</td><td>{row.branch_name}</td><td>{row.currency}</td><td>{money(row.balance)} {row.currency}</td><td>{money(row.base_balance)} {liquidity?.base_currency||baseCurrencyCode}</td></tr>)}
+        {!liquidity?.accounts.length&&<tr><td colSpan={6}>لا توجد أرصدة خزائن أو بنوك نشطة.</td></tr>}
+      </tbody></table></div>
+      <p className="form-wide">{liquidity?.note||"يتم احتساب الرصيد من القيود المرحلة فقط."}</p>
+      <p className="form-wide">هذا هو المركز النقدي الفعلي حتى التاريخ المحدد، وليس توقعًا للتحصيلات والمدفوعات المستقبلية. ستُعرض التوقعات في جزء منفصل بعد ربط مصادر العملاء والموردين والمرتبات دون تكرار المستندات.</p>
+    </>:tab==="accounts"?<>
       <form className="treasury-form" onSubmit={saveAcc}>
         <label>النوع<select value={acc.kind} onChange={e=>setAcc({...acc,kind:e.target.value})}><option value="cash">خزينة نقدية</option><option value="bank">حساب بنكي</option></select></label>
         <label>الكود<input required value={acc.code} onChange={e=>setAcc({...acc,code:e.target.value})}/></label>

@@ -12,7 +12,7 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import (
     post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
@@ -233,6 +233,107 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                     foreign_amount=account.opening_foreign_amount,
                     carrying_base_amount=account.opening_balance,
                 )
+
+    @decorators.action(detail=False, methods=("get",), url_path="liquidity-summary")
+    def liquidity_summary(self, request):
+        """الرصيد الدفتري الحالي لحسابات الخزينة مع فصل الأرصدة الاسمية الأجنبية."""
+        from accounting.models import JournalLine
+        from django.db.models import Sum
+
+        company_id = request.query_params.get("company")
+        if not company_id or not company_id.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض مركز السيولة."})
+        company_id = int(company_id)
+        self._scope(company_id)
+
+        as_of_raw = request.query_params.get("as_of")
+        as_of = dateparse.parse_date(as_of_raw) if as_of_raw else timezone.localdate()
+        if not as_of:
+            raise ValidationError({"as_of": "صيغة التاريخ يجب أن تكون YYYY-MM-DD."})
+        if as_of != timezone.localdate():
+            raise ValidationError({"as_of": "مركز السيولة الحالي يعرض تاريخ اليوم فقط؛ لا يعرض أرصدة تاريخية للعملات الأجنبية."})
+
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            if not branch_id.isdigit() or not can_access_branch(request.user, int(branch_id), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            branch_id = int(branch_id)
+
+        visible_accounts = self.get_queryset().filter(company_id=company_id, is_active=True).select_related(
+            "company__base_currency", "branch", "account", "fx_position",
+        )
+        if branch_id:
+            visible_accounts = visible_accounts.filter(models.Q(branch_id=branch_id) | models.Q(branch__isnull=True))
+
+        accessible_branch_ids = list(
+            accessible_branches(request.user, company_id).values_list("id", flat=True)
+        )
+        if branch_id:
+            scoped_branch_ids = [branch_id]
+        else:
+            scoped_branch_ids = accessible_branch_ids
+
+        rows = []
+        total_base = Decimal("0")
+        for account in visible_accounts.order_by("kind", "code"):
+            account_branch_ids = (
+                [account.branch_id] if account.branch_id else scoped_branch_ids
+            )
+            account_branch_ids = [value for value in account_branch_ids if value in scoped_branch_ids]
+            if not account_branch_ids:
+                continue
+            totals = JournalLine.objects.filter(
+                account_id=account.account_id,
+                entry__company_id=company_id,
+                entry__branch_id__in=account_branch_ids,
+                entry__entry_date__lte=as_of,
+                entry__status__in=("posted", "reversed"),
+            ).exclude(
+                entry__source_type="closing",
+            ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+            base_balance = (
+                (totals["debit"] or Decimal("0"))
+                - (totals["credit"] or Decimal("0"))
+            )
+            # Legacy accounts without an opening journal retain their stored opening value.
+            if not account.opening_journal_entry_id:
+                base_balance += account.opening_balance
+
+            is_foreign = account.currency_code != account.company.base_currency.code
+            try:
+                position = account.fx_position
+            except TreasuryFxPosition.DoesNotExist:
+                position = None
+            foreign_amount = position.foreign_amount if position else (
+                account.opening_foreign_amount if is_foreign else Decimal("0")
+            )
+            if is_foreign and position:
+                base_balance = position.carrying_base_amount
+            total_base += base_balance
+            rows.append({
+                "id": account.pk,
+                "code": account.code,
+                "name": account.name_ar,
+                "kind": account.kind,
+                "branch_id": account.branch_id,
+                "branch_name": account.branch.name_ar if account.branch_id else "كل الفروع",
+                "currency": account.currency_code,
+                "balance": str(foreign_amount if is_foreign else base_balance),
+                "foreign_amount": str(foreign_amount) if is_foreign else None,
+                "base_balance": str(base_balance),
+                "is_foreign": is_foreign,
+            })
+
+        return response.Response({
+            "company": company_id,
+            "as_of": as_of,
+            "base_currency": visible_accounts.first().company.base_currency.code if rows else "",
+            "branch": branch_id,
+            "scope": "branch" if branch_id else "accessible_branches",
+            "total_base_balance": str(total_base),
+            "accounts": rows,
+            "note": "الأرصدة محسوبة حتى اليوم من القيود المرحلة فقط، مع استبعاد قيود الإقفال. التحويلات الداخلية لا تغيّر إجمالي الشركة، والعملات الأجنبية معروضة اسميًا وبقيمتها الدفترية الأساسية.",
+        })
 
     @decorators.action(detail=True, methods=("post",), url_path="revalue")
     def revalue(self, request, pk=None):
