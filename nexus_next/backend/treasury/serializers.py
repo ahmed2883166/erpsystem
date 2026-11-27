@@ -289,6 +289,11 @@ class TreasuryChequeSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"treasury_transaction": "حركة الخزينة يجب أن تطابق الشركة والبنك ونوع ومبلغ الشيك."})
             if doc.status != TreasuryTransaction.Status.POSTED:
                 raise serializers.ValidationError({"treasury_transaction": "اربط حركة خزينة مرحلة فقط."})
+        cheque_number = attrs.get("cheque_number", getattr(self.instance, "cheque_number", None))
+        if company and bank and direction and cheque_number and TreasuryCheque.objects.filter(
+            company=company, bank_account=bank, direction=direction, cheque_number=cheque_number
+        ).exclude(pk=getattr(self.instance, "pk", None)).exists():
+            raise serializers.ValidationError({"cheque_number": "رقم الشيك مسجل بالفعل على الحساب البنكي نفسه."})
         if direction == TreasuryCheque.Direction.OUTGOING and not doc:
             raise serializers.ValidationError({"treasury_transaction": "الشيك الصادر يجب ربطه بسند صرف بنكي مرحّل حتى لا يظهر كالتزام غير مسجل."})
         return attrs

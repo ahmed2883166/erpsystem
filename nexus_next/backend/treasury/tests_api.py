@@ -9,7 +9,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, BankReconciliation, BankStatementLine
+from treasury.models import TreasuryAccount, TreasuryTransaction, BankReconciliation, BankStatementLine
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -1134,12 +1134,12 @@ class TreasuryChequeWorkflowTests(APITestCase):
             "issue_date": "2026-03-01", "due_date": "2026-03-15",
         }, format="json")
 
-    def _posted_receipt(self):
+    def _posted_receipt(self, movement_date='2026-03-15'):
         doc = self.client.post("/api/treasury/transactions/", {
             "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
             "source_account": self.bank.pk, "counter_account": self.counter_gl.pk,
             "kind": "receipt", "document_number": "CHQ-CLEAR-001",
-            "transaction_date": "2026-03-15", "amount": "1250.0000", "description": "تحصيل شيك",
+            "transaction_date": movement_date, "amount": "1250.0000", "description": "تحصيل شيك",
         }, format="json")
         self.assertEqual(doc.status_code, 201, doc.data)
         posted = self.client.post(f"/api/treasury/transactions/{doc.data['id']}/post/", {}, format="json")
@@ -1186,6 +1186,7 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.assertEqual(second.status_code, 400, second.data)
 
     def test_outgoing_cheque_requires_matching_posted_bank_payment(self):
+        self._posted_receipt(movement_date='2026-03-01')
         missing = self.client.post("/api/treasury/cheques/", {
             "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
             "bank_account": self.bank.pk, "direction": "outgoing", "cheque_number": "OUT-001",
