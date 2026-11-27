@@ -1079,7 +1079,7 @@ class LandedCostAllocation(models.Model):
     receipt_line = models.ForeignKey(
         StockMovementLine, on_delete=models.PROTECT, related_name="landed_cost_allocations",
     )
-    basis = models.CharField(max_length=12, choices=Basis.choices, default=Basis.VALUE)
+    basis = models.CharField(max_length=12, choices=Basis.choices, default=Basis.MANUAL)
     amount = models.DecimalField(
         max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))],
     )
