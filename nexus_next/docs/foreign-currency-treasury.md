@@ -10,7 +10,9 @@ The treasury FX workflow keeps the general ledger in the company's functional/ba
 4. Posting updates the locked foreign-currency position and writes a balanced base-currency journal.
 5. A foreign-currency payment removes the average carrying value from the bank position and recognizes the difference between the payment's spot value and carrying value using the configured realized FX gain/loss account roles.
 6. Use **إعادة تقييم أرصدة العملات الأجنبية** at period end. The endpoint requires an open fiscal year, an approved rate dated no later than the revaluation date, and posts the unrealized FX gain/loss to the configured account role. The account/date pair cannot be revalued twice.
-7. Foreign bank reconciliation uses the bank statement's nominal currency amount. The general ledger remains measured in base currency; revaluation entries do not change the nominal bank balance.
+7. A posted standalone foreign-currency treasury receipt, payment, or same-currency transfer can be reversed from the treasury transaction screen. The reversal posts a linked full reversal of the original journal (including the original realized FX gain/loss lines and foreign-currency journal snapshots) and restores the nominal and carrying-value subledger positions using the original document's recorded carrying amount—not a newly sampled exchange rate.
+8. To preserve historical average-cost and revaluation chronology, a foreign transaction cannot be reversed while a later posted movement or active revaluation exists on either affected treasury account. Reverse later movements and revaluations first. Reversal is also blocked while the transaction is bank-matched or linked to a cheque. The reversal date must be on or after the original transaction date.
+9. Foreign bank reconciliation uses the bank statement's nominal currency amount. The general ledger remains measured in base currency; revaluation entries do not change the nominal bank balance.
 
 ## Required account-role mappings
 
@@ -33,4 +35,4 @@ The system also refuses to initialize a new FX position if posted foreign treasu
 
 ## Current scope boundary
 
-This release covers foreign-currency treasury receipts, payments, same-currency transfers, average-cost carrying value, realized differences, period-end revaluation, and nominal foreign bank reconciliation. It does **not** yet implement foreign-currency customer/supplier invoices, receivable/payable partial settlements, customer/supplier advance allocation, FX settlement across different currencies, or consolidated multi-currency exposure reporting. Those workflows remain disabled or base-currency-only until their document-level carrying-value and settlement rules are implemented and tested.
+This release covers foreign-currency treasury receipts, payments, same-currency transfers, average-cost carrying value, realized differences, safe linked reversals, period-end revaluation, and nominal foreign bank reconciliation. It does **not** yet implement foreign-currency customer/supplier invoices, receivable/payable partial settlements, customer/supplier advance allocation, FX settlement across different currencies, or consolidated multi-currency exposure reporting. Those workflows remain disabled or base-currency-only until their document-level carrying-value and settlement rules are implemented and tested.
