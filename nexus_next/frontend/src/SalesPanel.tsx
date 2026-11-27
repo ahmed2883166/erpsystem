@@ -78,7 +78,20 @@ const refresh = async () => {
   };
   useEffect(() => { void refresh(); }, [companyId]);
 
-  const invoiceable = useMemo(() => deliveries.filter(d => d.movement_status === "posted" && d.line_items.length > 0 && !invoices.some(i => i.delivery === d.id)), [deliveries, invoices]);
+  const invoicedQuantityByDeliveryLine = useMemo(() => {
+    const totals = new Map<number, number>();
+    invoices.forEach(invoice => invoice.invoice_lines.forEach(line => {
+      if (line.delivery_line !== null) {
+        totals.set(line.delivery_line, (totals.get(line.delivery_line) || 0) + Number(line.quantity));
+      }
+    }));
+    return totals;
+  }, [invoices]);
+  const remainingDeliveryQuantity = (line: { id: number; quantity: string }) =>
+    Math.max(Number(line.quantity) - (invoicedQuantityByDeliveryLine.get(line.id) || 0), 0);
+  const invoiceable = useMemo(() => deliveries.filter(d =>
+    d.movement_status === "posted" && d.line_items.some(line => Number(line.quantity) > (invoicedQuantityByDeliveryLine.get(line.id) || 0))
+  ), [deliveries, invoicedQuantityByDeliveryLine]);
   const payable = useMemo(() => invoices.filter(i => i.status === "posted" && Number(i.balance_due) > 0), [invoices]);
   const filteredDeliveries = deliveries.filter(x => [x.delivery_number, x.customer_name, x.warehouse_name].join(" ").toLowerCase().includes(search.toLowerCase()));
   const filteredInvoices = invoices.filter(x => [x.invoice_number, x.customer_name, x.delivery_number].join(" ").toLowerCase().includes(search.toLowerCase()));
@@ -212,7 +225,7 @@ const createInvoice = async (event: React.FormEvent) => {
         exchange_rate: invoiceForm.transaction_currency ? invoiceForm.exchange_rate : null,
         exchange_rate_date: invoiceForm.transaction_currency ? invoiceForm.exchange_rate_date : null,
         lines: invoiceLines.map(line => ({
-          ...(invoiceForm.mode === "delivery" ? { delivery_line: line.delivery_line } : { product: line.product, quantity: line.quantity }),
+          ...(invoiceForm.mode === "delivery" ? { delivery_line: line.delivery_line, quantity: line.quantity } : { product: line.product, quantity: line.quantity }),
           ...(invoiceForm.transaction_currency ? { transaction_unit_price: line.unit_price } : { unit_price: line.unit_price }),
           tax_rate: line.tax_rate, tax_code: line.tax_code ? Number(line.tax_code) : null,
           ...(line.discount_percent !== "" ? { discount_percent: line.discount_percent } : {}),
@@ -402,7 +415,7 @@ const post = async (action: () => Promise<unknown>) => {
     </form>}
     {showForm && tab === "invoices" && <form className="inventory-form" onSubmit={createInvoice}>
       <label>نوع الفاتورة<select disabled={!!editingInvoiceId} value={invoiceForm.mode} onChange={e=>{const mode=e.target.value as "delivery"|"service";setInvoiceForm({...invoiceForm,mode,delivery:"",customer:"",branch:""});setInvoiceLines(mode==="service"?[{product:undefined,product_name:"",quantity:"1",unit_price:"0",tax_rate:"0",tax_code:"",discount_percent:""}]:[]);}}><option value="delivery">فاتورة بضاعة من إذن تسليم</option><option value="service">فاتورة خدمة مباشرة</option></select></label>
-      {invoiceForm.mode === "delivery" ? <label>إذن التسليم<select required disabled={!!editingInvoiceId} value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.map((line,index) => { const quoteLine=d.order_snapshot?.lines[index] || d.quotation_snapshot?.lines[index]; return {delivery_line:line.id, product:line.product, product_name:line.product_name, quantity:line.quantity, unit_price:quoteLine?.unit_price || products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:quoteLine?.tax_rate || "0", tax_code:quoteLine?.tax_code ? String(quoteLine.tax_code) : "", discount_percent:quoteLine?.discount_percent || ""}; }) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label> : <>
+      {invoiceForm.mode === "delivery" ? <label>إذن التسليم<select required disabled={!!editingInvoiceId} value={invoiceForm.delivery} onChange={e => { const d=deliveries.find(x=>x.id===Number(e.target.value)); setInvoiceForm({...invoiceForm, delivery:e.target.value}); setInvoiceLines(d ? d.line_items.filter(line => remainingDeliveryQuantity(line) > 0).map(line => { const index=d.line_items.findIndex(item=>item.id===line.id); const quoteLine=d.order_snapshot?.lines[index] || d.quotation_snapshot?.lines[index]; return {delivery_line:line.id, product:line.product, product_name:line.product_name, quantity:String(remainingDeliveryQuantity(line)), unit_price:quoteLine?.unit_price || products.find(p=>p.id===line.product)?.sale_price || "0", tax_rate:quoteLine?.tax_rate || "0", tax_code:quoteLine?.tax_code ? String(quoteLine.tax_code) : "", discount_percent:quoteLine?.discount_percent || ""}; }) : []); }}><option value="">اختر إذن التسليم</option>{invoiceable.map(d => <option key={d.id} value={d.id}>{d.delivery_number} · {d.customer_name}</option>)}</select></label> : <>
         <label>العميل<select required disabled={!!editingInvoiceId} value={invoiceForm.customer} onChange={e=>setInvoiceForm({...invoiceForm,customer:e.target.value})}><option value="">اختر العميل</option>{customers.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
         <label>الفرع<select required disabled={!!editingInvoiceId} value={invoiceForm.branch} onChange={e=>setInvoiceForm({...invoiceForm,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.filter(x=>x.is_active).map(x=><option key={x.id} value={x.id}>{x.code} · {x.name_ar}</option>)}</select></label>
       </>}
@@ -420,7 +433,7 @@ const post = async (action: () => Promise<unknown>) => {
           <label>الكمية<input required type="number" min="0.0001" step="0.0001" value={line.quantity} onChange={e=>setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,quantity:e.target.value}:x))}/></label>
           <button type="button" className="subtle-button" disabled={invoiceLines.length===1} onClick={()=>setInvoiceLines(old=>old.filter((_,i)=>i!==index))}>حذف الخدمة</button>
         </> : <>
-          <label>الصنف<input readOnly value={line.product_name} /></label><label>الكمية<input readOnly value={line.quantity} /></label>
+          <label>الصنف<input readOnly value={line.product_name} /></label><label>الكمية المطلوب فوترتها<input required type="number" min="0.0001" max={line.quantity} step="0.0001" value={line.quantity} onChange={e=>setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,quantity:e.target.value}:x))}/><small>المتاح للفوترة: {line.quantity}</small></label>
         </>}
         <label>{invoiceForm.transaction_currency ? "سعر الوحدة بالعملة الأجنبية" : "سعر الوحدة بالعملة الأساسية"}<input required type="number" min="0" step="0.0001" value={line.unit_price} onChange={e => setInvoiceLines(old => old.map((x,i)=>i===index?{...x,unit_price:e.target.value}:x))} /></label>
         <label>كود الضريبة<select value={line.tax_code} onChange={e => { const selected=taxCodes.find(code=>code.id===Number(e.target.value)); setInvoiceLines(old=>old.map((x,i)=>i===index?{...x,tax_code:e.target.value,tax_rate:selected?.rate || "0"}:x)); }}><option value="">بدون كود — إدخال يدوي</option>{taxCodes.map(code=><option key={code.id} value={code.id}>{code.code} · {code.name_ar} · {code.rate}%</option>)}</select></label>
