@@ -2101,6 +2101,13 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
                     raise ValidationError({field: "لا يمكن تغيير بيانات تأسيس العهدة بعد بدء حركتها."})
         serializer.save()
 
+    def perform_destroy(self, instance):
+        self._write(instance.company_id)
+        if instance.transfers.exists() or instance.expenses.exists():
+            raise ValidationError("لا يمكن حذف عهدة لها حركة؛ استخدم حالة الإيقاف أو الإغلاق للحفاظ على الأثر.")
+        instance.status = PettyCashFund.Status.CLOSED
+        instance.save(update_fields=("status", "updated_at"))
+
     @staticmethod
     def _balance(fund, as_of=None):
         from accounting.models import JournalEntry, JournalLine
@@ -2291,6 +2298,12 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
         qs = self.queryset.filter(fund__company__in=accessible_companies(self.request.user))
         if not self.request.user.is_superuser or is_platform_owner(self.request.user):
             qs = qs.filter(fund__branch__in=accessible_branches(self.request.user))
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            if not company_id.isdigit():
+                raise ValidationError({"company": "الشركة المحددة غير صحيحة."})
+            self._scope(int(company_id))
+            qs = qs.filter(fund__company_id=int(company_id))
         fund_id = self.request.query_params.get("fund")
         if fund_id:
             if not fund_id.isdigit():
