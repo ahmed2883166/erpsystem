@@ -1135,7 +1135,7 @@ export const bankReconciliationApi = {
 const uploadBankStatementFile = async <T,>(id:number,action:string,file:File):Promise<T> => {
   await request<{detail:string}>("/api/csrf/");
   const form=new FormData();form.append("file",file);
-  const response=await fetch(`/api/treasury/reconciliations/${id}/${action.replaceAll("-","_")}/`,{
+  const response=await fetch(`/api/treasury/reconciliations/${id}/${action}/`,{
     method:"POST",credentials:"same-origin",
     headers:{Accept:"application/json","X-CSRFToken":csrfToken()},body:form
   });
