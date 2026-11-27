@@ -314,6 +314,7 @@ class BankStatementLine(models.Model):
     reference = models.CharField(max_length=120, blank=True)
     amount = models.DecimalField(max_digits=20, decimal_places=4)
     matched_transaction = models.ForeignKey(TreasuryTransaction, null=True, blank=True, on_delete=models.PROTECT, related_name="bank_statement_matches")
+    adjustment_transaction = models.OneToOneField(TreasuryTransaction, null=True, blank=True, on_delete=models.PROTECT, related_name="bank_statement_adjustment")
     matched_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

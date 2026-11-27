@@ -615,6 +615,89 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         return response.Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="record-adjustment")
+    def record_adjustment(self, request, pk=None):
+        """إنشاء مسودة سند خزينة مقابل رسم أو فائدة أو حركة بنكية غير مسجلة."""
+        recon = self.get_object()
+        self._write(recon.company_id)
+        if recon.status != BankReconciliation.Status.DRAFT:
+            raise ValidationError("لا يمكن إنشاء تسوية محاسبية من كشف معتمد.")
+        if recon.bank_account.currency_code != recon.company.base_currency.code:
+            raise ValidationError("إنشاء سند التسوية المباشر متاح حاليًا للحسابات بالعملة الأساسية فقط؛ لا تُنشئ قيدًا أجنبيًا دون سعر صرف معتمد.")
+        if not recon.bank_account.branch_id and not has_company_wide_branch_access(
+            request.user, recon.company_id
+        ):
+            raise PermissionDenied("إنشاء سند من كشف حساب بنكي عام يتطلب صلاحية الوصول إلى جميع فروع الشركة.")
+        if recon.bank_account.branch_id:
+            branch_id = recon.bank_account.branch_id
+        else:
+            branch_id = request.data.get("branch")
+        try:
+            line = BankStatementLine.objects.select_for_update().get(
+                pk=request.data.get("line_id"), reconciliation=recon
+            )
+        except (BankStatementLine.DoesNotExist, ValueError, TypeError):
+            raise ValidationError("سطر كشف البنك غير موجود.") from None
+        if line.matched_transaction_id:
+            raise ValidationError("سطر كشف البنك تمت مطابقته بالفعل.")
+        if line.adjustment_transaction_id:
+            raise ValidationError("تم إنشاء سند تسوية لهذا السطر بالفعل.")
+        try:
+            fiscal_year_id = int(request.data.get("fiscal_year"))
+            counter_account_id = int(request.data.get("counter_account"))
+            branch_id = int(branch_id)
+        except (TypeError, ValueError):
+            raise ValidationError("حدد السنة المالية والحساب المقابل والفرع.") from None
+        from companies.models import Branch, FiscalYear
+        from accounting.models import ChartOfAccount
+        branch = Branch.objects.filter(pk=branch_id, company_id=recon.company_id).first()
+        fiscal_year = FiscalYear.objects.filter(pk=fiscal_year_id, company_id=recon.company_id).first()
+        counter_account = ChartOfAccount.objects.filter(pk=counter_account_id, company_id=recon.company_id).first()
+        if not branch or not can_access_branch(request.user, branch.pk, recon.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع سند التسوية.")
+        if not fiscal_year or fiscal_year.status != FiscalYear.Status.OPEN or not (
+            fiscal_year.start_date <= line.transaction_date <= fiscal_year.end_date
+        ):
+            raise ValidationError("اختر سنة مالية مفتوحة تشمل تاريخ حركة كشف البنك.")
+        if not counter_account or counter_account.is_group or not counter_account.allow_posting or not counter_account.is_active:
+            raise ValidationError("اختر حسابًا مقابلًا تفصيليًا نشطًا وقابلًا للترحيل.")
+        from .serializers import TreasuryTransactionSerializer
+        kind = (
+            TreasuryTransaction.Kind.RECEIPT
+            if line.amount > 0 else TreasuryTransaction.Kind.PAYMENT
+        )
+        payload = {
+            "company": recon.company_id,
+            "branch": branch.pk,
+            "fiscal_year": fiscal_year.pk,
+            "source_account": recon.bank_account_id,
+            "counter_account": counter_account.pk,
+            "kind": kind,
+            "document_number": f"BANK-ADJ-{recon.pk}-{line.pk}",
+            "transaction_date": line.transaction_date.isoformat(),
+            "amount": str(abs(line.amount)),
+            "description": (line.description or "تسوية حركة كشف بنك")[:500],
+            "reference": line.reference,
+            "cash_flow_category": request.data.get(
+                "cash_flow_category", TreasuryTransaction.CashFlowCategory.OPERATING
+            ),
+        }
+        serializer = TreasuryTransactionSerializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        doc = serializer.save(created_by=request.user)
+        refresh_financial_approval(
+            FinancialApprovalRequest.DocumentType.TREASURY_PAYMENT,
+            doc, request.user,
+        )
+        line.adjustment_transaction = doc
+        line.save(update_fields=("adjustment_transaction",))
+        return response.Response({
+            "line": BankStatementLineSerializer(line).data,
+            "transaction": TreasuryTransactionSerializer(doc).data,
+            "message": "تم إنشاء مسودة سند مقابل لحركة كشف البنك. رحّل السند وفق صلاحيات الاعتماد ثم ارجع لمطابقته.",
+        }, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
     def match(self, request, pk=None):
         """مطابقة سطر كشف البنك مع الحركة المالية المقابلة."""

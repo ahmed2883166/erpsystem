@@ -1057,7 +1057,7 @@ export const salesApi = {
 
 
 export type BankReconciliation = { id: number; company: number; bank_account: number; bank_name: string; bank_code: string; statement_number: string; statement_date: string; opening_balance: string; closing_balance: string; status: "draft" | "reconciled"; line_count: number; created_at: string; reconciled_at: string | null };
-export type BankStatementLine = { id: number; reconciliation: number; line_number: number; transaction_date: string; description: string; reference: string; amount: string; matched_transaction: number | null; matched_document: string; matched_amount: string | null; matched_at: string | null };
+export type BankStatementLine = { id: number; reconciliation: number; line_number: number; transaction_date: string; description: string; reference: string; amount: string; matched_transaction: number | null; matched_document: string; matched_amount: string | null; adjustment_transaction: number | null; adjustment_document: string; adjustment_status: string; matched_at: string | null };
 export type BankReconciliationSummary = { reconciliation: BankReconciliation; statement_calculated: string; statement_difference: string; book_balance: string; outstanding_total: string; expected_book_balance: string; unexplained_difference: string; matched_lines: number; unmatched_lines: number; lines: BankStatementLine[]; outstanding_transactions: { id: number; date: string; document_number: string; description: string; amount: string }[] };
 // واجهات التسوية البنكية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const bankReconciliationApi = {
@@ -1069,6 +1069,8 @@ export const bankReconciliationApi = {
   summary: (id: number) => request<BankReconciliationSummary>(`/api/treasury/reconciliations/${id}/summary/`),
   // إضافة سطر كشف بنك إلى جلسة التسوية.
   addLine: async (id: number, payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/add_line/`, { method: "POST", body: JSON.stringify(payload) }); },
+  // إنشاء مسودة سند قبض أو صرف من حركة كشف غير مسجلة مثل الفوائد أو العمولات.
+  recordAdjustment: async (id:number,payload:{line_id:number;counter_account:number;fiscal_year:number;branch?:number;cash_flow_category?:string}) => { await request<{detail:string}>("/api/csrf/"); return request<{line:BankStatementLine;transaction:TreasuryTransaction;message:string}>(`/api/treasury/reconciliations/${id}/record-adjustment/`, {method:"POST",body:JSON.stringify(payload)}); },
   // مطابقة سطر كشف البنك مع حركة خزينة محددة.
   match: async (id: number, lineId: number, transactionId: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankStatementLine>(`/api/treasury/reconciliations/${id}/match/`, { method: "POST", body: JSON.stringify({line_id:lineId,transaction_id:transactionId}) }); },
   // فك مطابقة سطر كشف البنك من الحركة المرتبطة.

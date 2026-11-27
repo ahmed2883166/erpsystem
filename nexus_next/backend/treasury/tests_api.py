@@ -603,6 +603,136 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(completed.data["status"], "reconciled")
         self.assertEqual(JournalEntry.objects.count(), 1)
 
+    def test_bank_statement_fee_creates_draft_payment_then_reconciles_after_posting(self):
+        expense = ChartOfAccount.objects.create(
+            company=self.company, code="6205", name_ar="عمولات بنكية",
+            nature=ChartOfAccount.Nature.EXPENSE,
+        )
+        # Model the 250 EGP as a true opening balance before the statement
+        # period, not as an unmatched transaction inside that period.
+        retained = ChartOfAccount.objects.create(
+            company=self.company, code="3000", name_ar="الأرباح المحتجزة",
+            nature=ChartOfAccount.Nature.EQUITY,
+        )
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
+        )
+        opening_bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        opening_bank = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": opening_bank_gl.pk,
+            "kind": "bank", "code": "BANK-FEE-OPEN", "name_ar": "بنك اختبار العمولة",
+            "currency_code": "EGP", "opening_balance": "250.0000",
+        }, format="json")
+        self.assertEqual(opening_bank.status_code, 201, opening_bank.data)
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": opening_bank.data["id"],
+            "statement_number": "ST-FEE-001", "statement_date": "2026-03-31",
+            "opening_balance": "250.0000", "closing_balance": "235.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        line = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/add_line/",
+            {"line_number": 1, "transaction_date": "2026-03-12",
+             "description": "عمولة تحويل بنكي", "reference": "FEE-15", "amount": "-15.0000"},
+            format="json",
+        )
+        self.assertEqual(line.status_code, 201, line.data)
+        adjustment = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/record-adjustment/",
+            {"line_id": line.data["id"], "counter_account": expense.pk,
+             "fiscal_year": self.year.pk},
+            format="json",
+        )
+        self.assertEqual(adjustment.status_code, 201, adjustment.data)
+        self.assertEqual(adjustment.data["transaction"]["kind"], "payment")
+        self.assertEqual(adjustment.data["transaction"]["status"], "draft")
+        self.assertEqual(adjustment.data["line"]["adjustment_document"], adjustment.data["transaction"]["document_number"])
+        # Only the earlier funding receipt is posted; the adjustment remains a draft.
+        self.assertEqual(JournalEntry.objects.count(), 1)
+
+        posted = self.client.post(
+            f"/api/treasury/transactions/{adjustment.data['transaction']['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        matched = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/match/",
+            {"line_id": line.data["id"], "transaction_id": posted.data["id"]},
+            format="json",
+        )
+        self.assertEqual(matched.status_code, 200, matched.data)
+        summary = self.client.get(
+            f"/api/treasury/reconciliations/{recon.data['id']}/summary/"
+        )
+        self.assertEqual(summary.status_code, 200, summary.data)
+        self.assertEqual(summary.data["unexplained_difference"], "0.0000")
+        completed = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/reconcile/",
+            {}, format="json",
+        )
+        self.assertEqual(completed.status_code, 200, completed.data)
+        self.assertEqual(completed.data["status"], "reconciled")
+
+    def test_bank_statement_interest_creates_receipt_and_foreign_adjustments_are_rejected(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk,
+            "statement_number": "ST-INT-001", "statement_date": "2026-03-31",
+            "opening_balance": "0.0000", "closing_balance": "8.0000",
+        }, format="json")
+        self.assertEqual(recon.status_code, 201, recon.data)
+        line = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/add_line/",
+            {"line_number": 1, "transaction_date": "2026-03-20",
+             "description": "فوائد دائنة", "reference": "INT-8", "amount": "8.0000"},
+            format="json",
+        )
+        self.assertEqual(line.status_code, 201, line.data)
+        adjustment = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/record-adjustment/",
+            {"line_id": line.data["id"], "counter_account": self.revenue_gl.pk,
+             "fiscal_year": self.year.pk},
+            format="json",
+        )
+        self.assertEqual(adjustment.status_code, 201, adjustment.data)
+        self.assertEqual(adjustment.data["transaction"]["kind"], "receipt")
+        self.assertEqual(adjustment.data["transaction"]["amount"], "8.0000")
+
+        foreign_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1198", name_ar="بنك أجنبي للتسوية",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        foreign_bank = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=foreign_gl,
+            kind="bank", code="BANK-FX-ADJ", name_ar="بنك أجنبي",
+            currency_code="USD",
+        )
+        foreign_recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": foreign_bank.pk,
+            "statement_number": "ST-FX-ADJ-001", "statement_date": "2026-03-31",
+            "opening_balance": "0.0000", "closing_balance": "2.0000",
+        }, format="json")
+        self.assertEqual(foreign_recon.status_code, 201, foreign_recon.data)
+        foreign_line = self.client.post(
+            f"/api/treasury/reconciliations/{foreign_recon.data['id']}/add_line/",
+            {"line_number": 1, "transaction_date": "2026-03-20",
+             "description": "Foreign bank fee", "reference": "FX-FEE", "amount": "-2.0000"},
+            format="json",
+        )
+        self.assertEqual(foreign_line.status_code, 201, foreign_line.data)
+        rejected = self.client.post(
+            f"/api/treasury/reconciliations/{foreign_recon.data['id']}/record-adjustment/",
+            {"line_id": foreign_line.data["id"], "counter_account": self.revenue_gl.pk,
+             "fiscal_year": self.year.pk},
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertFalse(TreasuryTransaction.objects.filter(
+            document_number=f"BANK-ADJ-{foreign_recon.data['id']}-{foreign_line.data['id']}"
+        ).exists())
+
     def test_bank_reconciliation_uses_reversed_journals_consistently(self):
         original = JournalEntry.objects.create(
             company=self.company, branch=self.branch, fiscal_year=self.year,
