@@ -3774,6 +3774,74 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
 
 
 
+    def test_landed_cost_automatic_value_and_quantity_allocation_preserves_exact_total(self):
+        _, first_receipt_line_id = self._create_and_post_receipt()
+        second_receipt = self.client.post("/api/purchasing/receipts/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+            "receipt_number": "GR-LC-AUTO-02", "receipt_date": "2026-03-11",
+            "lines": [{"product": self.product.pk, "quantity": "3", "unit_cost": "50"}],
+        }, format="json")
+        self.assertEqual(second_receipt.status_code, 201, second_receipt.data)
+        second_receipt_id = second_receipt.data["id"]
+        second_receipt_line_id = second_receipt.data["line_items"][0]["id"]
+        posted_receipt = self.client.post(
+            f"/api/purchasing/receipts/{second_receipt_id}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
+
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        source_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "LC-AUTO-SOURCE", "invoice_date": "2026-03-12",
+            "lines": [{
+                "description": "شحن",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "40.0000",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(source_response.status_code, 201, source_response.data)
+        posted_invoice = self.client.post(
+            f"/api/purchasing/invoices/{source_response.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+        source_line_id = PurchaseInvoice.objects.get(pk=source_response.data["id"]).lines.get().pk
+
+        cases = (
+            ("value", "LC-AUTO-VALUE", ["11.4286", "8.5714"]),
+            ("quantity", "LC-AUTO-QUANTITY", ["8.0000", "12.0000"]),
+        )
+        for basis, document_number, expected in cases:
+            with self.subTest(basis=basis):
+                response = self.client.post("/api/purchasing/landed-costs/", {
+                    "company": self.company.pk,
+                    "source_invoice": source_response.data["id"],
+                    "document_number": document_number,
+                    "document_date": "2026-03-13",
+                    "allocations": [{
+                        "source_invoice_line": source_line_id,
+                        "receipt_lines": [first_receipt_line_id, second_receipt_line_id],
+                        "basis": basis,
+                        "amount": "20.0000",
+                    }],
+                }, format="json")
+                self.assertEqual(response.status_code, 201, response.data)
+                actual = sorted(
+                    (row["receipt_line"], row["amount"])
+                    for row in response.data["allocation_lines"]
+                )
+                expected_rows = sorted([
+                    (first_receipt_line_id, expected[0]),
+                    (second_receipt_line_id, expected[1]),
+                ])
+                self.assertEqual(actual, expected_rows)
+                self.assertEqual(
+                    sum((Decimal(row["amount"]) for row in response.data["allocation_lines"]), Decimal("0")),
+                    Decimal("20.0000"),
+                )
+
     def test_landed_cost_posts_across_branches_without_duplicate_supplier_payable_and_can_reverse(self):
         receipt_id, receipt_line_id = self._create_and_post_receipt()
         second_branch = Branch.objects.create(
