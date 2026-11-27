@@ -1647,7 +1647,15 @@ def post_landed_cost_document(document_id, user):
             raise ValidationError("توزيع بند الرسملة لا يساوي مبلغ البند.")
         prepared.append((allocation, amounts))
 
-    clearing = _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING, invoice.activity)
+    has_remote_branch = any(
+        branch_id != source_branch.pk
+        for _, amounts in prepared
+        for branch_id in amounts
+    )
+    clearing = (
+        _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING, invoice.activity)
+        if has_remote_branch else None
+    )
     prepared_accounts = {}
     for allocation, amounts in prepared:
         expense_account = allocation.source_invoice_line.expense_account
@@ -1658,7 +1666,9 @@ def post_landed_cost_document(document_id, user):
                 prepared_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS, invoice.activity)
             if bucket["loss"]:
                 prepared_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, invoice.activity)
-        used_accounts = [expense_account, clearing, *prepared_accounts.values()]
+        used_accounts = [expense_account, *prepared_accounts.values()]
+        if clearing:
+            used_accounts.append(clearing)
         if len({account.pk for account in used_accounts}) != len(used_accounts):
             raise ValidationError("يجب فصل حساب المصروف عن حسابات المخزون والتكلفة والخسائر والتسوية بين الفروع.")
 
