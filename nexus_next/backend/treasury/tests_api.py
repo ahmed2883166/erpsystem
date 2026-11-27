@@ -1376,7 +1376,7 @@ class TreasuryLiquiditySummaryTests(APITestCase):
         )
 
         response = self.client.get(
-            f"/api/treasury/accounts/liquidity-summary/?company={self.company.pk}&as_of=2026-03-31"
+            f"/api/treasury/accounts/liquidity-summary/?company={self.company.pk}"
         )
         self.assertEqual(response.status_code, 200, response.data)
         row = next(item for item in response.data["accounts"] if item["id"] == foreign_account.pk)
