@@ -240,9 +240,10 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
 
         rows = []
         totals = {
-            "ordered_quantity": Decimal("0"), "received_quantity": Decimal("0"),
-            "invoiced_quantity": Decimal("0"), "uninvoiced_received_quantity": Decimal("0"),
-            "unreceived_quantity": Decimal("0"), "price_variance": Decimal("0"),
+            "line_count": 0, "unreceived_line_count": 0,
+            "uninvoiced_line_count": 0, "overinvoiced_line_count": 0,
+            "order_value": Decimal("0"), "invoiced_net_amount": Decimal("0"),
+            "price_variance": Decimal("0"),
         }
         for order in orders.order_by("order_date", "order_number"):
             for line in order.lines.all():
@@ -296,11 +297,12 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
                     }),
                     "invoice_numbers": sorted({item.invoice.invoice_number for item in invoice_lines}),
                 })
-                totals["ordered_quantity"] += line.quantity
-                totals["received_quantity"] += received_quantity
-                totals["invoiced_quantity"] += invoiced_quantity
-                totals["uninvoiced_received_quantity"] += uninvoiced_quantity
-                totals["unreceived_quantity"] += unreceived_quantity
+                totals["line_count"] += 1
+                totals["unreceived_line_count"] += int(unreceived_quantity > 0)
+                totals["uninvoiced_line_count"] += int(uninvoiced_quantity > 0)
+                totals["overinvoiced_line_count"] += int(overinvoiced_quantity > 0)
+                totals["order_value"] += expected_value
+                totals["invoiced_net_amount"] += invoiced_net
                 totals["price_variance"] += price_variance
 
         return Response({
