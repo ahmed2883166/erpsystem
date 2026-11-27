@@ -11,6 +11,24 @@ import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type Purch
 type Props = { companyId: number | null; company?: Company | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
 const money = (value: string) => formatMoney(value);
+const decimalToUnits = (value: string): bigint | null => {
+  const normalized = value.trim();
+  if (!/^\\d+(?:\\.\\d+)?$/.test(normalized)) return null;
+  const [whole, fraction = ""] = normalized.split(".");
+  if (fraction.length > 4 && /[^0]/.test(fraction.slice(4))) return null;
+  return BigInt(whole) * 10000n + BigInt((fraction.slice(0, 4) + "0000").slice(0, 4));
+};
+const unitsToDecimal = (value: bigint): string =>
+  `${value / 10000n}.${(value % 10000n).toString().padStart(4, "0")}`;
+const roundedShareUnits = (amount: bigint, weight: bigint, totalWeight: bigint): bigint => {
+  const numerator = amount * weight;
+  const quotient = numerator / totalWeight;
+  const remainder = numerator % totalWeight;
+  const doubled = remainder * 2n;
+  return doubled > totalWeight || (doubled === totalWeight && quotient % 2n === 1n)
+    ? quotient + 1n : quotient;
+};
+
 const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitted: "sent", approved: "accepted", rejected: "cancelled", converted: "posted", open: "sent", closed: "cancelled", awarded: "accepted", posted: "posted", reversed: "reversed", confirmed: "sent", partially_received: "partial", received: "accepted", cancelled: "cancelled", partial: "partial" } as Record<string, string>}[status] || "unknown"}`;
 
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
@@ -203,6 +221,53 @@ const loadAging = async () => {
     row.invoice_type === "direct_expense" && row.status === "posted" && row.invoice_lines.some(line => !!line.expense_account),
   );
   const selectedLandedCostInvoice = eligibleLandedCostInvoices.find(row => row.id === Number(landedCostForm.source_invoice)) || null;
+  const landedCostPreviews = landedCostLines.map((line) => {
+    const amount = decimalToUnits(line.amount);
+    const selectedIds = line.basis === "manual" ? (line.receipt_line ? [line.receipt_line] : []) : line.receipt_lines;
+    const selected = selectedIds.map((id) => {
+      for (const receipt of receipts) {
+        const item = receipt.line_items.find((candidate) => String(candidate.id) === id);
+        if (item) return { receipt, item };
+      }
+      return null;
+    }).filter((entry): entry is { receipt: PurchaseReceipt; item: PurchaseReceipt["line_items"][number] } => entry !== null);
+    if (amount === null || amount <= 0n || selected.length !== selectedIds.length || selected.length === 0) {
+      return { valid: false, total: "0.0000", rows: [] as { id: number; label: string; share: string }[] };
+    }
+    if (line.basis === "manual") {
+      const entry = selected[0];
+      return {
+        valid: entry.receipt.movement_status === "posted",
+        total: unitsToDecimal(amount),
+        rows: [{ id: entry.item.id, label: `${entry.receipt.receipt_number} · ${entry.item.product_name}`, share: unitsToDecimal(amount) }],
+      };
+    }
+    const weights = selected.map(({ item }) => decimalToUnits(line.basis === "quantity" ? item.quantity : item.cost_amount));
+    if (weights.some((weight) => weight === null || weight <= 0n) || selected.some(({ receipt }) => receipt.movement_status !== "posted")) {
+      return { valid: false, total: unitsToDecimal(amount), rows: [] as { id: number; label: string; share: string }[] };
+    }
+    const safeWeights = weights as bigint[];
+    const totalWeight = safeWeights.reduce((sum, weight) => sum + weight, 0n);
+    const shares = safeWeights.map((weight) => roundedShareUnits(amount, weight, totalWeight));
+    const residual = amount - shares.reduce((sum, share) => sum + share, 0n);
+    if (residual !== 0n) {
+      let largest = 0;
+      for (let index = 1; index < safeWeights.length; index += 1) {
+        if (safeWeights[index] > safeWeights[largest]) largest = index;
+      }
+      shares[largest] += residual;
+    }
+    return {
+      valid: shares.every((share) => share > 0n),
+      total: unitsToDecimal(shares.reduce((sum, share) => sum + share, 0n)),
+      rows: selected.map(({ receipt, item }, index) => ({
+        id: item.id,
+        label: `${receipt.receipt_number} · ${item.product_name}`,
+        share: unitsToDecimal(shares[index]),
+      })).filter((row) => row.share !== "0.0000"),
+    };
+  });
+
   const saveLandedCost = async (event:FormEvent) => {
     event.preventDefault();
     if (!companyId || !selectedLandedCostInvoice || !landedCostForm.document_number.trim()
@@ -704,6 +769,19 @@ const postInvoice = async (id: number) => {
         <label>{line.basis === "manual" ? "مبلغ التحميل" : "إجمالي المبلغ المراد توزيعه"}<input required type="number" min="0.0001" step="0.0001" value={line.amount} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,amount:e.target.value}:x))}/></label>
         <button className="subtle-button" type="button" disabled={landedCostLines.length===1} onClick={()=>setLandedCostLines(old=>old.filter((_,i)=>i!==index))}>حذف</button>
       </div>)}
+      <section className="inventory-wide" aria-live="polite">
+        <h3>معاينة التوزيع قبل الحفظ</h3>
+        {landedCostPreviews.map((preview, index) => <div className="data-table-wrap" key={index}>
+          <table><thead><tr><th>بند الاستلام</th><th>نصيب المصروف</th></tr></thead>
+            <tbody>{preview.rows.map(row => <tr key={row.id}><td>{row.label}</td><td>{money(row.share)}</td></tr>)}
+              {preview.rows.length === 0 && <tr><td colSpan={2}>أدخل مبلغًا واختر بنود استلام صالحة لعرض المعاينة.</td></tr>}
+            </tbody>
+            <tfoot><tr><th>إجمالي التوزيع المتوقع</th><th>{money(preview.total)}</th></tr></tfoot>
+          </table>
+          {!preview.valid && <p className="error-banner">المعاينة غير مكتملة: راجع بنود الاستلام والأوزان؛ يجب أن تكون الكمية أو القيمة موجبة وأن يكون الاستلام مرحّلًا.</p>}
+        </div>)}
+        <p>تُحسب الأنصبة حتى 4 منازل عشرية، ويُضاف فرق التقريب إلى البند صاحب أكبر وزن؛ يجب أن يساوي الإجمالي مبلغ المصروف.</p>
+      </section>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!eligibleLandedCostInvoices.length}>حفظ مسودة الرسملة</button><button className="subtle-button" type="button" onClick={()=>setShowForm(false)}>إلغاء</button></div>
     </form>}
     {tab === "landed-cost" && <div className="data-table-wrap"><table><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>فاتورة المصروف</th><th>المورد</th><th>التوزيعات</th><th>الإجمالي</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{landedCosts.filter(row=>[row.document_number,row.source_invoice_number,row.supplier_name].join(" ").toLowerCase().includes(search.toLowerCase())).map(row=><tr key={row.id}><td className="code-cell">{row.document_number}</td><td>{row.document_date}</td><td>{row.source_invoice_number}</td><td>{row.supplier_name}</td><td>{row.allocation_lines.map(line=><div key={line.id}>{line.product_code} · {money(line.amount)}</div>)}</td><td><strong>{money(row.total_amount)}</strong></td><td><span className={statusPill(row.status)}>{row.status==="draft"?"مسودة":row.status==="posted"?"مرحّل":"معكوس"}</span></td><td><div className="table-actions">{row.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void postLandedCost(row.id)}>ترحيل</button>:row.status==="posted"?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void reverseLandedCost(row.id)}>عكس الرسملة</button>:"—"}</div></td></tr>)}</tbody></table>{landedCosts.length===0&&<div className="table-empty">لا توجد مستندات رسملة تكلفة حتى الآن.</div>}</div>}
