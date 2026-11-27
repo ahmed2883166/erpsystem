@@ -287,6 +287,89 @@ class SalesWorkflowTests(APITestCase):
             2,
         )
 
+    def test_delivery_quantity_can_be_invoiced_in_multiple_partial_invoices(self):
+        delivery_id, line_id = self._create_delivery("DEL-PARTIAL-BILLING")
+
+        first = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-PARTIAL-1", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "0.7500", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["invoice_lines"][0]["quantity"], "0.7500")
+        first_posted = self.client.post(
+            f"/api/sales-documents/invoices/{first.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(first_posted.status_code, 200, first_posted.data)
+
+        second = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-PARTIAL-2", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "1.2500", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+        second_posted = self.client.post(
+            f"/api/sales-documents/invoices/{second.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(second_posted.status_code, 200, second_posted.data)
+
+        overbilled = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-PARTIAL-OVER", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "0.0001", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(overbilled.status_code, 400, overbilled.data)
+        self.assertEqual(
+            SalesInvoice.objects.filter(delivery_id=delivery_id, status=SalesInvoice.Status.POSTED).count(),
+            2,
+        )
+        self.assertEqual(
+            sum(SalesInvoice.objects.get(pk=invoice_id).lines.get().quantity for invoice_id in (first.data["id"], second.data["id"])),
+            Decimal("2.0000"),
+        )
+
+    def test_draft_delivery_invoices_reserve_quantity_and_edit_releases_reservation(self):
+        delivery_id, line_id = self._create_delivery("DEL-DRAFT-RESERVATION")
+
+        first = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DRAFT-RESERVE-1", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "1.5000", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+
+        second = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DRAFT-RESERVE-2", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "0.5000", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(second.status_code, 201, second.data)
+
+        blocked = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DRAFT-RESERVE-3", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "0.1000", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(blocked.status_code, 400, blocked.data)
+
+        revised = self.client.patch(
+            f"/api/sales-documents/invoices/{first.data['id']}/",
+            {"lines": [{
+                "delivery_line": line_id, "quantity": "1.0000",
+                "unit_price": "100", "tax_rate": "0",
+            }]},
+            format="json",
+        )
+        self.assertEqual(revised.status_code, 200, revised.data)
+        self.assertEqual(revised.data["invoice_lines"][0]["quantity"], "1.0000")
+
+        released = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk, "customer": self.customer.pk, "delivery": delivery_id,
+            "invoice_number": "INV-DRAFT-RESERVE-3", "invoice_date": "2026-03-10",
+            "lines": [{"delivery_line": line_id, "quantity": "0.5000", "unit_price": "100", "tax_rate": "0"}],
+        }, format="json")
+        self.assertEqual(released.status_code, 201, released.data)
+
     def test_customer_receipt_cannot_exceed_invoice_balance(self):
         delivery_id, line_id = self._create_delivery()
         invoice = self.client.post("/api/sales-documents/invoices/", {
