@@ -1380,6 +1380,10 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
         for row in allocations:
             source_line = row["source_invoice_line"]
             receipt_line = row["receipt_line"]
+            if row["basis"] != LandedCostAllocation.Basis.MANUAL:
+                raise serializers.ValidationError({
+                    "allocations": "التوزيع الآلي حسب القيمة أو الوزن أو الحجم غير متاح في هذه المرحلة؛ استخدم التوزيع اليدوي لكل بند."
+                })
             if source_line.invoice_id != invoice.pk or not source_line.expense_account_id:
                 raise serializers.ValidationError({"allocations": "كل بند مصدر يجب أن يكون بند مصروف تابعًا لفاتورة المصدر."})
             if receipt_line.movement.company_id != company.pk or receipt_line.movement.status != StockMovement.Status.POSTED:
