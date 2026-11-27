@@ -1326,8 +1326,19 @@ class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
 
 class LandedCostAllocationInputSerializer(serializers.Serializer):
     source_invoice_line = serializers.PrimaryKeyRelatedField(queryset=PurchaseInvoiceLine.objects.select_related("invoice"))
-    receipt_line = serializers.PrimaryKeyRelatedField(queryset=StockMovementLine.objects.select_related("movement", "product"))
+    receipt_line = serializers.PrimaryKeyRelatedField(
+        queryset=StockMovementLine.objects.select_related("movement", "product"),
+        required=False,
+    )
+    receipt_lines = serializers.ListField(
+        child=serializers.PrimaryKeyRelatedField(
+            queryset=StockMovementLine.objects.select_related("movement", "product"),
+        ),
+        required=False,
+        allow_empty=False,
+    )
     basis = serializers.ChoiceField(choices=LandedCostAllocation.Basis.choices, default=LandedCostAllocation.Basis.MANUAL)
+    # For automatic bases, amount is the total expense amount to distribute over receipt_lines.
     amount = serializers.DecimalField(max_digits=20, decimal_places=4, min_value=Decimal("0.0001"))
 
 
@@ -1375,24 +1386,23 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
         company = attrs["company"]
         invoice = attrs["source_invoice"]
         document_date = attrs["document_date"]
-        allocations = attrs.get("allocations") or []
+        input_rows = attrs.get("allocations") or []
         if invoice.company_id != company.pk:
             raise serializers.ValidationError({"source_invoice": "فاتورة المصدر لا تتبع الشركة المحددة."})
         if invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE or invoice.status != PurchaseInvoice.Status.POSTED:
             raise serializers.ValidationError({"source_invoice": "اختر فاتورة خدمات أو مصروفات مباشرة ومرحّلة."})
         if document_date < invoice.invoice_date:
             raise serializers.ValidationError({"document_date": "تاريخ الرسملة لا يجوز أن يسبق فاتورة المصروف."})
-        if not allocations:
+        if not input_rows:
             raise serializers.ValidationError({"allocations": "أضف بند رسملة واحدًا على الأقل."})
 
+        expanded_rows = []
         requested_by_source = {}
-        for row in allocations:
+        quantum = Decimal("0.0001")
+        for row in input_rows:
             source_line = row["source_invoice_line"]
-            receipt_line = row["receipt_line"]
-            if row["basis"] != LandedCostAllocation.Basis.MANUAL:
-                raise serializers.ValidationError({
-                    "allocations": "التوزيع الآلي حسب القيمة أو الوزن أو الحجم غير متاح في هذه المرحلة؛ استخدم التوزيع اليدوي لكل بند."
-                })
+            basis = row["basis"]
+            amount = row["amount"]
             if source_line.invoice_id != invoice.pk or not source_line.expense_account_id:
                 raise serializers.ValidationError({"allocations": "كل بند مصدر يجب أن يكون بند مصروف تابعًا لفاتورة المصدر."})
             account = source_line.expense_account
@@ -1400,18 +1410,59 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
                 not account.is_active or account.is_group or not account.allow_posting
                 or account.nature != ChartOfAccount.Nature.EXPENSE
             ):
-                raise serializers.ValidationError({
-                    "allocations": "حساب بند المصروف يجب أن يكون حساب مصروف تفصيليًا نشطًا ويسمح بالترحيل."
+                raise serializers.ValidationError({"allocations": "حساب بند المصروف يجب أن يكون حساب مصروف تفصيليًا نشطًا ويسمح بالترحيل."})
+
+            if basis == LandedCostAllocation.Basis.MANUAL:
+                receipt_lines = [row.get("receipt_line")]
+                if not receipt_lines[0] or row.get("receipt_lines"):
+                    raise serializers.ValidationError({"allocations": "التوزيع اليدوي يتطلب بند استلام واحدًا لكل مبلغ."})
+                shares = [amount]
+            else:
+                if basis not in (LandedCostAllocation.Basis.VALUE, LandedCostAllocation.Basis.QUANTITY):
+                    raise serializers.ValidationError({"allocations": "أساس التوزيع المتاح حاليًا هو القيمة أو الكمية أو اليدوي؛ الوزن والحجم غير متاحين لعدم وجود بيانات فعلية للصنف."})
+                receipt_lines = row.get("receipt_lines") or []
+                if row.get("receipt_line") or not receipt_lines:
+                    raise serializers.ValidationError({"allocations": "التوزيع الآلي يتطلب اختيار عدة بنود استلام في حقل receipt_lines."})
+                if len({line.pk for line in receipt_lines}) != len(receipt_lines):
+                    raise serializers.ValidationError({"allocations": "لا تكرر بند الاستلام داخل نفس عملية التوزيع."})
+                weights = []
+                for receipt in receipt_lines:
+                    weight = receipt.quantity if basis == LandedCostAllocation.Basis.QUANTITY else receipt.cost_amount
+                    if weight is None or weight <= 0:
+                        raise serializers.ValidationError({"allocations": "لا يمكن التوزيع بالقيمة أو الكمية على بند استلام بوزن توزيع صفري."})
+                    weights.append(Decimal(weight))
+                weight_total = sum(weights, Decimal("0"))
+                shares = [(amount * weight / weight_total).quantize(quantum) for weight in weights]
+                residual = amount - sum(shares, Decimal("0"))
+                if residual:
+                    largest = max(range(len(weights)), key=lambda index: weights[index])
+                    shares[largest] += residual
+                if sum(shares, Decimal("0")) != amount:
+                    raise serializers.ValidationError({"allocations": "تعذر توزيع المبلغ بدقة؛ تحقق من قيمة المصروف وأوزان بنود الاستلام."})
+
+            for receipt_line, share in zip(receipt_lines, shares):
+                if share <= 0:
+                    continue
+                if receipt_line.movement.company_id != company.pk or receipt_line.movement.status != StockMovement.Status.POSTED:
+                    raise serializers.ValidationError({"allocations": "كل بند استلام يجب أن يكون مرحّلًا ويتبع الشركة."})
+                if receipt_line.product.product_type != Product.ProductType.GOODS:
+                    raise serializers.ValidationError({"allocations": "رسملة التكلفة متاحة للأصناف المخزنية فقط."})
+                if not PurchaseReceipt.objects.filter(company=company, stock_movement_id=receipt_line.movement_id).exists():
+                    raise serializers.ValidationError({"allocations": "بند المخزون المحدد ليس جزءًا من إذن استلام مشتريات."})
+                expanded_rows.append({
+                    "source_invoice_line": source_line,
+                    "receipt_line": receipt_line,
+                    "basis": basis,
+                    "amount": share,
                 })
-            if receipt_line.movement.company_id != company.pk or receipt_line.movement.status != StockMovement.Status.POSTED:
-                raise serializers.ValidationError({"allocations": "كل بند استلام يجب أن يكون مرحّلًا ويتبع الشركة."})
-            if receipt_line.product.product_type != Product.ProductType.GOODS:
-                raise serializers.ValidationError({"allocations": "رسملة التكلفة متاحة للأصناف المخزنية فقط."})
-            if not PurchaseReceipt.objects.filter(
-                company=company, stock_movement_id=receipt_line.movement_id,
-            ).exists():
-                raise serializers.ValidationError({"allocations": "بند المخزون المحدد ليس جزءًا من إذن استلام مشتريات."})
-            requested_by_source[source_line.pk] = requested_by_source.get(source_line.pk, Decimal("0")) + row["amount"]
+                requested_by_source[source_line.pk] = requested_by_source.get(source_line.pk, Decimal("0")) + share
+
+        seen_pairs = set()
+        for expanded in expanded_rows:
+            pair = (expanded["source_invoice_line"].pk, expanded["receipt_line"].pk)
+            if pair in seen_pairs:
+                raise serializers.ValidationError({"allocations": "لا يمكن تكرار نفس بند المصروف مع نفس بند الاستلام في المستند."})
+            seen_pairs.add(pair)
 
         for source_id, requested in requested_by_source.items():
             source_line = PurchaseInvoiceLine.objects.select_related("invoice").get(pk=source_id)
@@ -1430,7 +1481,8 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "allocations": f"إجمالي الرسملة يتجاوز صافي بند المصروف {source_line.description or source_line.pk}."
                 })
-        attrs["computed_total"] = sum((row["amount"] for row in allocations), Decimal("0"))
+        attrs["allocations"] = expanded_rows
+        attrs["computed_total"] = sum((row["amount"] for row in expanded_rows), Decimal("0"))
         return attrs
 
     @transaction.atomic
