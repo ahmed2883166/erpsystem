@@ -1069,6 +1069,7 @@ class TreasuryWorkflowTests(APITestCase):
         transaction = self._posted_bank_receipt("BANK-PARTIAL-150", "150.0000")
         recon = self._bank_reconciliation("ST-PARTIAL-200", "200.0000")
         line = self._bank_line(recon["id"], 1, "200.0000")
+        second_transaction = self._posted_bank_receipt("BANK-PARTIAL-200", "200.0000")
         partial = self._allocate(recon["id"], line["id"], transaction["id"], "100.0000")
         self.assertEqual(partial.status_code, 200, partial.data)
         self.assertEqual(partial.data["matched_amount"], "100.0000")
@@ -1077,7 +1078,7 @@ class TreasuryWorkflowTests(APITestCase):
         over_transaction = self._allocate(recon["id"], line["id"], transaction["id"], "100.0000")
         self.assertEqual(over_transaction.status_code, 400, over_transaction.data)
         self.assertIn("المتبقي", str(over_transaction.data))
-        over_line = self._allocate(recon["id"], line["id"], transaction["id"], "50.0000")
+        over_line = self._allocate(recon["id"], line["id"], second_transaction["id"], "100.0001")
         self.assertEqual(over_line.status_code, 400, over_line.data)
 
         summary = self.client.get(
@@ -1086,7 +1087,7 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(summary.status_code, 200, summary.data)
         self.assertEqual(summary.data["unmatched_lines"], 1)
         self.assertEqual(summary.data["unmatched_statement_total"], "100.0000")
-        self.assertEqual(summary.data["outstanding_total"], "50.0000")
+        self.assertEqual(summary.data["outstanding_total"], "250.0000")
         self.assertEqual(summary.data["unexplained_difference"], "0.0000")
         cannot_close = self.client.post(
             f"/api/treasury/reconciliations/{recon['id']}/reconcile/", {}, format="json"
