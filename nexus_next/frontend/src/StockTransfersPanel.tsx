@@ -211,7 +211,7 @@ export default function StockTransfersPanel({
         <div className="activity-title"><div><h3>البضاعة بالطريق والاستلام الجزئي</h3><p>أدخل الكمية التي وصلت الآن فقط؛ لا تُدخل الكمية المتبقية إلا عند وصولها.</p></div></div>
         <div className="stock-card-filters"><label>تاريخ الاستلام<input type="date" value={receiptDate} onChange={(event) => setReceiptDate(event.target.value)} /></label></div>
         {inTransit.map((transfer) => <article className="activity-panel inventory-report-section" key={transfer.id}>
-          <div className="activity-title"><div><h4>{transfer.transfer_number}</h4><p>{transfer.source_warehouse} ← {transfer.destination_warehouse} · {statusLabel(transfer.status)}</p></div></div>
+          <div className="activity-title"><div><h4>{transfer.transfer_number}</h4><p>{transfer.source_warehouse} → {transfer.destination_warehouse} · {statusLabel(transfer.status)}</p></div></div>
           <div className="data-table-wrap"><table><thead><tr><th>الصنف</th><th>المشحون</th><th>المستلم</th><th>المتبقي بالطريق</th><th>كمية الاستلام الآن</th></tr></thead><tbody>
             {transfer.lines.map((line) => <tr key={line.transfer_line}>
               <td>{line.product_code} - {line.product_name}</td>
