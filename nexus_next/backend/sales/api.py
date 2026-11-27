@@ -1060,12 +1060,14 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 net=Sum("net_amount"), discount=Sum("discount_amount"),
                 tax=Sum("tax_amount"), total=Sum("total_amount"),
             )
+            invoice_count = invoice_lines.values("invoice_id").distinct().count()
             return_count = return_lines.values("sales_return_id").distinct().count()
         else:
             sales_totals = invoices.aggregate(
                 net=Sum("net_total"), discount=Sum("discount_total"),
-                tax=Sum("tax_total"), total=Sum("grand_total"),
+                tax=Sum("tax_amount"), total=Sum("grand_total"),
             )
+            invoice_count = invoices.count()
             return_count = returns.count()
         return_totals_raw = return_lines.aggregate(
             net=Sum("net_amount"), tax=Sum("tax_amount"), total=Sum("total_amount"),
