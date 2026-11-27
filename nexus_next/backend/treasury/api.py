@@ -2264,8 +2264,113 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         return response.Response({
             "fund": fund.pk, "as_of": timezone.localdate(),
             "authorized_amount": fund.authorized_amount, "book_balance": value,
-            "unsettled_expenses": fund.expenses.filter(status=PettyCashExpense.Status.DRAFT).aggregate(total=Sum("amount"))["total"] or Decimal("0"),
+            "unsettled_expenses": fund.expenses.filter(status__in=(
+                PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.PENDING_APPROVAL,
+                PettyCashExpense.Status.APPROVED, PettyCashExpense.Status.REJECTED,
+            )).aggregate(total=Sum("amount"))["total"] or Decimal("0"),
             "available_for_expenses": max(Decimal("0"), value),
+        })
+
+    @decorators.action(detail=True, methods=("get",), url_path="statement")
+    def statement(self, request, pk=None):
+        """كشف حركة العهدة وربط كل حركة برصيد الأستاذ العام."""
+        from datetime import timedelta
+        from accounting.models import JournalEntry, JournalLine
+
+        fund = self.get_object()
+        self._scope(fund.company_id)
+        date_from = dateparse.parse_date(str(request.query_params.get("date_from", "")))
+        date_to = dateparse.parse_date(str(request.query_params.get("date_to", "")))
+        if not date_from or not date_to or date_from > date_to:
+            raise ValidationError({"date_from": "حدد فترة صحيحة لكشف حركة العهدة."})
+
+        rows = []
+        transfers = fund.transfers.filter(
+            treasury_transaction__status=TreasuryTransaction.Status.POSTED,
+            treasury_transaction__transaction_date__gte=date_from,
+            treasury_transaction__transaction_date__lte=date_to,
+        ).select_related(
+            "treasury_transaction__journal_entry",
+            "treasury_transaction__source_account",
+            "treasury_transaction__destination_account",
+        ).order_by("treasury_transaction__transaction_date", "id")
+        for transfer in transfers:
+            is_return = transfer.kind == PettyCashTransfer.Kind.CLOSURE_RETURN
+            rows.append({
+                "date": transfer.treasury_transaction.transaction_date,
+                "type": transfer.kind,
+                "description": transfer.treasury_transaction.description,
+                "document_number": transfer.treasury_transaction.document_number,
+                "journal_number": transfer.treasury_transaction.journal_entry.entry_number if transfer.treasury_transaction.journal_entry_id else "",
+                "account_code": "",
+                "account_name": (
+                    transfer.treasury_transaction.destination_account.name_ar if is_return
+                    else transfer.treasury_transaction.source_account.name_ar
+                ),
+                "amount": -transfer.amount if is_return else transfer.amount,
+                "reference_id": transfer.pk,
+            })
+
+        expenses = fund.expenses.filter(
+            status=PettyCashExpense.Status.SETTLED,
+            settlement__settlement_date__gte=date_from,
+            settlement__settlement_date__lte=date_to,
+            settlement__journal_entry__status=JournalEntry.Status.POSTED,
+        ).select_related("expense_account", "settlement__journal_entry").order_by(
+            "settlement__settlement_date", "id",
+        )
+        for expense in expenses:
+            rows.append({
+                "date": expense.settlement.settlement_date,
+                "type": "expense",
+                "description": expense.description,
+                "document_number": expense.receipt_number or f"مصروف-{expense.pk}",
+                "journal_number": expense.settlement.journal_entry.entry_number,
+                "account_code": expense.expense_account.code,
+                "account_name": expense.expense_account.name_ar,
+                "amount": -expense.amount,
+                "reference_id": expense.pk,
+            })
+
+        counts = fund.counts.filter(
+            status=PettyCashCount.Status.APPROVED,
+            count_date__gte=date_from,
+            count_date__lte=date_to,
+            adjustment_journal_entry__status=JournalEntry.Status.POSTED,
+        ).select_related("adjustment_journal_entry").order_by("count_date", "id")
+        for count in counts:
+            variance = count.variance
+            if not variance:
+                continue
+            counter_line = JournalLine.objects.filter(
+                entry_id=count.adjustment_journal_entry_id,
+            ).exclude(account_id=fund.petty_cash_account.account_id).select_related("account").first()
+            rows.append({
+                "date": count.count_date,
+                "type": "count_shortage" if variance < 0 else "count_surplus",
+                "description": count.notes or "فرق جرد العهدة",
+                "document_number": f"جرد-{count.pk}",
+                "journal_number": count.adjustment_journal_entry.entry_number,
+                "account_code": counter_line.account.code if counter_line else "",
+                "account_name": counter_line.account.name_ar if counter_line else "فرق جرد",
+                "amount": variance,
+                "reference_id": count.pk,
+            })
+
+        rows.sort(key=lambda item: (item["date"], item["type"], item["reference_id"]))
+        opening_balance = self._balance(fund, as_of=date_from - timedelta(days=1))
+        closing_balance = self._balance(fund, as_of=date_to)
+        inflows = sum((item["amount"] for item in rows if item["amount"] > 0), Decimal("0"))
+        outflows = sum((-item["amount"] for item in rows if item["amount"] < 0), Decimal("0"))
+        return response.Response({
+            "fund": fund.pk, "fund_code": fund.code, "fund_name": fund.name,
+            "branch": fund.branch_id, "branch_name": fund.branch.name_ar,
+            "date_from": date_from, "date_to": date_to,
+            "opening_balance": opening_balance, "total_inflows": inflows,
+            "total_outflows": outflows, "net_movement": inflows - outflows,
+            "closing_balance": closing_balance,
+            "reconciliation_difference": closing_balance - (opening_balance + inflows - outflows),
+            "rows": rows,
         })
 
     def _transfer(self, fund, amount, transfer_kind, transaction_date, user):
@@ -2543,6 +2648,7 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
     @decorators.action(detail=True, methods=("post",), url_path="handover")
     def handover(self, request, pk=None):
         from companies.models import CompanyMembership
+        from accounting.models import JournalEntry
         fund = PettyCashFund.objects.select_for_update().get(pk=self.get_object().pk)
         self._write(fund.company_id)
         if fund.status != PettyCashFund.Status.ACTIVE:
@@ -2569,7 +2675,27 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
             raise ValidationError("لا يمكن التسليم قبل اعتماد أو رفض وتسوية جميع المصروفات المفتوحة.")
         if fund.counts.filter(status=PettyCashCount.Status.PENDING).exists():
             raise ValidationError("لا يمكن التسليم مع وجود جرد بانتظار الاعتماد.")
-        expected = self._balance(fund)
+        latest_movement_dates = [
+            fund.transfers.filter(
+                treasury_transaction__status=TreasuryTransaction.Status.POSTED,
+            ).order_by("-treasury_transaction__transaction_date").values_list(
+                "treasury_transaction__transaction_date", flat=True,
+            ).first(),
+            fund.settlements.filter(
+                journal_entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+            ).order_by("-settlement_date").values_list("settlement_date", flat=True).first(),
+            fund.counts.filter(
+                status=PettyCashCount.Status.APPROVED,
+                adjustment_journal_entry__isnull=False,
+            ).order_by("-count_date").values_list("count_date", flat=True).first(),
+            fund.custodian_handovers.order_by("-handover_date").values_list("handover_date", flat=True).first(),
+        ]
+        latest_movement_date = max((value for value in latest_movement_dates if value), default=None)
+        if latest_movement_date and handover_date < latest_movement_date:
+            raise ValidationError({
+                "handover_date": "لا يجوز تأريخ التسليم قبل أحدث حركة أو تسوية أو جرد مسجل للعهدة."
+            })
+        expected = self._balance(fund, as_of=handover_date)
         try:
             actual = Decimal(str(request.data.get("actual_balance", "")))
         except (InvalidOperation, TypeError, ValueError):
@@ -2609,6 +2735,62 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
             qs = qs.filter(fund_id=int(fund_id))
         return qs
 
+    @decorators.action(detail=False, methods=("get",), url_path="report")
+    def report(self, request):
+        """تقرير المصروفات حسب الفرع والحساب مع بيان المصروفات غير المسواة."""
+        from django.db.models import Count
+
+        qs = self.get_queryset().exclude(status=PettyCashExpense.Status.VOID)
+        company_raw = request.query_params.get("company")
+        if not company_raw or not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير مصروفات العهدة."})
+        company_id = int(company_raw)
+        self._scope(company_id)
+        qs = qs.filter(fund__company_id=company_id)
+        branch_raw = request.query_params.get("branch")
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            qs = qs.filter(fund__branch_id=int(branch_raw))
+        date_from = dateparse.parse_date(str(request.query_params.get("date_from", "")))
+        date_to = dateparse.parse_date(str(request.query_params.get("date_to", "")))
+        if bool(date_from) != bool(date_to) or (date_from and date_to and date_from > date_to):
+            raise ValidationError({"date_from": "حدد تاريخ بداية ونهاية صحيحين معًا."})
+        if date_from:
+            qs = qs.filter(expense_date__gte=date_from, expense_date__lte=date_to)
+
+        by_branch_account = list(qs.values(
+            "fund__branch_id", "fund__branch__name_ar",
+            "expense_account_id", "expense_account__code", "expense_account__name_ar",
+        ).annotate(
+            total_amount=Sum("amount"), expense_count=Count("id"),
+        ).order_by("fund__branch__name_ar", "expense_account__code"))
+        unsettled = qs.filter(status__in=(
+            PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.PENDING_APPROVAL,
+            PettyCashExpense.Status.APPROVED, PettyCashExpense.Status.REJECTED,
+        )).select_related("fund__branch", "fund", "expense_account").order_by(
+            "expense_date", "fund__branch__name_ar", "id",
+        )
+        unsettled_total = unsettled.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        unsettled_rows = [{
+            "id": item.pk, "fund": item.fund_id, "fund_name": item.fund.name,
+            "branch": item.fund.branch_id, "branch_name": item.fund.branch.name_ar,
+            "expense_date": item.expense_date, "description": item.description,
+            "expense_account": item.expense_account_id,
+            "expense_account_code": item.expense_account.code,
+            "expense_account_name": item.expense_account.name_ar,
+            "amount": item.amount, "status": item.status,
+            "receipt_number": item.receipt_number,
+        } for item in unsettled]
+        total = qs.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+        return response.Response({
+            "company": company_id, "branch": int(branch_raw) if branch_raw else None,
+            "date_from": date_from, "date_to": date_to,
+            "total_expenses": total, "by_branch_account": by_branch_account,
+            "unsettled_count": len(unsettled_rows), "unsettled_total": unsettled_total,
+            "unsettled_expenses": unsettled_rows,
+        })
+
     def perform_create(self, serializer):
         fund = serializer.validated_data["fund"]
         self._scope(fund.company_id)
@@ -2618,10 +2800,13 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
-        if serializer.instance.status != PettyCashExpense.Status.DRAFT:
-            raise ValidationError("لا يمكن تعديل مصروف تمت تسويته أو إلغاؤه.")
-        self._write(serializer.instance.fund.company_id)
-        if "fund" in serializer.validated_data and serializer.validated_data["fund"].pk != serializer.instance.fund_id:
+        expense = serializer.instance
+        if expense.status not in (PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.REJECTED):
+            raise ValidationError("يمكن تعديل المسودة أو المصروف المرفوض فقط قبل إعادة إرساله.")
+        self._write(expense.fund.company_id)
+        if expense.fund.status != PettyCashFund.Status.ACTIVE:
+            raise ValidationError("لا يمكن تعديل مصروف تابع لعهدة موقوفة أو مغلقة.")
+        if "fund" in serializer.validated_data and serializer.validated_data["fund"].pk != expense.fund_id:
             raise ValidationError("لا يمكن نقل المصروف إلى عهدة أخرى.")
         serializer.save()
 
@@ -2630,6 +2815,8 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
     def submit(self, request, pk=None):
         expense = PettyCashExpense.objects.select_for_update().select_related("fund").get(pk=self.get_object().pk)
         self._write(expense.fund.company_id)
+        if expense.fund.status != PettyCashFund.Status.ACTIVE:
+            raise ValidationError("لا يمكن إرسال مصروف تابع لعهدة موقوفة أو مغلقة للاعتماد.")
         if expense.status not in (PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.REJECTED):
             raise ValidationError("لا يمكن إرسال المصروف للاعتماد من حالته الحالية.")
         if not expense.receipt_number.strip() and not expense.receipt_file_data:
@@ -2647,6 +2834,8 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
     def approve(self, request, pk=None):
         expense = PettyCashExpense.objects.select_for_update().select_related("fund").get(pk=self.get_object().pk)
         self._write(expense.fund.company_id)
+        if expense.fund.status != PettyCashFund.Status.ACTIVE:
+            raise ValidationError("لا يمكن اعتماد مصروف تابع لعهدة موقوفة أو مغلقة.")
         if expense.status != PettyCashExpense.Status.PENDING_APPROVAL:
             raise ValidationError("المصروف ليس بانتظار الاعتماد.")
         if expense.created_by_id == request.user.pk:
