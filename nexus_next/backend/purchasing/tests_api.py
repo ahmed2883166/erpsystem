@@ -2317,6 +2317,182 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(duplicate_conversion.status_code, 400)
 
 
+    def test_purchase_requisition_draft_can_be_edited(self):
+        created = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-EDIT-001",
+            "request_date": "2026-03-10", "department": "المخازن",
+            "lines": [{"product": self.product.pk, "requested_quantity": "2"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        updated = self.client.patch(f"/api/purchasing/requisitions/{created.data['id']}/", {
+            "request_number": "REQ-EDIT-002",
+            "department": "الصيانة",
+            "lines": [{"product": self.product.pk, "requested_quantity": "3",
+                       "estimated_unit_price": "125"}],
+        }, format="json")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["request_number"], "REQ-EDIT-002")
+        self.assertEqual(updated.data["department"], "الصيانة")
+        self.assertEqual(updated.data["line_items"][0]["requested_quantity"], "3.0000")
+        self.assertEqual(updated.data["line_items"][0]["estimated_unit_price"], "125.0000")
+
+    def test_rejected_purchase_requisition_can_be_edited_and_resubmitted(self):
+        from purchasing.models import PurchaseRequisition
+
+        created = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-REOPEN-001",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "2",
+                       "estimated_unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        requisition_id = created.data["id"]
+        submitted = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/submit/", {}, format="json"
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+
+        reviewer = get_user_model().objects.create_user(username="req-reject-reviewer", password="test-password")
+        CompanyMembership.objects.create(user=reviewer, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(reviewer)
+        rejected = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "reject", "note": "يرجى تعديل الكمية"}, format="json",
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.assertEqual(rejected.data["status"], PurchaseRequisition.Status.REJECTED)
+
+        self.client.force_authenticate(self.user)
+        edited = self.client.patch(f"/api/purchasing/requisitions/{requisition_id}/", {
+            "department": "التشغيل",
+            "lines": [{"product": self.product.pk, "requested_quantity": "4",
+                       "estimated_unit_price": "110"}],
+        }, format="json")
+        self.assertEqual(edited.status_code, 200, edited.data)
+        self.assertEqual(edited.data["status"], PurchaseRequisition.Status.DRAFT)
+        self.assertIsNone(edited.data["reviewed_by"])
+        self.assertIsNone(edited.data["reviewed_at"])
+        self.assertEqual(edited.data["review_note"], "")
+        self.assertEqual(edited.data["line_items"][0]["requested_quantity"], "4.0000")
+
+        resubmitted = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/submit/", {}, format="json"
+        )
+        self.assertEqual(resubmitted.status_code, 200, resubmitted.data)
+        self.assertEqual(resubmitted.data["status"], PurchaseRequisition.Status.SUBMITTED)
+
+    def test_purchase_requisition_can_be_cancelled_before_approval_only(self):
+        from purchasing.models import PurchaseRequisition
+
+        draft = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-CANCEL-DRAFT",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "1",
+                       "estimated_unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(draft.status_code, 201, draft.data)
+        cancelled_draft = self.client.post(
+            f"/api/purchasing/requisitions/{draft.data['id']}/cancel/", {}, format="json"
+        )
+        self.assertEqual(cancelled_draft.status_code, 200, cancelled_draft.data)
+        self.assertEqual(cancelled_draft.data["status"], PurchaseRequisition.Status.CANCELLED)
+
+        submitted = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-CANCEL-SUBMITTED",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "1",
+                       "estimated_unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(submitted.status_code, 201, submitted.data)
+        self.client.post(f"/api/purchasing/requisitions/{submitted.data['id']}/submit/", {}, format="json")
+        cancelled_submitted = self.client.post(
+            f"/api/purchasing/requisitions/{submitted.data['id']}/cancel/", {}, format="json"
+        )
+        self.assertEqual(cancelled_submitted.status_code, 200, cancelled_submitted.data)
+        self.assertEqual(cancelled_submitted.data["status"], PurchaseRequisition.Status.CANCELLED)
+
+        rejected = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-CANCEL-REJECTED",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "1",
+                       "estimated_unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(rejected.status_code, 201, rejected.data)
+        self.client.post(f"/api/purchasing/requisitions/{rejected.data['id']}/submit/", {}, format="json")
+        reviewer = get_user_model().objects.create_user(username="req-cancel-reviewer", password="test-password")
+        CompanyMembership.objects.create(user=reviewer, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(reviewer)
+        decision = self.client.post(
+            f"/api/purchasing/requisitions/{rejected.data['id']}/review/",
+            {"decision": "reject", "note": "غير مكتمل"}, format="json",
+        )
+        self.assertEqual(decision.status_code, 200, decision.data)
+        self.client.force_authenticate(self.user)
+        cancelled_rejected = self.client.post(
+            f"/api/purchasing/requisitions/{rejected.data['id']}/cancel/", {}, format="json"
+        )
+        self.assertEqual(cancelled_rejected.status_code, 200, cancelled_rejected.data)
+        self.assertEqual(cancelled_rejected.data["status"], PurchaseRequisition.Status.CANCELLED)
+
+        approved = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-CANCEL-APPROVED",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "1",
+                       "estimated_unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(approved.status_code, 201, approved.data)
+        self.client.post(f"/api/purchasing/requisitions/{approved.data['id']}/submit/", {}, format="json")
+        self.client.force_authenticate(reviewer)
+        approval = self.client.post(
+            f"/api/purchasing/requisitions/{approved.data['id']}/review/",
+            {"decision": "approve"}, format="json",
+        )
+        self.assertEqual(approval.status_code, 200, approval.data)
+        self.client.force_authenticate(self.user)
+        blocked_cancel = self.client.post(
+            f"/api/purchasing/requisitions/{approved.data['id']}/cancel/", {}, format="json"
+        )
+        self.assertEqual(blocked_cancel.status_code, 400, blocked_cancel.data)
+        self.assertEqual(
+            PurchaseRequisition.objects.get(pk=approved.data["id"]).status,
+            PurchaseRequisition.Status.APPROVED,
+        )
+
+    def test_requisition_conversion_requires_estimated_price_for_every_line(self):
+        from purchasing.models import PurchaseRequisition
+
+        created = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-NO-PRICE",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "2"}],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        requisition_id = created.data["id"]
+        self.client.post(f"/api/purchasing/requisitions/{requisition_id}/submit/", {}, format="json")
+
+        reviewer = get_user_model().objects.create_user(username="req-price-reviewer", password="test-password")
+        CompanyMembership.objects.create(user=reviewer, company=self.company, role="accountant", all_branches=True)
+        self.client.force_authenticate(reviewer)
+        approved = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/review/",
+            {"decision": "approve"}, format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+
+        self.client.force_authenticate(self.user)
+        converted = self.client.post(
+            f"/api/purchasing/requisitions/{requisition_id}/convert/",
+            {"supplier": self.supplier.pk, "warehouse": self.warehouse.pk,
+             "order_number": "PO-REQ-NO-PRICE", "order_date": "2026-03-11"},
+            format="json",
+        )
+        self.assertEqual(converted.status_code, 400, converted.data)
+        self.assertIn("السعر التقديري", str(converted.data))
+        self.assertEqual(PurchaseRequisition.objects.get(pk=requisition_id).status, PurchaseRequisition.Status.APPROVED)
+        self.assertFalse(PurchaseOrder.objects.filter(order_number="PO-REQ-NO-PRICE").exists())
+
+
     def test_purchase_order_over_limit_waits_for_separate_manager_approval(self):
         DiscountApprovalPolicy.objects.create(
             company=self.company, max_purchase_order_amount=Decimal("500"),

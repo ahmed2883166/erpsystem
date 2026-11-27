@@ -877,8 +877,8 @@ class PurchaseRequisition(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             old = type(self).objects.filter(pk=self.pk).values_list("status", flat=True).first()
-            if old not in (None, self.Status.DRAFT):
-                raise ValidationError("طلب الشراء بعد إرساله غير قابل للتعديل.")
+            if old not in (None, self.Status.DRAFT) and not (old == self.Status.REJECTED and self.status == self.Status.DRAFT):
+                raise ValidationError("لا يمكن تعديل طلب الشراء إلا إذا كان مسودة أو مرفوضًا ويعاد فتحه كمسودة.")
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
