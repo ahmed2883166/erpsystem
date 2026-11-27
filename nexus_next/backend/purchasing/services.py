@@ -1671,6 +1671,12 @@ def post_landed_cost_document(document_id, user):
     for allocation in allocations:
         if allocation.source_invoice_line.invoice_id != invoice.pk:
             raise ValidationError("بند المصروف لا يتبع فاتورة المصدر.")
+        expense_account = allocation.source_invoice_line.expense_account
+        if (
+            not expense_account or not expense_account.is_active or expense_account.is_group
+            or not expense_account.allow_posting or expense_account.nature != ChartOfAccount.Nature.EXPENSE
+        ):
+            raise ValidationError("حساب بند المصروف يجب أن يكون حساب مصروف تفصيليًا نشطًا ويسمح بالترحيل.")
         if allocation.receipt_line.movement.company_id != invoice.company_id:
             raise ValidationError("بند الاستلام لا يتبع الشركة.")
         amounts = _allocate_landed_cost_to_stock(allocation)
