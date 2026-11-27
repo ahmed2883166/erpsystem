@@ -8,7 +8,9 @@ from rest_framework.test import APIClient
 from accounts.models import User
 from companies.models import Branch, Company, CompanyActivity, CompanyMembership, Currency, ExchangeRate, FiscalPeriod, FiscalYear
 from audit.models import AuditEvent
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation
+from treasury.models import (TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation,
+                             PettyCashFund, PettyCashTransfer, PettyCashSettlement,
+                             PettyCashExpense, PettyCashCount)
 from treasury.services import (
     post_treasury_transaction, revalue_treasury_fx_account,
     reverse_treasury_fx_revaluation,
@@ -572,6 +574,140 @@ class DirectCashFlowApiTests(TestCase):
             Decimal("6200.0000"),
         )
         self.assertEqual(february_indirect.data["reconciliation_difference"], Decimal("0.0000"))
+
+
+    def test_direct_cash_flow_includes_petty_cash_settlements_and_approved_count_variances(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        company = Company.objects.create(
+            code="DIRECT-PC-CF", name_ar="شركة تدفقات العهدة",
+            country="EG", activity="commercial", base_currency=currency,
+        )
+        branch = Branch.objects.create(
+            company=company, code="PC-HQ", name_ar="الرئيسي", is_head_office=True,
+        )
+        year = FiscalYear.objects.create(
+            company=company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        cash_gl = ChartOfAccount.objects.create(
+            company=company, code="1001", name_ar="البنك الرئيسي", nature="asset",
+        )
+        petty_gl = ChartOfAccount.objects.create(
+            company=company, code="1002", name_ar="العهدة النثرية", nature="asset",
+        )
+        capital = ChartOfAccount.objects.create(
+            company=company, code="3001", name_ar="رأس المال", nature="equity",
+        )
+        expense = ChartOfAccount.objects.create(
+            company=company, code="5001", name_ar="مصروفات العهدة", nature="expense",
+        )
+        opening = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="PC-CF-OPEN", entry_date=date(2026, 1, 1),
+            description="رصيد نقدية افتتاحي", source_type=JournalEntry.Source.OPENING,
+        )
+        JournalLine.objects.create(entry=opening, account=cash_gl, debit=Decimal("500"))
+        JournalLine.objects.create(entry=opening, account=capital, credit=Decimal("500"))
+        post_journal(opening.pk)
+
+        bank = TreasuryAccount.objects.create(
+            company=company, branch=branch, account=cash_gl,
+            kind=TreasuryAccount.Kind.BANK, code="PC-CF-BANK",
+            name_ar="البنك", currency_code="EGP",
+        )
+        petty_account = TreasuryAccount.objects.create(
+            company=company, branch=branch, account=petty_gl,
+            kind=TreasuryAccount.Kind.CASH, code="PC-CF-CASH",
+            name_ar="صندوق العهدة", currency_code="EGP",
+        )
+        user = User.objects.create_user(username="petty_cash_cf_reader", password="test-password")
+        approver = User.objects.create_user(username="petty_cash_cf_approver", password="test-password")
+        user.user_permissions.add(Permission.objects.get(codename="view_journalentry"))
+        CompanyMembership.objects.create(user=user, company=company, role="viewer", all_branches=True)
+        fund = PettyCashFund.objects.create(
+            company=company, branch=branch, code="PC-CF-01", name="عهدة اختبار التدفقات",
+            custodian=user, funding_account=bank, petty_cash_account=petty_account,
+            authorized_amount=Decimal("500"), created_by=user,
+        )
+
+        transfer_entry = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="PC-CF-FUND", entry_date=date(2026, 1, 15),
+            description="تمويل العهدة",
+        )
+        JournalLine.objects.create(entry=transfer_entry, account=petty_gl, debit=Decimal("200"))
+        JournalLine.objects.create(entry=transfer_entry, account=cash_gl, credit=Decimal("200"))
+        post_journal(transfer_entry.pk)
+        transfer_doc = TreasuryTransaction.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            source_account=bank, destination_account=petty_account,
+            kind=TreasuryTransaction.Kind.TRANSFER,
+            status=TreasuryTransaction.Status.POSTED,
+            document_number="PC-CF-TRANSFER", transaction_date=date(2026, 1, 15),
+            amount=Decimal("200"), description="تمويل العهدة", journal_entry=transfer_entry,
+        )
+        PettyCashTransfer.objects.create(
+            fund=fund, kind=PettyCashTransfer.Kind.INITIAL,
+            amount=Decimal("200"), treasury_transaction=transfer_doc, created_by=user,
+        )
+
+        settlement_entry = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="PC-CF-SETTLE", entry_date=date(2026, 1, 16),
+            description="تسوية مصروفات العهدة",
+        )
+        JournalLine.objects.create(entry=settlement_entry, account=expense, debit=Decimal("50"))
+        JournalLine.objects.create(entry=settlement_entry, account=petty_gl, credit=Decimal("50"))
+        post_journal(settlement_entry.pk)
+        settlement = PettyCashSettlement.objects.create(
+            fund=fund, settlement_date=date(2026, 1, 16),
+            journal_entry=settlement_entry, total_amount=Decimal("50"), created_by=user,
+        )
+        PettyCashExpense.objects.create(
+            fund=fund, expense_date=date(2026, 1, 16),
+            description="مصروف نقدي من العهدة", amount=Decimal("50"),
+            expense_account=expense, receipt_number="PC-CF-R1",
+            status=PettyCashExpense.Status.SETTLED, settlement=settlement, created_by=user,
+        )
+
+        count_entry = JournalEntry.objects.create(
+            company=company, branch=branch, fiscal_year=year,
+            entry_number="PC-CF-COUNT", entry_date=date(2026, 1, 17),
+            description="عجز جرد العهدة",
+        )
+        JournalLine.objects.create(entry=count_entry, account=expense, debit=Decimal("5"))
+        JournalLine.objects.create(entry=count_entry, account=petty_gl, credit=Decimal("5"))
+        post_journal(count_entry.pk)
+        PettyCashCount.objects.create(
+            fund=fund, count_date=date(2026, 1, 17),
+            expected_balance=Decimal("150"), actual_balance=Decimal("145"),
+            notes="عجز جرد خمسة جنيهات", status=PettyCashCount.Status.APPROVED,
+            counted_by=user, reviewed_by=approver, adjustment_journal_entry=count_entry,
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=user)
+        result = client.get(
+            f"/api/accounting/journal-entries/direct-cash-flow/?company={company.pk}"
+            "&date_from=2026-01-01&date_to=2026-01-31"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        operating = next(
+            row for row in result.data["sections"]
+            if row["category"] == TreasuryTransaction.CashFlowCategory.OPERATING
+        )
+        self.assertEqual(operating["cash_payments"], Decimal("55.0000"))
+        self.assertEqual(operating["net_cash_flow"], Decimal("-55.0000"))
+        self.assertEqual(
+            {item["source"] for item in operating["details"]},
+            {"petty_cash_expense", "petty_cash_count_variance"},
+        )
+        self.assertEqual(result.data["net_change_in_cash"], Decimal("-55.0000"))
+        self.assertEqual(result.data["closing_cash_balance"], Decimal("445.0000"))
+        self.assertEqual(result.data["ledger_closing_cash_balance"], Decimal("445.0000"))
+        self.assertEqual(result.data["reconciliation_difference"], Decimal("0.0000"))
+        self.assertEqual(result.data["closing_balance_difference"], Decimal("0.0000"))
+
 
 
 class AccountingApiTests(TestCase):
