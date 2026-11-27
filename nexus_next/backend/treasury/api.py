@@ -2180,6 +2180,32 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
                     raise ValidationError({field: "لا يمكن تغيير بيانات تأسيس العهدة بعد بدء حركتها."})
         serializer.save()
 
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="close")
+    def close(self, request, pk=None):
+        fund = PettyCashFund.objects.select_for_update().get(pk=self.get_object().pk)
+        self._write(fund.company_id)
+        if fund.status == PettyCashFund.Status.CLOSED:
+            raise ValidationError("العهدة مغلقة بالفعل.")
+        pending_expenses = fund.expenses.filter(status__in=(
+            PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.PENDING_APPROVAL,
+            PettyCashExpense.Status.APPROVED,
+        )).exists()
+        pending_counts = fund.counts.filter(status=PettyCashCount.Status.PENDING).exists()
+        unreplenished = fund.settlements.filter(total_amount__gt=models.F("replenished_amount")).exists()
+        balance = self._balance(fund)
+        if balance != 0 or pending_expenses or pending_counts or unreplenished:
+            raise ValidationError({
+                "detail": "لا يمكن إغلاق العهدة قبل تصفير الرصيد، وتسوية/رفض المصروفات، واعتماد الجرد، وتغذية جميع التسويات.",
+                "book_balance": str(balance),
+                "pending_expenses": pending_expenses,
+                "pending_counts": pending_counts,
+                "unreplenished_settlements": unreplenished,
+            })
+        fund.status = PettyCashFund.Status.CLOSED
+        fund.save(update_fields=("status", "updated_at"))
+        return response.Response(PettyCashFundSerializer(fund).data)
+
     def perform_destroy(self, instance):
         self._write(instance.company_id)
         if instance.transfers.exists() or instance.expenses.exists():
