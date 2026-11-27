@@ -229,7 +229,15 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
                 raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
             if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
-            orders = orders.filter(warehouse__branch_id=branch_id)
+            default_branch = Branch.objects.filter(
+                company_id=company_id, is_active=True,
+            ).order_by("-is_head_office", "code").first()
+            if default_branch and default_branch.pk == branch_id:
+                orders = orders.filter(
+                    Q(warehouse__branch_id=branch_id) | Q(warehouse__branch__isnull=True)
+                )
+            else:
+                orders = orders.filter(warehouse__branch_id=branch_id)
         product_id = request.query_params.get("product")
         if product_id:
             try:
@@ -246,6 +254,11 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             "price_variance": Decimal("0"),
         }
         for order in orders.order_by("order_date", "order_number"):
+            resolved_branch = order.warehouse.branch
+            if resolved_branch is None:
+                resolved_branch = Branch.objects.filter(
+                    company_id=company_id, is_active=True,
+                ).order_by("-is_head_office", "code").first()
             for line in order.lines.all():
                 links = list(line.receipt_links.select_related(
                     "receipt_line__movement__purchase_receipt",
@@ -275,7 +288,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
                     "order_date": order.order_date.isoformat(), "order_status": order.status,
                     "supplier_id": order.supplier_id, "supplier_name": order.supplier.name_ar,
                     "warehouse_id": order.warehouse_id, "warehouse_name": order.warehouse.name_ar,
-                    "branch_id": order.warehouse.branch_id, "branch_name": order.warehouse.branch.name_ar if order.warehouse.branch_id else "",
+                    "branch_id": resolved_branch.pk if resolved_branch else None, "branch_name": resolved_branch.name_ar if resolved_branch else "",
                     "order_line_id": line.pk, "product_id": line.product_id,
                     "product_code": line.product.code, "product_name": line.product.name_ar,
                     "ordered_quantity": str(line.quantity),
