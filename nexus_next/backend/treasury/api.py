@@ -788,20 +788,24 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         total_collections = Decimal("0")
         total_supplier_payments = Decimal("0")
         total_payroll = Decimal("0")
+        total_other_commitments = Decimal("0")
         for day in dates:
             row = daily[day]
             collections = row["collections"]
             supplier_payments = row["supplier_payments"]
             payroll = row["payroll"]
-            payments = supplier_payments + payroll
+            other_commitments = row.get("other_commitments", Decimal("0"))
+            payments = supplier_payments + payroll + other_commitments
             net = collections - payments
             running += net
             total_collections += collections
             total_supplier_payments += supplier_payments
             total_payroll += payroll
+            total_other_commitments += other_commitments
             daily_rows.append({
                 "date": day.isoformat(), "collections": str(collections),
                 "supplier_payments": str(supplier_payments), "payroll": str(payroll),
+                "other_commitments": str(other_commitments),
                 "payments": str(payments), "net": str(net),
                 "projected_balance": str(running),
             })
