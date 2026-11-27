@@ -4414,3 +4414,125 @@ class PurchaseInvoiceIntegrityTests(TransactionTestCase):
         self.assertEqual(grni.data["grand_total"], "0.0000")
         self.assertEqual(grni.data["gl_reconciliation"]["difference"], "0.0000")
         self.assertTrue(grni.data["gl_reconciliation"]["reconciled"])
+
+
+
+class SupplierPaymentIntegrityTests(TransactionTestCase):
+    """Atomicity and PostgreSQL concurrency regressions for supplier disbursements."""
+
+    def setUp(self):
+        self.client = APIClient()
+        PurchasingWorkflowTests.setUp(self)
+
+    def _create_posted_invoice(self, invoice_number):
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": invoice_number, "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return invoice.data["id"]
+
+    def _create_payment(self, invoice_id, number, amount="114.0000"):
+        bank = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.BANK,
+        ).account
+        response = self.client.post("/api/purchasing/payments/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "invoice": invoice_id,
+            "payment_number": number, "payment_date": "2026-03-15",
+            "method": "bank", "payment_account": bank.pk, "amount": amount,
+            "reference": number,
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data["id"]
+
+    def test_bank_payment_rolls_back_journal_and_treasury_movement_together(self):
+        invoice_id = self._create_posted_invoice("INV-PAY-ATOMIC")
+        payment_id = self._create_payment(invoice_id, "PAY-ATOMIC")
+        journal_count = JournalEntry.objects.count()
+        treasury_count = TreasuryTransaction.objects.count()
+
+        from treasury.services import record_posted_document_bank_movement
+        from purchasing.services import post_supplier_payment
+        def create_then_fail(**kwargs):
+            record_posted_document_bank_movement_original(**kwargs)
+            raise DRFValidationError("Injected failure after treasury movement.")
+
+        record_posted_document_bank_movement_original = record_posted_document_bank_movement
+        with patch(
+            "treasury.services.record_posted_document_bank_movement",
+            side_effect=create_then_fail,
+        ):
+            with self.assertRaises(DRFValidationError):
+                post_supplier_payment(payment_id, self.user)
+
+        payment = SupplierPayment.objects.get(pk=payment_id)
+        self.assertEqual(payment.status, SupplierPayment.Status.DRAFT)
+        self.assertIsNone(payment.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+        self.assertEqual(TreasuryTransaction.objects.count(), treasury_count)
+        self.assertFalse(JournalEntry.objects.filter(
+            entry_number=f"PUR-PAY-{payment_id}",
+        ).exists())
+
+    def test_concurrent_bank_payments_cannot_overpay_same_supplier_invoice(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("Concurrent invoice row-locking regression requires PostgreSQL.")
+
+        invoice_id = self._create_posted_invoice("INV-PAY-CONCURRENT")
+        payment_ids = [
+            self._create_payment(invoice_id, "PAY-CONCURRENT-A"),
+            self._create_payment(invoice_id, "PAY-CONCURRENT-B"),
+        ]
+        barrier = threading.Barrier(2)
+
+        def post_payment(payment_id):
+            from django.db import close_old_connections
+            close_old_connections()
+            user = get_user_model().objects.get(pk=self.user.pk)
+            barrier.wait(timeout=10)
+            try:
+                from purchasing.services import post_supplier_payment
+                post_supplier_payment(payment_id, user)
+                return "posted"
+            except DRFValidationError:
+                return "rejected"
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(post_payment, payment_ids))
+
+        self.assertEqual(outcomes.count("posted"), 2, outcomes)
+        payments = list(SupplierPayment.objects.filter(pk__in=payment_ids))
+        self.assertTrue(all(p.status == SupplierPayment.Status.POSTED for p in payments))
+        self.assertEqual(
+            sum((p.amount for p in payments), Decimal("0")),
+            Decimal("228.0000"),
+        )
+        bank = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.BANK,
+        ).account
+        self.assertEqual(
+            JournalLine.objects.filter(
+                account=bank, entry__status=JournalEntry.Status.POSTED,
+                entry__entry_number__startswith="PUR-PAY-",
+            ).aggregate(total=Sum("credit"))["total"],
+            Decimal("228.0000"),
+        )
+        movements = TreasuryTransaction.objects.filter(
+            document_number__startswith="AUTO-PUR-PAY-",
+            status=TreasuryTransaction.Status.POSTED,
+        )
+        self.assertEqual(movements.count(), 2)
+        self.assertEqual(
+            movements.aggregate(total=Sum("amount"))["total"],
+            Decimal("228.0000"),
+        )
