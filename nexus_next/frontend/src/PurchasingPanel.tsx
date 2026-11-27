@@ -13,7 +13,7 @@ type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; 
 const money = (value: string) => formatMoney(value);
 const decimalToUnits = (value: string): bigint | null => {
   const normalized = value.trim();
-  if (!/^\\d+(?:\\.\\d+)?$/.test(normalized)) return null;
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) return null;
   const [whole, fraction = ""] = normalized.split(".");
   if (fraction.length > 4 && /[^0]/.test(fraction.slice(4))) return null;
   return BigInt(whole) * 10000n + BigInt((fraction.slice(0, 4) + "0000").slice(0, 4));
