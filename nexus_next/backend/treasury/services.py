@@ -545,17 +545,11 @@ def _foreign_treasury_transaction_reversal_blocker(doc, accounts):
             status=TreasuryTransaction.Status.POSTED,
         ).filter(
             Q(source_account=account) | Q(destination_account=account),
-        ).exclude(pk=doc.pk).filter(
-            Q(transaction_date__gt=doc.transaction_date)
-            | Q(transaction_date=doc.transaction_date, posted_at__gt=doc.posted_at)
-        )
+        ).exclude(pk=doc.pk).filter(posted_at__gt=doc.posted_at)
         if later_movements.exists():
-            return "توجد حركة خزينة أجنبية أحدث على الحساب؛ اعكس الحركات الأحدث أولًا حتى لا يتشوّه مركز العملة."
+            return "توجد حركة خزينة أجنبية رُحّلت بعد هذا المستند؛ اعكس الحركات الأحدث أولًا حتى لا يتشوّه مركز العملة."
         later_revaluations = TreasuryFxRevaluation.objects.filter(
-            account=account,
-        ).filter(
-            Q(revaluation_date__gt=doc.transaction_date)
-            | Q(revaluation_date=doc.transaction_date, created_at__gt=doc.posted_at)
+            account=account, created_at__gt=doc.posted_at,
         ).filter(
             Q(reversal_journal_entry__isnull=True)
             | Q(reversal_journal_entry__status=JournalEntry.Status.REVERSED)
@@ -584,6 +578,8 @@ def reverse_treasury_transaction(*, transaction_id, entry_date, user=None):
     foreign = doc.source_account.currency_code != base_code
     if (doc.destination_account_id and doc.destination_account.currency_code != doc.source_account.currency_code):
         raise ValidationError("عملة حساب التحويل لا تطابق عملة الحساب المصدر؛ لا يمكن عكس الحركة بأمان.")
+    if foreign and not doc.posted_at:
+        raise ValidationError("تاريخ ترحيل المستند غير متوفر للتحقق من تسلسل مركز العملة؛ راجع سجل المستند.")
     if foreign and (
         not doc.transaction_currency_id or doc.transaction_currency.code != doc.source_account.currency_code
         or not doc.transaction_amount or not doc.exchange_rate or not doc.carrying_amount
