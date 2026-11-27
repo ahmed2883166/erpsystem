@@ -2,7 +2,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule
 
 
 class TreasuryAccountSerializer(serializers.ModelSerializer):
@@ -316,4 +316,154 @@ class TreasuryChequeSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"cheque_number": "رقم الشيك مسجل بالفعل على الحساب البنكي نفسه."})
         if direction == TreasuryCheque.Direction.OUTGOING and not doc:
             raise serializers.ValidationError({"treasury_transaction": "الشيك الصادر يجب ربطه بسند صرف بنكي مرحّل حتى لا يظهر كالتزام غير مسجل."})
+        return attrs
+
+
+class CashCommitmentPaymentSerializer(serializers.ModelSerializer):
+    journal_number = serializers.CharField(source="journal_entry.entry_number", read_only=True)
+    reversal_journal_number = serializers.CharField(source="reversal_journal_entry.entry_number", read_only=True, default="")
+
+    class Meta:
+        model = CashCommitmentPayment
+        fields = ("id", "payment_date", "amount", "base_amount", "journal_entry", "journal_number",
+                  "reversal_journal_entry", "reversal_journal_number", "reference", "notes", "created_at")
+        read_only_fields = ("base_amount", "reversal_journal_entry", "created_at")
+
+
+class CashCommitmentSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name_ar", read_only=True)
+    branch_name = serializers.CharField(source="branch.name_ar", read_only=True, default="")
+    payable_account_code = serializers.CharField(source="payable_account.code", read_only=True)
+    payable_account_name = serializers.CharField(source="payable_account.name_ar", read_only=True)
+    paid_base_amount = serializers.SerializerMethodField()
+    remaining_base_amount = serializers.SerializerMethodField()
+    payments = CashCommitmentPaymentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = CashCommitment
+        fields = ("id", "company", "company_name", "branch", "branch_name", "commitment_type",
+                  "title", "period_label", "amount", "currency_code", "exchange_rate", "base_amount",
+                  "due_date", "payable_account", "payable_account_code", "payable_account_name",
+                  "origin_type", "origin_id", "status", "notes", "paid_base_amount",
+                  "remaining_base_amount", "payments", "created_at", "updated_at")
+        read_only_fields = ("status", "created_at", "updated_at", "paid_base_amount",
+                            "remaining_base_amount", "payments", "base_amount")
+
+    def _paid(self, obj):
+        from accounting.models import JournalEntry
+        total = Decimal("0")
+        for payment in obj.payments.select_related("journal_entry", "reversal_journal_entry").all():
+            if payment.reversal_journal_entry_id:
+                if payment.reversal_journal_entry.status != JournalEntry.Status.REVERSED:
+                    continue
+            elif payment.journal_entry.status != JournalEntry.Status.POSTED:
+                continue
+            total += payment.base_amount
+        return total
+
+    def get_paid_base_amount(self, obj):
+        return self._paid(obj)
+
+    def get_remaining_base_amount(self, obj):
+        return max(Decimal("0"), obj.base_amount - self._paid(obj))
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        account = attrs.get("payable_account", getattr(self.instance, "payable_account", None))
+        currency_code = attrs.get("currency_code", getattr(self.instance, "currency_code", ""))
+        amount = attrs.get("amount", getattr(self.instance, "amount", None))
+        rate = attrs.get("exchange_rate", getattr(self.instance, "exchange_rate", Decimal("1")))
+        base_amount = attrs.get("base_amount", getattr(self.instance, "base_amount", None))
+        if company and branch and branch.company_id != company.pk:
+            raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        if company and account:
+            if account.company_id != company.pk or account.is_group or not account.is_active or account.nature != account.Nature.LIABILITY:
+                raise serializers.ValidationError({"payable_account": "اختر حساب خصوم تفصيليًا ونشطًا تابعًا للشركة."})
+        if company and currency_code and amount is not None:
+            from companies.models import Currency
+            if not Currency.objects.filter(code=currency_code, is_active=True).exists():
+                raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة."})
+            if currency_code == company.base_currency.code:
+                rate = Decimal("1")
+                base_amount = amount
+                attrs["exchange_rate"] = rate
+                attrs["base_amount"] = base_amount
+            else:
+                from companies.models import ExchangeRate
+                rate_date = attrs.get("due_date", getattr(self.instance, "due_date", None))
+                approved = ExchangeRate.objects.filter(
+                    company=company, currency__code=currency_code, rate_date=rate_date, rate=rate,
+                ).exists()
+                if not approved:
+                    raise serializers.ValidationError({"exchange_rate": "سعر الصرف يجب أن يطابق سعرًا معتمدًا بتاريخ الاستحقاق."})
+                expected = (amount * rate).quantize(Decimal("0.0001"))
+                if base_amount is None:
+                    attrs["base_amount"] = expected
+                elif base_amount != expected:
+                    raise serializers.ValidationError({"base_amount": "القيمة الأساسية لا تطابق المبلغ وسعر الصرف."})
+        if self.instance and self.instance.payments.exists():
+            raise serializers.ValidationError("لا يمكن تعديل التزام له دفعات مسجلة؛ استخدم العكس أو أنشئ التزامًا جديدًا.")
+        origin_type = attrs.get("origin_type", getattr(self.instance, "origin_type", ""))
+        origin_id = attrs.get("origin_id", getattr(self.instance, "origin_id", None))
+        if bool(origin_type) != (origin_id is not None):
+            raise serializers.ValidationError({"origin_id": "مرجع المصدر يجب أن يحتوي النوع والمعرف معًا."})
+        if company and origin_type and origin_id is not None:
+            duplicate = CashCommitment.objects.filter(company=company, origin_type=origin_type, origin_id=origin_id)
+            if self.instance:
+                duplicate = duplicate.exclude(pk=self.instance.pk)
+            if duplicate.exists():
+                raise serializers.ValidationError({"origin_id": "يوجد التزام مرتبط بالمصدر نفسه بالفعل."})
+        return attrs
+
+
+class CashCommitmentScheduleSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name_ar", read_only=True)
+    payable_account_code = serializers.CharField(source="payable_account.code", read_only=True)
+
+    class Meta:
+        model = CashCommitmentSchedule
+        fields = ("id", "company", "company_name", "branch", "title", "amount", "currency_code",
+                  "exchange_rate", "base_amount", "frequency", "interval_months", "anchor_day",
+                  "next_due_date", "end_date", "payable_account", "payable_account_code",
+                  "active", "notes", "created_at", "updated_at")
+        read_only_fields = ("interval_months", "anchor_day", "base_amount", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        if self.instance and set(attrs) == {"active"}:
+            return attrs
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        account = attrs.get("payable_account", getattr(self.instance, "payable_account", None))
+        amount = attrs.get("amount", getattr(self.instance, "amount", None))
+        currency = attrs.get("currency_code", getattr(self.instance, "currency_code", ""))
+        rate = attrs.get("exchange_rate", getattr(self.instance, "exchange_rate", Decimal("1")))
+        if company and branch and branch.company_id != company.pk:
+            raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        if company and account and (account.company_id != company.pk or account.is_group or not account.is_active or account.nature != account.Nature.LIABILITY):
+            raise serializers.ValidationError({"payable_account": "اختر حساب خصوم تفصيليًا ونشطًا تابعًا للشركة."})
+        if company and amount is not None:
+            from companies.models import Currency
+            if not Currency.objects.filter(code=currency, is_active=True).exists():
+                raise serializers.ValidationError({"currency_code": "اختر عملة موجودة ونشطة."})
+            if currency == company.base_currency.code:
+                rate = Decimal("1")
+                attrs["exchange_rate"] = rate
+            else:
+                from companies.models import ExchangeRate
+                rate_date = attrs.get("next_due_date", getattr(self.instance, "next_due_date", None))
+                if not ExchangeRate.objects.filter(company=company, currency__code=currency, rate_date=rate_date, rate=rate).exists():
+                    raise serializers.ValidationError({"exchange_rate": "سعر الصرف يجب أن يطابق سعرًا معتمدًا بتاريخ أول استحقاق."})
+            attrs["base_amount"] = (amount * rate).quantize(Decimal("0.0001"))
+        frequency = attrs.get("frequency", getattr(self.instance, "frequency", None))
+        intervals = {"monthly": 1, "quarterly": 3, "semiannual": 6, "annual": 12}
+        if frequency not in intervals:
+            raise serializers.ValidationError({"frequency": "دورية غير صحيحة."})
+        attrs["interval_months"] = intervals[frequency]
+        next_due = attrs.get("next_due_date", getattr(self.instance, "next_due_date", None))
+        if next_due:
+            attrs["anchor_day"] = next_due.day
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+        if end_date and next_due and end_date < next_due:
+            raise serializers.ValidationError({"end_date": "تاريخ النهاية يسبق أول استحقاق."})
         return attrs

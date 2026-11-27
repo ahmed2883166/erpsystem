@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast } from "./api";
+import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -12,8 +12,15 @@ const money = (v: string | number) => formatMoney(v);
 
 // شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
-  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity">("transactions");
+  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity"|"commitments">("transactions");
   const [liquidity,setLiquidity]=useState<TreasuryLiquiditySummary|null>(null);
+  const [commitments,setCommitments]=useState<CashCommitment[]>([]);
+  const [commitmentSchedules,setCommitmentSchedules]=useState<CashCommitmentSchedule[]>([]);
+  const [commitmentForm,setCommitmentForm]=useState({branch:"",commitment_type:"tax" as CashCommitment["commitment_type"],title:"",period_label:"",amount:"",currency_code:"",exchange_rate:"1",due_date:today(),payable_account:"",notes:""});
+  const [scheduleForm,setScheduleForm]=useState({branch:"",title:"",amount:"",currency_code:"",exchange_rate:"1",frequency:"monthly" as CashCommitmentSchedule["frequency"],next_due_date:today(),end_date:"",payable_account:"",notes:""});
+  const [scheduleThrough,setScheduleThrough]=useState(today());
+  const [paymentForms,setPaymentForms]=useState<Record<number,{amount:string;journal_entry:string;payment_date:string}>>({});
+
   const [forecast,setForecast]=useState<TreasuryLiquidityForecast|null>(null);
   const [forecastDays,setForecastDays]=useState(90);
   const [accounts,setAccounts]=useState<TreasuryAccount[]>([]);
@@ -49,10 +56,12 @@ export default function TreasuryPanel({companyId}: Props) {
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
-      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid,forecastData]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId),treasuryApi.liquidityForecast(companyId,forecastDays)]);
+      const [a,t,ch,b,y,g,rs,cs,xr,companies,liquid,forecastData,commitmentRows,scheduleRows]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies(),treasuryApi.liquiditySummary(companyId),treasuryApi.liquidityForecast(companyId,forecastDays),treasuryApi.commitments(companyId),treasuryApi.commitmentSchedules(companyId)]);
       const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"";
-      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);setForecast(forecastData);
+      setAccounts(a);setTransactions(t);setCheques(ch);setCommitments(commitmentRows);setCommitmentSchedules(scheduleRows);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);setLiquidity(liquid);setForecast(forecastData);
       setAcc(old=>({...old,currency_code:companyBase}));
+      setCommitmentForm(old=>({...old,branch:old.branch||String(b[0]?.id||""),currency_code:old.currency_code||companyBase,payable_account:old.payable_account||String(g.find(v=>v.nature==="liability"&&!v.is_group&&v.is_active)?.id||"")}));
+      setScheduleForm(old=>({...old,branch:old.branch||String(b[0]?.id||""),currency_code:old.currency_code||companyBase,payable_account:old.payable_account||String(g.find(v=>v.nature==="liability"&&!v.is_group&&v.is_active)?.id||"")}));
       setReval(old=>({...old,account:old.account||String(a.find(v=>v.is_active&&v.currency_code!==companyBase)?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||"")}));
       setDoc(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),source_account:old.source_account||String(a.find(v=>v.is_active)?.id||"")}));
       setRec(old=>({...old,bank_account:old.bank_account||String(a.find(v=>v.kind==="bank"&&v.is_active)?.id||"")}));
@@ -65,7 +74,13 @@ export default function TreasuryPanel({companyId}: Props) {
   const refreshSummary=useCallback(async(id:string)=>{if(!id){setSummary(null);return;}try{setSummary(await bankReconciliationApi.summary(Number(id)));}catch(e){setError((e as Error).message||"تعذر تحميل التسوية.");}},[]);
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
-const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+const saveCommitment=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitment({...commitmentForm,company:companyId,branch:commitmentForm.branch?Number(commitmentForm.branch):null,payable_account:Number(commitmentForm.payable_account)});setCommitmentForm(old=>({...old,title:"",period_label:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الالتزام.");}finally{setBusy(false);}};
+  const saveCommitmentSchedule=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitmentSchedule({...scheduleForm,company:companyId,branch:scheduleForm.branch?Number(scheduleForm.branch):null,payable_account:Number(scheduleForm.payable_account),end_date:scheduleForm.end_date||null});setScheduleForm(old=>({...old,title:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الجدول الدوري.");}finally{setBusy(false);}};
+  const toggleCommitmentSchedule=async(item:CashCommitmentSchedule)=>{setBusy(true);setError("");try{await treasuryApi.setCommitmentScheduleActive(item.id,!item.active);await load();}catch(err){setError((err as Error).message||"تعذر تغيير حالة الجدول الدوري.");}finally{setBusy(false);}};
+  const generateSchedule=async(id:number)=>{setBusy(true);setError("");try{const result=await treasuryApi.generateCommitmentSchedule(id,scheduleThrough);setError("تم إنشاء "+result.generated+" استحقاق دوري.");await load();}catch(err){setError((err as Error).message||"تعذر توليد الاستحقاقات.");}finally{setBusy(false);}};
+  const saveCommitmentPayment=async(id:number)=>{const form=paymentForms[id];if(!form)return;setBusy(true);setError("");try{await treasuryApi.recordCommitmentPayment(id,{amount:form.amount,payment_date:form.payment_date,journal_entry:Number(form.journal_entry)});await load();}catch(err){setError((err as Error).message||"تعذر ربط دفعة الالتزام بالقيد.");}finally{setBusy(false);}};
+  const voidCommitment=async(id:number)=>{setBusy(true);setError("");try{await treasuryApi.voidCommitment(id);await load();}catch(err){setError((err as Error).message||"تعذر إلغاء الالتزام.");}finally{setBusy(false);}};
+  const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
     const foreign=!!acc.currency_code&&acc.currency_code!==baseCurrencyCode;
     let openingBase=acc.opening_balance;
     if(foreign&&Number(acc.opening_foreign_amount)>0){
@@ -139,8 +154,48 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
   return <section className="work-panel treasury-panel">
     <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
     {error&&<div className="error-banner">{error}</div>}
-    <div className="module-tabs"><button className={tab==="liquidity"?"active":""} onClick={()=>setTab("liquidity")}>مركز السيولة</button><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
-    {tab==="liquidity"?<>
+    <div className="module-tabs"><button className={tab==="liquidity"?"active":""} onClick={()=>setTab("liquidity")}>مركز السيولة</button><button className={tab==="commitments"?"active":""} onClick={()=>setTab("commitments")}>الالتزامات النقدية</button><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
+    
+    {tab==="commitments"?<>
+      <div className="form-wide"><strong>سجل الالتزامات النقدية</strong><p>للمبالغ غير الموجودة بالفعل في فواتير العملاء والموردين أو دورة المرتبات. التسجيل هنا لا ينشئ قيدًا محاسبيًا ولا يغير رصيد البنك.</p></div>
+      <form className="treasury-form" onSubmit={saveCommitment}>
+        <label>نوع الالتزام<select value={commitmentForm.commitment_type} onChange={e=>setCommitmentForm({...commitmentForm,commitment_type:e.target.value as CashCommitment["commitment_type"]})}><option value="tax">ضرائب ورسوم</option><option value="recurring_expense">مصروف دوري</option><option value="friday_overtime">أجور إضافية</option><option value="other">التزامات أخرى</option></select></label>
+        <label>اسم الالتزام<input required value={commitmentForm.title} onChange={e=>setCommitmentForm({...commitmentForm,title:e.target.value})}/></label>
+        <label>الفترة / البيان<input value={commitmentForm.period_label} onChange={e=>setCommitmentForm({...commitmentForm,period_label:e.target.value})} placeholder="مثال: أكتوبر 2026"/></label>
+        <label>تاريخ الاستحقاق<input type="date" required value={commitmentForm.due_date} onChange={e=>setCommitmentForm({...commitmentForm,due_date:e.target.value})}/></label>
+        <label>المبلغ<input type="number" min="0.0001" step="0.0001" required value={commitmentForm.amount} onChange={e=>setCommitmentForm({...commitmentForm,amount:e.target.value})}/></label>
+        <label>العملة<select value={commitmentForm.currency_code} onChange={e=>setCommitmentForm({...commitmentForm,currency_code:e.target.value,exchange_rate:e.target.value===baseCurrencyCode?"1":commitmentForm.exchange_rate})}>{currencies.filter(x=>x.is_active).map(x=><option key={x.id} value={x.code}>{x.code} · {x.name_ar}</option>)}</select></label>
+        {commitmentForm.currency_code!==baseCurrencyCode&&<label>سعر الصرف المعتمد بتاريخ الاستحقاق<input type="number" min="0.0000000001" step="0.0000000001" value={commitmentForm.exchange_rate} onChange={e=>setCommitmentForm({...commitmentForm,exchange_rate:e.target.value})}/></label>}
+        <label>حساب الالتزام (خصوم)<select required value={commitmentForm.payable_account} onChange={e=>setCommitmentForm({...commitmentForm,payable_account:e.target.value})}><option value="">اختر حساب الخصوم</option>{gl.filter(a=>a.is_active&&!a.is_group&&a.nature==="liability").map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+        <label>الفرع<select value={commitmentForm.branch} onChange={e=>setCommitmentForm({...commitmentForm,branch:e.target.value})}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
+        <label className="form-wide">ملاحظات<input value={commitmentForm.notes} onChange={e=>setCommitmentForm({...commitmentForm,notes:e.target.value})}/></label>
+        <button type="submit" disabled={busy||!commitmentForm.payable_account}>تسجيل الالتزام</button>
+      </form>
+      <div className="data-table-wrap"><h3>الالتزامات المسجلة</h3><table><thead><tr><th>الاستحقاق</th><th>النوع</th><th>الالتزام</th><th>المبلغ الأساسي</th><th>المسدد</th><th>المتبقي</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
+        {commitments.map(item=><tr key={item.id}><td>{item.due_date}</td><td>{item.commitment_type==="tax"?"ضرائب":item.commitment_type==="recurring_expense"?"مصروف دوري":item.commitment_type==="friday_overtime"?"أجور إضافية":"أخرى"}</td><td>{item.title}<small> · {item.payable_account_code}</small></td><td>{money(item.base_amount)} {baseCurrencyCode}</td><td>{money(item.paid_base_amount)}</td><td>{money(item.remaining_base_amount)}</td><td>{item.status==="paid"?"مسدد":item.status==="partially_paid"?"جزئي":item.status==="void"?"ملغي":"مفتوح"}</td><td>
+          {item.status!=="void"&&item.status!=="paid"&&<div className="treasury-inline-actions"><input aria-label="مبلغ الدفعة" type="number" min="0.0001" step="0.0001" placeholder="مبلغ" value={paymentForms[item.id]?.amount||""} onChange={e=>setPaymentForms(old=>({...old,[item.id]:{amount:e.target.value,journal_entry:old[item.id]?.journal_entry||"",payment_date:old[item.id]?.payment_date||today()}}))}/><input aria-label="رقم قيد السداد" type="number" min="1" placeholder="رقم القيد" value={paymentForms[item.id]?.journal_entry||""} onChange={e=>setPaymentForms(old=>({...old,[item.id]:{amount:old[item.id]?.amount||"",journal_entry:e.target.value,payment_date:old[item.id]?.payment_date||today()}}))}/><input aria-label="تاريخ السداد" type="date" value={paymentForms[item.id]?.payment_date||today()} onChange={e=>setPaymentForms(old=>({...old,[item.id]:{amount:old[item.id]?.amount||"",journal_entry:old[item.id]?.journal_entry||"",payment_date:e.target.value}}))}/><button type="button" disabled={busy||!paymentForms[item.id]?.amount||!paymentForms[item.id]?.journal_entry} onClick={()=>void saveCommitmentPayment(item.id)}>ربط السداد</button><button type="button" disabled={busy||Number(item.paid_base_amount)>0} onClick={()=>void voidCommitment(item.id)}>إلغاء</button></div>}
+        </td></tr>)}
+        {!commitments.length&&<tr><td colSpan={8}>لا توجد التزامات مسجلة.</td></tr>}
+      </tbody></table></div>
+      <form className="treasury-form" onSubmit={saveCommitmentSchedule}>
+        <h3 className="form-wide">جدول المصروفات الدورية</h3>
+        <label>اسم المصروف<input required value={scheduleForm.title} onChange={e=>setScheduleForm({...scheduleForm,title:e.target.value})}/></label>
+        <label>المبلغ<input type="number" min="0.0001" step="0.0001" required value={scheduleForm.amount} onChange={e=>setScheduleForm({...scheduleForm,amount:e.target.value})}/></label>
+        <label>العملة<select value={scheduleForm.currency_code} onChange={e=>setScheduleForm({...scheduleForm,currency_code:e.target.value,exchange_rate:e.target.value===baseCurrencyCode?"1":scheduleForm.exchange_rate})}>{currencies.filter(x=>x.is_active).map(x=><option key={x.id} value={x.code}>{x.code}</option>)}</select></label>
+        {scheduleForm.currency_code!==baseCurrencyCode&&<label>سعر الصرف<input type="number" min="0.0000000001" step="0.0000000001" value={scheduleForm.exchange_rate} onChange={e=>setScheduleForm({...scheduleForm,exchange_rate:e.target.value})}/></label>}
+        <label>التكرار<select value={scheduleForm.frequency} onChange={e=>setScheduleForm({...scheduleForm,frequency:e.target.value as CashCommitmentSchedule["frequency"]})}><option value="monthly">شهري</option><option value="quarterly">ربع سنوي</option><option value="semiannual">نصف سنوي</option><option value="annual">سنوي</option></select></label>
+        <label>أول استحقاق<input type="date" required value={scheduleForm.next_due_date} onChange={e=>setScheduleForm({...scheduleForm,next_due_date:e.target.value})}/></label>
+        <label>آخر استحقاق (اختياري)<input type="date" value={scheduleForm.end_date} onChange={e=>setScheduleForm({...scheduleForm,end_date:e.target.value})}/></label>
+        <label>حساب الالتزام<select required value={scheduleForm.payable_account} onChange={e=>setScheduleForm({...scheduleForm,payable_account:e.target.value})}><option value="">اختر حساب الخصوم</option>{gl.filter(a=>a.is_active&&!a.is_group&&a.nature==="liability").map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+        <label>الفرع<select value={scheduleForm.branch} onChange={e=>setScheduleForm({...scheduleForm,branch:e.target.value})}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
+        <button type="submit" disabled={busy||!scheduleForm.payable_account}>حفظ الجدول الدوري</button>
+      </form>
+      <div className="data-table-wrap"><h3>توليد الاستحقاقات المجدولة</h3><label>توليد حتى تاريخ <input type="date" value={scheduleThrough} onChange={e=>setScheduleThrough(e.target.value)}/></label><table><thead><tr><th>المصروف</th><th>التكرار</th><th>الاستحقاق التالي</th><th>الحالة</th><th>إجراء</th></tr></thead><tbody>
+        {commitmentSchedules.map(item=><tr key={item.id}><td>{item.title}</td><td>{item.frequency==="monthly"?"شهري":item.frequency==="quarterly"?"ربع سنوي":item.frequency==="semiannual"?"نصف سنوي":"سنوي"}</td><td>{item.next_due_date}</td><td>{item.active?"نشط":"متوقف"}</td><td><button type="button" disabled={busy||!item.active} onClick={()=>void generateSchedule(item.id)}>توليد الاستحقاقات</button><button type="button" disabled={busy} onClick={()=>void toggleCommitmentSchedule(item)}>{item.active?"إيقاف الجدول":"إعادة التفعيل"}</button></td></tr>)}
+        {!commitmentSchedules.length&&<tr><td colSpan={5}>لا توجد جداول دورية.</td></tr>}
+      </tbody></table></div>
+    </>:tab==="liquidity"?<>
+
       <div className="treasury-summary-grid">
         <div><small>إجمالي السيولة الدفترية ({liquidity?.base_currency||baseCurrencyCode})</small><strong>{money(liquidity?.total_base_balance||0)} {liquidity?.base_currency||baseCurrencyCode}</strong></div>
         <div><small>حسابات الخزائن والبنوك</small><strong>{liquidity?.accounts.length||0}</strong></div>
@@ -159,17 +214,17 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         <div className="treasury-summary-grid">
           <div><small>تحصيلات العملاء المتوقعة</small><strong>{money(forecast?.expected_collections||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
           <div><small>مدفوعات الموردين</small><strong>{money(forecast?.expected_supplier_payments||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
-          <div><small>المرتبات غير المصروفة</small><strong>{money(forecast?.expected_payroll||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
+          <div><small>المرتبات غير المصروفة</small><strong>{money(forecast?.expected_payroll||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div><div><small>التزامات أخرى</small><strong>{money(forecast?.expected_other_commitments||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
           <div><small>صافي التدفق المتوقع</small><strong>{money(forecast?.expected_net||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
           <div><small>الرصيد المتوقع بنهاية الفترة</small><strong>{money(forecast?.projected_closing_balance||0)} {forecast?.base_currency||baseCurrencyCode}</strong></div>
         </div>
         <p className="form-wide">{forecast?.note||"يتم احتساب التوقع من الأرصدة المفتوحة فقط."}</p>
-        <div className="data-table-wrap"><h3>التوقع حسب تاريخ الاستحقاق</h3><table><thead><tr><th>التاريخ</th><th>تحصيلات</th><th>موردون</th><th>مرتبات</th><th>إجمالي المدفوعات</th><th>الصافي</th><th>الرصيد المتوقع</th></tr></thead><tbody>
-          {(forecast?.daily||[]).map(row=><tr key={row.date}><td>{row.date}</td><td>{money(row.collections)}</td><td>{money(row.supplier_payments)}</td><td>{money(row.payroll)}</td><td>{money(row.payments)}</td><td>{money(row.net)}</td><td>{money(row.projected_balance)}</td></tr>)}
-          {!forecast?.daily.length&&<tr><td colSpan={7}>لا توجد تحصيلات أو مدفوعات مستحقة خلال الأفق المحدد.</td></tr>}
+        <div className="data-table-wrap"><h3>التوقع حسب تاريخ الاستحقاق</h3><table><thead><tr><th>التاريخ</th><th>تحصيلات</th><th>موردون</th><th>مرتبات</th><th>التزامات أخرى</th><th>إجمالي المدفوعات</th><th>الصافي</th><th>الرصيد المتوقع</th></tr></thead><tbody>
+          {(forecast?.daily||[]).map(row=><tr key={row.date}><td>{row.date}</td><td>{money(row.collections)}</td><td>{money(row.supplier_payments)}</td><td>{money(row.payroll)}</td><td>{money(row.other_commitments)}</td><td>{money(row.payments)}</td><td>{money(row.net)}</td><td>{money(row.projected_balance)}</td></tr>)}
+          {!forecast?.daily.length&&<tr><td colSpan={8}>لا توجد تحصيلات أو مدفوعات مستحقة خلال الأفق المحدد.</td></tr>}
         </tbody></table></div>
         <div className="data-table-wrap"><h3>المستندات الداخلة في التوقع</h3><table><thead><tr><th>النوع</th><th>الطرف</th><th>المستند</th><th>الاستحقاق</th><th>الرصيد المتبقي</th><th>البيان</th></tr></thead><tbody>
-          {(forecast?.items||[]).map((row,index)=><tr key={row.kind+"-"+row.document+"-"+index}><td>{row.kind==="collections"?"تحصيل عميل":row.kind==="supplier_payments"?"سداد مورد":"مرتبات"}</td><td>{row.party}</td><td>{row.document}</td><td>{row.due_date}</td><td>{money(row.balance)} {forecast?.base_currency||baseCurrencyCode}</td><td>{row.date_basis}</td></tr>)}
+          {(forecast?.items||[]).map((row,index)=><tr key={row.kind+"-"+row.document+"-"+index}><td>{row.kind==="collections"?"تحصيل عميل":row.kind==="supplier_payments"?"سداد مورد":row.kind==="other_commitments"?"التزامات أخرى":"مرتبات"}</td><td>{row.party}</td><td>{row.document}</td><td>{row.due_date}</td><td>{money(row.balance)} {forecast?.base_currency||baseCurrencyCode}</td><td>{row.date_basis}</td></tr>)}
           {!forecast?.items.length&&<tr><td colSpan={6}>لا توجد مستندات مفتوحة ضمن الفترة.</td></tr>}
         </tbody></table></div>
         <ul className="form-wide">{(forecast?.coverage_notes||[]).map((note,index)=><li key={index}>{note}</li>)}</ul>
