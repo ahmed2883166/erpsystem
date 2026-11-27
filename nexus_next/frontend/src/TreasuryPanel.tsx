@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation } from "./api";
+import { api, treasuryApi, bankReconciliationApi, importBankStatementCsv, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -12,9 +12,12 @@ const money = (v: string | number) => formatMoney(v);
 
 // شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
-  const [tab,setTab]=useState<"transactions"|"accounts"|"reconciliation">("transactions");
+  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation">("transactions");
   const [accounts,setAccounts]=useState<TreasuryAccount[]>([]);
   const [transactions,setTransactions]=useState<TreasuryTransaction[]>([]);
+  const [cheques,setCheques]=useState<TreasuryCheque[]>([]);
+  const [chequeSettlementIds,setChequeSettlementIds]=useState<Record<number,string>>({});
+  const [chequeForm,setChequeForm]=useState({branch:"",fiscal_year:"",bank_account:"",direction:"incoming" as "incoming"|"outgoing",cheque_number:"",counterparty:"",amount:"",issue_date:today(),due_date:today(),treasury_transaction:"",notes:""});
   const [branches,setBranches]=useState<Branch[]>([]);
   const [years,setYears]=useState<FiscalYear[]>([]);
   const [gl,setGl]=useState<Account[]>([]);
@@ -42,14 +45,15 @@ export default function TreasuryPanel({companyId}: Props) {
   const load=useCallback(async()=>{
     setLoading(true);setError("");
     try {
-      const [a,t,b,y,g,rs,cs,xr,companies]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies()]);
+      const [a,t,ch,b,y,g,rs,cs,xr,companies]=await Promise.all([treasuryApi.accounts(companyId),treasuryApi.transactions(companyId),treasuryApi.cheques(companyId),api.branches(companyId),api.fiscalYears(companyId),api.accounts(companyId),bankReconciliationApi.list(companyId),api.currencies(),api.exchangeRates(companyId),api.companies()]);
       const companyBase=companies.find(v=>v.id===companyId)?.base_currency_code||"";
-      setAccounts(a);setTransactions(t);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);
+      setAccounts(a);setTransactions(t);setCheques(ch);setBranches(b);setYears(y);setGl(g);setReconciliations(rs);setCurrencies(cs);setExchangeRates(xr);setBaseCurrencyCode(companyBase);
       setAcc(old=>({...old,currency_code:companyBase}));
       setReval(old=>({...old,account:old.account||String(a.find(v=>v.is_active&&v.currency_code!==companyBase)?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||"")}));
       setDoc(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),source_account:old.source_account||String(a.find(v=>v.is_active)?.id||"")}));
       setRec(old=>({...old,bank_account:old.bank_account||String(a.find(v=>v.kind==="bank"&&v.is_active)?.id||"")}));
       setAdjustmentForm(old=>({...old,fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),branch:old.branch||String(b[0]?.id||"")}));
+      setChequeForm(old=>({...old,branch:old.branch||String(b[0]?.id||""),fiscal_year:old.fiscal_year||String(y.find(v=>v.status==="open")?.id||""),bank_account:old.bank_account||String(a.find(v=>v.kind==="bank"&&v.is_active&&v.currency_code===companyBase)?.id||"")}));
       setSelectedRecon(old=>old||String(rs[0]?.id||""));
     } catch(e){setError((e as Error).message||"تعذر تحميل بيانات الخزينة.");} finally{setLoading(false);}
   },[companyId]);
@@ -98,6 +102,18 @@ const createAdjustment=async(lineId:number)=>{if(!selectedRecon||!adjustmentForm
 const unmatch=async(lineId:number)=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.unmatch(Number(selectedRecon),lineId);await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر فك المطابقة.");}finally{setBusy(false);}};
   // اعتماد التسوية البنكية بعد استكمال المطابقات والتحقق من الفروق.
 const finalize=async()=>{if(!selectedRecon)return;setBusy(true);setError("");try{await bankReconciliationApi.reconcile(Number(selectedRecon));await load();await refreshSummary(selectedRecon);}catch(e){setError((e as Error).message||"تعذر اعتماد التسوية.");}finally{setBusy(false);}};
+
+  const saveCheque=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+    await treasuryApi.createCheque({company:companyId,branch:Number(chequeForm.branch),fiscal_year:Number(chequeForm.fiscal_year),bank_account:Number(chequeForm.bank_account),direction:chequeForm.direction,cheque_number:chequeForm.cheque_number,counterparty:chequeForm.counterparty,amount:chequeForm.amount,issue_date:chequeForm.issue_date,due_date:chequeForm.due_date,...(chequeForm.direction==="outgoing"?{treasury_transaction:Number(chequeForm.treasury_transaction)}:{}),notes:chequeForm.notes});
+    setChequeForm(old=>({...old,cheque_number:"",counterparty:"",amount:"",treasury_transaction:"",notes:""}));await load();
+  }catch(e){setError((e as Error).message||"تعذر تسجيل الشيك.");}finally{setBusy(false);}};
+  const runChequeAction=async(row:TreasuryCheque,action:"deposit"|"under_collection"|"present"|"clear"|"bounce"|"cancel")=>{setBusy(true);setError("");try{
+    let payload:Record<string,unknown>={};
+    if(action==="deposit")payload={deposit_date:today()};
+    if(action==="clear"){const linked=row.direction==="outgoing"?row.treasury_transaction:Number(chequeSettlementIds[row.id]||0);if(!linked)throw new Error("اختر سند الخزينة البنكي المرحّل المطابق أولًا.");payload={clearing_date:today(),treasury_transaction:linked};}
+    if(action==="bounce"){const reason=window.prompt("سبب ارتداد الشيك","شيك مرتد من البنك");if(reason===null)return;payload={bounce_date:today(),reason};}
+    await treasuryApi.chequeAction(row.id,action,payload);await load();
+  }catch(e){setError((e as Error).message||"تعذر تنفيذ إجراء الشيك.");}finally{setBusy(false);}};
   const active=accounts.filter(a=>a.is_active);
   const visibleAccounts=accounts.filter(a=>`${a.code} ${a.name_ar} ${a.bank_name||""} ${a.account_number||""} ${a.iban||""}`.toLocaleLowerCase("ar").includes(accountSearch.trim().toLocaleLowerCase("ar")));
   const visibleTransactions=transactions.filter(t=>`${t.document_number} ${t.transaction_date} ${t.kind} ${t.source_name} ${t.destination_name||""} ${t.journal_number||""} ${t.status}`.toLocaleLowerCase("ar").includes(transactionSearch.trim().toLocaleLowerCase("ar")));
@@ -110,7 +126,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
   return <section className="work-panel treasury-panel">
     <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
     {error&&<div className="error-banner">{error}</div>}
-    <div className="module-tabs"><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
+    <div className="module-tabs"><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
     {tab==="accounts"?<>
       <form className="treasury-form" onSubmit={saveAcc}>
         <label>النوع<select value={acc.kind} onChange={e=>setAcc({...acc,kind:e.target.value})}><option value="cash">خزينة نقدية</option><option value="bank">حساب بنكي</option></select></label>
@@ -141,6 +157,36 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         <div className="treasury-form-actions"><button className="primary-button" disabled={busy||!active.length||!years.some(y=>y.status==="open")}>حفظ كمسودة</button></div>
       </form>
       <div className="table-toolbar"><input aria-label="البحث في حركات الخزينة" placeholder="ابحث برقم المستند أو الحساب أو القيد…" value={transactionSearch} onChange={e=>setTransactionSearch(e.target.value)}/><span className="module-count">{visibleTransactions.length} من {transactions.length} مستند</span></div><div className="data-table-wrap"><table><thead><tr><th>المستند</th><th>التاريخ</th><th>النوع</th><th>الحساب</th><th>المبلغ</th><th>الحالة</th><th>القيد</th><th>إجراء</th></tr></thead><tbody>{visibleTransactions.map(t=><tr key={t.id}><td>{t.document_number}</td><td>{t.transaction_date}</td><td>{t.kind==="receipt"?"قبض":t.kind==="payment"?"صرف":"تحويل"}</td><td>{t.source_name}{t.destination_name?" ← "+t.destination_name:""}</td><td>{money(t.amount)} {baseCurrencyCode}{t.transaction_amount?` · ${money(t.transaction_amount)} ${currencies.find(v=>v.id===t.transaction_currency)?.code||""}`:""}</td><td><span className={"status-pill "+t.status}>{t.status==="posted"?"مرحّل":t.status==="reversed"?"معكوس":t.status==="void"?"ملغي":"مسودة"}</span></td><td>{t.journal_number||"—"}</td><td>{t.status==="draft"?<button className="subtle-button" disabled={busy} onClick={()=>void post(t.id)}>ترحيل</button>:t.status==="posted"?<button className="subtle-button" disabled={busy} onClick={()=>void reverseTransaction(t)}>عكس</button>:t.reversal_journal_number?`القيد العكسي ${t.reversal_journal_number}`:"—"}</td></tr>)}</tbody></table>{!loading&&!transactions.length&&<div className="table-empty">لا توجد مستندات حتى الآن.</div>}{transactions.length>0&&!visibleTransactions.length&&<div className="table-empty">لا توجد مستندات مطابقة للبحث.</div>}</div>
+
+    </>:tab==="cheques"?<>
+      <form className="treasury-form" onSubmit={saveCheque}>
+        <label>نوع الشيك<select value={chequeForm.direction} onChange={e=>setChequeForm({...chequeForm,direction:e.target.value as "incoming"|"outgoing",treasury_transaction:""})}><option value="incoming">شيك وارد من عميل / طرف آخر</option><option value="outgoing">شيك صادر لمورد / طرف آخر</option></select></label>
+        <label>رقم الشيك<input required maxLength={80} value={chequeForm.cheque_number} onChange={e=>setChequeForm({...chequeForm,cheque_number:e.target.value})}/></label>
+        <label>الطرف المقابل<input required maxLength={180} value={chequeForm.counterparty} onChange={e=>setChequeForm({...chequeForm,counterparty:e.target.value})}/></label>
+        <label>الحساب البنكي<select required value={chequeForm.bank_account} onChange={e=>setChequeForm({...chequeForm,bank_account:e.target.value,treasury_transaction:""})}><option value="">اختر الحساب البنكي</option>{bankAccounts.filter(a=>a.currency_code===baseCurrencyCode).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
+        <label>الفرع<select required value={chequeForm.branch} onChange={e=>setChequeForm({...chequeForm,branch:e.target.value})}><option value="">اختر الفرع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
+        <label>السنة المالية<select required value={chequeForm.fiscal_year} onChange={e=>setChequeForm({...chequeForm,fiscal_year:e.target.value})}><option value="">اختر السنة المفتوحة</option>{years.filter(y=>y.status==="open").map(y=><option key={y.id} value={y.id}>{y.name}</option>)}</select></label>
+        <label>قيمة الشيك<input required type="number" min="0.0001" step="0.0001" value={chequeForm.amount} onChange={e=>setChequeForm({...chequeForm,amount:e.target.value})}/></label>
+        <label>تاريخ الإصدار / الاستلام<input required type="date" value={chequeForm.issue_date} onChange={e=>setChequeForm({...chequeForm,issue_date:e.target.value})}/></label>
+        <label>تاريخ الاستحقاق<input required type="date" min={chequeForm.issue_date} value={chequeForm.due_date} onChange={e=>setChequeForm({...chequeForm,due_date:e.target.value})}/></label>
+        {chequeForm.direction==="outgoing"&&<label className="form-wide">سند الصرف البنكي المرحّل<select required value={chequeForm.treasury_transaction} onChange={e=>setChequeForm({...chequeForm,treasury_transaction:e.target.value})}><option value="">اختر سند صرف مطابقًا</option>{transactions.filter(t=>t.status==="posted"&&t.kind==="payment"&&t.source_account===Number(chequeForm.bank_account)&&Number(t.amount)===Number(chequeForm.amount)&&!cheques.some(c=>c.treasury_transaction===t.id)).map(t=><option key={t.id} value={t.id}>{t.document_number} · {t.transaction_date} · {money(t.amount)}</option>)}</select><small>الشيك الصادر لا يُسجل دون سند صرف بنكي مرحّل بنفس البنك والقيمة.</small></label>}
+        <label className="form-wide">ملاحظات<input maxLength={500} value={chequeForm.notes} onChange={e=>setChequeForm({...chequeForm,notes:e.target.value})}/></label>
+        <div className="treasury-form-actions"><button className="primary-button" disabled={busy||!bankAccounts.some(a=>a.currency_code===baseCurrencyCode)||!years.some(y=>y.status==="open")}>تسجيل الشيك</button></div>
+      </form>
+      <div className="table-toolbar"><span className="module-count">{cheques.length} شيك مسجل</span></div>
+      <div className="data-table-wrap"><table><thead><tr><th>الاتجاه</th><th>رقم الشيك</th><th>البنك</th><th>الطرف</th><th>القيمة</th><th>الإصدار</th><th>الاستحقاق</th><th>الحالة</th><th>سند الخزينة</th><th>الإجراء</th></tr></thead><tbody>{cheques.map(row=><tr key={row.id}>
+        <td>{row.direction==="incoming"?"وارد":"صادر"}</td><td>{row.cheque_number}</td><td>{row.bank_name}</td><td>{row.counterparty}</td><td>{money(row.amount)} {baseCurrencyCode}</td><td>{row.issue_date}</td><td>{row.due_date}</td>
+        <td><span className={"status-pill "+row.status}>{({received:"مستلم",deposited:"مودع بالبنك",under_collection:"تحت التحصيل",issued:"صادر",presented:"مقدم للصرف",cleared:"تم التحصيل/الصرف",bounced:"مرتد",cancelled:"ملغي"} as Record<string,string>)[row.status]}</span></td>
+        <td>{row.transaction_number||"—"}</td><td>
+          {row.direction==="incoming"&&row.status==="received"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void runChequeAction(row,"deposit")}>إيداع بالبنك</button>}
+          {row.direction==="incoming"&&row.status==="deposited"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void runChequeAction(row,"under_collection")}>تحت التحصيل</button>}
+          {row.direction==="outgoing"&&row.status==="issued"&&<button type="button" className="subtle-button" disabled={busy} onClick={()=>void runChequeAction(row,"present")}>تقديم للصرف</button>}
+          {(row.direction==="incoming"&&["deposited","under_collection"].includes(row.status)||row.direction==="outgoing"&&["issued","presented"].includes(row.status))&&<><select aria-label="سند الخزينة لإثبات التحصيل أو الصرف" value={chequeSettlementIds[row.id]||String(row.treasury_transaction||"")} onChange={e=>setChequeSettlementIds({...chequeSettlementIds,[row.id]:e.target.value})}><option value="">سند التحصيل / الصرف المرحّل</option>{transactions.filter(t=>t.status==="posted"&&t.kind===(row.direction==="incoming"?"receipt":"payment")&&t.source_account===row.bank_account&&Number(t.amount)===Number(row.amount)&&(t.id===row.treasury_transaction||!cheques.some(c=>c.treasury_transaction===t.id))).map(t=><option key={t.id} value={t.id}>{t.document_number} · {t.transaction_date}</option>)}</select><button type="button" className="subtle-button" disabled={busy||!(chequeSettlementIds[row.id]||row.treasury_transaction)} onClick={()=>void runChequeAction(row,"clear")}>تأكيد التحصيل / الصرف</button></>}
+          {row.status!=="cleared"&&row.status!=="bounced"&&row.status!=="cancelled"&&<button type="button" className="subtle-button" disabled={busy||(row.direction==="outgoing"&&transactions.find(t=>t.id===row.treasury_transaction)?.status!=="reversed")} onClick={()=>void runChequeAction(row,"bounce")}>تسجيل ارتداد</button>}
+          {(row.status==="received"||row.status==="issued")&&<button type="button" className="subtle-button" disabled={busy||(row.direction==="outgoing"&&transactions.find(t=>t.id===row.treasury_transaction)?.status!=="reversed")} onClick={()=>void runChequeAction(row,"cancel")}>إلغاء</button>}
+          {["cleared","bounced","cancelled"].includes(row.status)?"—":null}
+        </td></tr>)}{!cheques.length&&<tr><td colSpan={10}>لا توجد شيكات مسجلة حتى الآن.</td></tr>}</tbody></table></div>
+
     </>:<>
       <form className="treasury-form" onSubmit={createRecon}>
         <label>الحساب البنكي<select required value={rec.bank_account} onChange={e=>setRec({...rec,bank_account:e.target.value})}><option value="">اختر البنك</option>{bankAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>

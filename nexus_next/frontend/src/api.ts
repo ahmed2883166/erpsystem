@@ -391,6 +391,13 @@ export type TreasuryTransaction = {
   transaction_date: string; amount: string; description: string; reference: string; journal_entry: number | null;
   journal_number: string; reversal_journal_entry: number | null; reversal_journal_number: string; reversed_at: string | null; reversed_by: number | null; transaction_currency: number|null; transaction_amount: string|null; exchange_rate: string|null; exchange_rate_date: string|null; carrying_amount: string|null; cash_flow_category: "operating" | "investing" | "financing"; created_at: string; posted_at: string | null;
 };
+export type TreasuryCheque = {
+  id:number; company:number; branch:number; fiscal_year:number; bank_account:number; bank_name:string;
+  direction:"incoming"|"outgoing"; cheque_number:string; counterparty:string; amount:string;
+  issue_date:string; due_date:string; status:"received"|"deposited"|"under_collection"|"issued"|"presented"|"cleared"|"bounced"|"cancelled";
+  treasury_transaction:number|null; transaction_number:string; deposit_date:string|null; clearing_date:string|null;
+  bounce_date:string|null; notes:string; created_at:string; updated_at:string;
+};
 export type CashFlowReport = {
   company: number; date_from: string | null; date_to: string | null; net_cash_flow: string; note: string;
   categories: {category:"operating"|"investing"|"financing";label:string;inflows:string;outflows:string;net:string}[];
@@ -433,6 +440,12 @@ export const treasuryApi = {
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
   // جلب حركات الخزينة مرتبة من الأحدث.
   transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
+  // جلب سجل الشيكات الواردة والصادرة للشركة.
+  cheques: (companyId:number) => request<TreasuryCheque[]>(`/api/treasury/cheques/?company=${companyId}&ordering=due_date`),
+  // تسجيل شيك جديد.
+  createCheque: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryCheque>("/api/treasury/cheques/",{method:"POST",body:JSON.stringify(payload)}); },
+  // تنفيذ إجراء دورة الشيك.
+  chequeAction: async (id:number,action:"deposit"|"under_collection"|"present"|"clear"|"bounce"|"cancel",payload:Record<string,unknown>={}) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryCheque>(`/api/treasury/cheques/${id}/${action}/`,{method:"POST",body:JSON.stringify(payload)}); },
   // إنشاء حساب خزينة أو بنك جديد.
   createAccount: async (payload: unknown) => { await request<{detail:string}>("/api/csrf/"); return request<TreasuryAccount>("/api/treasury/accounts/", {method:"POST", body:JSON.stringify(payload)}); },
   // إنشاء حركة قبض أو صرف أو تحويل.
