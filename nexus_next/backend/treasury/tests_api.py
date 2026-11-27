@@ -1947,3 +1947,214 @@ class PettyCashWorkflowTests(APITestCase):
         }, format="multipart")
         self.assertEqual(expense.status_code, 400, expense.data)
         self.assertFalse(PettyCashExpense.objects.exists())
+
+
+    def test_rejected_expense_can_be_corrected_then_resubmitted_and_approved(self):
+        fund_id = self._create_fund()
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف يحتاج تصحيح", "amount": "15",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-EDIT-1",
+        }, format="json")
+        self.assertEqual(expense.status_code, 201, expense.data)
+        submitted = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json",
+        )
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.client.force_authenticate(self.approver)
+        rejected = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{expense.data['id']}/reject/",
+            {"rejection_note": "الإيصال يحتاج تصحيح البيان والمبلغ"},
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.client.force_authenticate(self.user)
+        corrected = self.client.patch(
+            f"/api/treasury/petty-cash-expenses/{expense.data['id']}/",
+            {"description": "شراء أدوات مكتبية بعد التصحيح", "amount": "18.5000",
+             "receipt_number": "R-EDIT-2"},
+            format="json",
+        )
+        self.assertEqual(corrected.status_code, 200, corrected.data)
+        self.assertEqual(corrected.data["status"], PettyCashExpense.Status.REJECTED)
+        self.assertEqual(Decimal(str(corrected.data["amount"])), Decimal("18.5000"))
+        resubmitted = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json",
+        )
+        self.assertEqual(resubmitted.status_code, 200, resubmitted.data)
+        self.assertEqual(resubmitted.data["status"], PettyCashExpense.Status.PENDING_APPROVAL)
+        self.assertEqual(resubmitted.data["rejection_note"], "")
+        self.client.force_authenticate(self.approver)
+        approved = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{expense.data['id']}/approve/",
+            {"approval_note": "تمت مراجعة المستند بعد التصحيح"},
+            format="json",
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data["status"], PettyCashExpense.Status.APPROVED)
+
+    def test_handover_rejects_backdated_date_before_latest_fund_movement(self):
+        fund_id = self._create_fund()
+        funded = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/fund/",
+            {"amount": "500", "transaction_date": "2026-03-01"}, format="json",
+        )
+        self.assertEqual(funded.status_code, 201, funded.data)
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف قبل التسليم", "amount": "100",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-HANDOVER-1",
+        }, format="json")
+        self.assertEqual(expense.status_code, 201, expense.data)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json")
+        self.client.force_authenticate(self.approver)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/approve/", {}, format="json")
+        self.client.force_authenticate(self.user)
+        settled = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/settle/",
+            {"expense_ids": [expense.data["id"]], "settlement_date": "2026-03-03"},
+            format="json",
+        )
+        self.assertEqual(settled.status_code, 201, settled.data)
+        backdated = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/handover/",
+            {"new_custodian": self.new_custodian.pk, "handover_date": "2026-03-02",
+             "actual_balance": "400"},
+            format="json",
+        )
+        self.assertEqual(backdated.status_code, 400, backdated.data)
+        valid = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/handover/",
+            {"new_custodian": self.new_custodian.pk, "handover_date": "2026-03-04",
+             "actual_balance": "400", "notes": "تسليم بعد آخر حركة مسجلة"},
+            format="json",
+        )
+        self.assertEqual(valid.status_code, 201, valid.data)
+        self.assertEqual(Decimal(str(valid.data["expected_balance"])), Decimal("400"))
+
+    def test_suspended_fund_blocks_resubmission_and_approval(self):
+        fund_id = self._create_fund()
+        rejected_expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف مرفوض", "amount": "10",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-SUSP-1",
+        }, format="json")
+        pending_expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف معلق", "amount": "20",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-SUSP-2",
+        }, format="json")
+        for item in (rejected_expense, pending_expense):
+            self.assertEqual(item.status_code, 201, item.data)
+            submitted = self.client.post(
+                f"/api/treasury/petty-cash-expenses/{item.data['id']}/submit/", {}, format="json",
+            )
+            self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.client.force_authenticate(self.approver)
+        rejected = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{rejected_expense.data['id']}/reject/",
+            {"rejection_note": "المستند غير مكتمل ويحتاج استيفاء"},
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, 200, rejected.data)
+        self.client.force_authenticate(self.user)
+        PettyCashFund.objects.filter(pk=fund_id).update(status=PettyCashFund.Status.SUSPENDED)
+        resubmit = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{rejected_expense.data['id']}/submit/", {}, format="json",
+        )
+        self.assertEqual(resubmit.status_code, 400, resubmit.data)
+        self.client.force_authenticate(self.approver)
+        approve = self.client.post(
+            f"/api/treasury/petty-cash-expenses/{pending_expense.data['id']}/approve/", {}, format="json",
+        )
+        self.assertEqual(approve.status_code, 400, approve.data)
+        self.assertEqual(
+            PettyCashExpense.objects.get(pk=pending_expense.data["id"]).status,
+            PettyCashExpense.Status.PENDING_APPROVAL,
+        )
+
+    def test_petty_cash_statement_reconciles_funding_expense_and_count_difference(self):
+        fund_id = self._create_fund()
+        funded = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/fund/",
+            {"amount": "500", "transaction_date": "2026-03-01"}, format="json",
+        )
+        self.assertEqual(funded.status_code, 201, funded.data)
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف كشف الحركة", "amount": "100",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-STMT-1",
+        }, format="json")
+        self.assertEqual(expense.status_code, 201, expense.data)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json")
+        self.client.force_authenticate(self.approver)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/approve/", {}, format="json")
+        self.client.force_authenticate(self.user)
+        settled = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/settle/",
+            {"expense_ids": [expense.data["id"]], "settlement_date": "2026-03-03"},
+            format="json",
+        )
+        self.assertEqual(settled.status_code, 201, settled.data)
+        count = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/count/",
+            {"count_date": "2026-03-04", "actual_balance": "398", "notes": "عجز جرد بمقدار 2"},
+            format="json",
+        )
+        self.assertEqual(count.status_code, 201, count.data)
+        self.client.force_authenticate(self.approver)
+        approved_count = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/approve-count/",
+            {"count_id": count.data["id"], "counter_account": self.expense_gl.pk,
+             "review_note": "تم فحص العجز واعتماد المعالجة"},
+            format="json",
+        )
+        self.assertEqual(approved_count.status_code, 200, approved_count.data)
+        self.client.force_authenticate(self.user)
+        statement = self.client.get(
+            f"/api/treasury/petty-cash-funds/{fund_id}/statement/"
+            "?date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(Decimal(str(statement.data["opening_balance"])), Decimal("0"))
+        self.assertEqual(Decimal(str(statement.data["total_inflows"])), Decimal("500"))
+        self.assertEqual(Decimal(str(statement.data["total_outflows"])), Decimal("102"))
+        self.assertEqual(Decimal(str(statement.data["closing_balance"])), Decimal("398"))
+        self.assertEqual(Decimal(str(statement.data["reconciliation_difference"])), Decimal("0"))
+        self.assertEqual(len(statement.data["rows"]), 3)
+
+    def test_petty_cash_expense_report_groups_by_branch_account_and_lists_unsettled(self):
+        fund_id = self._create_fund()
+        rejected = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02",
+            "description": "مصروف مرفوض بالتقرير", "amount": "10",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-REPORT-1",
+        }, format="json")
+        draft = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-04",
+            "description": "مصروف مسودة بالتقرير", "amount": "20",
+            "expense_account": self.expense_gl.pk, "receipt_number": "R-REPORT-2",
+        }, format="json")
+        self.assertEqual(rejected.status_code, 201, rejected.data)
+        self.assertEqual(draft.status_code, 201, draft.data)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{rejected.data['id']}/submit/", {}, format="json")
+        self.client.force_authenticate(self.approver)
+        self.client.post(
+            f"/api/treasury/petty-cash-expenses/{rejected.data['id']}/reject/",
+            {"rejection_note": "المستند غير مكتمل ويحتاج استيفاء"},
+            format="json",
+        )
+        self.client.force_authenticate(self.user)
+        report = self.client.get(
+            f"/api/treasury/petty-cash-expenses/report/?company={self.company.pk}"
+            f"&branch={self.branch.pk}&date_from=2026-03-01&date_to=2026-03-31"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(Decimal(str(report.data["total_expenses"])), Decimal("30"))
+        self.assertEqual(report.data["unsettled_count"], 2)
+        self.assertEqual(Decimal(str(report.data["unsettled_total"])), Decimal("30"))
+        self.assertEqual(len(report.data["by_branch_account"]), 1)
+        row = report.data["by_branch_account"][0]
+        self.assertEqual(row["fund__branch_id"], self.branch.pk)
+        self.assertEqual(row["expense_account_id"], self.expense_gl.pk)
+        self.assertEqual(Decimal(str(row["total_amount"])), Decimal("30"))

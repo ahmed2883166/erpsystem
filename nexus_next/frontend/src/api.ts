@@ -500,6 +500,25 @@ export type PettyCashCustodianHandover = {
   expected_balance:string; actual_balance:string; notes:string; handed_over_by:number;
   handed_over_by_name:string; created_at:string;
 };
+export type PettyCashStatement = {
+  fund:number; fund_code:string; fund_name:string; branch:number; branch_name:string;
+  date_from:string; date_to:string; opening_balance:string; total_inflows:string;
+  total_outflows:string; net_movement:string; closing_balance:string;
+  reconciliation_difference:string;
+  rows:{date:string;type:string;description:string;document_number:string;journal_number:string;
+    account_code:string;account_name:string;amount:string;reference_id:number}[];
+};
+export type PettyCashExpenseReport = {
+  company:number; branch:number|null; date_from:string|null; date_to:string|null;
+  total_expenses:string;
+  by_branch_account:{fund__branch_id:number;fund__branch__name_ar:string;
+    expense_account_id:number;expense_account__code:string;expense_account__name_ar:string;
+    total_amount:string;expense_count:number}[];
+  unsettled_count:number; unsettled_total:string;
+  unsettled_expenses:{id:number;fund:number;fund_name:string;branch:number;branch_name:string;
+    expense_date:string;description:string;expense_account:number;expense_account_code:string;
+    expense_account_name:string;amount:string;status:string;receipt_number:string}[];
+};
 
 // واجهات الخزينة والتدفقات النقدية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const treasuryApi = {
@@ -524,8 +543,15 @@ export const treasuryApi = {
 
   pettyCashFunds: (companyId:number) => request<PettyCashFund[]>(`/api/treasury/petty-cash-funds/?company=${companyId}`),
   pettyCashExpenses: (companyId:number) => request<PettyCashExpense[]>(`/api/treasury/petty-cash-expenses/?company=${companyId}`),
+  pettyCashStatement: (id:number,dateFrom:string,dateTo:string) => request<PettyCashStatement>(`/api/treasury/petty-cash-funds/${id}/statement/?date_from=${dateFrom}&date_to=${dateTo}`),
+  pettyCashExpenseReport: (companyId:number,dateFrom:string,dateTo:string,branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId),date_from:dateFrom,date_to:dateTo});
+    if(branch) q.set("branch",String(branch));
+    return request<PettyCashExpenseReport>(`/api/treasury/petty-cash-expenses/report/?${q.toString()}`);
+  },
   createPettyCashFund: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashFund>("/api/treasury/petty-cash-funds/",{method:"POST",body:JSON.stringify(payload)}); },
   createPettyCashExpense: async (payload:FormData) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>("/api/treasury/petty-cash-expenses/",{method:"POST",body:payload}); },
+  updatePettyCashExpense: async (id:number,payload:FormData) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/`,{method:"PATCH",body:payload}); },
   submitPettyCashExpense: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/submit/`,{method:"POST",body:"{}"}); },
   approvePettyCashExpense: async (id:number,approval_note="") => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/approve/`,{method:"POST",body:JSON.stringify({approval_note})}); },
   rejectPettyCashExpense: async (id:number,rejection_note:string) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/reject/`,{method:"POST",body:JSON.stringify({rejection_note})}); },

@@ -1772,7 +1772,7 @@ class JournalEntryViewSet(AccountingViewSet):
         """إعداد التدفقات النقدية بالطريقة المباشرة من الحركات النقدية المرحلة."""
         from decimal import Decimal
         from django.db.models import Sum
-        from treasury.models import TreasuryAccount, TreasuryTransaction
+        from treasury.models import PettyCashCount, PettyCashExpense, TreasuryAccount, TreasuryTransaction
 
         company_raw = request.query_params.get("company")
         if not company_raw or not company_raw.isdigit():
@@ -1812,6 +1812,55 @@ class JournalEntryViewSet(AccountingViewSet):
             "cash_flow_category", "kind", "counter_account__code"
         ))
 
+        # Petty-cash expenses are real operating cash payments made from a cash-equivalent
+        # fund. Internal funding/replenishment transfers remain excluded from cash flows.
+        petty_expenses = PettyCashExpense.objects.filter(
+            fund__company_id=company_id, fund__branch__in=visible_branches,
+            status=PettyCashExpense.Status.SETTLED,
+            settlement__settlement_date__gte=date_from,
+            settlement__settlement_date__lte=date_to,
+            settlement__journal_entry__status=JournalEntry.Status.POSTED,
+        ).values(
+            "expense_account_id", "expense_account__code", "expense_account__name_ar",
+        ).annotate(amount=Sum("amount"))
+        for row in petty_expenses:
+            grouped.append({
+                "cash_flow_category": TreasuryTransaction.CashFlowCategory.OPERATING,
+                "kind": TreasuryTransaction.Kind.PAYMENT,
+                "counter_account_id": row["expense_account_id"],
+                "counter_account__code": row["expense_account__code"],
+                "counter_account__name_ar": row["expense_account__name_ar"],
+                "amount": row["amount"], "source": "petty_cash_expense",
+            })
+
+        # Approved count differences also change the petty-cash ledger balance.
+        petty_counts = PettyCashCount.objects.filter(
+            fund__company_id=company_id, fund__branch__in=visible_branches,
+            status=PettyCashCount.Status.APPROVED,
+            count_date__gte=date_from, count_date__lte=date_to,
+            adjustment_journal_entry__status=JournalEntry.Status.POSTED,
+        ).select_related("fund__petty_cash_account__account", "adjustment_journal_entry")
+        for count in petty_counts:
+            variance = count.variance
+            if not variance:
+                continue
+            counter_line = JournalLine.objects.filter(
+                entry_id=count.adjustment_journal_entry_id,
+            ).exclude(
+                account_id=count.fund.petty_cash_account.account_id,
+            ).select_related("account").first()
+            grouped.append({
+                "cash_flow_category": TreasuryTransaction.CashFlowCategory.OPERATING,
+                "kind": (TreasuryTransaction.Kind.RECEIPT if variance > 0
+                         else TreasuryTransaction.Kind.PAYMENT),
+                "counter_account_id": counter_line.account_id if counter_line else None,
+                "counter_account__code": counter_line.account.code if counter_line else None,
+                "counter_account__name_ar": (
+                    counter_line.account.name_ar if counter_line else "فرق جرد عهدة"
+                ),
+                "amount": abs(variance), "source": "petty_cash_count_variance",
+            })
+
         sections = []
         net_change_in_cash = Decimal("0")
         for category, label in TreasuryTransaction.CashFlowCategory.choices:
@@ -1831,6 +1880,7 @@ class JournalEntryViewSet(AccountingViewSet):
                 "counter_account_code": row["counter_account__code"],
                 "counter_account_name": row["counter_account__name_ar"] or "حساب مقابل غير محدد",
                 "kind": row["kind"],
+                "source": row.get("source", "treasury_transaction"),
                 "inflows": row["amount"] if row["kind"] == TreasuryTransaction.Kind.RECEIPT else Decimal("0"),
                 "outflows": row["amount"] if row["kind"] == TreasuryTransaction.Kind.PAYMENT else Decimal("0"),
             } for row in selected]
@@ -1986,7 +2036,7 @@ class JournalEntryViewSet(AccountingViewSet):
             "reconciliation_difference": ledger_cash_change - net_increase_decrease_in_cash,
             "uncategorized_counterparty_transactions": uncategorized_counterparties,
             "non_cash_investing_transactions": non_cash_investing_transactions,
-            "note": "تُعرض المقبوضات والمدفوعات النقدية الفعلية حسب تصنيف الحركة والحساب المقابل. يجب مراجعة تصنيف كل حركة (تشغيلي/استثماري/تمويلي) قبل اعتماد القائمة؛ التحويلات الداخلية والحركات غير النقدية مستبعدة، ويُعرض أثر تغير أسعار صرف العملات الأجنبية على النقدية كبند مستقل بعد الأنشطة التشغيلية والاستثمارية والتمويلية، وتُفصح المعاملات الاستثمارية والتمويلية غير النقدية بصورة منفصلة.",
+            "note": "تُعرض المقبوضات والمدفوعات النقدية الفعلية حسب تصنيف الحركة والحساب المقابل. تشمل التدفقات التشغيلية مصروفات العهدة النثرية التي تمت تسويتها وفروق الجرد المعتمدة، بينما تظل تحويلات تمويل العهدة وتجديدها الداخلية مستبعدة منعًا للازدواج. يجب مراجعة تصنيف كل حركة قبل اعتماد القائمة؛ ويُعرض أثر تغير أسعار صرف العملات الأجنبية كبند مستقل، وتُفصح المعاملات غير النقدية بصورة منفصلة.",
         })
 
     @decorators.action(detail=False, methods=("get",), url_path="vat-return")
