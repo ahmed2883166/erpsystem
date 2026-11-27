@@ -2624,6 +2624,18 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(posted_receipt.status_code, 200, posted_receipt.data)
         self.assertEqual(posted_receipt.data["print_template_snapshot"]["template_id"], receipt_template.pk)
 
+        batch = self.client.post("/api/sales-documents/receipt-batches/", {
+            "company": self.company.pk, "customer": self.customer.pk, "branch": self.branch.pk,
+            "receipt_number": "RC-BATCH-PRINT-SNAPSHOT", "receipt_date": "2026-03-11",
+            "method": "cash", "amount": "5", "reference": "دفعة مقدمة",
+        }, format="json")
+        self.assertEqual(batch.status_code, 201, batch.data)
+        posted_batch = self.client.post(
+            f"/api/sales-documents/receipt-batches/{batch.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted_batch.status_code, 200, posted_batch.data)
+        self.assertEqual(posted_batch.data["print_template_snapshot"]["template_id"], receipt_template.pk)
+
         return_template = SalesDocumentTemplate.objects.create(
             company=self.company, document_type="return", name="Return Frozen",
             style="modern", config={"footer_text": "مردود"}, is_default=True,
@@ -2649,6 +2661,8 @@ class SalesWorkflowTests(APITestCase):
         )
         receipt.refresh_from_db()
         self.assertEqual(receipt.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
+        batch.refresh_from_db()
+        self.assertEqual(batch.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
         saved_return = self.client.get(
             f"/api/sales-documents/returns/{sales_return.data['id']}/"
         ).data
