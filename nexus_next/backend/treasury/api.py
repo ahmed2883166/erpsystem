@@ -737,7 +737,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         # Commitments outside operational subledgers are forecast-only. Their
         # linked posted payments are already reflected in actual cash and are
         # therefore subtracted from the outstanding commitment balance.
-        from treasury.models import CashCommitment, CashCommitmentPayment
+        from treasury.models import CashCommitment, CashCommitmentPayment\n        from accounting.models import JournalEntry
         commitment_qs = CashCommitment.objects.filter(
             company_id=company_id, status__in=(CashCommitment.Status.OPEN, CashCommitment.Status.PARTIALLY_PAID),
             due_date__lte=end_date,
