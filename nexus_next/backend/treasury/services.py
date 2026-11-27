@@ -23,15 +23,22 @@ def _money(value):
 
 
 def _foreign_position(account):
-    """قفل أو إنشاء مركز عملة، مع منع ترحيل أرصدة افتتاحية غير مُمثلة اسميًا."""
-    if account.opening_balance != 0 or account.opening_journal_entry_id:
-        raise ValidationError(
-            "لا يمكن ترحيل حساب أجنبي له رصيد افتتاحي قديم قبل إدخال رصيد افتتاحي بالعملة الأجنبية وسعره المعتمد."
+    """قفل مركز العملة، مع قبول الافتتاحي الأجنبي الموثق فقط."""
+    position = TreasuryFxPosition.objects.select_for_update().filter(account=account).first()
+    if position:
+        if account.opening_journal_entry_id and account.opening_foreign_amount <= 0:
+            raise ValidationError("القيد الافتتاحي القديم غير موثق بمبلغ أجنبي وسعر صرف؛ راجع الرصيد قبل المتابعة.")
+        if account.opening_foreign_amount > 0 and not account.opening_journal_entry_id:
+            raise ValidationError("الرصيد الأجنبي الافتتاحي غير مرتبط بقيد افتتاحي مرحّل.")
+    else:
+        if account.opening_balance != 0 or account.opening_journal_entry_id or account.opening_foreign_amount > 0:
+            raise ValidationError(
+                "يوجد رصيد افتتاحي غير ممثل بمركز عملة موثق؛ راجع القيد الافتتاحي قبل المتابعة."
+            )
+        position, created = TreasuryFxPosition.objects.select_for_update().get_or_create(
+            account=account,
+            defaults={"foreign_amount": Decimal("0"), "carrying_base_amount": Decimal("0")},
         )
-    position, created = TreasuryFxPosition.objects.select_for_update().get_or_create(
-        account=account,
-        defaults={"foreign_amount": Decimal("0"), "carrying_base_amount": Decimal("0")},
-    )
     if created and TreasuryTransaction.objects.filter(
         Q(source_account=account) | Q(destination_account=account),
         status=TreasuryTransaction.Status.POSTED,
@@ -311,7 +318,15 @@ def revalue_treasury_fx_account(*, account_id, fiscal_year_id, revaluation_date,
     if account.account.nature != account.account.Nature.ASSET:
         raise ValidationError("حساب الخزينة يجب أن يكون من طبيعة الأصول.")
     if account.opening_balance != 0 or account.opening_journal_entry_id:
-        raise ValidationError("الحساب له رصيد افتتاحي غير ممثل بعملة أجنبية؛ عالج الرصيد الافتتاحي أولًا.")
+        valid_opening = (
+            account.opening_foreign_amount > 0
+            and account.opening_exchange_rate is not None
+            and account.opening_exchange_rate_date is not None
+            and account.opening_journal_entry_id is not None
+            and TreasuryFxPosition.objects.filter(account=account).exists()
+        )
+        if not valid_opening:
+            raise ValidationError("الحساب له رصيد افتتاحي غير ممثل بمركز عملة أجنبي موثق؛ عالج الرصيد الافتتاحي أولًا.")
     if account.branch_id and account.branch_id != branch.pk:
         raise ValidationError("الفرع المحدد لا يطابق فرع حساب الخزينة.")
     if branch.company_id != account.company_id:
