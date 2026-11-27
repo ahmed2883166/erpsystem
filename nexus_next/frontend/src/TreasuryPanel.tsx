@@ -188,7 +188,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         </td></tr>)}{!cheques.length&&<tr><td colSpan={10}>لا توجد شيكات مسجلة حتى الآن.</td></tr>}</tbody></table></div>
 
     </>:<>
-      <form className="treasury-form" onSubmit={createRecon}
+      <form className="treasury-form" onSubmit={createRecon}>
         <label>الحساب البنكي<select required value={rec.bank_account} onChange={e=>setRec({...rec,bank_account:e.target.value})}><option value="">اختر البنك</option>{bankAccounts.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         <label>رقم كشف البنك<input required value={rec.statement_number} onChange={e=>setRec({...rec,statement_number:e.target.value})}/></label>
         <label>تاريخ الكشف<input required type="date" value={rec.statement_date} onChange={e=>setRec({...rec,statement_date:e.target.value})}/></label>
