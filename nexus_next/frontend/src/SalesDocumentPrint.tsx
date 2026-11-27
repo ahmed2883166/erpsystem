@@ -11,7 +11,7 @@ export default function SalesDocumentPrint({company,delivery,invoice,quotation,r
  const [defaultTemplate,setDefaultTemplate]=useState<SalesDocumentTemplate|null>(null);
  useEffect(()=>{if(!company?.id)return;let active=true;const type=isDelivery?"delivery":isQuotation?"quotation":isReceipt?"receipt":isReturn?"return":"invoice";void salesApi.documentTemplates(company.id).then(rows=>{if(active)setDefaultTemplate(rows.find(row=>row.document_type===type&&row.is_active&&row.is_default)||null);}).catch(()=>{if(active)setDefaultTemplate(null);});return()=>{active=false;};},[company?.id,kind]);
  if(!doc)return null;
- const saved=(delivery||invoice||quotation||receipt||salesReturn)?.print_template_snapshot;
+ const saved=(delivery||invoice||quotation||receipt||salesReturn||receiptBatch)?.print_template_snapshot;
  const snapshot:NonNullable<SalesInvoice["print_template_snapshot"]>=saved&&Object.keys(saved).length>0?saved:{template_id:defaultTemplate?.id??null,name:defaultTemplate?.name||"Classic",style:defaultTemplate?.style||"classic",config:defaultTemplate?.config||{}};
  const config=snapshot.config||{},language=config.language||"ar";
  const label=(ar:string,en:string)=>language==="en"?en:language==="bilingual"?ar+" / "+en:ar;
