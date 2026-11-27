@@ -1032,6 +1032,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         def amount(value):
             return value if value is not None else Decimal("0")
 
+        def cost_amount(value):
+            # Monetary cost is stored and reported to four decimal places.
+            return amount(value).quantize(Decimal("0.0001"))
+
         if product_id is not None:
             # عند اختيار صنف، تُحسب الإجماليات من بنوده فقط لا من إجمالي الفاتورة التي قد تضم أصنافًا أخرى.
             sales_totals = invoice_lines.aggregate(
@@ -1063,7 +1067,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 )
             )
 
-        sales_cost = amount(
+        sales_cost = cost_amount(
             invoice_lines_with_allocated_cost().aggregate(total=Sum("_allocated_sales_cost"))["total"]
         )
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
@@ -1099,7 +1103,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "return_net": Decimal("0"),
                 "sales_tax": amount(row["tax"]),
                 "return_tax": Decimal("0"),
-                "sales_cost": amount(row["cost"]),
+                "sales_cost": cost_amount(row["cost"]),
                 "return_cost": Decimal("0"),
             }
         for row in customer_returns:
@@ -1150,7 +1154,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "return_net": Decimal("0"),
                 "sales_tax": amount(row["tax"]),
                 "return_tax": Decimal("0"),
-                "sales_cost": amount(row["cost"]),
+                "sales_cost": cost_amount(row["cost"]),
                 "return_cost": Decimal("0"),
             }
         for row in product_returns:
