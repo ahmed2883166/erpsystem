@@ -1110,140 +1110,6 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
 
 
-class SupplierReturnViewSet(PurchaseBaseViewSet):
-    serializer_class = SupplierReturnSerializer
-    queryset = SupplierReturn.objects.select_related(
-        "company", "supplier", "invoice", "invoice__receipt__warehouse",
-        "stock_movement", "journal_entry", "reversal_stock_movement", "reversal_journal_entry",
-    ).prefetch_related("lines__invoice_line__receipt_line__product", "lines__movement_line")
-    filterset_fields = ("company", "supplier", "invoice", "status", "return_date")
-    search_fields = ("return_number", "supplier__name_ar", "invoice__invoice_number")
-    ordering_fields = ("return_date", "return_number", "created_at")
-
-    def get_queryset(self):
-        companies = accessible_companies(self.request.user)
-        qs = self.queryset.filter(company__in=companies)
-        branches = accessible_branches(self.request.user)
-        defaults = _default_branch_company_ids(self.request.user, companies)
-        return qs.filter(
-            Q(invoice__branch__in=branches)
-            | Q(invoice__receipt__warehouse__branch__in=branches)
-            | Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
-        )
-
-    def create(self, request, *args, **kwargs):
-        try:
-            company_id = int(request.data.get("company"))
-        except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."}) from None
-        self._check_write(company_id)
-        return super().create(request, *args, **kwargs)
-
-    def perform_create(self, serializer):
-        data = serializer.validated_data
-        self._check_write(data["company"].pk)
-        invoice = data["invoice"]
-        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
-        serializer.save()
-
-    def perform_update(self, serializer):
-        self._check_write(serializer.instance.company_id)
-        raise ValidationError("تعديل مرتجع المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
-
-    @action(detail=True, methods=("post",))
-    def post(self, request, pk=None):
-        document = self.get_object()
-        self._check_write(document.company_id)
-        if not _purchase_warehouse_accessible(request.user, document.invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
-        document = post_supplier_return(document.pk, request.user)
-        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=("post",))
-    @transaction.atomic
-    def reverse(self, request, pk=None):
-        document = self.get_object()
-        self._check_write(document.company_id)
-        if not _purchase_warehouse_accessible(request.user, document.invoice.receipt.warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
-        entry_date_raw = request.data.get("entry_date")
-        entry_date = parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
-        if not entry_date:
-            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
-        document = reverse_supplier_return(document.pk, request.user, entry_date)
-        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
-
-
-
-
-class SupplierRefundViewSet(PurchaseBaseViewSet):
-    serializer_class = SupplierRefundSerializer
-    queryset = SupplierRefund.objects.select_related(
-        "company", "supplier", "return_document", "return_document__invoice",
-        "return_document__invoice__receipt__warehouse", "payment_account", "journal_entry",
-    )
-    filterset_fields = ("company", "supplier", "return_document", "status", "refund_date")
-    search_fields = ("refund_number", "supplier__name_ar", "return_document__return_number")
-    ordering_fields = ("refund_date", "refund_number", "created_at")
-
-    def get_queryset(self):
-        companies = accessible_companies(self.request.user)
-        qs = self.queryset.filter(company__in=companies)
-        branches = accessible_branches(self.request.user)
-        defaults = _default_branch_company_ids(self.request.user, companies)
-        return qs.filter(
-            Q(return_document__invoice__receipt__warehouse__branch__in=branches)
-            | Q(return_document__invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
-        )
-
-    def create(self, request, *args, **kwargs):
-        try:
-            company_id = int(request.data.get("company"))
-        except (TypeError, ValueError):
-            raise ValidationError({"company": "حدد الشركة."}) from None
-        self._check_write(company_id)
-        return super().create(request, *args, **kwargs)
-
-    def perform_create(self, serializer):
-        data = serializer.validated_data
-        self._check_write(data["company"].pk)
-        if not _purchase_warehouse_accessible(
-            self.request.user, data["return_document"].invoice.receipt.warehouse,
-        ):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
-        serializer.save()
-
-    def perform_update(self, serializer):
-        self._check_write(serializer.instance.company_id)
-        raise ValidationError("تعديل استرداد المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
-
-    @action(detail=True, methods=("post",))
-    def post(self, request, pk=None):
-        document = self.get_object()
-        self._check_write(document.company_id)
-        if not _purchase_warehouse_accessible(
-            request.user, document.return_document.invoice.receipt.warehouse,
-        ):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
-        document = post_supplier_refund(document.pk, request.user)
-        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=("post",))
-    def reverse(self, request, pk=None):
-        """عكس استرداد المورد وإعادة الرصيد الدائن إلى حساب المورد."""
-        document = self.get_object()
-        self._check_write(document.company_id)
-        warehouse = document.return_document.invoice.receipt.warehouse
-        if not _purchase_warehouse_accessible(request.user, warehouse):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
-        entry_date = parse_date(str(request.data.get("entry_date") or timezone.localdate()))
-        if not entry_date:
-            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
-        document = reverse_supplier_refund(document.pk, request.user, entry_date)
-        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
-
-
     @action(detail=False, methods=("get",), url_path="analysis-report")
     def analysis_report(self, request):
         """تحليل المشتريات حسب المورد والصنف والفرع والمخزن والنشاط."""
@@ -1498,6 +1364,142 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
             f'attachment; filename="purchase-analysis-report-{report_data["company"]}.xlsx"'
         )
         return response_file
+
+
+class SupplierReturnViewSet(PurchaseBaseViewSet):
+    serializer_class = SupplierReturnSerializer
+    queryset = SupplierReturn.objects.select_related(
+        "company", "supplier", "invoice", "invoice__receipt__warehouse",
+        "stock_movement", "journal_entry", "reversal_stock_movement", "reversal_journal_entry",
+    ).prefetch_related("lines__invoice_line__receipt_line__product", "lines__movement_line")
+    filterset_fields = ("company", "supplier", "invoice", "status", "return_date")
+    search_fields = ("return_number", "supplier__name_ar", "invoice__invoice_number")
+    ordering_fields = ("return_date", "return_number", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(
+            Q(invoice__branch__in=branches)
+            | Q(invoice__receipt__warehouse__branch__in=branches)
+            | Q(invoice__branch__isnull=True, invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_write(data["company"].pk)
+        invoice = data["invoice"]
+        if not _purchase_warehouse_accessible(self.request.user, invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("تعديل مرتجع المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(request.user, document.invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        document = post_supplier_return(document.pk, request.user)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    @transaction.atomic
+    def reverse(self, request, pk=None):
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(request.user, document.invoice.receipt.warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المورد.")
+        entry_date_raw = request.data.get("entry_date")
+        entry_date = parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        document = reverse_supplier_return(document.pk, request.user, entry_date)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+
+
+
+class SupplierRefundViewSet(PurchaseBaseViewSet):
+    serializer_class = SupplierRefundSerializer
+    queryset = SupplierRefund.objects.select_related(
+        "company", "supplier", "return_document", "return_document__invoice",
+        "return_document__invoice__receipt__warehouse", "payment_account", "journal_entry",
+    )
+    filterset_fields = ("company", "supplier", "return_document", "status", "refund_date")
+    search_fields = ("refund_number", "supplier__name_ar", "return_document__return_number")
+    ordering_fields = ("refund_date", "refund_number", "created_at")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        qs = self.queryset.filter(company__in=companies)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return qs.filter(
+            Q(return_document__invoice__receipt__warehouse__branch__in=branches)
+            | Q(return_document__invoice__receipt__warehouse__branch__isnull=True, company_id__in=defaults)
+        )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        self._check_write(data["company"].pk)
+        if not _purchase_warehouse_accessible(
+            self.request.user, data["return_document"].invoice.receipt.warehouse,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._check_write(serializer.instance.company_id)
+        raise ValidationError("تعديل استرداد المورد غير متاح؛ احذف المسودة وأعد إنشاءها.")
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not _purchase_warehouse_accessible(
+            request.user, document.return_document.invoice.receipt.warehouse,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
+        document = post_supplier_refund(document.pk, request.user)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=("post",))
+    def reverse(self, request, pk=None):
+        """عكس استرداد المورد وإعادة الرصيد الدائن إلى حساب المورد."""
+        document = self.get_object()
+        self._check_write(document.company_id)
+        warehouse = document.return_document.invoice.receipt.warehouse
+        if not _purchase_warehouse_accessible(request.user, warehouse):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع مرتجع المورد.")
+        entry_date = parse_date(str(request.data.get("entry_date") or timezone.localdate()))
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        document = reverse_supplier_refund(document.pk, request.user, entry_date)
+        return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+
 
 
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
