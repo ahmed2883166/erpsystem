@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import PurchaseDocumentPrint, { type PurchasePrintDocument } from "./PurchaseDocumentPrint";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport, type LandedCostDocument, type LandedCostReport } from "./api";
 
 type Props = { companyId: number | null; company?: Company | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -15,7 +15,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitte
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId, company, activityAssignments, primaryActivity }: Props) {
   const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
-  const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging" | "landed-cost">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -45,6 +45,12 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
   const [returns, setReturns] = useState<SupplierReturn[]>([]);
   const [refunds, setRefunds] = useState<SupplierRefund[]>([]);
+  const [landedCosts, setLandedCosts] = useState<LandedCostDocument[]>([]);
+  const [landedCostReport, setLandedCostReport] = useState<LandedCostReport | null>(null);
+  const [landedCostForm, setLandedCostForm] = useState({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
+  const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;amount:string;basis:"value"|"quantity"|"weight"|"volume"|"manual"}[]>([{source_invoice_line:"",receipt_line:"",amount:"",basis:"value"}]);
+  const [landedCostReportFrom, setLandedCostReportFrom] = useState("");
+  const [landedCostReportTo, setLandedCostReportTo] = useState("");
   const [refundForm, setRefundForm] = useState({ return_document: "", refund_number: "", refund_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "", notes: "" });
   const [returnForm, setReturnForm] = useState({ invoice: "", return_number: "", return_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [returnLines, setReturnLines] = useState<{ invoice_line: string; quantity: string }[]>([{ invoice_line: "", quantity: "1" }]);
@@ -53,7 +59,7 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [statementTo, setStatementTo] = useState("");
   const [statement, setStatement] = useState<SupplierStatement | null>(null);
   const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
-  const [agingView, setAgingView] = useState<"supplier" | "grni">("supplier");
+  const [agingView, setAgingView] = useState<"supplier" | "grni" | "landed-cost">("supplier");
   const [grniReport, setGrniReport] = useState<GRNIAgingReport | null>(null);
   const [aging, setAging] = useState<SupplierAging | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,14 +90,14 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, serviceAcceptanceRows, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData, accountRows, costCenterRows, branchRows] = await Promise.all([
+      const [s, p, w, o, serviceAcceptanceRows, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData, accountRows, costCenterRows, branchRows, landedCostRows] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
         purchasingApi.orders(companyId), purchasingApi.serviceAcceptances(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId), purchasingApi.rfqs(companyId), purchasingApi.quotations(companyId),
-        api.accounts(companyId), api.allCostCenters(companyId), api.branches(companyId),
+        api.accounts(companyId), api.allCostCenters(companyId), api.branches(companyId), purchasingApi.landedCosts(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active));
       setAccounts(accountRows); setCostCenters(costCenterRows.filter(x=>x.is_active)); setBranches(branchRows.filter(x=>x.is_active));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setServiceAcceptances(serviceAcceptanceRows); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setServiceAcceptances(serviceAcceptanceRows); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setLandedCosts(landedCostRows); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
