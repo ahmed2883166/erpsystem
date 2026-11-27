@@ -13,6 +13,7 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from audit.models import AuditEvent
+from accounting.models import ChartOfAccount
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, CashCommitmentOccurrence, PettyCashFund, PettyCashExpense, PettyCashSettlement, PettyCashTransfer, PettyCashCount, PettyCashCustodianHandover
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer, CashCommitmentSerializer, CashCommitmentPaymentSerializer, CashCommitmentScheduleSerializer, PettyCashFundSerializer, PettyCashExpenseSerializer, PettyCashCountSerializer, PettyCashCustodianHandoverSerializer
