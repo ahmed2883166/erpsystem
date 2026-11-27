@@ -1115,6 +1115,12 @@ class LandedCostAllocation(models.Model):
             raise ValidationError({"source_invoice_line": "بند المصروف لا يتبع فاتورة المصدر المحددة."})
         if source.invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE or not source.expense_account_id:
             raise ValidationError({"source_invoice_line": "بند المصدر يجب أن يكون بند مصروف مباشر بحساب مصروف."})
+        account = source.expense_account
+        if (
+            not account.is_active or account.is_group or not account.allow_posting
+            or account.nature != "expense"
+        ):
+            raise ValidationError({"source_invoice_line": "حساب المصروف يجب أن يكون تفصيليًا ونشطًا ويسمح بالترحيل."})
         if receipt.movement.company_id != self.document.company_id:
             raise ValidationError({"receipt_line": "بند الاستلام لا يتبع شركة مستند الرسملة."})
         if receipt.movement.status != StockMovement.Status.POSTED or receipt.product.product_type != "goods":
