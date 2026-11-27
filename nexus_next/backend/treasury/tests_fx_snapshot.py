@@ -211,11 +211,11 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(position.foreign_amount, Decimal("0.0000"))
         self.assertEqual(position.carrying_base_amount, Decimal("0.0000"))
         self.assertEqual(
-            receipt.reversal_journal_entry.lines.get(account=self.bank.account).debit,
+            receipt.reversal_journal_entry.lines.get(account=self.bank.account).credit,
             Decimal("3000.0000"),
         )
         self.assertEqual(
-            receipt.reversal_journal_entry.lines.get(account=self.counter).credit,
+            receipt.reversal_journal_entry.lines.get(account=self.counter).debit,
             Decimal("3000.0000"),
         )
         self.assertEqual(
