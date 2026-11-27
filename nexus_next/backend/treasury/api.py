@@ -121,7 +121,7 @@ def _allocate_bank_match(recon, line_id, transaction_id, raw_amount, user):
     line_total = _allocated_line_amount(line)
     doc_total = _allocated_transaction_amount(doc, recon.bank_account)
     line.matched_transaction = None
-    if line_total == abs(line.amount) and line.allocations.count() == 1 and doc_total == abs(signed_amount):
+    if (line_total == abs(line.amount) and line.allocations.count() == 1 and doc_total == abs(signed_amount) and doc.reconciliation_allocations.filter(line__reconciliation__bank_account=recon.bank_account).count() == 1):
         line.matched_transaction = doc
     line.matched_at = timezone.now()
     line.save(update_fields=("matched_transaction", "matched_at"))
