@@ -1,7 +1,10 @@
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponse
+from openpyxl import Workbook
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
@@ -1814,3 +1817,43 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
             "totals": {key: str(value) for key, value in totals.items()},
             "rows": rows,
         })
+
+
+    @action(detail=False, methods=("get",), url_path="export-excel")
+    def export_excel(self, request):
+        """تصدير تقرير رسملة التكلفة بنفس نطاق الصلاحيات والفلاتر إلى Excel."""
+        report_data = self.report(request).data
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "تسوية رسملة التكلفة"
+        headers = [
+            "مستند الرسملة", "التاريخ", "الحالة", "فاتورة المصروف", "المورد",
+            "الصنف", "الفرع", "أساس التوزيع", "المبلغ الموزع",
+            "المخزون", "تكلفة المبيعات", "خسائر المخزون", "القيد", "قيد العكس",
+        ]
+        sheet.append(headers)
+        fields = [
+            "document_number", "document_date", "document_status",
+            "source_invoice_number", "supplier_name", "product_code",
+            "branch_name", "allocation_basis", "allocation_amount",
+            "inventory_amount", "cogs_amount", "adjustment_loss_amount",
+            "journal_entry", "reversal_journal_entry",
+        ]
+        for row in report_data["rows"]:
+            sheet.append([row.get(field) or "" for field in fields])
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column in sheet.columns:
+            width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 36)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = (
+            f'attachment; filename="landed-cost-report-{report_data["company"]}.xlsx"'
+        )
+        return response_file
