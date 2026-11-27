@@ -1745,3 +1745,139 @@ def post_landed_cost_document(document_id, user):
     document.posted_at = timezone.now()
     document.save(update_fields=("status", "posted_by", "posted_at"))
     return document
+
+
+
+@transaction.atomic
+def reverse_landed_cost_document(document_id, user, entry_date):
+    """Reverse landed-cost journals and stock valuation when no later stock consumption exists."""
+    document = LandedCostDocument.objects.select_for_update(of=("self",)).select_related(
+        "company", "company__base_currency",
+    ).get(pk=document_id)
+    if document.status != LandedCostDocument.Status.POSTED:
+        raise ValidationError("لا يمكن عكس إلا مستند رسملة تكلفة مرحّل.")
+    if document.reversal_journal_entry_id:
+        raise ValidationError("تم عكس مستند الرسملة من قبل.")
+    if entry_date < document.document_date:
+        raise ValidationError("تاريخ عكس الرسملة لا يجوز أن يسبق تاريخ المستند.")
+
+    allocations = list(document.allocations.select_for_update(of=("self",)).select_related(
+        "source_invoice_line", "receipt_line__product",
+    ).prefetch_related("distributions").order_by("pk"))
+    if not allocations:
+        raise ValidationError("لا توجد بنود رسملة يمكن عكسها.")
+
+    for allocation in allocations:
+        if not allocation.source_journal_entry_id:
+            raise ValidationError("قيد إعادة تصنيف مصروف المصدر غير مرتبط ببند الرسملة.")
+        receipt_line = allocation.receipt_line
+        if StockCostConsumption.objects.filter(
+            source_layer__root_source_line=receipt_line,
+            created_at__gt=document.posted_at,
+        ).exists():
+            raise ValidationError(
+                f"لا يمكن عكس الرسملة للصنف {receipt_line.product.code} بعد حدوث استهلاك مخزني لاحق؛ "
+                "يلزم معالجة أثر التكلفة اللاحق أولًا."
+            )
+
+        layers = list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+            root_source_line=receipt_line,
+        ).select_related("warehouse").order_by("pk"))
+        quantity = receipt_line.quantity
+        if quantity <= 0:
+            raise ValidationError("كمية الاستلام الأصلية غير صالحة لعكس الرسملة.")
+        unit_addition = (allocation.amount / quantity).quantize(
+            Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+        )
+        for layer in layers:
+            if layer.quantity_remaining > 0:
+                if layer.unit_cost < unit_addition:
+                    raise ValidationError("تعذر عكس زيادة تكلفة طبقة المخزون دون إنتاج تكلفة سالبة.")
+                layer.unit_cost = (layer.unit_cost - unit_addition).quantize(
+                    Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+                )
+                layer.save(update_fields=("unit_cost",))
+
+        distributions = list(allocation.distributions.select_for_update(of=("self",)).select_related("branch").order_by("branch_id"))
+        inventory_total = sum((dist.inventory_amount for dist in distributions), Decimal("0"))
+        remaining_by_balance = defaultdict(Decimal)
+        for layer in layers:
+            if layer.quantity_remaining > 0:
+                key = (layer.warehouse_id, layer.location_id, layer.expiry_date)
+                remaining_by_balance[key] += layer.quantity_remaining
+        if inventory_total:
+            remaining_quantity = sum(remaining_by_balance.values(), Decimal("0"))
+            if remaining_quantity <= 0:
+                raise ValidationError("قيمة مخزون مرسملة موجودة دون طبقات متبقية لعكسها.")
+            currency = document.company.base_currency
+            quantum = Decimal("1").scaleb(-currency.decimal_places)
+            raw = {
+                key: qty * allocation.amount / quantity
+                for key, qty in remaining_by_balance.items()
+            }
+            rounded = {
+                key: value.quantize(quantum, rounding=ROUND_HALF_UP)
+                for key, value in raw.items()
+            }
+            residual = inventory_total - sum(rounded.values(), Decimal("0"))
+            if residual:
+                largest = max(raw, key=raw.get)
+                rounded[largest] += residual
+            for (warehouse_id, location_id, expiry_date), value in rounded.items():
+                balance = StockBalance.objects.select_for_update().get(
+                    product_id=receipt_line.product_id,
+                    warehouse_id=warehouse_id,
+                    location_id=location_id,
+                    expiry_date=expiry_date,
+                )
+                if balance.inventory_value < value:
+                    raise ValidationError("قيمة المخزون الحالية أقل من مبلغ الرسملة المطلوب عكسه.")
+                balance.inventory_value -= value
+                if balance.quantity > 0:
+                    balance.average_cost = (balance.inventory_value / balance.quantity).quantize(
+                        Decimal("0.000001"), rounding=ROUND_HALF_UP,
+                    )
+                balance.save(update_fields=("inventory_value", "average_cost", "updated_at"))
+
+    reversal_by_original = {}
+    for allocation in allocations:
+        original_entries = []
+        if allocation.source_journal_entry_id:
+            original_entries.append(allocation.source_journal_entry_id)
+        original_entries.extend(
+            distribution.journal_entry_id
+            for distribution in allocation.distributions.all()
+            if distribution.journal_entry_id
+        )
+        for original_id in sorted(set(original_entries)):
+            if original_id in reversal_by_original:
+                continue
+            original = JournalEntry.objects.select_for_update(of=("self",)).get(pk=original_id)
+            if original.status != JournalEntry.Status.POSTED:
+                raise ValidationError("يوجد قيد رسملة غير مرحّل أو سبق عكسه.")
+            try:
+                reversal = reverse_operational_journal(
+                    original.pk, user, entry_date, JournalEntry.Source.PURCHASES,
+                )
+            except DjangoValidationError as exc:
+                detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+                raise ValidationError(detail) from exc
+            reversal_by_original[original_id] = reversal
+
+        source_reversal = reversal_by_original[allocation.source_journal_entry_id]
+        LandedCostAllocation.objects.filter(pk=allocation.pk).update(
+            source_reversal_journal_entry=source_reversal,
+        )
+        for distribution in allocation.distributions.all():
+            if distribution.journal_entry_id:
+                LandedCostDistribution.objects.filter(pk=distribution.pk).update(
+                    reversal_journal_entry=reversal_by_original[distribution.journal_entry_id],
+                )
+
+    first_reversal = next(iter(reversal_by_original.values()))
+    LandedCostDocument.objects.filter(pk=document.pk).update(
+        status=LandedCostDocument.Status.REVERSED,
+        reversal_journal_entry=first_reversal,
+        reversed_at=timezone.now(),
+    )
+    return LandedCostDocument.objects.get(pk=document.pk)
