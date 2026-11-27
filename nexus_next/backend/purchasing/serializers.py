@@ -1318,7 +1318,7 @@ class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
 class LandedCostAllocationInputSerializer(serializers.Serializer):
     source_invoice_line = serializers.PrimaryKeyRelatedField(queryset=PurchaseInvoiceLine.objects.select_related("invoice"))
     receipt_line = serializers.PrimaryKeyRelatedField(queryset=StockMovementLine.objects.select_related("movement", "product"))
-    basis = serializers.ChoiceField(choices=LandedCostAllocation.Basis.choices, default=LandedCostAllocation.Basis.VALUE)
+    basis = serializers.ChoiceField(choices=LandedCostAllocation.Basis.choices, default=LandedCostAllocation.Basis.MANUAL)
     amount = serializers.DecimalField(max_digits=20, decimal_places=4, min_value=Decimal("0.0001"))
 
 
