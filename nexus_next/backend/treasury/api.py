@@ -201,6 +201,10 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             ).order_by("start_date").first()
             if not year:
                 raise ValidationError("لا توجد سنة مالية مفتوحة لتسجيل الرصيد الافتتاحي.")
+            if foreign_opening and account.opening_exchange_rate_date > year.start_date:
+                raise ValidationError({
+                    "opening_exchange_rate_date": "تاريخ سعر الصرف يجب ألا يتجاوز تاريخ القيد الافتتاحي."
+                })
             retained_earnings = get_account_for_role(company, "retained_earnings")
             entry = JournalEntry.objects.create(
                 company=company, branch=posting_branch, fiscal_year=year,
