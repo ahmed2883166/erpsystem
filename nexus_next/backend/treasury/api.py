@@ -15,7 +15,7 @@ from companies.access import accessible_branches, accessible_companies, can_acce
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import (
-    post_treasury_transaction, revalue_treasury_fx_account,
+    post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
     reverse_treasury_fx_revaluation, can_reverse_treasury_fx_revaluation,
 )
 from approvals.models import FinancialApprovalRequest
@@ -376,6 +376,23 @@ class TreasuryTransactionViewSet(TreasuryBaseViewSet):
             raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
         return response.Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
 
+
+    @decorators.action(detail=True, methods=("post",), url_path="reverse")
+    def reverse(self, request, pk=None):
+        """عكس سند خزينة مستقل مع تحديث حالته وربط القيد العكسي."""
+        doc = self.get_object()
+        self._write(doc.company_id)
+        if not can_access_branch(request.user, doc.branch_id, doc.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع.")
+        entry_date_raw = request.data.get("entry_date")
+        entry_date = dateparse.parse_date(str(entry_date_raw)) if entry_date_raw else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
+        try:
+            doc = reverse_treasury_transaction(transaction_id=doc.pk, entry_date=entry_date, user=request.user)
+        except DjangoValidationError as exc:
+            raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+        return response.Response(self.get_serializer(doc).data, status=status.HTTP_200_OK)
 
     @decorators.action(detail=False, methods=("get",), url_path="cash-flow")
     def cash_flow(self, request):
