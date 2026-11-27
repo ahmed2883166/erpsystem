@@ -688,6 +688,9 @@ class PettyCashSettlement(models.Model):
 class PettyCashExpense(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "مسودة"
+        PENDING_APPROVAL = "pending_approval", "بانتظار الاعتماد"
+        APPROVED = "approved", "معتمد"
+        REJECTED = "rejected", "مرفوض"
         SETTLED = "settled", "تمت التسوية"
         VOID = "void", "ملغاة"
 
@@ -697,8 +700,18 @@ class PettyCashExpense(models.Model):
     amount = models.DecimalField(max_digits=20, decimal_places=4)
     expense_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="petty_cash_expenses")
     receipt_number = models.CharField(max_length=100, blank=True)
+    receipt_file_data = models.BinaryField(null=True, blank=True, editable=False)
+    receipt_file_name = models.CharField(max_length=255, blank=True)
+    receipt_file_content_type = models.CharField(max_length=100, blank=True)
     vendor_name = models.CharField(max_length=180, blank=True)
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="approved_petty_cash_expenses")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approval_note = models.CharField(max_length=500, blank=True)
+    rejected_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="rejected_petty_cash_expenses")
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_note = models.CharField(max_length=500, blank=True)
     settlement = models.ForeignKey(PettyCashSettlement, null=True, blank=True, on_delete=models.PROTECT, related_name="expenses")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="petty_cash_expenses")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -732,6 +745,7 @@ class PettyCashTransfer(models.Model):
     class Kind(models.TextChoices):
         INITIAL = "initial", "صرف عهدة"
         REPLENISHMENT = "replenishment", "تغذية عهدة"
+        CLOSURE_RETURN = "closure_return", "رد المتبقي عند الإغلاق"
 
     fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="transfers")
     kind = models.CharField(max_length=16, choices=Kind.choices)
@@ -750,12 +764,22 @@ class PettyCashTransfer(models.Model):
 
 
 class PettyCashCount(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "بانتظار الاعتماد"
+        APPROVED = "approved", "معتمد"
+        REJECTED = "rejected", "مرفوض"
+
     fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="counts")
     count_date = models.DateField()
     expected_balance = models.DecimalField(max_digits=20, decimal_places=4)
     actual_balance = models.DecimalField(max_digits=20, decimal_places=4)
     notes = models.CharField(max_length=500, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
     counted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="petty_cash_counts")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="reviewed_petty_cash_counts")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.CharField(max_length=500, blank=True)
+    adjustment_journal_entry = models.OneToOneField(JournalEntry, null=True, blank=True, on_delete=models.PROTECT, related_name="petty_cash_count_adjustment")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -768,6 +792,25 @@ class PettyCashCount(models.Model):
     @property
     def variance(self):
         return self.actual_balance - self.expected_balance
+
+    @property
+    def company_id_for_permission(self):
+        return self.fund.company_id
+
+
+class PettyCashCustodianHandover(models.Model):
+    fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="custodian_handovers")
+    previous_custodian = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="petty_cash_handovers_from")
+    new_custodian = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="petty_cash_handovers_to")
+    handover_date = models.DateField()
+    expected_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    actual_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    notes = models.CharField(max_length=500, blank=True)
+    handed_over_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="petty_cash_handovers_recorded")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-handover_date", "-id")
 
     @property
     def company_id_for_permission(self):

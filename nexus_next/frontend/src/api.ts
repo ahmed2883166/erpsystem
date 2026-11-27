@@ -225,7 +225,8 @@ function csrfToken(): string { const item = document.cookie.split("; ").find((pa
 // عميل HTTP موحد: يرسل الطلب بنفس جلسة الدخول، يضيف CSRF، ويحوّل أخطاء الخادم إلى رسائل مفهومة.
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const method = (options.method || "GET").toUpperCase();
-  const response = await fetch(path, { credentials: "same-origin", ...options, headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-CSRFToken": csrfToken() } : {}), ...options.headers } });
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const response = await fetch(path, { credentials: "same-origin", ...options, headers: { Accept: "application/json", ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}), ...(method !== "GET" ? { "X-CSRFToken": csrfToken() } : {}), ...options.headers } });
   if (!response.ok) {
     let message = response.status === 401 ? "انتهت جلسة الدخول. سجّل الدخول مرة أخرى." : response.status === 403 ? "ليس لديك صلاحية لتنفيذ هذا الطلب." : `تعذر تنفيذ الطلب (HTTP ${response.status}).`;
     try {
@@ -480,12 +481,24 @@ export type PettyCashFund = {
 export type PettyCashExpense = {
   id:number; fund:number; fund_name:string; expense_date:string; description:string; amount:string;
   expense_account:number; expense_account_code:string; expense_account_name:string;
-  receipt_number:string; vendor_name:string; status:"draft"|"settled"|"void";
-  settlement:number|null; settlement_journal_number:string; created_at:string; updated_at:string;
+  receipt_number:string; receipt_file:string|null; vendor_name:string;
+  status:"draft"|"pending_approval"|"approved"|"rejected"|"settled"|"void";
+  settlement:number|null; settlement_journal_number:string; submitted_at:string|null;
+  approved_by:number|null; approved_at:string|null; approval_note:string;
+  rejected_by:number|null; rejected_at:string|null; rejection_note:string;
+  created_at:string; updated_at:string;
 };
 export type PettyCashCount = {
   id:number; fund:number; count_date:string; expected_balance:string; actual_balance:string;
-  variance:string; notes:string; counted_by:number; counted_by_name:string; created_at:string;
+  variance:string; notes:string; status:"pending"|"approved"|"rejected";
+  counted_by:number; counted_by_name:string; reviewed_by:number|null; reviewed_at:string|null;
+  review_note:string; adjustment_journal_entry:number|null; created_at:string;
+};
+export type PettyCashCustodianHandover = {
+  id:number; fund:number; previous_custodian:number; previous_custodian_name:string;
+  new_custodian:number; new_custodian_name:string; handover_date:string;
+  expected_balance:string; actual_balance:string; notes:string; handed_over_by:number;
+  handed_over_by_name:string; created_at:string;
 };
 
 // واجهات الخزينة والتدفقات النقدية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
@@ -512,7 +525,16 @@ export const treasuryApi = {
   pettyCashFunds: (companyId:number) => request<PettyCashFund[]>(`/api/treasury/petty-cash-funds/?company=${companyId}`),
   pettyCashExpenses: (companyId:number) => request<PettyCashExpense[]>(`/api/treasury/petty-cash-expenses/?company=${companyId}`),
   createPettyCashFund: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashFund>("/api/treasury/petty-cash-funds/",{method:"POST",body:JSON.stringify(payload)}); },
-  createPettyCashExpense: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>("/api/treasury/petty-cash-expenses/",{method:"POST",body:JSON.stringify(payload)}); },
+  createPettyCashExpense: async (payload:FormData) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>("/api/treasury/petty-cash-expenses/",{method:"POST",body:payload}); },
+  submitPettyCashExpense: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/submit/`,{method:"POST",body:"{}"}); },
+  approvePettyCashExpense: async (id:number,approval_note="") => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/approve/`,{method:"POST",body:JSON.stringify({approval_note})}); },
+  rejectPettyCashExpense: async (id:number,rejection_note:string) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashExpense>(`/api/treasury/petty-cash-expenses/${id}/reject/`,{method:"POST",body:JSON.stringify({rejection_note})}); },
+  pettyCashCounts: (id:number) => request<PettyCashCount[]>(`/api/treasury/petty-cash-funds/${id}/counts/`),
+  pettyCashHandovers: (id:number) => request<PettyCashCustodianHandover[]>(`/api/treasury/petty-cash-funds/${id}/handovers/`),
+  approvePettyCashCount: async (id:number,count_id:number,counter_account?:number,review_note="") => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashCount>(`/api/treasury/petty-cash-funds/${id}/approve-count/`,{method:"POST",body:JSON.stringify({count_id,counter_account,review_note})}); },
+  rejectPettyCashCount: async (id:number,count_id:number,review_note:string) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashCount>(`/api/treasury/petty-cash-funds/${id}/reject-count/`,{method:"POST",body:JSON.stringify({count_id,review_note})}); },
+  handoverPettyCash: async (id:number,payload:{new_custodian:number;handover_date:string;actual_balance:string;notes?:string}) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashCustodianHandover>(`/api/treasury/petty-cash-funds/${id}/handover/`,{method:"POST",body:JSON.stringify(payload)}); },
+  closePettyCash: async (id:number,actual_balance:string) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashFund & {returned_amount:string;book_balance_after_close:string}>(`/api/treasury/petty-cash-funds/${id}/close/`,{method:"POST",body:JSON.stringify({actual_balance})}); },
   pettyCashBalance: (id:number) => request<{fund:number;as_of:string;authorized_amount:string;book_balance:string;unsettled_expenses:string;available_for_expenses:string}>(`/api/treasury/petty-cash-funds/${id}/balance/`),
   fundPettyCash: async (id:number,amount:string,transaction_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<{transfer_id:number;journal_entry:number;amount:string}>(`/api/treasury/petty-cash-funds/${id}/fund/`,{method:"POST",body:JSON.stringify({amount,transaction_date})}); },
   settlePettyCash: async (id:number,expense_ids:number[],settlement_date:string) => { await request<{detail:string}>("/api/csrf/"); return request<{settlement_id:number;journal_entry:number;journal_number:string;total_amount:string}>(`/api/treasury/petty-cash-funds/${id}/settle/`,{method:"POST",body:JSON.stringify({expense_ids,settlement_date})}); },
