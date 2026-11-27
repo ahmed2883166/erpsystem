@@ -608,21 +608,27 @@ class TreasuryWorkflowTests(APITestCase):
             company=self.company, code="6205", name_ar="عمولات بنكية",
             nature=ChartOfAccount.Nature.EXPENSE,
         )
-        # Fund the bank account first: a real bank fee must not bypass the
-        # treasury rule that prevents posting payments into a negative balance.
-        funding = self._create(
-            source_account=self.bank.pk,
-            document_number="BANK-FUND-FEE-001",
-            description="رصيد متاح قبل خصم العمولة",
+        # Model the 250 EGP as a true opening balance before the statement
+        # period, not as an unmatched transaction inside that period.
+        retained = ChartOfAccount.objects.create(
+            company=self.company, code="3000", name_ar="الأرباح المحتجزة",
+            nature=ChartOfAccount.Nature.EQUITY,
         )
-        self.assertEqual(funding.status_code, 201, funding.data)
-        funded = self.client.post(
-            f"/api/treasury/transactions/{funding.data['id']}/post/", {}, format="json"
+        AccountRole.objects.create(
+            company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
         )
-        self.assertEqual(funded.status_code, 200, funded.data)
-
+        opening_bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        opening_bank = self.client.post("/api/treasury/accounts/", {
+            "company": self.company.pk, "branch": self.branch.pk, "account": opening_bank_gl.pk,
+            "kind": "bank", "code": "BANK-FEE-OPEN", "name_ar": "بنك اختبار العمولة",
+            "currency_code": "EGP", "opening_balance": "250.0000",
+        }, format="json")
+        self.assertEqual(opening_bank.status_code, 201, opening_bank.data)
         recon = self.client.post("/api/treasury/reconciliations/", {
-            "company": self.company.pk, "bank_account": self.bank.pk,
+            "company": self.company.pk, "bank_account": opening_bank.data["id"],
             "statement_number": "ST-FEE-001", "statement_date": "2026-03-31",
             "opening_balance": "250.0000", "closing_balance": "235.0000",
         }, format="json")
