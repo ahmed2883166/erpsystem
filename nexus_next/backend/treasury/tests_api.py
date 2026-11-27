@@ -1468,8 +1468,14 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
         other = Branch.objects.create(
             company=self.company, code="OTHER", name_ar="فرع آخر",
         )
+        restricted = get_user_model().objects.create_user(
+            username="liquidity-restricted", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=restricted, company=self.company, role="accountant", all_branches=False,
+        )
+        self.client.force_authenticate(restricted)
         denied = self.client.get(
             f"/api/treasury/accounts/liquidity-forecast/?company={self.company.pk}&days=30&branch={other.pk}"
         )
-        # This membership deliberately has company-wide branch access in this fixture.
-        self.assertEqual(denied.status_code, 200, denied.data)
+        self.assertEqual(denied.status_code, 403, denied.data)
