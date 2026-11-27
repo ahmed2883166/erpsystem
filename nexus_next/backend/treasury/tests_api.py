@@ -1928,10 +1928,10 @@ class PettyCashWorkflowTests(APITestCase):
         )
         expense = self.client.post("/api/treasury/petty-cash-expenses/", {
             "fund": fund_id, "expense_date": "2026-03-02", "description": "مصروف بمرفق",
-            "amount": "20", "expense_account": self.expense_gl.pk, "receipt_file": upload,
+            "amount": "20", "expense_account": self.expense_gl.pk, "receipt_upload": upload,
         }, format="multipart")
         self.assertEqual(expense.status_code, 201, expense.data)
-        self.assertTrue(PettyCashExpense.objects.get(pk=expense.data["id"]).receipt_file)
+        self.assertTrue(PettyCashExpense.objects.get(pk=expense.data["id"]).receipt_file_data)
         submitted = self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json")
         self.assertEqual(submitted.status_code, 200, submitted.data)
         download = self.client.get(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/receipt/")
