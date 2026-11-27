@@ -48,7 +48,7 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [landedCosts, setLandedCosts] = useState<LandedCostDocument[]>([]);
   const [landedCostReport, setLandedCostReport] = useState<LandedCostReport | null>(null);
   const [landedCostForm, setLandedCostForm] = useState({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
-  const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;amount:string;basis:"value"|"quantity"|"weight"|"volume"|"manual"}[]>([{source_invoice_line:"",receipt_line:"",amount:"",basis:"value"}]);
+  const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;amount:string;basis:"manual"|"quantity"|"weight"|"volume"|"manual"}[]>([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
   const [landedCostReportFrom, setLandedCostReportFrom] = useState("");
   const [landedCostReportTo, setLandedCostReportTo] = useState("");
   const [refundForm, setRefundForm] = useState({ return_document: "", refund_number: "", refund_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "", notes: "" });
@@ -213,7 +213,7 @@ const loadAging = async () => {
       });
       setShowForm(false);
       setLandedCostForm({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
-      setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"value"}]);
+      setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
       setNotice("تم حفظ مستند رسملة التكلفة كمسودة. لم يؤثر على الحسابات أو المخزون قبل الترحيل.");
       await refresh();
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ مستند الرسملة."); }
@@ -638,11 +638,11 @@ const postInvoice = async (id: number) => {
 
     {showForm && tab === "landed-cost" && <form className="inventory-form" onSubmit={e=>void saveLandedCost(e)}>
       <div className="inventory-wide"><h3>مستند رسملة تكلفة شراء</h3><p>اربط فاتورة مصروف شحن أو جمارك أو تأمين بسطور استلام البضاعة. سيظل المستند مسودة حتى تنفذ الترحيل.</p></div>
-      <label className="inventory-wide">فاتورة المصروف المصدر<select required value={landedCostForm.source_invoice} onChange={e=>{setLandedCostForm({...landedCostForm,source_invoice:e.target.value});setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"value"}]);}}><option value="">اختر فاتورة مصروف مرحلة</option>{eligibleLandedCostInvoices.map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
+      <label className="inventory-wide">فاتورة المصروف المصدر<select required value={landedCostForm.source_invoice} onChange={e=>{setLandedCostForm({...landedCostForm,source_invoice:e.target.value});setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);}}><option value="">اختر فاتورة مصروف مرحلة</option>{eligibleLandedCostInvoices.map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
       <label>رقم مستند الرسملة<input required value={landedCostForm.document_number} onChange={e=>setLandedCostForm({...landedCostForm,document_number:e.target.value})}/></label>
       <label>تاريخ الرسملة<input required type="date" value={landedCostForm.document_date} onChange={e=>setLandedCostForm({...landedCostForm,document_date:e.target.value})}/></label>
       <label className="inventory-wide">ملاحظات<textarea value={landedCostForm.notes} onChange={e=>setLandedCostForm({...landedCostForm,notes:e.target.value})}/></label>
-      <div className="inventory-wide"><div className="work-panel-head"><h3>توزيع المصروف على الاستلامات</h3><button className="subtle-button" type="button" onClick={()=>setLandedCostLines(old=>[...old,{source_invoice_line:"",receipt_line:"",amount:"",basis:"value"}])}>＋ إضافة توزيع</button></div></div>
+      <div className="inventory-wide"><div className="work-panel-head"><h3>توزيع المصروف على الاستلامات</h3><button className="subtle-button" type="button" onClick={()=>setLandedCostLines(old=>[...old,{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}])}>＋ إضافة توزيع</button></div></div>
       {landedCostLines.map((line,index)=><div className="inventory-form-row inventory-wide" key={index}>
         <label>بند المصروف<select required value={line.source_invoice_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,source_invoice_line:e.target.value}:x))}><option value="">اختر بندًا</option>{selectedLandedCostInvoice?.invoice_lines.filter(x=>!!x.expense_account).map(x=><option key={x.id} value={x.id}>{x.description||x.expense_account_name||("بند "+x.id)} · {money(x.net_amount)}</option>)}</select></label>
         <label>بند الاستلام<select required value={line.receipt_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,receipt_line:e.target.value}:x))}><option value="">اختر استلامًا</option>{receipts.filter(x=>x.movement_status==="posted").flatMap(receipt=>receipt.line_items.map(item=><option key={item.id} value={item.id}>{receipt.receipt_number} · {item.product_code} · {item.product_name}</option>))}</select></label>
