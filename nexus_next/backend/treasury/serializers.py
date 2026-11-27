@@ -347,7 +347,7 @@ class CashCommitmentSerializer(serializers.ModelSerializer):
                   "origin_type", "origin_id", "status", "notes", "paid_base_amount",
                   "remaining_base_amount", "payments", "created_at", "updated_at")
         read_only_fields = ("status", "created_at", "updated_at", "paid_base_amount",
-                            "remaining_base_amount", "payments")
+                            "remaining_base_amount", "payments", "base_amount")
 
     def _paid(self, obj):
         from accounting.models import JournalEntry
