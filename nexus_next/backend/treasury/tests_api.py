@@ -158,6 +158,48 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(cash_flow.status_code, 200, cash_flow.data)
         self.assertEqual(cash_flow.data["rows"], [])
 
+    def test_payment_and_transfer_reversal_restore_both_treasury_balances(self):
+        seed = self._create(document_number="TR-REV-SEED-001")
+        self.assertEqual(seed.status_code, 201, seed.data)
+        self.assertEqual(self.client.post(
+            f"/api/treasury/transactions/{seed.data['id']}/post/", {}, format="json"
+        ).status_code, 200)
+
+        payment = self._create(
+            kind="payment", document_number="TR-REV-PAY-001", amount="100.0000",
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        payment_posted = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(payment_posted.status_code, 200, payment_posted.data)
+        payment_reversed = self.client.post(
+            f"/api/treasury/transactions/{payment.data['id']}/reverse/",
+            {"entry_date": "2026-03-16"}, format="json",
+        )
+        self.assertEqual(payment_reversed.status_code, 200, payment_reversed.data)
+        self.assertEqual(payment_reversed.data["status"], TreasuryTransaction.Status.REVERSED)
+
+        transfer = self._create(
+            kind="transfer", counter_account=None, destination_account=self.bank.pk,
+            document_number="TR-REV-TRANSFER-001", amount="50.0000",
+        )
+        self.assertEqual(transfer.status_code, 201, transfer.data)
+        transfer_posted = self.client.post(
+            f"/api/treasury/transactions/{transfer.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(transfer_posted.status_code, 200, transfer_posted.data)
+        transfer_reversed = self.client.post(
+            f"/api/treasury/transactions/{transfer.data['id']}/reverse/",
+            {"entry_date": "2026-03-16"}, format="json",
+        )
+        self.assertEqual(transfer_reversed.status_code, 200, transfer_reversed.data)
+        self.assertEqual(transfer_reversed.data["status"], TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(
+            JournalEntry.objects.get(pk=transfer_reversed.data["reversal_journal_entry"]).lines.count(),
+            2,
+        )
+
     def test_treasury_reversal_rejects_foreign_currency_and_linked_operational_documents(self):
         usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         foreign_gl = ChartOfAccount.objects.create(company=self.company, code="1198", name_ar="بنك دولار", nature=ChartOfAccount.Nature.ASSET)
