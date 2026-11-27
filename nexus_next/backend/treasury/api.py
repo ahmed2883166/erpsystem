@@ -747,11 +747,16 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         elif branch_ids:
             commitment_qs = commitment_qs.filter(models.Q(branch_id__in=branch_ids) | models.Q(branch__isnull=True))
         for commitment in commitment_qs:
-            payments = commitment.payments.select_related("reversal_journal_entry").filter(payment_date__lte=today)
+            payments = commitment.payments.select_related("journal_entry", "reversal_journal_entry").filter(payment_date__lte=today)
             paid_base = sum((
                 payment.base_amount for payment in payments
-                if not payment.reversal_journal_entry_id
-                or payment.reversal_journal_entry.status == JournalEntry.Status.REVERSED
+                if (
+                    payment.reversal_journal_entry_id
+                    and payment.reversal_journal_entry.status == JournalEntry.Status.REVERSED
+                ) or (
+                    not payment.reversal_journal_entry_id
+                    and payment.journal_entry.status == JournalEntry.Status.POSTED
+                )
             ), Decimal("0"))
             remaining = max(Decimal("0"), commitment.base_amount - paid_base)
             if remaining <= 0:
@@ -1831,9 +1836,14 @@ class CashCommitmentViewSet(TreasuryBaseViewSet):
     def _paid_total(commitment):
         from accounting.models import JournalEntry
         return sum((
-            payment.base_amount for payment in commitment.payments.select_related("reversal_journal_entry").all()
-            if not payment.reversal_journal_entry_id
-            or payment.reversal_journal_entry.status == JournalEntry.Status.REVERSED
+            payment.base_amount for payment in commitment.payments.select_related("journal_entry", "reversal_journal_entry").all()
+            if (
+                payment.reversal_journal_entry_id
+                and payment.reversal_journal_entry.status == JournalEntry.Status.REVERSED
+            ) or (
+                not payment.reversal_journal_entry_id
+                and payment.journal_entry.status == JournalEntry.Status.POSTED
+            )
         ), Decimal("0"))
 
     def _refresh_status(self, commitment):
