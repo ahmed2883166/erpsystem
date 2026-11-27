@@ -697,8 +697,7 @@ class TreasuryWorkflowTests(APITestCase):
             company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
         )
         opening_bank_gl = ChartOfAccount.objects.create(
-            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",            nature=ChartOfAccount.Nature.ASSET,        )
-        opening_bank = self.client.post("/api/treasury/accounts/", {
+            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",            nature=ChartOfAccount.Nature.ASSET,        )        opening_bank = self.client.post("/api/treasury/accounts/", {
             "company": self.company.pk, "branch": self.branch.pk, "account": opening_bank_gl.pk,
             "kind": "bank", "code": "BANK-FEE-OPEN", "name_ar": "بنك اختبار العمولة",
             "currency_code": "EGP", "opening_balance": "250.0000",
@@ -1397,8 +1396,7 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.assertEqual(created.data["status"], "issued")
         presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")
         self.assertEqual(presented.status_code, 200, presented.data)
-class TreasuryLiquiditySummaryTests(APITestCase):
-    def setUp(self):
+class TreasuryLiquiditySummaryTests(APITestCase):    def setUp(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         self.company = Company.objects.create(
             code="LIQ", name_ar="شركة السيولة", country="EG",
@@ -1590,8 +1588,16 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
 
 
     def test_reconciled_bank_statement_can_be_reopened_with_reason_and_audit(self):
+        bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1198", name_ar="بنك إعادة الفتح",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        bank = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind="bank", code="BANK-REOPEN-1", name_ar="بنك إعادة الفتح",
+        )
         recon = BankReconciliation.objects.create(
-            company=self.company, bank_account=self.cash,
+            company=self.company, bank_account=bank,
             statement_number="ST-REOPEN-001", statement_date=date(2026, 3, 31),
             opening_balance=Decimal("0"), closing_balance=Decimal("0"),
             status=BankReconciliation.Status.RECONCILED,
@@ -1626,15 +1632,23 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
         )
 
     def test_reopen_is_blocked_when_a_later_bank_reconciliation_is_already_reconciled(self):
+        bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1198", name_ar="بنك إعادة الفتح",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        bank = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind="bank", code="BANK-REOPEN-1", name_ar="بنك إعادة الفتح",
+        )
         earlier = BankReconciliation.objects.create(
-            company=self.company, bank_account=self.cash,
+            company=self.company, bank_account=bank,
             statement_number="ST-REOPEN-OLD", statement_date=date(2026, 3, 31),
             opening_balance=Decimal("0"), closing_balance=Decimal("0"),
             status=BankReconciliation.Status.RECONCILED,
             reconciled_at=timezone.now(), created_by=self.user,
         )
         BankReconciliation.objects.create(
-            company=self.company, bank_account=self.cash,
+            company=self.company, bank_account=bank,
             statement_number="ST-REOPEN-NEW", statement_date=date(2026, 4, 30),
             opening_balance=Decimal("0"), closing_balance=Decimal("0"),
             status=BankReconciliation.Status.RECONCILED,
