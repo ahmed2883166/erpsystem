@@ -97,8 +97,8 @@ class CashCommitmentApiTests(APITestCase):
         )
         self.assertEqual(payment.status_code, 201, payment.data)
         commitment = self.client.get(f"/api/treasury/commitments/{commitment_id}/")
-        self.assertEqual(commitment.data["paid_base_amount"], "250.0000")
-        self.assertEqual(commitment.data["remaining_base_amount"], "750.0000")
+        self.assertEqual(commitment.data["paid_base_amount"], Decimal("250.0000"))
+        self.assertEqual(commitment.data["remaining_base_amount"], Decimal("750.0000"))
         self.assertEqual(commitment.data["status"], "partially_paid")
 
     def test_recurring_schedule_generation_is_idempotent_and_uses_month_end_clamp(self):
@@ -181,6 +181,6 @@ class CashCommitmentApiTests(APITestCase):
         )
         self.assertEqual(reversed_payment.status_code, 200, reversed_payment.data)
         commitment = self.client.get(f"/api/treasury/commitments/{commitment_id}/")
-        self.assertEqual(commitment.data["paid_base_amount"], "0.0000")
-        self.assertEqual(commitment.data["remaining_base_amount"], "1000.0000")
+        self.assertEqual(commitment.data["paid_base_amount"], Decimal("0.0000"))
+        self.assertEqual(commitment.data["remaining_base_amount"], Decimal("1000.0000"))
         self.assertEqual(commitment.data["status"], "open")
