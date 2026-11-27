@@ -146,6 +146,21 @@ export type SupplierQuotation = {
 };
 
 
+
+export type PurchaseAnalysisReport = {
+  company:number; date_from:string|null; date_to:string|null; branch:number|null;supplier:number|null;product:number|null;activity:number|null;
+  totals:{purchase_net:string;returned_net:string;net_purchases:string;nonrecoverable_tax:string;total_cost:string;tax_amount:string;invoice_count:number;line_count:number};
+  rows:{
+    kind:"inventory"|"direct_expense";supplier_id:number;supplier_name:string;
+    product_id:number|null;product_code:string;product_name:string;
+    expense_account_id:number|null;expense_account_code:string;expense_account_name:string;
+    branch_id:number|null;branch_name:string;warehouse_id:number|null;warehouse_name:string;
+    activity_id:number|null;activity_name:string;invoice_count:number;line_count:number;
+    quantity:string;returned_quantity:string;purchase_net:string;returned_net:string;
+    nonrecoverable_tax:string;net_purchases:string;total_cost:string;tax_amount:string;
+  }[];
+};
+
 export type PurchaseMatchingReport = {
   company:number; date_from:string|null; date_to:string|null; branch:number|null; supplier:number|null; product:number|null;
   totals:{line_count:number;unreceived_line_count:number;uninvoiced_line_count:number;overinvoiced_line_count:number;order_value:string;invoiced_net_amount:string;price_variance:string};
@@ -270,6 +285,11 @@ export const purchasingApi = {
   createLandedCost: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>("/api/purchasing/landed-costs/", {method:"POST",body:JSON.stringify(payload)}); },
   postLandedCost: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>(`/api/purchasing/landed-costs/${id}/post/`, {method:"POST"}); },
   reverseLandedCost: async (id:number,entryDate:string) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>(`/api/purchasing/landed-costs/${id}/reverse/`, {method:"POST",body:JSON.stringify({entry_date:entryDate})}); },
+  purchaseAnalysisReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number;activity?:number}={}) => {
+    const params=new URLSearchParams({company:String(companyId)});
+    Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
+    return request<PurchaseAnalysisReport>(`/api/purchasing/invoices/analysis-report/?${params.toString()}`);
+  },
   purchaseMatchingReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number}={}) => {
     const params=new URLSearchParams({company:String(companyId)});
     Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
