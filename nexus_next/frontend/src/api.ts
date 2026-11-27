@@ -487,7 +487,8 @@ export type PettyCashCount = {
   id:number; fund:number; count_date:string; expected_balance:string; actual_balance:string;
   variance:string; notes:string; counted_by:number; counted_by_name:string; created_at:string;
 };
-\n// واجهات الخزينة والتدفقات النقدية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
+
+// واجهات الخزينة والتدفقات النقدية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export const treasuryApi = {
   // جلب حسابات الخزينة والبنوك للشركة.
   accounts: (companyId: number) => request<TreasuryAccount[]>(`/api/treasury/accounts/?company=${companyId}&ordering=kind,code`),
@@ -506,7 +507,8 @@ export const treasuryApi = {
   },
   // جلب حركات الخزينة مرتبة من الأحدث.
   transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
-  commitments: (companyId:number) => request<CashCommitment[]>(`/api/treasury/commitments/?company=${companyId}&ordering=due_date`),\n
+  commitments: (companyId:number) => request<CashCommitment[]>(`/api/treasury/commitments/?company=${companyId}&ordering=due_date`),
+
   pettyCashFunds: (companyId:number) => request<PettyCashFund[]>(`/api/treasury/petty-cash-funds/?company=${companyId}`),
   pettyCashExpenses: (companyId:number) => request<PettyCashExpense[]>(`/api/treasury/petty-cash-expenses/?fund__company=${companyId}`),
   createPettyCashFund: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<PettyCashFund>("/api/treasury/petty-cash-funds/",{method:"POST",body:JSON.stringify(payload)}); },
