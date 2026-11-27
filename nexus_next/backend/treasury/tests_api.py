@@ -8,11 +8,14 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APITestCase
 
+from audit.models import AuditEvent
+from django.utils import timezone
+
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, JournalLine
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, PettyCashExpense, PettyCashSettlement
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, PettyCashExpense, PettyCashSettlement
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -1396,8 +1399,6 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.assertEqual(created.data["status"], "issued")
         presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")
         self.assertEqual(presented.status_code, 200, presented.data)
-
-
 class TreasuryLiquiditySummaryTests(APITestCase):
     def setUp(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
@@ -1588,6 +1589,110 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
             f"/api/treasury/accounts/liquidity-forecast/?company={self.company.pk}&days=30&branch={other.pk}"
         )
         self.assertEqual(denied.status_code, 403, denied.data)
+
+
+    def test_reconciled_bank_statement_can_be_reopened_with_reason_and_audit(self):
+        bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1198", name_ar="بنك إعادة الفتح",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        bank = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind="bank", code="BANK-REOPEN-1", name_ar="بنك إعادة الفتح",
+        )
+        recon = BankReconciliation.objects.create(
+            company=self.company, bank_account=bank,
+            statement_number="ST-REOPEN-001", statement_date=date(2026, 3, 31),
+            opening_balance=Decimal("0"), closing_balance=Decimal("25"),
+            status=BankReconciliation.Status.RECONCILED,
+            reconciled_at=timezone.now(), created_by=self.user,
+        )
+        transaction_response = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.cash.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": "REOPEN-KEEP-001",
+            "transaction_date": "2026-03-15", "amount": "25.0000",
+            "description": "حركة مرتبطة بسطر كشف البنك",
+        }, format="json")
+        self.assertEqual(transaction_response.status_code, 201, transaction_response.data)
+        posted_transaction = self.client.post(
+            f"/api/treasury/transactions/{transaction_response.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_transaction.status_code, 200, posted_transaction.data)
+        statement_line = BankStatementLine.objects.create(
+            reconciliation=recon, line_number=1, transaction_date=date(2026, 3, 15),
+            description="تحصيل بنكي", reference="REOPEN-REF",
+            amount=Decimal("25.0000"),
+        )
+        allocation = BankStatementMatchAllocation.objects.create(
+            line=statement_line, transaction_id=posted_transaction.data["id"],
+            amount=Decimal("25.0000"),
+        )
+        missing_reason = self.client.post(
+            f"/api/treasury/reconciliations/{recon.pk}/reopen/", {}, format="json",
+        )
+        self.assertEqual(missing_reason.status_code, 400)
+        recon.refresh_from_db()
+        self.assertEqual(recon.status, BankReconciliation.Status.RECONCILED)
+
+        response = self.client.post(
+            f"/api/treasury/reconciliations/{recon.pk}/reopen/",
+            {"reason": "تصحيح سطر كشف بنك تم إدخاله بقيمة غير صحيحة"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["status"], "draft")
+        self.assertIsNone(response.data["reconciled_at"])
+        recon.refresh_from_db()
+        self.assertEqual(recon.status, BankReconciliation.Status.DRAFT)
+        self.assertIsNone(recon.reconciled_at)
+        event = AuditEvent.objects.get(
+            resource="treasury.reconciliations.reopen", object_id=str(recon.pk),
+            succeeded=True,
+        )
+        self.assertEqual(event.actor_id, self.user.pk)
+        self.assertEqual(
+            event.metadata["reason"],
+            "تصحيح سطر كشف بنك تم إدخاله بقيمة غير صحيحة",
+        )
+        self.assertTrue(BankStatementLine.objects.filter(pk=statement_line.pk, reconciliation=recon).exists())
+        allocation.refresh_from_db()
+        self.assertEqual(allocation.line_id, statement_line.pk)
+        self.assertEqual(allocation.transaction_id, posted_transaction.data["id"])
+        self.assertEqual(allocation.amount, Decimal("25.0000"))
+
+    def test_reopen_is_blocked_when_a_later_bank_reconciliation_is_already_reconciled(self):
+        bank_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1198", name_ar="بنك إعادة الفتح",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        bank = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=bank_gl,
+            kind="bank", code="BANK-REOPEN-1", name_ar="بنك إعادة الفتح",
+        )
+        earlier = BankReconciliation.objects.create(
+            company=self.company, bank_account=bank,
+            statement_number="ST-REOPEN-OLD", statement_date=date(2026, 3, 31),
+            opening_balance=Decimal("0"), closing_balance=Decimal("0"),
+            status=BankReconciliation.Status.RECONCILED,
+            reconciled_at=timezone.now(), created_by=self.user,
+        )
+        BankReconciliation.objects.create(
+            company=self.company, bank_account=bank,
+            statement_number="ST-REOPEN-NEW", statement_date=date(2026, 4, 30),
+            opening_balance=Decimal("0"), closing_balance=Decimal("0"),
+            status=BankReconciliation.Status.RECONCILED,
+            reconciled_at=timezone.now(), created_by=self.user,
+        )
+        response = self.client.post(
+            f"/api/treasury/reconciliations/{earlier.pk}/reopen/",
+            {"reason": "مراجعة خطأ قديم في كشف البنك"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        earlier.refresh_from_db()
+        self.assertEqual(earlier.status, BankReconciliation.Status.RECONCILED)
 
 
 class PettyCashWorkflowTests(APITestCase):

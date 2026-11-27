@@ -1189,6 +1189,8 @@ export const bankReconciliationApi = {
   confirmImport: async (id:number,file:File) => uploadBankStatementFile<BankStatementImportResult>(id,"confirm-import",file),
   // اعتماد التسوية البنكية بعد استكمال إجراءات المطابقة.
   reconcile: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>(`/api/treasury/reconciliations/${id}/reconcile/`, { method: "POST" }); },
+  // إعادة فتح تسوية معتمدة بسبب موثق وبعد التأكد من عدم وجود تسويات لاحقة.
+  reopen: async (id: number, reason: string) => { await request<{ detail: string }>("/api/csrf/"); return request<BankReconciliation>(`/api/treasury/reconciliations/${id}/reopen/`, { method: "POST", body: JSON.stringify({reason}) }); },
 };
 
 const uploadBankStatementFile = async <T,>(id:number,action:string,file:File):Promise<T> => {

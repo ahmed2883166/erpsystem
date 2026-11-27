@@ -18,7 +18,7 @@ _ACTIONS = {
     "PATCH": AuditEvent.Action.UPDATE,
     "DELETE": AuditEvent.Action.DELETE,
 }
-_ACTION_ENDPOINTS = {"post", "reverse", "dispose", "depreciate", "approve", "reject", "transfer", "confirm", "cancel", "reconcile"}
+_ACTION_ENDPOINTS = {"post", "reverse", "dispose", "depreciate", "approve", "reject", "transfer", "confirm", "cancel", "reconcile", "reopen"}
 
 
 def _numeric_id(value):
