@@ -1577,14 +1577,16 @@ def _post_landed_cost_journal(company, branch, entry_date, entry_number, descrip
         description=description[:500], source_type=JournalEntry.Source.PURCHASES,
         created_by=user,
     )
-    JournalLine.objects.bulk_create([
-        JournalLine(
-            entry=entry, account=account, description=line_description[:240],
-            debit=debit, credit=credit,
-        )
-        for account, line_description, debit, credit in lines
-        if debit or credit
-    ])
+    journal_lines = []
+    for row in lines:
+        account, line_description, debit, credit = row[:4]
+        cost_center = row[4] if len(row) > 4 else None
+        if debit or credit:
+            journal_lines.append(JournalLine(
+                entry=entry, account=account, description=line_description[:240],
+                debit=debit, credit=credit, cost_center=cost_center,
+            ))
+    JournalLine.objects.bulk_create(journal_lines)
     try:
         return post_journal(entry.pk, actor=user)
     except DjangoValidationError as exc:
@@ -1698,12 +1700,13 @@ def post_landed_cost_document(document_id, user):
             if value:
                 source_lines.append((
                     prepared_accounts[category], descriptions[category], value, Decimal("0"),
+                    allocation.source_invoice_line.cost_center,
                 ))
         if remote_total:
             source_lines.append((clearing, "تسوية نصيب الفروع الأخرى من تكلفة الشراء", remote_total, Decimal("0")))
         source_lines.append((
             expense_account, "إعادة تصنيف مصروف الشحن/الجمارك إلى تكلفة المخزون والمبيعات",
-            Decimal("0"), allocation.amount,
+            Decimal("0"), allocation.amount, allocation.source_invoice_line.cost_center,
         ))
         source_entry = _post_landed_cost_journal(
             invoice.company, source_branch, document.document_date,
@@ -1731,7 +1734,7 @@ def post_landed_cost_document(document_id, user):
                     if value:
                         remote_lines.append((
                             prepared_accounts[category], descriptions[category],
-                            value, Decimal("0"),
+                            value, Decimal("0"), allocation.source_invoice_line.cost_center,
                         ))
                 remote_total = sum(bucket.values(), Decimal("0"))
                 remote_lines.append((
