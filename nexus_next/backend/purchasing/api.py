@@ -1244,6 +1244,181 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
 
 
+    @action(detail=False, methods=("get",), url_path="analysis-report")
+    def analysis_report(self, request):
+        """تحليل المشتريات حسب المورد والصنف والفرع والمخزن والنشاط."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تحليل المشتريات."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        invoices = self.get_queryset().filter(
+            company_id=company_id, status=PurchaseInvoice.Status.POSTED,
+        ).select_related(
+            "supplier", "activity", "branch", "receipt__warehouse", "receipt__warehouse__branch",
+        ).prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__tax_code")
+        date_from = parse_date(request.query_params.get("date_from", "")) if request.query_params.get("date_from") else None
+        date_to = parse_date(request.query_params.get("date_to", "")) if request.query_params.get("date_to") else None
+        if request.query_params.get("date_from") and not date_from:
+            raise ValidationError({"date_from": "تاريخ البداية غير صالح."})
+        if request.query_params.get("date_to") and not date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية غير صالح."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."})
+        if date_from:
+            invoices = invoices.filter(invoice_date__gte=date_from)
+        if date_to:
+            invoices = invoices.filter(invoice_date__lte=date_to)
+
+        supplier_id = request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"supplier": "معرّف المورد غير صالح."}) from None
+            invoices = invoices.filter(supplier_id=supplier_id)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        product_id = request.query_params.get("product")
+        if product_id:
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+        activity_id = request.query_params.get("activity")
+        if activity_id:
+            try:
+                activity_id = int(activity_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"activity": "معرّف النشاط غير صالح."}) from None
+            invoices = invoices.filter(activity_id=activity_id)
+
+        default_branch = Branch.objects.filter(
+            company_id=company_id, is_active=True,
+        ).order_by("-is_head_office", "code").first()
+        grouped = {}
+        for invoice in invoices.order_by("invoice_date", "invoice_number"):
+            warehouse = invoice.receipt.warehouse if invoice.receipt_id else None
+            branch = invoice.branch or (warehouse.branch if warehouse else None) or default_branch
+            if branch_id and (not branch or branch.pk != branch_id):
+                continue
+            for line in invoice.lines.all():
+                if line.receipt_line_id:
+                    product = line.receipt_line.product
+                    if product_id and product.pk != product_id:
+                        continue
+                    kind = "inventory"
+                    key = (kind, invoice.supplier_id, product.pk, branch.pk if branch else None,
+                           warehouse.pk if warehouse else None, invoice.activity_id)
+                    row = grouped.setdefault(key, {
+                        "kind": kind, "supplier_id": invoice.supplier_id,
+                        "supplier_name": invoice.supplier.name_ar,
+                        "product_id": product.pk, "product_code": product.code,
+                        "product_name": product.name_ar, "expense_account_id": None,
+                        "expense_account_code": "", "expense_account_name": "",
+                        "branch_id": branch.pk if branch else None,
+                        "branch_name": branch.name_ar if branch else "",
+                        "warehouse_id": warehouse.pk if warehouse else None,
+                        "warehouse_name": warehouse.name_ar if warehouse else "",
+                        "activity_id": invoice.activity_id,
+                        "activity_name": invoice.activity.name_ar if invoice.activity_id else "",
+                        "invoice_count": set(), "line_count": 0,
+                        "quantity": Decimal("0"), "returned_quantity": Decimal("0"),
+                        "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
+                        "tax_amount": Decimal("0"),
+                    })
+                    returned = SupplierReturnLine.objects.filter(
+                        invoice_line=line,
+                        return_document__status=SupplierReturn.Status.POSTED,
+                    ).aggregate(quantity=Sum("quantity"), net=Sum("net_amount"))
+                    returned_qty = returned["quantity"] or Decimal("0")
+                    returned_net = returned["net"] or Decimal("0")
+                    row["quantity"] += line.billed_quantity
+                    row["returned_quantity"] += returned_qty
+                    row["purchase_net"] += line.net_amount
+                    row["returned_net"] += returned_net
+                    row["tax_amount"] += line.tax_amount
+                else:
+                    account = line.expense_account
+                    if not account:
+                        continue
+                    kind = "direct_expense"
+                    key = (kind, invoice.supplier_id, account.pk, branch.pk if branch else None, invoice.activity_id)
+                    row = grouped.setdefault(key, {
+                        "kind": kind, "supplier_id": invoice.supplier_id,
+                        "supplier_name": invoice.supplier.name_ar,
+                        "product_id": None, "product_code": "", "product_name": "",
+                        "expense_account_id": account.pk, "expense_account_code": account.code,
+                        "expense_account_name": account.name_ar,
+                        "branch_id": branch.pk if branch else None,
+                        "branch_name": branch.name_ar if branch else "",
+                        "warehouse_id": None, "warehouse_name": "",
+                        "activity_id": invoice.activity_id,
+                        "activity_name": invoice.activity.name_ar if invoice.activity_id else "",
+                        "invoice_count": set(), "line_count": 0,
+                        "quantity": Decimal("0"), "returned_quantity": Decimal("0"),
+                        "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
+                        "tax_amount": Decimal("0"),
+                    })
+                    nonrecoverable_tax = (
+                        line.tax_amount
+                        if line.tax_code_id and not line.tax_code.input_tax_recoverable
+                        else Decimal("0")
+                    )
+                    row["purchase_net"] += line.net_amount + nonrecoverable_tax
+                    row["tax_amount"] += line.tax_amount
+                row["invoice_count"].add(invoice.pk)
+                row["line_count"] += 1
+
+        rows = []
+        totals = {
+            "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
+            "net_purchases": Decimal("0"), "tax_amount": Decimal("0"),
+            "invoice_count": set(), "line_count": 0,
+        }
+        for row in grouped.values():
+            row["net_purchases"] = row["purchase_net"] - row["returned_net"]
+            row["invoice_count"] = len(row["invoice_count"])
+            for key in ("quantity", "returned_quantity", "purchase_net", "returned_net", "net_purchases", "tax_amount"):
+                row[key] = str(row[key])
+            totals["purchase_net"] += Decimal(row["purchase_net"])
+            totals["returned_net"] += Decimal(row["returned_net"])
+            totals["net_purchases"] += Decimal(row["net_purchases"])
+            totals["tax_amount"] += Decimal(row["tax_amount"])
+            totals["line_count"] += row["line_count"]
+            rows.append(row)
+        totals["invoice_count"] = len({
+            invoice.pk for invoice in invoices
+        })
+        rows.sort(key=lambda row: (
+            row["supplier_name"], row["kind"], row["product_code"] or row["expense_account_code"],
+            row["branch_name"], row["warehouse_name"],
+        ))
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch": branch_id, "supplier": supplier_id,
+            "product": product_id, "activity": activity_id,
+            "totals": {
+                "purchase_net": str(totals["purchase_net"]),
+                "returned_net": str(totals["returned_net"]),
+                "net_purchases": str(totals["net_purchases"]),
+                "tax_amount": str(totals["tax_amount"]),
+                "invoice_count": totals["invoice_count"],
+                "line_count": totals["line_count"],
+            },
+            "rows": rows,
+        })
+
+
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
     queryset = SupplierPayment.objects.select_related(
