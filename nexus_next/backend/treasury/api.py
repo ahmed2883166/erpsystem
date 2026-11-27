@@ -2556,8 +2556,8 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
             raise ValidationError({"new_custodian": "اختر مستخدمًا نشطًا مختلفًا عن أمين العهدة الحالي."})
         if not CompanyMembership.objects.filter(
             user=new_custodian, company=fund.company, is_active=True,
-        ).exists():
-            raise ValidationError({"new_custodian": "أمين العهدة الجديد يجب أن يكون عضوًا نشطًا بالشركة."})
+        ).exists() or not can_access_branch(new_custodian, fund.branch_id, fund.company_id):
+            raise ValidationError({"new_custodian": "أمين العهدة الجديد يجب أن يكون عضوًا نشطًا وله صلاحية على فرع العهدة."})
         handover_date = dateparse.parse_date(str(request.data.get("handover_date", "")))
         if not handover_date or handover_date > timezone.localdate():
             raise ValidationError({"handover_date": "تاريخ التسليم غير صحيح أو مستقبلي."})
