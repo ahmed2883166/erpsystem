@@ -1367,7 +1367,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                         "invoice_count": set(), "line_count": 0,
                         "quantity": Decimal("0"), "returned_quantity": Decimal("0"),
                         "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
-                        "tax_amount": Decimal("0"),
+                        "nonrecoverable_tax": Decimal("0"), "tax_amount": Decimal("0"),
                     })
                     nonrecoverable_tax = (
                         line.tax_amount
