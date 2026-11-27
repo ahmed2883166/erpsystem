@@ -1357,7 +1357,7 @@ class TreasuryLiquiditySummaryTests(APITestCase):
         self.assertEqual(Decimal(response.data["accounts"][0]["base_balance"]), Decimal("1250"))
 
     def test_liquidity_summary_keeps_foreign_nominal_and_base_carrying_values_separate(self):
-        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        Currency.objects.create(code="USD", name_ar="دولار أمريكي")
         foreign_gl = ChartOfAccount.objects.create(
             company=self.company, code="1120", name_ar="بنك دولار",
             nature=ChartOfAccount.Nature.ASSET,
