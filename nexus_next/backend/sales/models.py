@@ -721,6 +721,7 @@ class CustomerReceiptBatch(models.Model):
         validators=[MinValueValidator(Decimal("0.0001"))],
     )
     reference = models.CharField(max_length=120, blank=True)
+    print_template_snapshot = models.JSONField(default=dict, blank=True, editable=False)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
     journal_entry = models.OneToOneField(
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
