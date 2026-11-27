@@ -34,7 +34,7 @@ export default function TreasuryPanel({companyId}: Props) {
   const [loading,setLoading]=useState(true), [busy,setBusy]=useState(false), [error,setError]=useState("");
   const [accountSearch,setAccountSearch]=useState("");
   const [transactionSearch,setTransactionSearch]=useState("");
-  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"",opening_balance:"0"});
+  const [acc,setAcc]=useState({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:"",opening_balance:"0",opening_foreign_amount:"0",opening_exchange_rate:"",opening_exchange_rate_date:today()});
   const [doc,setDoc]=useState({branch:"",fiscal_year:"",source_account:"",destination_account:"",counter_account:"",kind:"receipt",document_number:"",transaction_date:today(),amount:"",transaction_amount:"",exchange_rate:"",exchange_rate_date:today(),description:"",reference:""});
   const [rec,setRec]=useState({bank_account:"",statement_number:"",statement_date:today(),opening_balance:"0",closing_balance:"0"});
   const [line,setLine]=useState({line_number:"1",transaction_date:today(),description:"",reference:"",amount:""});
@@ -62,8 +62,15 @@ export default function TreasuryPanel({companyId}: Props) {
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
 const saveAcc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
-    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code||baseCurrencyCode,opening_balance:acc.opening_balance});
-    setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:baseCurrencyCode,opening_balance:"0"});await load();
+    const foreign=!!acc.currency_code&&acc.currency_code!==baseCurrencyCode;
+    let openingBase=acc.opening_balance;
+    if(foreign&&Number(acc.opening_foreign_amount)>0){
+      if(Number(acc.opening_exchange_rate)<=0||!acc.opening_exchange_rate_date)throw new Error("أدخل المبلغ الافتتاحي الأجنبي وسعر الصرف وتاريخه.");
+      if(!exchangeRates.some(v=>v.currency_code===acc.currency_code&&v.rate_date===acc.opening_exchange_rate_date&&Number(v.rate)===Number(acc.opening_exchange_rate)))throw new Error("سعر صرف الرصيد الافتتاحي غير موجود ضمن الأسعار المعتمدة.");
+      openingBase=multiplyDecimalToFixed(acc.opening_foreign_amount,acc.opening_exchange_rate,4);
+    }
+    await treasuryApi.createAccount({company:companyId,branch:acc.branch?Number(acc.branch):null,account:Number(acc.account),kind:acc.kind,code:acc.code,name_ar:acc.name_ar,bank_name:acc.bank_name,account_number:acc.account_number,iban:acc.iban,currency_code:acc.currency_code||baseCurrencyCode,opening_balance:openingBase,opening_foreign_amount:foreign?acc.opening_foreign_amount:"0",opening_exchange_rate:foreign&&Number(acc.opening_foreign_amount)>0?acc.opening_exchange_rate:null,opening_exchange_rate_date:foreign&&Number(acc.opening_foreign_amount)>0?acc.opening_exchange_rate_date:null});
+    setAcc({branch:"",account:"",kind:"cash",code:"",name_ar:"",bank_name:"",account_number:"",iban:"",currency_code:baseCurrencyCode,opening_balance:"0",opening_foreign_amount:"0",opening_exchange_rate:"",opening_exchange_rate_date:today()});await load();
   }catch(e){setError((e as Error).message||"تعذر حفظ الحساب.");}finally{setBusy(false);}};
   // تسجيل مستند حركة نقدية أو بنكية حسب نوع العملية المختار.
 const saveDoc=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
@@ -135,7 +142,7 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
         <label>الحساب بدليل الحسابات<select required value={acc.account} onChange={e=>setAcc({...acc,account:e.target.value})}><option value="">اختر الحساب</option>{gl.filter(a=>a.is_active&&!a.is_group&&a.allow_posting).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name_ar}</option>)}</select></label>
         <label>الفرع<select value={acc.branch} onChange={e=>setAcc({...acc,branch:e.target.value})}><option value="">كل الفروع</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
         <label>العملة<select value={acc.currency_code||baseCurrencyCode} onChange={e=>setAcc({...acc,currency_code:e.target.value})}>{currencies.map(v=><option key={v.id} value={v.code}>{v.code} · {v.name_ar}</option>)}</select></label>
-        <label>الرصيد الافتتاحي<input type="number" min="0" step="0.0001" disabled={acc.currency_code!==baseCurrencyCode} value={acc.opening_balance} onChange={e=>setAcc({...acc,opening_balance:e.target.value})}/>{acc.currency_code!==baseCurrencyCode&&<small>ابدأ بصفر؛ الرصيد الافتتاحي الأجنبي يتطلب شاشة افتتاحية موثقة.</small>}</label>
+        {acc.currency_code===baseCurrencyCode?<label>الرصيد الافتتاحي ({baseCurrencyCode})<input type="number" min="0" step="0.0001" value={acc.opening_balance} onChange={e=>setAcc({...acc,opening_balance:e.target.value})}/></label>:<><label>الرصيد الافتتاحي ({acc.currency_code})<input type="number" min="0" step="0.0001" value={acc.opening_foreign_amount} onChange={e=>setAcc({...acc,opening_foreign_amount:e.target.value})}/></label><label>سعر الصرف المعتمد<input type="number" min="0" step="0.0000000001" value={acc.opening_exchange_rate} onChange={e=>setAcc({...acc,opening_exchange_rate:e.target.value})}/></label><label>تاريخ سعر الصرف<input type="date" value={acc.opening_exchange_rate_date} onChange={e=>setAcc({...acc,opening_exchange_rate_date:e.target.value})}/></label><p className="form-wide">القيمة الدفترية بالعملة الأساسية: {Number(acc.opening_foreign_amount)>0&&Number(acc.opening_exchange_rate)>0?money(multiplyDecimalToFixed(acc.opening_foreign_amount,acc.opening_exchange_rate,4)):money(0)} {baseCurrencyCode}. يجب أن يكون السعر مسجلًا ومعتمدًا في أسعار الصرف.</p></>}
         {acc.kind==="bank"&&<><label>اسم البنك<input value={acc.bank_name} onChange={e=>setAcc({...acc,bank_name:e.target.value})}/></label><label>رقم الحساب<input value={acc.account_number} onChange={e=>setAcc({...acc,account_number:e.target.value})}/></label><label>IBAN<input value={acc.iban} onChange={e=>setAcc({...acc,iban:e.target.value})}/></label></>}
         <div className="treasury-form-actions"><button className="primary-button" disabled={busy}>حفظ الحساب</button></div>
       </form>
