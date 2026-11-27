@@ -2366,7 +2366,7 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         settlement_date = dateparse.parse_date(str(request.data.get("settlement_date", "")))
         if not settlement_date or any(item.expense_date > settlement_date for item in expenses):
             raise ValidationError({"settlement_date": "تاريخ التسوية غير صحيح أو يسبق تاريخ أحد المصروفات."})
-        missing_receipts = [item.pk for item in expenses if not item.receipt_number.strip() and not item.receipt_file]
+        missing_receipts = [item.pk for item in expenses if not item.receipt_number.strip() and not item.receipt_file_data]
         if missing_receipts:
             raise ValidationError({"expense_ids": f"يجب إدخال رقم إيصال أو مستند لكل مصروف قبل التسوية: {missing_receipts}."})
         total = sum((item.amount for item in expenses), Decimal("0"))
@@ -2631,7 +2631,7 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
         self._write(expense.fund.company_id)
         if expense.status not in (PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.REJECTED):
             raise ValidationError("لا يمكن إرسال المصروف للاعتماد من حالته الحالية.")
-        if not expense.receipt_number.strip() and not expense.receipt_file:
+        if not expense.receipt_number.strip() and not expense.receipt_file_data:
             raise ValidationError("أدخل رقم الإيصال أو أرفق صورة/ملف المستند قبل طلب الاعتماد.")
         expense.status = PettyCashExpense.Status.PENDING_APPROVAL
         expense.submitted_at = timezone.now()
@@ -2678,10 +2678,15 @@ class PettyCashExpenseViewSet(TreasuryBaseViewSet):
     def receipt(self, request, pk=None):
         expense = self.get_object()
         self._scope(expense.fund.company_id)
-        if not expense.receipt_file:
+        if not expense.receipt_file_data:
             raise Http404("لا يوجد مرفق لهذا المصروف.")
-        filename = expense.receipt_file.name.rsplit("/", 1)[-1]
-        return FileResponse(expense.receipt_file.open("rb"), as_attachment=True, filename=filename)
+        filename = expense.receipt_file_name or "petty-cash-receipt"
+        return FileResponse(
+            io.BytesIO(bytes(expense.receipt_file_data)),
+            as_attachment=True,
+            filename=filename,
+            content_type=expense.receipt_file_content_type or "application/octet-stream",
+        )
 
     def perform_destroy(self, instance):
         self._write(instance.fund.company_id)
