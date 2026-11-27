@@ -4536,3 +4536,161 @@ class SupplierPaymentIntegrityTests(TransactionTestCase):
             movements.aggregate(total=Sum("amount"))["total"],
             Decimal("228.0000"),
         )
+
+
+
+class SupplierReturnIntegrityTests(TransactionTestCase):
+    """Atomicity and PostgreSQL concurrency regressions for supplier returns."""
+
+    def setUp(self):
+        self.client = APIClient()
+        PurchasingWorkflowTests.setUp(self)
+
+    def _create_posted_invoice(self, invoice_number):
+        receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
+        invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": invoice_number, "invoice_date": "2026-03-10",
+            "lines": [{
+                "receipt_line": receipt_line_id, "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted = self.client.post(
+            f"/api/purchasing/invoices/{invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        return invoice.data
+
+    def _create_return(self, invoice, number, quantity="1"):
+        response = self.client.post("/api/purchasing/returns/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice": invoice["id"], "return_number": number,
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice["invoice_lines"][0]["id"],
+                "quantity": quantity,
+            }],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data["id"]
+
+    def test_supplier_return_rolls_back_stock_and_journal_when_posting_fails(self):
+        invoice = self._create_posted_invoice("INV-RETURN-ATOMIC")
+        return_id = self._create_return(invoice, "RET-ATOMIC")
+        return_document = SupplierReturn.objects.get(pk=return_id)
+        movement_id = return_document.stock_movement_id
+        journal_count_before = JournalEntry.objects.count()
+        balance_before = StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse,
+        )
+        self.assertEqual(balance_before.quantity, Decimal("2.0000"))
+        self.assertEqual(balance_before.inventory_value, Decimal("200.0000"))
+
+        from purchasing import services as purchasing_services
+        original_post_journal = purchasing_services.post_journal
+
+        def post_then_fail(entry_id, actor=None):
+            original_post_journal(entry_id, actor=actor)
+            raise DRFValidationError("Injected failure after supplier-return journal posting.")
+
+        with patch("purchasing.services.post_journal", side_effect=post_then_fail):
+            response = self.client.post(
+                f"/api/purchasing/returns/{return_id}/post/", {}, format="json",
+            )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        return_document.refresh_from_db()
+        movement = StockMovement.objects.get(pk=movement_id)
+        balance_after = StockBalance.objects.get(
+            product=self.product, warehouse=self.warehouse,
+        )
+        self.assertEqual(return_document.status, SupplierReturn.Status.DRAFT)
+        self.assertIsNone(return_document.journal_entry_id)
+        self.assertEqual(movement.status, StockMovement.Status.DRAFT)
+        self.assertEqual(balance_after.quantity, balance_before.quantity)
+        self.assertEqual(balance_after.inventory_value, balance_before.inventory_value)
+        self.assertEqual(JournalEntry.objects.count(), journal_count_before)
+        self.assertFalse(JournalEntry.objects.filter(
+            entry_number=f"PUR-RET-{return_id}",
+        ).exists())
+
+    def test_concurrent_partial_supplier_returns_serialize_invoice_quantity_and_ap(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("Concurrent supplier-return row-locking regression requires PostgreSQL.")
+
+        from purchasing.models import SupplierReturnLine
+
+        invoice = self._create_posted_invoice("INV-RETURN-CONCURRENT")
+        return_ids = [
+            self._create_return(invoice, "RET-CONCURRENT-A", "1"),
+            self._create_return(invoice, "RET-CONCURRENT-B", "1"),
+        ]
+        barrier = threading.Barrier(2)
+
+        def post_return(return_id):
+            from django.db import close_old_connections
+            close_old_connections()
+            client = APIClient()
+            user = get_user_model().objects.get(pk=self.user.pk)
+            client.force_authenticate(user)
+            barrier.wait(timeout=10)
+            try:
+                response = client.post(
+                    f"/api/purchasing/returns/{return_id}/post/", {}, format="json",
+                )
+                return response.status_code, response.data
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(post_return, return_ids))
+
+        self.assertEqual([status for status, _ in results].count(200), 2, results)
+        returns = list(SupplierReturn.objects.filter(pk__in=return_ids))
+        self.assertEqual(
+            {document.status for document in returns},
+            {SupplierReturn.Status.POSTED},
+        )
+        self.assertEqual(
+            SupplierReturnLine.objects.filter(
+                return_document__invoice_id=invoice["id"],
+                return_document__status=SupplierReturn.Status.POSTED,
+            ).aggregate(total=Sum("quantity"))["total"],
+            Decimal("2.0000"),
+        )
+        balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(balance.quantity, Decimal("0.0000"))
+        self.assertEqual(balance.inventory_value, Decimal("0.0000"))
+
+        invoice_data = self.client.get(
+            f"/api/purchasing/invoices/{invoice['id']}/",
+        ).data
+        self.assertEqual(invoice_data["balance_due"], "0.0000")
+        statement = self.client.get(
+            "/api/purchasing/invoices/supplier-statement/",
+            {"company": self.company.pk, "supplier": self.supplier.pk},
+        )
+        self.assertEqual(statement.status_code, 200, statement.data)
+        self.assertEqual(statement.data["closing_balance"], "0.0000")
+
+        ap_totals = JournalLine.objects.filter(
+            account__code="2200", entry__company=self.company,
+            entry__status=JournalEntry.Status.POSTED,
+        ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        self.assertEqual(ap_totals["debit"], Decimal("228.0000"))
+        self.assertEqual(ap_totals["credit"], Decimal("228.0000"))
+        self.assertEqual(
+            JournalLine.objects.filter(
+                entry__in=[document.journal_entry for document in returns],
+                account__code="1000", credit=Decimal("100.0000"),
+            ).count(),
+            2,
+        )
+        self.assertEqual(
+            JournalLine.objects.filter(
+                entry__in=[document.journal_entry for document in returns],
+                account__code="1300", credit=Decimal("14.0000"),
+            ).count(),
+            2,
+        )
