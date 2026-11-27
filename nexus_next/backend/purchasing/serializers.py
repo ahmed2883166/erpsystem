@@ -1057,8 +1057,8 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
         from .models import PurchaseRequisition
         company = attrs.get("company", self.instance.company if self.instance else None)
         lines = attrs.get("lines")
-        if self.instance and self.instance.status != PurchaseRequisition.Status.DRAFT:
-            raise serializers.ValidationError("لا يمكن تعديل طلب شراء بعد إرساله للاعتماد.")
+        if self.instance and self.instance.status not in (PurchaseRequisition.Status.DRAFT, PurchaseRequisition.Status.REJECTED):
+            raise serializers.ValidationError("يمكن تعديل المسودة أو الطلب المرفوض فقط.")
         if self.instance and "company" in attrs and attrs["company"].pk != self.instance.company_id:
             raise serializers.ValidationError({"company": "لا يمكن نقل طلب الاحتياج إلى شركة أخرى بعد إنشائه."})
         if not self.instance and lines is None:
@@ -1089,9 +1089,14 @@ class PurchaseRequisitionSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         from .models import PurchaseRequisition, PurchaseRequisitionLine
         requisition = PurchaseRequisition.objects.select_for_update().get(pk=instance.pk)
-        if requisition.status != PurchaseRequisition.Status.DRAFT:
-            raise serializers.ValidationError("لا يمكن تعديل طلب شراء بعد إرساله للاعتماد.")
+        if requisition.status not in (PurchaseRequisition.Status.DRAFT, PurchaseRequisition.Status.REJECTED):
+            raise serializers.ValidationError("يمكن تعديل المسودة أو الطلب المرفوض فقط.")
         lines = validated_data.pop("lines", None)
+        if requisition.status == PurchaseRequisition.Status.REJECTED:
+            requisition.status = PurchaseRequisition.Status.DRAFT
+            requisition.reviewed_by = None
+            requisition.reviewed_at = None
+            requisition.review_note = ""
         requisition = super().update(requisition, validated_data)
         if lines is not None:
             requisition.lines.all().delete()
