@@ -26,6 +26,31 @@ class SupplierSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("اسم المورد مطلوب.")
         return value.strip()
 
+    def validate_tax_number(self, value):
+        """منع تكرار الرقم الضريبي داخل الشركة مع تجاهل اختلاف حالة الأحرف والمسافات."""
+        value = value.strip()
+        if not value:
+            return value
+        company = self.initial_data.get("company")
+        if company is not None:
+            try:
+                company_id = int(company)
+            except (TypeError, ValueError):
+                company_id = None
+        else:
+            company_id = getattr(self.instance, "company_id", None)
+        if company_id is None and self.instance is None:
+            return value
+        duplicates = Supplier.objects.filter(
+            company_id=company_id,
+            tax_number__iexact=value,
+        )
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError("الرقم الضريبي مستخدم بالفعل لمورد آخر داخل الشركة.")
+        return value
+
     def validate_credit_limit(self, value):
         """التحقق من صحة البيانات والعلاقات المرتبطة قبل حفظ السجل."""
         if value < 0:
