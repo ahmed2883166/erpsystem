@@ -1,7 +1,10 @@
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponse
+from openpyxl import Workbook
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
@@ -46,9 +49,9 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
-from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
+from .models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .serializers import LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .services import post_landed_cost_document, reverse_landed_cost_document, post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
 class PurchaseBaseViewSet(viewsets.ModelViewSet):
@@ -184,6 +187,195 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             approval.save(update_fields=("status", "decided_at"))
         order.refresh_from_db()
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
+
+    @action(detail=False, methods=("get",), url_path="matching-report")
+    def matching_report(self, request):
+        """مطابقة الكميات والقيم بين أمر الشراء والاستلام وفواتير المورد."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير المطابقة."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        orders = self.get_queryset().filter(company_id=company_id).select_related(
+            "supplier", "warehouse", "warehouse__branch",
+        ).prefetch_related("lines__product", "lines__receipt_links__receipt_line__movement__purchase_receipt")
+        date_from = parse_date(request.query_params.get("date_from", "")) if request.query_params.get("date_from") else None
+        date_to = parse_date(request.query_params.get("date_to", "")) if request.query_params.get("date_to") else None
+        if request.query_params.get("date_from") and not date_from:
+            raise ValidationError({"date_from": "تاريخ البداية غير صالح."})
+        if request.query_params.get("date_to") and not date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية غير صالح."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."})
+        if date_from:
+            orders = orders.filter(order_date__gte=date_from)
+        if date_to:
+            orders = orders.filter(order_date__lte=date_to)
+
+        supplier_id = request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"supplier": "معرّف المورد غير صالح."}) from None
+            orders = orders.filter(supplier_id=supplier_id)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            default_branch = Branch.objects.filter(
+                company_id=company_id, is_active=True,
+            ).order_by("-is_head_office", "code").first()
+            if default_branch and default_branch.pk == branch_id:
+                orders = orders.filter(
+                    Q(warehouse__branch_id=branch_id) | Q(warehouse__branch__isnull=True)
+                )
+            else:
+                orders = orders.filter(warehouse__branch_id=branch_id)
+        product_id = request.query_params.get("product")
+        if product_id:
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+            orders = orders.filter(lines__product_id=product_id).distinct()
+
+        rows = []
+        totals = {
+            "line_count": 0, "unreceived_line_count": 0,
+            "uninvoiced_line_count": 0, "overinvoiced_line_count": 0,
+            "order_value": Decimal("0"), "invoiced_net_amount": Decimal("0"),
+            "price_variance": Decimal("0"),
+        }
+        for order in orders.order_by("order_date", "order_number"):
+            resolved_branch = order.warehouse.branch
+            if resolved_branch is None:
+                resolved_branch = Branch.objects.filter(
+                    company_id=company_id, is_active=True,
+                ).order_by("-is_head_office", "code").first()
+            for line in order.lines.all():
+                links = list(line.receipt_links.select_related(
+                    "receipt_line__movement__purchase_receipt",
+                ).order_by("pk"))
+                receipt_line_ids = [link.receipt_line_id for link in links]
+                invoice_lines = list(PurchaseInvoiceLine.objects.filter(
+                    receipt_line_id__in=receipt_line_ids,
+                    invoice__status=PurchaseInvoice.Status.POSTED,
+                ).select_related("invoice").order_by("invoice__invoice_date", "pk"))
+                received_quantity = sum((link.quantity for link in links), Decimal("0"))
+                invoiced_quantity = sum((item.billed_quantity for item in invoice_lines), Decimal("0"))
+                invoiced_net = sum((item.net_amount for item in invoice_lines), Decimal("0"))
+                price_variance = sum((
+                    (item.net_amount - (item.billed_quantity * line.unit_price)).quantize(Decimal("0.0001"))
+                    for item in invoice_lines
+                ), Decimal("0"))
+                returned_quantity = SupplierReturnLine.objects.filter(
+                    invoice_line__in=invoice_lines,
+                    return_document__status=SupplierReturn.Status.POSTED,
+                ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+                uninvoiced_quantity = max(received_quantity - invoiced_quantity, Decimal("0"))
+                unreceived_quantity = max(line.quantity - received_quantity, Decimal("0"))
+                overinvoiced_quantity = max(invoiced_quantity - received_quantity, Decimal("0"))
+                expected_value = (line.quantity * line.unit_price).quantize(Decimal("0.0001"))
+                rows.append({
+                    "order_id": order.pk, "order_number": order.order_number,
+                    "order_date": order.order_date.isoformat(), "order_status": order.status,
+                    "supplier_id": order.supplier_id, "supplier_name": order.supplier.name_ar,
+                    "warehouse_id": order.warehouse_id, "warehouse_name": order.warehouse.name_ar,
+                    "branch_id": resolved_branch.pk if resolved_branch else None, "branch_name": resolved_branch.name_ar if resolved_branch else "",
+                    "order_line_id": line.pk, "product_id": line.product_id,
+                    "product_code": line.product.code, "product_name": line.product.name_ar,
+                    "ordered_quantity": str(line.quantity),
+                    "received_quantity": str(received_quantity),
+                    "recorded_received_quantity": str(line.received_quantity),
+                    "receipt_link_discrepancy": str(line.received_quantity - received_quantity),
+                    "invoiced_quantity": str(invoiced_quantity),
+                    "returned_quantity": str(returned_quantity),
+                    "uninvoiced_received_quantity": str(uninvoiced_quantity),
+                    "unreceived_quantity": str(unreceived_quantity),
+                    "overinvoiced_quantity": str(overinvoiced_quantity),
+                    "order_unit_price": str(line.unit_price),
+                    "expected_order_value": str(expected_value),
+                    "invoiced_net_amount": str(invoiced_net),
+                    "price_variance": str(price_variance),
+                    "receipt_numbers": sorted({
+                        link.receipt_line.movement.purchase_receipt.receipt_number
+                        for link in links if hasattr(link.receipt_line.movement, "purchase_receipt")
+                    }),
+                    "invoice_numbers": sorted({item.invoice.invoice_number for item in invoice_lines}),
+                })
+                totals["line_count"] += 1
+                totals["unreceived_line_count"] += int(unreceived_quantity > 0)
+                totals["uninvoiced_line_count"] += int(uninvoiced_quantity > 0)
+                totals["overinvoiced_line_count"] += int(overinvoiced_quantity > 0)
+                totals["order_value"] += expected_value
+                totals["invoiced_net_amount"] += invoiced_net
+                totals["price_variance"] += price_variance
+
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch": branch_id, "supplier": supplier_id, "product": product_id,
+            "totals": {key: str(value) for key, value in totals.items()},
+            "rows": rows,
+        })
+
+    @action(detail=False, methods=("get",), url_path="matching-report-export-excel")
+    def matching_report_export_excel(self, request):
+        """تصدير تقرير مطابقة أوامر الشراء والاستلام والفواتير إلى Excel."""
+        report_data = self.matching_report(request).data
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "مطابقة المشتريات"
+        fields = [
+            ("order_number", "أمر الشراء"), ("order_date", "التاريخ"),
+            ("supplier_name", "المورد"), ("warehouse_name", "المخزن"),
+            ("branch_name", "الفرع"), ("product_code", "كود الصنف"),
+            ("product_name", "الصنف"), ("ordered_quantity", "الكمية المطلوبة"),
+            ("received_quantity", "الكمية المستلمة"), ("invoiced_quantity", "الكمية المفوترة"),
+            ("returned_quantity", "الكمية المرتجعة"),
+            ("uninvoiced_received_quantity", "مستلم غير مفوتر"),
+            ("unreceived_quantity", "غير مستلم"), ("overinvoiced_quantity", "مفوتر بالزيادة"),
+            ("order_unit_price", "سعر أمر الشراء"), ("expected_order_value", "قيمة الأمر"),
+            ("invoiced_net_amount", "صافي الفاتورة"), ("price_variance", "فرق السعر"),
+            ("receipt_numbers", "أذون الاستلام"), ("invoice_numbers", "فواتير المورد"),
+        ]
+        sheet.append([label for _, label in fields])
+        for row in report_data["rows"]:
+            values = []
+            for key, _ in fields:
+                value = row.get(key, "")
+                if isinstance(value, list):
+                    value = "، ".join(str(item) for item in value)
+                if value is None:
+                    value = ""
+                if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\\t", "\\r")):
+                    value = "'" + value
+                values.append(value)
+            sheet.append(values)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column in sheet.columns:
+            width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 36)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = (
+            f'attachment; filename="purchase-matching-report-{report_data["company"]}.xlsx"'
+        )
+        return response_file
 
 
 class PurchaseReceiptViewSet(PurchaseBaseViewSet):
@@ -918,6 +1110,262 @@ class PurchaseInvoiceViewSet(PurchaseBaseViewSet):
 
 
 
+    @action(detail=False, methods=("get",), url_path="analysis-report")
+    def analysis_report(self, request):
+        """تحليل المشتريات حسب المورد والصنف والفرع والمخزن والنشاط."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تحليل المشتريات."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        invoices = self.get_queryset().filter(
+            company_id=company_id, status=PurchaseInvoice.Status.POSTED,
+        ).select_related(
+            "supplier", "activity", "branch", "receipt__warehouse", "receipt__warehouse__branch",
+        ).prefetch_related("lines__receipt_line__product", "lines__expense_account", "lines__tax_code")
+        date_from = parse_date(request.query_params.get("date_from", "")) if request.query_params.get("date_from") else None
+        date_to = parse_date(request.query_params.get("date_to", "")) if request.query_params.get("date_to") else None
+        if request.query_params.get("date_from") and not date_from:
+            raise ValidationError({"date_from": "تاريخ البداية غير صالح."})
+        if request.query_params.get("date_to") and not date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية غير صالح."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."})
+        if date_from:
+            invoices = invoices.filter(invoice_date__gte=date_from)
+        if date_to:
+            invoices = invoices.filter(invoice_date__lte=date_to)
+
+        supplier_id = request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"supplier": "معرّف المورد غير صالح."}) from None
+            invoices = invoices.filter(supplier_id=supplier_id)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        product_id = request.query_params.get("product")
+        if product_id:
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+        activity_id = request.query_params.get("activity")
+        if activity_id:
+            try:
+                activity_id = int(activity_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"activity": "معرّف النشاط غير صالح."}) from None
+            invoices = invoices.filter(activity_id=activity_id)
+
+        default_branch = Branch.objects.filter(
+            company_id=company_id, is_active=True,
+        ).order_by("-is_head_office", "code").first()
+        grouped = {}
+        included_invoice_ids = set()
+        for invoice in invoices.order_by("invoice_date", "invoice_number"):
+            warehouse = invoice.receipt.warehouse if invoice.receipt_id else None
+            branch = invoice.branch or (warehouse.branch if warehouse else None) or default_branch
+            if branch_id and (not branch or branch.pk != branch_id):
+                continue
+            for line in invoice.lines.all():
+                if line.receipt_line_id:
+                    product = line.receipt_line.product
+                    if product_id and product.pk != product_id:
+                        continue
+                    kind = "inventory"
+                    key = (kind, invoice.supplier_id, product.pk, branch.pk if branch else None,
+                           warehouse.pk if warehouse else None, invoice.activity_id)
+                    row = grouped.setdefault(key, {
+                        "kind": kind, "supplier_id": invoice.supplier_id,
+                        "supplier_name": invoice.supplier.name_ar,
+                        "product_id": product.pk, "product_code": product.code,
+                        "product_name": product.name_ar, "expense_account_id": None,
+                        "expense_account_code": "", "expense_account_name": "",
+                        "branch_id": branch.pk if branch else None,
+                        "branch_name": branch.name_ar if branch else "",
+                        "warehouse_id": warehouse.pk if warehouse else None,
+                        "warehouse_name": warehouse.name_ar if warehouse else "",
+                        "activity_id": invoice.activity_id,
+                        "activity_name": invoice.activity.get_activity_display() if invoice.activity_id else "",
+                        "invoice_count": set(), "line_count": 0,
+                        "quantity": Decimal("0"), "returned_quantity": Decimal("0"),
+                        "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
+                        "nonrecoverable_tax": Decimal("0"), "tax_amount": Decimal("0"),
+                    })
+                    returned = SupplierReturnLine.objects.filter(
+                        invoice_line=line,
+                        return_document__status=SupplierReturn.Status.POSTED,
+                    ).aggregate(quantity=Sum("quantity"), net=Sum("net_amount"))
+                    returned_qty = returned["quantity"] or Decimal("0")
+                    returned_net = returned["net"] or Decimal("0")
+                    row["quantity"] += line.billed_quantity
+                    row["returned_quantity"] += returned_qty
+                    row["purchase_net"] += line.net_amount
+                    row["returned_net"] += returned_net
+                    row["tax_amount"] += line.tax_amount
+                else:
+                    if product_id:
+                        continue
+                    account = line.expense_account
+                    if not account:
+                        continue
+                    kind = "direct_expense"
+                    key = (kind, invoice.supplier_id, account.pk, branch.pk if branch else None, invoice.activity_id)
+                    row = grouped.setdefault(key, {
+                        "kind": kind, "supplier_id": invoice.supplier_id,
+                        "supplier_name": invoice.supplier.name_ar,
+                        "product_id": None, "product_code": "", "product_name": "",
+                        "expense_account_id": account.pk, "expense_account_code": account.code,
+                        "expense_account_name": account.name_ar,
+                        "branch_id": branch.pk if branch else None,
+                        "branch_name": branch.name_ar if branch else "",
+                        "warehouse_id": None, "warehouse_name": "",
+                        "activity_id": invoice.activity_id,
+                        "activity_name": invoice.activity.get_activity_display() if invoice.activity_id else "",
+                        "invoice_count": set(), "line_count": 0,
+                        "quantity": Decimal("0"), "returned_quantity": Decimal("0"),
+                        "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
+                        "nonrecoverable_tax": Decimal("0"), "tax_amount": Decimal("0"),
+                    })
+                    nonrecoverable_tax = (
+                        line.tax_amount
+                        if line.tax_code_id and not line.tax_code.input_tax_recoverable
+                        else Decimal("0")
+                    )
+                    row["purchase_net"] += line.net_amount
+                    row["nonrecoverable_tax"] += nonrecoverable_tax
+                    row["tax_amount"] += line.tax_amount
+                row["invoice_count"].add(invoice.pk)
+                row["line_count"] += 1
+                included_invoice_ids.add(invoice.pk)
+
+        rows = []
+        totals = {
+            "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
+            "net_purchases": Decimal("0"), "nonrecoverable_tax": Decimal("0"),
+            "total_cost": Decimal("0"), "tax_amount": Decimal("0"),
+            "invoice_count": set(), "line_count": 0,
+        }
+        for row in grouped.values():
+            row["net_purchases"] = row["purchase_net"] - row["returned_net"]
+            row["total_cost"] = row["net_purchases"] + row["nonrecoverable_tax"]
+            row["invoice_count"] = len(row["invoice_count"])
+            for key in ("quantity", "returned_quantity", "purchase_net", "returned_net", "nonrecoverable_tax", "net_purchases", "total_cost", "tax_amount"):
+                row[key] = str(row[key])
+            totals["purchase_net"] += Decimal(row["purchase_net"])
+            totals["returned_net"] += Decimal(row["returned_net"])
+            totals["net_purchases"] += Decimal(row["net_purchases"])
+            totals["nonrecoverable_tax"] += Decimal(row["nonrecoverable_tax"])
+            totals["total_cost"] += Decimal(row["total_cost"])
+            totals["tax_amount"] += Decimal(row["tax_amount"])
+            totals["line_count"] += row["line_count"]
+            rows.append(row)
+        totals["invoice_count"] = len(included_invoice_ids)
+        inventory_nonrecoverable_tax = sum((
+            allocation.inventory_amount + allocation.cogs_amount + allocation.adjustment_loss_amount
+            for invoice in invoices
+            for allocation in invoice.tax_allocations.all()
+            if (not branch_id or allocation.branch_id == branch_id)
+            and can_access_branch(request.user, allocation.branch_id, company_id)
+        ), Decimal("0"))
+        totals["inventory_nonrecoverable_tax"] = inventory_nonrecoverable_tax
+        totals["nonrecoverable_tax"] += inventory_nonrecoverable_tax
+        totals["total_cost"] += inventory_nonrecoverable_tax
+        rows.sort(key=lambda row: (
+            row["supplier_name"], row["kind"], row["product_code"] or row["expense_account_code"],
+            row["branch_name"], row["warehouse_name"],
+        ))
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch": branch_id, "supplier": supplier_id,
+            "product": product_id, "activity": activity_id,
+            "totals": {
+                "purchase_net": str(totals["purchase_net"]),
+                "returned_net": str(totals["returned_net"]),
+                "net_purchases": str(totals["net_purchases"]),
+                "nonrecoverable_tax": str(totals["nonrecoverable_tax"]),
+                "inventory_nonrecoverable_tax": str(totals["inventory_nonrecoverable_tax"]),
+                "total_cost": str(totals["total_cost"]),
+                "tax_amount": str(totals["tax_amount"]),
+                "invoice_count": totals["invoice_count"],
+                "line_count": totals["line_count"],
+            },
+            "rows": rows,
+        })
+
+    @action(detail=False, methods=("get",), url_path="analysis-report-export-excel")
+    def analysis_report_export_excel(self, request):
+        """تصدير تحليل المشتريات إلى Excel بنفس نطاق الصلاحيات والفلاتر."""
+        report_data = self.analysis_report(request).data
+        workbook = Workbook()
+        summary = workbook.active
+        summary.title = "الملخص"
+        summary.append(["المؤشر", "القيمة"])
+        for key, label in (
+            ("purchase_net", "قيمة المشتريات قبل المرتجعات"),
+            ("returned_net", "قيمة مرتجعات الموردين"),
+            ("net_purchases", "صافي المشتريات"),
+            ("nonrecoverable_tax", "ضريبة غير قابلة للخصم"),
+            ("inventory_nonrecoverable_tax", "ضريبة غير قابلة للخصم موزعة على المخزون والفروع"),
+            ("total_cost", "التكلفة بعد الضريبة غير القابلة للخصم"),
+            ("tax_amount", "إجمالي الضريبة"),
+            ("invoice_count", "عدد الفواتير"),
+            ("line_count", "عدد البنود"),
+        ):
+            summary.append([label, report_data["totals"][key]])
+        sheet = workbook.create_sheet("تفاصيل التحليل")
+        fields = [
+            ("kind", "النوع"), ("supplier_name", "المورد"),
+            ("product_code", "كود الصنف"), ("product_name", "الصنف"),
+            ("expense_account_code", "كود حساب المصروف"), ("expense_account_name", "حساب المصروف"),
+            ("branch_name", "الفرع"), ("warehouse_name", "المخزن"),
+            ("activity_name", "النشاط"), ("invoice_count", "عدد الفواتير"),
+            ("line_count", "عدد البنود"), ("quantity", "الكمية"),
+            ("returned_quantity", "الكمية المرتجعة"), ("purchase_net", "قيمة المشتريات"),
+            ("returned_net", "قيمة المرتجعات"), ("net_purchases", "صافي المشتريات"),
+            ("nonrecoverable_tax", "ضريبة غير قابلة للخصم"),
+            ("total_cost", "التكلفة بعد الضريبة غير القابلة للخصم"), ("tax_amount", "إجمالي الضريبة"),
+        ]
+        sheet.append([label for _, label in fields])
+        for row in report_data["rows"]:
+            values = []
+            for key, _ in fields:
+                value = row.get(key, "")
+                if value is None:
+                    value = ""
+                if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\\t", "\\r")):
+                    value = "'" + value
+                values.append(value)
+            sheet.append(values)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column in sheet.columns:
+            width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 36)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = (
+            f'attachment; filename="purchase-analysis-report-{report_data["company"]}.xlsx"'
+        )
+        return response_file
+
+
 class SupplierReturnViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierReturnSerializer
     queryset = SupplierReturn.objects.select_related(
@@ -1050,6 +1498,8 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
             raise ValidationError({"entry_date": "صيغة تاريخ العكس يجب أن تكون YYYY-MM-DD."})
         document = reverse_supplier_refund(document.pk, request.user, entry_date)
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+
 
 
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
@@ -1587,3 +2037,278 @@ class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
         )
         document.refresh_from_db()
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+
+
+class LandedCostDocumentViewSet(PurchaseBaseViewSet):
+    """إدارة مسودات رسملة تكاليف الاستيراد والشحن دون إنشاء فاتورة مورد ثانية."""
+
+    serializer_class = LandedCostDocumentSerializer
+    queryset = LandedCostDocument.objects.select_related(
+        "company", "source_invoice", "source_invoice__supplier", "source_invoice__branch",
+    ).prefetch_related(
+        "allocations__source_invoice_line", "allocations__receipt_line__product",
+        "allocations__distributions__branch",
+    )
+    filterset_fields = ("company", "status", "document_date", "source_invoice")
+    search_fields = ("document_number", "source_invoice__invoice_number", "source_invoice__supplier__name_ar")
+    ordering_fields = ("document_date", "document_number", "created_at")
+    http_method_names = ("get", "post", "head", "options")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        allowed_allocation_scope = (
+            Q(receipt_line__movement__destination_warehouse__branch__in=branches)
+            | Q(receipt_line__movement__destination_warehouse__branch__isnull=True, document__company_id__in=defaults)
+        )
+        inaccessible_documents = LandedCostAllocation.objects.filter(
+            document__company__in=companies,
+        ).exclude(allowed_allocation_scope).values_list("document_id", flat=True)
+        return self.queryset.filter(company__in=companies).filter(
+            Q(source_invoice__branch__in=branches)
+            | Q(source_invoice__branch__isnull=True, company_id__in=defaults)
+        ).exclude(pk__in=inaccessible_documents).distinct()
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        company = data["company"]
+        self._check_write(company.pk)
+        source_invoice = data["source_invoice"]
+        if not source_invoice.branch_id or not can_access_branch(
+            self.request.user, source_invoice.branch_id, company.pk,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة مصروف المصدر.")
+        for row in data["allocations"]:
+            warehouse = row["receipt_line"].movement.destination_warehouse
+            if not warehouse or not _purchase_warehouse_accessible(self.request.user, warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
+        serializer.save(created_by=self.request.user)
+
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        """ترحيل الرسملة وتحديث المخزون والقيود في معاملة واحدة."""
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not document.source_invoice.branch_id or not can_access_branch(
+            request.user, document.source_invoice.branch_id, document.company_id,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المصروف المصدر.")
+        for allocation in document.allocations.select_related(
+            "receipt_line__movement__destination_warehouse",
+        ).all():
+            warehouse = allocation.receipt_line.movement.destination_warehouse
+            if not warehouse or not _purchase_warehouse_accessible(request.user, warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
+        posted = post_landed_cost_document(document.pk, request.user)
+        return Response(self.get_serializer(posted).data, status=status.HTTP_200_OK)
+
+
+    @action(detail=True, methods=("post",))
+    def reverse(self, request, pk=None):
+        """عكس الرسملة بعد التحقق من عدم وجود استهلاك مخزني لاحق."""
+        document = self.get_object()
+        self._check_write(document.company_id)
+        raw_date = request.data.get("entry_date")
+        entry_date = parse_date(raw_date) if raw_date else timezone.localdate()
+        if not entry_date:
+            raise ValidationError({"entry_date": "تاريخ العكس غير صالح."})
+        if not document.source_invoice.branch_id or not can_access_branch(
+            request.user, document.source_invoice.branch_id, document.company_id,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المصروف المصدر.")
+        for allocation in document.allocations.select_related(
+            "receipt_line__movement__destination_warehouse",
+        ).all():
+            warehouse = allocation.receipt_line.movement.destination_warehouse
+            if not warehouse or not _purchase_warehouse_accessible(request.user, warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
+        reversed_document = reverse_landed_cost_document(document.pk, request.user, entry_date)
+        return Response(self.get_serializer(reversed_document).data, status=status.HTTP_200_OK)
+
+
+
+    @action(detail=False, methods=("get",))
+    def report(self, request):
+        """تقرير سجل رسملة التكلفة ومطابقة التوزيع مع المخزون وCOGS والخسائر."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير رسملة التكلفة."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        qs = self.get_queryset().filter(
+            company_id=company_id,
+            status__in=(LandedCostDocument.Status.POSTED, LandedCostDocument.Status.REVERSED),
+        ).select_related("source_invoice__supplier").prefetch_related(
+            "allocations__source_invoice_line__expense_account",
+            "allocations__source_invoice_line__tax_code",
+            "allocations__receipt_line__product",
+            "allocations__receipt_line__movement__destination_warehouse",
+            "allocations__distributions__branch",
+        )
+        date_from = parse_date(request.query_params.get("date_from", "")) if request.query_params.get("date_from") else None
+        date_to = parse_date(request.query_params.get("date_to", "")) if request.query_params.get("date_to") else None
+        if request.query_params.get("date_from") and not date_from:
+            raise ValidationError({"date_from": "تاريخ البداية غير صالح."})
+        if request.query_params.get("date_to") and not date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية غير صالح."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."})
+        if date_from:
+            qs = qs.filter(document_date__gte=date_from)
+        if date_to:
+            qs = qs.filter(document_date__lte=date_to)
+        supplier_id = request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"supplier": "معرّف المورد غير صالح."}) from None
+            qs = qs.filter(source_invoice__supplier_id=supplier_id)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        product_id = request.query_params.get("product")
+        if product_id:
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+            qs = qs.filter(allocations__receipt_line__product_id=product_id).distinct()
+
+        rows = []
+        totals = {
+            "allocated": Decimal("0"), "inventory": Decimal("0"),
+            "cogs": Decimal("0"), "adjustment_loss": Decimal("0"),
+            "reversed": Decimal("0"),
+        }
+        for document in qs.order_by("document_date", "document_number"):
+            for allocation in document.allocations.all():
+                source_line = allocation.source_invoice_line
+                nonrecoverable_tax = (
+                    source_line.tax_amount
+                    if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+                    else Decimal("0")
+                )
+                capitalizable = source_line.net_amount + nonrecoverable_tax
+                allocated_to_date = LandedCostAllocation.objects.filter(
+                    source_invoice_line_id=source_line.pk,
+                ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
+                    total=Sum("amount"),
+                )["total"] or Decimal("0")
+                for distribution in allocation.distributions.all():
+                    if branch_id and distribution.branch_id != branch_id:
+                        continue
+                    allocated = (
+                        distribution.inventory_amount + distribution.cogs_amount
+                        + distribution.adjustment_loss_amount
+                    )
+                    if document.status == LandedCostDocument.Status.REVERSED:
+                        totals["reversed"] += allocated
+                    else:
+                        totals["allocated"] += allocated
+                        totals["inventory"] += distribution.inventory_amount
+                        totals["cogs"] += distribution.cogs_amount
+                        totals["adjustment_loss"] += distribution.adjustment_loss_amount
+                    rows.append({
+                        "document_id": document.pk,
+                        "document_number": document.document_number,
+                        "document_date": document.document_date.isoformat(),
+                        "document_status": document.status,
+                        "source_invoice_id": document.source_invoice_id,
+                        "source_invoice_number": document.source_invoice.invoice_number,
+                        "supplier_id": document.source_invoice.supplier_id,
+                        "supplier_name": document.source_invoice.supplier.name_ar,
+                        "expense_line_id": source_line.pk,
+                        "expense_description": source_line.description,
+                        "expense_account_code": source_line.expense_account.code,
+                        "receipt_line_id": allocation.receipt_line_id,
+                        "product_id": allocation.receipt_line.product_id,
+                        "product_code": allocation.receipt_line.product.code,
+                        "product_name": allocation.receipt_line.product.name_ar,
+                        "warehouse_id": allocation.receipt_line.movement.destination_warehouse_id,
+                        "branch_id": distribution.branch_id,
+                        "branch_name": distribution.branch.name_ar,
+                        "allocation_basis": allocation.basis,
+                        "allocation_amount": str(allocated),
+                        "source_line_capitalizable_amount": str(capitalizable),
+                        "source_line_allocated_to_date": str(allocated_to_date),
+                        "source_line_unallocated": str(max(capitalizable - allocated_to_date, Decimal("0"))),
+                        "inventory_amount": str(distribution.inventory_amount),
+                        "cogs_amount": str(distribution.cogs_amount),
+                        "adjustment_loss_amount": str(distribution.adjustment_loss_amount),
+                        "journal_entry": distribution.journal_entry_id,
+                        "reversal_journal_entry": distribution.reversal_journal_entry_id,
+                    })
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch": branch_id, "supplier": supplier_id, "product": product_id,
+            "totals": {key: str(value) for key, value in totals.items()},
+            "rows": rows,
+        })
+
+
+    @action(detail=False, methods=("get",), url_path="export-excel")
+    def export_excel(self, request):
+        """تصدير تقرير رسملة التكلفة بنفس نطاق الصلاحيات والفلاتر إلى Excel."""
+        report_data = self.report(request).data
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "تسوية رسملة التكلفة"
+        headers = [
+            "مستند الرسملة", "التاريخ", "الحالة", "فاتورة المصروف", "المورد",
+            "الصنف", "الفرع", "أساس التوزيع", "المبلغ الموزع",
+            "المخزون", "تكلفة المبيعات", "خسائر المخزون", "القيد", "قيد العكس",
+        ]
+        sheet.append(headers)
+        fields = [
+            "document_number", "document_date", "document_status",
+            "source_invoice_number", "supplier_name", "product_code",
+            "branch_name", "allocation_basis", "allocation_amount",
+            "inventory_amount", "cogs_amount", "adjustment_loss_amount",
+            "journal_entry", "reversal_journal_entry",
+        ]
+        for row in report_data["rows"]:
+            values = []
+            for field in fields:
+                value = row.get(field)
+                if value is None:
+                    value = ""
+                if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+                    value = "'" + value
+                values.append(value)
+            sheet.append(values)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column in sheet.columns:
+            width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 36)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = (
+            f'attachment; filename="landed-cost-report-{report_data["company"]}.xlsx"'
+        )
+        return response_file

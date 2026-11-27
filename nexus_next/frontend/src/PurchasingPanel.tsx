@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import PurchaseDocumentPrint, { type PurchasePrintDocument } from "./PurchaseDocumentPrint";
 import { divideDecimalToFixed, formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport } from "./api";
+import { api, inventoryApi, purchasingApi, treasuryApi, type Product, type PurchaseInvoice, type PurchaseOrder, type PurchaseReceipt, type Supplier, type Account, type Branch, type CostCenter, type Company, type SupplierAging, type SupplierPayment, type SupplierReturn, type SupplierRefund, type SupplierStatement, type TreasuryAccount, type Warehouse, type TaxCode, type Currency, type ExchangeRate, type FxSubledgerRevaluation, type PurchaseRequisition, type PurchaseRFQ, type PurchaseServiceAcceptance, type SupplierQuotation, type GRNIAgingReport, type LandedCostDocument, type LandedCostReport, type PurchaseMatchingReport, type PurchaseAnalysisReport } from "./api";
 
 type Props = { companyId: number | null; company?: Company | null; activityAssignments?: NonNullable<Company["activity_assignments"]>; primaryActivity?: Company["activity"] };
 type ReceiptDraftLine = { product: string; quantity: string; unit_cost: string; expiry_date: string; purchase_order_line?: string };
@@ -15,7 +15,7 @@ const statusPill = (status: string) => `status-pill ${{ draft: "draft", submitte
 // شاشة دورة المشتريات وتبويبات أوامر الشراء والاستلام والفواتير والمدفوعات.
 export default function PurchasingPanel({ companyId, company, activityAssignments, primaryActivity }: Props) {
   const activeActivityAssignments = (activityAssignments || []).filter((item) => item.is_active);
-  const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging">("receipts");
+  const [tab, setTab] = useState<"requisitions" | "sourcing" | "orders" | "service-acceptances" | "receipts" | "invoices" | "payments" | "returns" | "refunds" | "statement" | "aging" | "landed-cost">("receipts");
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -45,6 +45,18 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [payments, setPayments] = useState<SupplierPayment[]>([]);
   const [returns, setReturns] = useState<SupplierReturn[]>([]);
   const [refunds, setRefunds] = useState<SupplierRefund[]>([]);
+  const [landedCosts, setLandedCosts] = useState<LandedCostDocument[]>([]);
+  const [landedCostReport, setLandedCostReport] = useState<LandedCostReport | null>(null);
+  const [landedCostForm, setLandedCostForm] = useState({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
+  const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;amount:string;basis:"manual"|"quantity"|"weight"|"volume"|"manual"}[]>([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
+  const [landedCostReportFrom, setLandedCostReportFrom] = useState("");
+  const [landedCostReportTo, setLandedCostReportTo] = useState("");
+  const [purchaseMatchingReport, setPurchaseMatchingReport] = useState<PurchaseMatchingReport | null>(null);
+  const [matchingReportFrom, setMatchingReportFrom] = useState("");
+  const [matchingReportTo, setMatchingReportTo] = useState("");
+  const [purchaseAnalysisReport, setPurchaseAnalysisReport] = useState<PurchaseAnalysisReport | null>(null);
+  const [purchaseAnalysisFrom, setPurchaseAnalysisFrom] = useState("");
+  const [purchaseAnalysisTo, setPurchaseAnalysisTo] = useState("");
   const [refundForm, setRefundForm] = useState({ return_document: "", refund_number: "", refund_date: new Date().toISOString().slice(0, 10), method: "bank" as "cash" | "bank", payment_account: "", amount: "", reference: "", notes: "" });
   const [returnForm, setReturnForm] = useState({ invoice: "", return_number: "", return_date: new Date().toISOString().slice(0, 10), notes: "" });
   const [returnLines, setReturnLines] = useState<{ invoice_line: string; quantity: string }[]>([{ invoice_line: "", quantity: "1" }]);
@@ -53,7 +65,7 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [statementTo, setStatementTo] = useState("");
   const [statement, setStatement] = useState<SupplierStatement | null>(null);
   const [agingAsOf, setAgingAsOf] = useState(new Date().toISOString().slice(0, 10));
-  const [agingView, setAgingView] = useState<"supplier" | "grni">("supplier");
+  const [agingView, setAgingView] = useState<"supplier" | "grni" | "landed-cost" | "matching" | "analysis">("supplier");
   const [grniReport, setGrniReport] = useState<GRNIAgingReport | null>(null);
   const [aging, setAging] = useState<SupplierAging | null>(null);
   const [busy, setBusy] = useState(false);
@@ -84,14 +96,14 @@ const refresh = async () => {
     if (!companyId) return;
     setBusy(true); setError("");
     try {
-      const [s, p, w, o, serviceAcceptanceRows, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData, accountRows, costCenterRows, branchRows] = await Promise.all([
+      const [s, p, w, o, serviceAcceptanceRows, r, i, pay, ret, ref, t, ta, cur, fx, rq, rfqData, quoteData, accountRows, costCenterRows, branchRows, landedCostRows] = await Promise.all([
         api.suppliers(companyId), inventoryApi.products(companyId), inventoryApi.warehouses(companyId),
         purchasingApi.orders(companyId), purchasingApi.serviceAcceptances(companyId), purchasingApi.receipts(companyId), purchasingApi.invoices(companyId), purchasingApi.payments(companyId), purchasingApi.returns(companyId), purchasingApi.refunds(companyId), api.taxCodes(companyId), treasuryApi.accounts(companyId), api.currencies(), api.exchangeRates(companyId), purchasingApi.requisitions(companyId), purchasingApi.rfqs(companyId), purchasingApi.quotations(companyId),
-        api.accounts(companyId), api.allCostCenters(companyId), api.branches(companyId),
+        api.accounts(companyId), api.allCostCenters(companyId), api.branches(companyId), purchasingApi.landedCosts(companyId),
       ]);
       setSuppliers(s.filter((x) => x.is_active)); setProducts(p.filter((x) => x.is_active));
       setAccounts(accountRows); setCostCenters(costCenterRows.filter(x=>x.is_active)); setBranches(branchRows.filter(x=>x.is_active));
-      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setServiceAcceptances(serviceAcceptanceRows); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
+      setWarehouses(w.filter((x) => x.is_active)); setOrders(o); setServiceAcceptances(serviceAcceptanceRows); setRequisitions(rq); setRfqs(rfqData); setQuotations(quoteData); setReceipts(r); setInvoices(i); setPayments(pay); setReturns(ret); setRefunds(ref); setLandedCosts(landedCostRows); setTaxCodes(t.filter(x => x.is_active && x.category !== "reverse_charge")); setTreasuryAccounts(ta.filter(x => x.is_active));
       setOrderForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
       setOrderLines((old) => old.map((line, index) => ({ ...line, product: line.product || (index === 0 ? String(p.find((x) => x.is_active && x.product_type === "goods")?.id || "") : "") })));
       setReceiptForm((old) => ({ ...old, supplier: old.supplier || String(s.find((x) => x.is_active)?.id || ""), warehouse: old.warehouse || String(w.find((x) => x.is_active)?.id || "") }));
@@ -181,6 +193,74 @@ const loadAging = async () => {
     setBusy(true); setError("");
     try { setAging(await purchasingApi.supplierAging(companyId, agingAsOf)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر تحميل أعمار مديونية الموردين."); }
+    finally { setBusy(false); }
+  };
+
+  const eligibleLandedCostInvoices = invoices.filter(row =>
+    row.invoice_type === "direct_expense" && row.status === "posted" && row.invoice_lines.some(line => !!line.expense_account),
+  );
+  const selectedLandedCostInvoice = eligibleLandedCostInvoices.find(row => row.id === Number(landedCostForm.source_invoice)) || null;
+  const saveLandedCost = async (event:FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !selectedLandedCostInvoice || !landedCostForm.document_number.trim()
+      || !landedCostLines.length || landedCostLines.some(line => !line.source_invoice_line || !line.receipt_line || Number(line.amount) <= 0)) {
+      setError("حدد فاتورة مصروف مرحلة ورقم المستند وبنود الاستلام ومبالغ صحيحة."); return;
+    }
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createLandedCost({
+        company:companyId, source_invoice:selectedLandedCostInvoice.id,
+        document_number:landedCostForm.document_number.trim(),
+        document_date:landedCostForm.document_date, notes:landedCostForm.notes,
+        allocations:landedCostLines.map(line => ({
+          source_invoice_line:Number(line.source_invoice_line),
+          receipt_line:Number(line.receipt_line), amount:line.amount, basis:line.basis,
+        })),
+      });
+      setShowForm(false);
+      setLandedCostForm({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
+      setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
+      setNotice("تم حفظ مستند رسملة التكلفة كمسودة. لم يؤثر على الحسابات أو المخزون قبل الترحيل.");
+      await refresh();
+    } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ مستند الرسملة."); }
+    finally { setBusy(false); }
+  };
+  const postLandedCost = async (id:number) => {
+    setBusy(true);setError("");setNotice("");
+    try { await purchasingApi.postLandedCost(id);setNotice("تم ترحيل رسملة التكلفة وتحديث المخزون والقيود.");await refresh(); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر ترحيل رسملة التكلفة."); }
+    finally { setBusy(false); }
+  };
+  const reverseLandedCost = async (id:number) => {
+    const entryDate = window.prompt("أدخل تاريخ عكس الرسملة (YYYY-MM-DD):", new Date().toISOString().slice(0,10));
+    if(!entryDate)return;
+    setBusy(true);setError("");setNotice("");
+    try { await purchasingApi.reverseLandedCost(id,entryDate);setNotice("تم عكس الرسملة والقيود المرتبطة بها.");await refresh(); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر عكس الرسملة."); }
+    finally { setBusy(false); }
+  };
+  const loadLandedCostReport = async () => {
+    if(!companyId)return;
+    if(landedCostReportFrom && landedCostReportTo && landedCostReportFrom>landedCostReportTo){setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.");return;}
+    setBusy(true);setError("");
+    try { setLandedCostReport(await purchasingApi.landedCostReport(companyId,{date_from:landedCostReportFrom||undefined,date_to:landedCostReportTo||undefined})); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحميل تقرير رسملة التكلفة."); }
+    finally { setBusy(false); }
+  };
+  const loadPurchaseMatchingReport = async () => {
+    if(!companyId)return;
+    if(matchingReportFrom && matchingReportTo && matchingReportFrom>matchingReportTo){setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.");return;}
+    setBusy(true);setError("");
+    try { setPurchaseMatchingReport(await purchasingApi.purchaseMatchingReport(companyId,{date_from:matchingReportFrom||undefined,date_to:matchingReportTo||undefined})); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحميل تقرير مطابقة أوامر الشراء."); }
+    finally { setBusy(false); }
+  };
+  const loadPurchaseAnalysisReport = async () => {
+    if(!companyId)return;
+    if(purchaseAnalysisFrom && purchaseAnalysisTo && purchaseAnalysisFrom>purchaseAnalysisTo){setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.");return;}
+    setBusy(true);setError("");
+    try { setPurchaseAnalysisReport(await purchasingApi.purchaseAnalysisReport(companyId,{date_from:purchaseAnalysisFrom||undefined,date_to:purchaseAnalysisTo||undefined})); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحميل تحليل المشتريات."); }
     finally { setBusy(false); }
   };
 
@@ -572,11 +652,29 @@ const postInvoice = async (id: number) => {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || tab === "service-acceptances" || (tab === "sourcing" && sourcingView === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0 && !(suppliers.length>0 && branches.length>0 && expenseAccounts.length>0)) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "sourcing" ? (sourcingView === "rfqs" ? "＋ طلب عروض أسعار" : "＋ تسجيل عرض مورد") : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "service-acceptances" ? "محاضر إنجاز الخدمات" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || tab === "service-acceptances" || (tab === "sourcing" && sourcingView === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0 && !(suppliers.length>0 && branches.length>0 && expenseAccounts.length>0)) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "sourcing" ? (sourcingView === "rfqs" ? "＋ طلب عروض أسعار" : "＋ تسجيل عرض مورد") : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "service-acceptances" ? "محاضر إنجاز الخدمات" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : tab === "landed-cost" ? "＋ رسملة تكلفة شراء" : "كشف الحساب"}</button>
     </div>
-    <div className="inventory-tabs"><button className={tab === "sourcing" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("sourcing");setSourcingView("rfqs");setShowForm(false);setSearch("");}}>عروض الموردين <b>{rfqs.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "service-acceptances" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("service-acceptances"); setShowForm(false); setSearch(""); }}>استلام الخدمات <b>{serviceAcceptances.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>تقارير المشتريات</button></div>
+    <div className="inventory-tabs"><button className={tab === "sourcing" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("sourcing");setSourcingView("rfqs");setShowForm(false);setSearch("");}}>عروض الموردين <b>{rfqs.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "service-acceptances" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("service-acceptances"); setShowForm(false); setSearch(""); }}>استلام الخدمات <b>{serviceAcceptances.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "landed-cost" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("landed-cost"); setShowForm(false); setSearch(""); }}>رسملة تكاليف الشراء <b>{landedCosts.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>تقارير المشتريات</button></div>
     {error && <div className="error-banner">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+
+    {showForm && tab === "landed-cost" && <form className="inventory-form" onSubmit={e=>void saveLandedCost(e)}>
+      <div className="inventory-wide"><h3>مستند رسملة تكلفة شراء</h3><p>اربط فاتورة مصروف شحن أو جمارك أو تأمين بسطور استلام البضاعة. سيظل المستند مسودة حتى تنفذ الترحيل.</p></div>
+      <label className="inventory-wide">فاتورة المصروف المصدر<select required value={landedCostForm.source_invoice} onChange={e=>{setLandedCostForm({...landedCostForm,source_invoice:e.target.value});setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);}}><option value="">اختر فاتورة مصروف مرحلة</option>{eligibleLandedCostInvoices.map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
+      <label>رقم مستند الرسملة<input required value={landedCostForm.document_number} onChange={e=>setLandedCostForm({...landedCostForm,document_number:e.target.value})}/></label>
+      <label>تاريخ الرسملة<input required type="date" value={landedCostForm.document_date} onChange={e=>setLandedCostForm({...landedCostForm,document_date:e.target.value})}/></label>
+      <label className="inventory-wide">ملاحظات<textarea value={landedCostForm.notes} onChange={e=>setLandedCostForm({...landedCostForm,notes:e.target.value})}/></label>
+      <div className="inventory-wide"><div className="work-panel-head"><h3>توزيع المصروف على الاستلامات</h3><button className="subtle-button" type="button" onClick={()=>setLandedCostLines(old=>[...old,{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}])}>＋ إضافة توزيع</button></div></div>
+      {landedCostLines.map((line,index)=><div className="inventory-form-row inventory-wide" key={index}>
+        <label>بند المصروف<select required value={line.source_invoice_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,source_invoice_line:e.target.value}:x))}><option value="">اختر بندًا</option>{selectedLandedCostInvoice?.invoice_lines.filter(x=>!!x.expense_account).map(x=><option key={x.id} value={x.id}>{x.description||x.expense_account_name||("بند "+x.id)} · {money(x.net_amount)}</option>)}</select></label>
+        <label>بند الاستلام<select required value={line.receipt_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,receipt_line:e.target.value}:x))}><option value="">اختر استلامًا</option>{receipts.filter(x=>x.movement_status==="posted").flatMap(receipt=>receipt.line_items.map(item=><option key={item.id} value={item.id}>{receipt.receipt_number} · {item.product_code} · {item.product_name}</option>))}</select></label>
+        <label>طريقة التوزيع<input value="يدوي لكل بند استلام" readOnly /></label>
+        <label>مبلغ التحميل<input required type="number" min="0.0001" step="0.0001" value={line.amount} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,amount:e.target.value}:x))}/></label>
+        <button className="subtle-button" type="button" disabled={landedCostLines.length===1} onClick={()=>setLandedCostLines(old=>old.filter((_,i)=>i!==index))}>حذف</button>
+      </div>)}
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!eligibleLandedCostInvoices.length}>حفظ مسودة الرسملة</button><button className="subtle-button" type="button" onClick={()=>setShowForm(false)}>إلغاء</button></div>
+    </form>}
+    {tab === "landed-cost" && <div className="data-table-wrap"><table><thead><tr><th>رقم المستند</th><th>التاريخ</th><th>فاتورة المصروف</th><th>المورد</th><th>التوزيعات</th><th>الإجمالي</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{landedCosts.filter(row=>[row.document_number,row.source_invoice_number,row.supplier_name].join(" ").toLowerCase().includes(search.toLowerCase())).map(row=><tr key={row.id}><td className="code-cell">{row.document_number}</td><td>{row.document_date}</td><td>{row.source_invoice_number}</td><td>{row.supplier_name}</td><td>{row.allocation_lines.map(line=><div key={line.id}>{line.product_code} · {money(line.amount)}</div>)}</td><td><strong>{money(row.total_amount)}</strong></td><td><span className={statusPill(row.status)}>{row.status==="draft"?"مسودة":row.status==="posted"?"مرحّل":"معكوس"}</span></td><td><div className="table-actions">{row.status==="draft"?<button className="primary-button" type="button" disabled={busy} onClick={()=>void postLandedCost(row.id)}>ترحيل</button>:row.status==="posted"?<button className="subtle-button" type="button" disabled={busy} onClick={()=>void reverseLandedCost(row.id)}>عكس الرسملة</button>:"—"}</div></td></tr>)}</tbody></table>{landedCosts.length===0&&<div className="table-empty">لا توجد مستندات رسملة تكلفة حتى الآن.</div>}</div>}
 
     {tab === "sourcing" && <div className="inventory-tabs"><button className={sourcingView === "rfqs" ? "inventory-tab active" : "inventory-tab"} type="button" onClick={()=>{setSourcingView("rfqs");setShowForm(false);}}>طلبات العروض <b>{rfqs.length}</b></button><button className={sourcingView === "quotations" ? "inventory-tab active" : "inventory-tab"} type="button" onClick={()=>{setSourcingView("quotations");setShowForm(false);}}>مقارنة العروض <b>{quotations.length}</b></button></div>}
     {convertingRFQId !== null && tab === "sourcing" && <form className="inventory-form" onSubmit={e=>void submitAwardConversion(e)}>
@@ -809,7 +907,7 @@ const postInvoice = async (id: number) => {
         <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>نوع المستند</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statement.rows.map((row, index) => <tr key={row.document_type + row.document_number + index}><td>{row.date}</td><td>{row.document_type === "invoice" ? "فاتورة مورد" : row.document_type === "supplier_return" ? "مرتجع مورد" : row.document_type === "supplier_return_reversal" ? "عكس مرتجع" : "سداد"}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table>{statement.rows.length === 0 && <div className="table-empty">لا توجد حركة خلال الفترة المحددة.</div>}</div>
       </div>}
     </div>}
-    {tab === "aging" && <div className="inventory-tabs"><button type="button" className={agingView==="supplier"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("supplier")}>أعمار مديونية الموردين</button><button type="button" className={agingView==="grni"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("grni")}>مطابقة GRNI</button></div>}
+    {tab === "aging" && <div className="inventory-tabs"><button type="button" className={agingView==="supplier"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("supplier")}>أعمار مديونية الموردين</button><button type="button" className={agingView==="grni"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("grni")}>مطابقة GRNI</button><button type="button" className={agingView==="landed-cost"?"inventory-tab active":"inventory-tab"} onClick={()=>{setAgingView("landed-cost");setLandedCostReport(null);}}>تسوية تكاليف الشراء</button><button type="button" className={agingView==="matching"?"inventory-tab active":"inventory-tab"} onClick={()=>{setAgingView("matching");setPurchaseMatchingReport(null);}}>مطابقة أمر الشراء والاستلام والفاتورة</button><button type="button" className={agingView==="analysis"?"inventory-tab active":"inventory-tab"} onClick={()=>{setAgingView("analysis");setPurchaseAnalysisReport(null);}}>تحليل المورد والصنف</button></div>}
     {tab === "aging" && agingView === "supplier" && <div className="inventory-form">
       <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={(e) => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={() => void loadAging()}>{busy ? "جارٍ التحميل…" : "عرض أعمار المديونية"}</button></div>
@@ -826,6 +924,54 @@ const postInvoice = async (id: number) => {
           <tbody>{aging.suppliers.map((row) => <tr key={row.supplier}><td className="code-cell">{row.supplier_code}</td><td>{row.supplier_name}</td><td>{money(row.not_due)}</td><td>{money(row["1_30"])}</td><td>{money(row["31_60"])}</td><td>{money(row["61_90"])}</td><td>{money(row.over_90)}</td><td><strong>{money(row.total_due)}</strong></td></tr>)}</tbody>
         </table>{aging.suppliers.length === 0 && <div className="table-empty">لا توجد أرصدة مستحقة على الموردين في تاريخ التقرير.</div>}</div>
         <p className="inventory-report-note">يُحسب تاريخ الاستحقاق من تاريخ الفاتورة مضافًا إليه أجل السداد المسجل للمورد، وتُخصم السدادات المرحلة فقط.</p>
+      </div>}
+    </div>}
+    {tab === "aging" && agingView === "landed-cost" && <div className="inventory-form">
+      <div className="inventory-form-row"><label>من تاريخ<input type="date" value={landedCostReportFrom} onChange={e=>{setLandedCostReportFrom(e.target.value);setLandedCostReport(null);}}/></label><label>إلى تاريخ<input type="date" value={landedCostReportTo} onChange={e=>{setLandedCostReportTo(e.target.value);setLandedCostReport(null);}}/></label></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadLandedCostReport()}>{busy?"جارٍ التحميل…":"عرض تسوية تكاليف الشراء"}</button>{landedCostReport && <a className="subtle-button" href={`/api/purchasing/landed-costs/export-excel/?company=${companyId}${landedCostReportFrom? `&date_from=${landedCostReportFrom}`:""}${landedCostReportTo? `&date_to=${landedCostReportTo}`:""}`}>تصدير Excel</a>}</div>
+      {landedCostReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>إجمالي التكلفة الموزعة</span><strong>{money(landedCostReport.totals.allocated)}</strong></div>
+          <div><span>المخزون المتبقي</span><strong>{money(landedCostReport.totals.inventory)}</strong></div>
+          <div><span>تكلفة المبيعات</span><strong>{money(landedCostReport.totals.cogs)}</strong></div>
+          <div><span>خسائر المخزون</span><strong>{money(landedCostReport.totals.adjustment_loss)}</strong></div>
+          <div><span>رسملات معكوسة</span><strong>{money(landedCostReport.totals.reversed)}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>مستند الرسملة</th><th>فاتورة المصروف</th><th>المورد</th><th>الصنف</th><th>الفرع</th><th>المخزون</th><th>تكلفة المبيعات</th><th>الخسائر</th><th>القيد</th></tr></thead><tbody>{landedCostReport.rows.map((row,index)=><tr key={row.document_id+"-"+row.expense_line_id+"-"+row.branch_id+"-"+index}><td>{row.document_number}<small>{row.document_date}</small></td><td>{row.source_invoice_number}</td><td>{row.supplier_name}</td><td>{row.product_code} · {row.product_name}</td><td>{row.branch_name}</td><td>{money(row.inventory_amount)}</td><td>{money(row.cogs_amount)}</td><td>{money(row.adjustment_loss_amount)}</td><td>{row.journal_entry||"—"}</td></tr>)}</tbody></table>{landedCostReport.rows.length===0&&<div className="table-empty">لا توجد رسملات في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">يتم عرض أثر الرسملة حسب الفرع، مع فصل قيمة المخزون عن تكلفة المبيعات وخسائر المخزون، وربط كل توزيع بقيده المحاسبي.</p>
+      </div>}
+    </div>}
+    {tab === "aging" && agingView === "analysis" && <div className="inventory-form">
+      <div className="inventory-form-row"><label>من تاريخ الفاتورة<input type="date" value={purchaseAnalysisFrom} onChange={e=>{setPurchaseAnalysisFrom(e.target.value);setPurchaseAnalysisReport(null);}}/></label><label>إلى تاريخ الفاتورة<input type="date" value={purchaseAnalysisTo} onChange={e=>{setPurchaseAnalysisTo(e.target.value);setPurchaseAnalysisReport(null);}}/></label></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseAnalysisReport()}>{busy?"جارٍ التحميل…":"عرض تحليل المشتريات"}</button>{purchaseAnalysisReport && <a className="subtle-button" href={`/api/purchasing/invoices/analysis-report-export-excel/?company=${companyId}${purchaseAnalysisFrom? `&date_from=${purchaseAnalysisFrom}`:""}${purchaseAnalysisTo? `&date_to=${purchaseAnalysisTo}`:""}`}>تصدير Excel</a>}</div>
+      {purchaseAnalysisReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>صافي المشتريات</span><strong>{money(purchaseAnalysisReport.totals.net_purchases)}</strong></div>
+          <div><span>مرتجعات الموردين</span><strong>{money(purchaseAnalysisReport.totals.returned_net)}</strong></div>
+          <div><span>ضريبة غير قابلة للخصم</span><strong>{money(purchaseAnalysisReport.totals.nonrecoverable_tax)}</strong></div>
+          <div><span>منها على المخزون / COGS</span><strong>{money(purchaseAnalysisReport.totals.inventory_nonrecoverable_tax)}</strong></div>
+          <div><span>التكلفة بعد الضريبة غير القابلة للخصم</span><strong>{money(purchaseAnalysisReport.totals.total_cost)}</strong></div>
+          <div><span>عدد الفواتير</span><strong>{purchaseAnalysisReport.totals.invoice_count}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>المورد</th><th>الصنف / حساب المصروف</th><th>الفرع / المخزن</th><th>الكمية</th><th>المرتجع</th><th>صافي المشتريات</th><th>ضريبة غير قابلة للخصم</th><th>التكلفة</th></tr></thead><tbody>{purchaseAnalysisReport.rows.map((row,index)=><tr key={row.kind+"-"+row.supplier_id+"-"+(row.product_id||row.expense_account_id)+"-"+row.branch_id+"-"+index}><td>{row.kind==="inventory"?"مخزون":"مصروف مباشر"}</td><td>{row.supplier_name}</td><td>{row.kind==="inventory"?(row.product_code+" · "+row.product_name):(row.expense_account_code+" · "+row.expense_account_name)}</td><td>{row.branch_name}<small>{row.warehouse_name}</small></td><td>{row.quantity}</td><td>{row.returned_quantity}</td><td>{money(row.net_purchases)}</td><td>{money(row.nonrecoverable_tax)}</td><td>{money(row.total_cost)}</td></tr>)}</tbody></table>{purchaseAnalysisReport.rows.length===0&&<div className="table-empty">لا توجد فواتير مشتريات مرحلة في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">ضريبة المدخلات غير القابلة للخصم الموزعة على المخزون وCOGS تظهر في إجمالي الملخص على مستوى الفاتورة والفرع، ولا تُكرر على صفوف الأصناف.</p>
+        <p className="inventory-report-note">يحلل التقرير فواتير المشتريات المرحلة حسب المورد والصنف أو حساب المصروف والفرع والمخزن والنشاط، ويخصم مرتجعات الموردين المرحلة.</p>
+      </div>}
+    </div>}
+    {tab === "aging" && agingView === "matching" && <div className="inventory-form">
+      <div className="inventory-form-row"><label>من تاريخ الأمر<input type="date" value={matchingReportFrom} onChange={e=>{setMatchingReportFrom(e.target.value);setPurchaseMatchingReport(null);}}/></label><label>إلى تاريخ الأمر<input type="date" value={matchingReportTo} onChange={e=>{setMatchingReportTo(e.target.value);setPurchaseMatchingReport(null);}}/></label></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseMatchingReport()}>{busy?"جارٍ التحميل…":"عرض تقرير المطابقة"}</button>{purchaseMatchingReport && <a className="subtle-button" href={`/api/purchasing/orders/matching-report-export-excel/?company=${companyId}${matchingReportFrom? `&date_from=${matchingReportFrom}`:""}${matchingReportTo? `&date_to=${matchingReportTo}`:""}`}>تصدير Excel</a>}</div>
+      {purchaseMatchingReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>قيمة أوامر الشراء</span><strong>{money(purchaseMatchingReport.totals.order_value)}</strong></div>
+          <div><span>صافي الفواتير المرحلة</span><strong>{money(purchaseMatchingReport.totals.invoiced_net_amount)}</strong></div>
+          <div><span>فرق السعر</span><strong>{money(purchaseMatchingReport.totals.price_variance)}</strong></div>
+          <div><span>بنود غير مستلمة</span><strong>{purchaseMatchingReport.totals.unreceived_line_count}</strong></div>
+          <div><span>بنود مستلمة غير مفوترة</span><strong>{purchaseMatchingReport.totals.uninvoiced_line_count}</strong></div>
+          <div><span>بنود مفوترة بأكثر من الاستلام</span><strong>{purchaseMatchingReport.totals.overinvoiced_line_count}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>أمر الشراء</th><th>المورد / المخزن</th><th>الصنف</th><th>المطلوب</th><th>المستلم</th><th>المفوتر</th><th>غير مفوتر</th><th>غير مستلم</th><th>فرق السعر</th><th>الاستلامات / الفواتير</th></tr></thead><tbody>{purchaseMatchingReport.rows.map(row=><tr key={row.order_line_id}><td>{row.order_number}<small>{row.order_date}</small></td><td>{row.supplier_name}<small>{row.warehouse_name}</small></td><td>{row.product_code} · {row.product_name}</td><td>{row.ordered_quantity}</td><td>{row.received_quantity}<small>{Number(row.receipt_link_discrepancy)!==0?("فرق ربط: "+row.receipt_link_discrepancy):""}</small></td><td>{row.invoiced_quantity}</td><td>{row.uninvoiced_received_quantity}</td><td>{row.unreceived_quantity}</td><td>{money(row.price_variance)}</td><td><small>استلام: {row.receipt_numbers.join("، ")||"—"}</small><small>فاتورة: {row.invoice_numbers.join("، ")||"—"}</small></td></tr>)}</tbody></table>{purchaseMatchingReport.rows.length===0&&<div className="table-empty">لا توجد بنود أوامر شراء في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">يقارن التقرير كميات أمر الشراء بالاستلام والفواتير المرحلة، ويظهر الكميات غير المفوترة أو غير المستلمة وفروق أسعار الفواتير ومرتجعات الموردين.</p>
       </div>}
     </div>}
     {tab === "aging" && agingView === "grni" && <div className="inventory-form">
@@ -845,7 +991,7 @@ const postInvoice = async (id: number) => {
       </div>}
     </div>}
 
-    {tab !== "aging" && tab !== "statement" && <div className="customer-toolbar"><div className="customer-count">{tab === "sourcing" ? "عدد طلبات عروض الأسعار" : tab === "requisitions" ? "عدد طلبات الاحتياج" : tab === "orders" ? "عدد أوامر الشراء" : tab === "service-acceptances" ? "عدد محاضر إنجاز الخدمات" : tab === "receipts" ? "عدد أذون الاستلام" : tab === "invoices" ? "عدد فواتير الموردين" : tab === "returns" ? "عدد مرتجعات الموردين" : "عدد سندات الصرف"} <strong>{(tab === "orders" ? orders : tab === "service-acceptances" ? serviceAcceptances : tab === "receipts" ? receipts : tab === "invoices" ? invoices : tab === "returns" ? returns : payments).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو المورد…" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="subtle-button" type="button" onClick={() => void refresh()} disabled={busy}>{busy ? "تحديث…" : "تحديث"}</button></div>}
+    {tab !== "aging" && tab !== "statement" && tab !== "landed-cost" && <div className="customer-toolbar"><div className="customer-count">{tab === "sourcing" ? "عدد طلبات عروض الأسعار" : tab === "requisitions" ? "عدد طلبات الاحتياج" : tab === "orders" ? "عدد أوامر الشراء" : tab === "service-acceptances" ? "عدد محاضر إنجاز الخدمات" : tab === "receipts" ? "عدد أذون الاستلام" : tab === "invoices" ? "عدد فواتير الموردين" : tab === "returns" ? "عدد مرتجعات الموردين" : "عدد سندات الصرف"} <strong>{(tab === "orders" ? orders : tab === "service-acceptances" ? serviceAcceptances : tab === "receipts" ? receipts : tab === "invoices" ? invoices : tab === "returns" ? returns : payments).length.toLocaleString("ar-EG")}</strong></div><input placeholder="بحث برقم المستند أو المورد…" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="subtle-button" type="button" onClick={() => void refresh()} disabled={busy}>{busy ? "تحديث…" : "تحديث"}</button></div>}
     {tab === "service-acceptances" && <div className="data-table-wrap"><table><thead><tr><th>رقم المحضر</th><th>أمر الشراء</th><th>المورد</th><th>التاريخ</th><th>الخدمات والكميات</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{serviceAcceptances.filter(row => [row.acceptance_number, row.order_number, row.supplier_name].join(" ").toLowerCase().includes(search.toLowerCase())).map(row => <tr key={row.id}><td className="code-cell">{row.acceptance_number}</td><td>{row.order_number}</td><td>{row.supplier_name}</td><td>{row.acceptance_date}</td><td>{row.line_items.map(line => <div key={line.id}>{line.product_name}: {line.quantity}</div>)}</td><td><span className={statusPill(row.status)}>{row.status === "accepted" ? "معتمد" : row.status === "draft" ? "مسودة" : "مرفوض"}</span></td><td><div className="table-actions"><button className="subtle-button" type="button" onClick={()=>openPrint("service_accept","محضر إنجاز خدمة",row.acceptance_number,row.acceptance_date,row.supplier_name,row.line_items.map(line=>({label:line.product_name,code:line.product_code,quantity:line.quantity,detail:line.notes})),[{label:"أمر الشراء",value:row.order_number}],row.notes)}>طباعة</button>{row.status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void acceptServiceAcceptance(row.id)}>اعتماد الإنجاز</button> : "—"}</div></td></tr>)}</tbody></table>{!busy && serviceAcceptances.length === 0 && <div className="table-empty">لا توجد محاضر استلام خدمات.</div>}</div>}
   {tab === "orders" && <div className="data-table-wrap"><table><thead><tr><th>رقم الأمر</th><th>المورد</th><th>المخزن</th><th>تاريخ الأمر</th><th>التوريد المتوقع</th><th>البنود المستلمة/المطلوبة</th><th>الإجمالي</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{orders.filter((row) => [row.order_number, row.supplier_name, row.warehouse_name].join(" ").toLowerCase().includes(search.toLowerCase())).map((row) => <tr key={row.id}><td className="code-cell">{row.order_number}</td><td>{row.supplier_name}</td><td>{row.warehouse_name}</td><td>{row.order_date}</td><td>{row.expected_date || "—"}</td><td>{row.line_items.map((line) => <div key={line.id}>{line.product_code}: {line.product_type === "service" ? `${serviceAcceptances.filter(doc => doc.order === row.id && doc.status === "accepted").flatMap(doc => doc.line_items).filter(item => item.order_line === line.id).reduce((sum, item) => sum + Number(item.quantity), 0)}/${line.quantity} (إنجاز)` : `${line.received_quantity}/${line.quantity}`}</div>)}</td><td><strong>{money(row.grand_total)}</strong></td><td><span className={statusPill(row.status)}>{row.status === "draft" ? (row.approval_status === "pending" ? "بانتظار موافقة المدير" : row.approval_status === "rejected" ? "مرفوض - يحتاج إعادة إرسال" : "مسودة") : row.status === "confirmed" ? "معتمد" : row.status === "partially_received" ? "استلام جزئي" : row.status === "received" ? "مستلم بالكامل" : "ملغي"}</span></td><td><div className="form-actions"><button className="subtle-button" type="button" onClick={()=>openPrint("purchase_order","أمر شراء",row.order_number,row.order_date,row.supplier_name,row.line_items.map(line=>({label:line.product_name,code:line.product_code,quantity:line.quantity,unitPrice:line.unit_price,amount:multiplyDecimalToFixed(line.quantity,line.unit_price,4)})),[{label:"إجمالي الأمر",value:money(row.grand_total),emphasis:true}],row.notes,row.warehouse_name)}>طباعة</button>{row.status === "draft" && row.approval_status === "pending" ? "بانتظار موافقة المدير" : row.status === "draft" && <button className="primary-button" type="button" disabled={busy} onClick={() => void confirmOrder(row.id)}>{row.approval_status === "rejected" ? "إعادة الإرسال للاعتماد" : "اعتماد الأمر"}</button>}{(row.status === "confirmed" || row.status === "partially_received") && row.line_items.some(line => line.product_type === "goods") && <button className="subtle-button" type="button" onClick={() => { setTab("receipts"); setShowForm(true); setReceiptForm((old) => ({ ...old, supplier: String(row.supplier), warehouse: String(row.warehouse), purchase_order: String(row.id), receipt_number: "" })); setReceiptLines(row.line_items.filter((line) => line.product_type === "goods" && Number(line.remaining_quantity) > 0).map((line) => ({ product: String(line.product), quantity: line.remaining_quantity, unit_cost: line.unit_price, expiry_date: "", purchase_order_line: String(line.id) }))); }}>إنشاء إذن استلام</button>}{(row.status === "confirmed" || row.status === "partially_received" || row.status === "received") && row.line_items.some(line => line.product_type === "service") && <button className="subtle-button" type="button" disabled={busy} onClick={() => void createServiceAcceptanceForOrder(row)}>محضر إنجاز خدمة</button>}{(row.status === "draft" || row.status === "confirmed") && <button className="subtle-button" type="button" disabled={busy} onClick={() => void cancelOrder(row.id)}>إلغاء الأمر</button>}{(row.status === "received" || row.status === "cancelled") && "—"}</div></td></tr>)}</tbody></table>{!busy && orders.length === 0 && <div className="table-empty">لا توجد أوامر شراء.</div>}</div>}
     {tab === "receipts" && <div className="data-table-wrap"><table><thead><tr><th>رقم الإذن</th><th>المورد</th><th>المخزن</th><th>التاريخ</th><th>مرجع المورد</th><th>الحالة</th><th>الإجراء</th></tr></thead><tbody>{filteredReceipts.map((x) => <tr key={x.id}><td className="code-cell">{x.receipt_number}</td><td>{x.supplier_name}</td><td>{x.warehouse_name}</td><td>{x.receipt_date}</td><td>{x.supplier_delivery_ref || "—"}</td><td><span className={statusPill(x.movement_status)}>{x.movement_status === "posted" ? "مرحّل" : "مسودة"}</span></td><td><div className="table-actions"><button className="subtle-button" type="button" onClick={()=>openPrint("purchase_receipt","إذن استلام مشتريات",x.receipt_number,x.receipt_date,x.supplier_name,x.line_items.map(line=>({label:line.product_name,code:line.product_code,quantity:line.quantity,unitPrice:line.unit_cost,amount:line.cost_amount})),[{label:"المخزن",value:x.warehouse_name},{label:"مرجع المورد",value:x.supplier_delivery_ref||"—"}],x.notes)}>طباعة</button>{x.movement_status === "draft" ? <button className="primary-button" type="button" disabled={busy} onClick={() => void postReceipt(x.id)}>ترحيل الاستلام</button> : "تم تحديث المخزون"}</div></td></tr>)}</tbody></table>{!busy && filteredReceipts.length === 0 && <div className="table-empty">لا توجد أذون استلام مطابقة.</div>}</div>}

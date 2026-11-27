@@ -46,3 +46,34 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     search_fields = ("order_number", "supplier__name_ar")
     inlines = (PurchaseOrderLineInline,)
     readonly_fields = ("status", "confirmed_at")
+
+
+from .models import LandedCostAllocation, LandedCostDocument, LandedCostDistribution
+
+
+class LandedCostAllocationInline(admin.TabularInline):
+    model = LandedCostAllocation
+    extra = 0
+    readonly_fields = ("created_at",)
+
+
+class LandedCostDistributionInline(admin.TabularInline):
+    model = LandedCostDistribution
+    extra = 0
+    readonly_fields = ("journal_entry",)
+
+
+@admin.register(LandedCostDocument)
+class LandedCostDocumentAdmin(admin.ModelAdmin):
+    list_display = ("document_number", "company", "source_invoice", "document_date", "status", "total_amount")
+    list_filter = ("company", "status", "document_date")
+    search_fields = ("document_number", "source_invoice__invoice_number", "source_invoice__supplier__name_ar")
+    readonly_fields = ("status", "total_amount", "posted_by", "posted_at", "reversal_journal_entry", "reversed_at")
+    inlines = (LandedCostAllocationInline,)
+
+
+@admin.register(LandedCostDistribution)
+class LandedCostDistributionAdmin(admin.ModelAdmin):
+    list_display = ("allocation", "branch", "inventory_amount", "cogs_amount", "adjustment_loss_amount", "journal_entry")
+    list_filter = ("branch",)
+    readonly_fields = ("journal_entry",)

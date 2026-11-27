@@ -14,7 +14,7 @@ from treasury.models import TreasuryAccount
 
 from inventory.models import Product, StockMovement, StockMovementLine, StorageLocation
 from suppliers.models import Supplier
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, PurchaseServiceAcceptance, PurchaseServiceAcceptanceLine, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRFQ, PurchaseRFQLine, PurchaseRFQInvitation, PurchaseServiceAcceptance, PurchaseServiceAcceptanceLine, SupplierQuotation, SupplierQuotationLine, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 class ReceiptLineInputSerializer(serializers.Serializer):
@@ -1312,3 +1312,151 @@ class PurchaseServiceAcceptanceSerializer(serializers.ModelSerializer):
             item.full_clean()
             item.save()
         return document
+
+
+
+class LandedCostAllocationInputSerializer(serializers.Serializer):
+    source_invoice_line = serializers.PrimaryKeyRelatedField(queryset=PurchaseInvoiceLine.objects.select_related("invoice"))
+    receipt_line = serializers.PrimaryKeyRelatedField(queryset=StockMovementLine.objects.select_related("movement", "product"))
+    basis = serializers.ChoiceField(choices=LandedCostAllocation.Basis.choices, default=LandedCostAllocation.Basis.MANUAL)
+    amount = serializers.DecimalField(max_digits=20, decimal_places=4, min_value=Decimal("0.0001"))
+
+
+class LandedCostDocumentSerializer(serializers.ModelSerializer):
+    allocations = LandedCostAllocationInputSerializer(many=True, write_only=True)
+    allocation_lines = serializers.SerializerMethodField()
+    source_invoice_number = serializers.CharField(source="source_invoice.invoice_number", read_only=True)
+    supplier_name = serializers.CharField(source="source_invoice.supplier.name_ar", read_only=True)
+
+    class Meta:
+        model = LandedCostDocument
+        fields = (
+            "id", "company", "source_invoice", "source_invoice_number", "supplier_name",
+            "document_number", "document_date", "status", "total_amount", "notes",
+            "allocations", "allocation_lines", "created_at", "posted_at", "reversed_at",
+        )
+        read_only_fields = ("status", "total_amount", "allocation_lines", "created_at", "posted_at", "reversed_at")
+
+    def get_allocation_lines(self, obj):
+        return [{
+            "id": line.pk,
+            "source_invoice_line": line.source_invoice_line_id,
+            "source_description": line.source_invoice_line.description,
+            "expense_account": line.source_invoice_line.expense_account_id,
+            "receipt_line": line.receipt_line_id,
+            "product": line.receipt_line.product_id,
+            "product_code": line.receipt_line.product.code,
+            "product_name": line.receipt_line.product.name_ar,
+            "quantity": str(line.receipt_line.quantity),
+            "basis": line.basis,
+            "amount": str(line.amount),
+            "distributions": [{
+                "branch": dist.branch_id,
+                "branch_name": dist.branch.name_ar,
+                "inventory_amount": str(dist.inventory_amount),
+                "cogs_amount": str(dist.cogs_amount),
+                "adjustment_loss_amount": str(dist.adjustment_loss_amount),
+                "journal_entry": dist.journal_entry_id,
+            } for dist in line.distributions.select_related("branch").all()],
+        } for line in obj.allocations.select_related(
+            "source_invoice_line__expense_account", "receipt_line__product",
+        ).prefetch_related("distributions__branch").all()]
+
+    def validate(self, attrs):
+        company = attrs["company"]
+        invoice = attrs["source_invoice"]
+        document_date = attrs["document_date"]
+        allocations = attrs.get("allocations") or []
+        if invoice.company_id != company.pk:
+            raise serializers.ValidationError({"source_invoice": "فاتورة المصدر لا تتبع الشركة المحددة."})
+        if invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE or invoice.status != PurchaseInvoice.Status.POSTED:
+            raise serializers.ValidationError({"source_invoice": "اختر فاتورة خدمات أو مصروفات مباشرة ومرحّلة."})
+        if document_date < invoice.invoice_date:
+            raise serializers.ValidationError({"document_date": "تاريخ الرسملة لا يجوز أن يسبق فاتورة المصروف."})
+        if not allocations:
+            raise serializers.ValidationError({"allocations": "أضف بند رسملة واحدًا على الأقل."})
+
+        requested_by_source = {}
+        for row in allocations:
+            source_line = row["source_invoice_line"]
+            receipt_line = row["receipt_line"]
+            if row["basis"] != LandedCostAllocation.Basis.MANUAL:
+                raise serializers.ValidationError({
+                    "allocations": "التوزيع الآلي حسب القيمة أو الوزن أو الحجم غير متاح في هذه المرحلة؛ استخدم التوزيع اليدوي لكل بند."
+                })
+            if source_line.invoice_id != invoice.pk or not source_line.expense_account_id:
+                raise serializers.ValidationError({"allocations": "كل بند مصدر يجب أن يكون بند مصروف تابعًا لفاتورة المصدر."})
+            account = source_line.expense_account
+            if (
+                not account.is_active or account.is_group or not account.allow_posting
+                or account.nature != ChartOfAccount.Nature.EXPENSE
+            ):
+                raise serializers.ValidationError({
+                    "allocations": "حساب بند المصروف يجب أن يكون حساب مصروف تفصيليًا نشطًا ويسمح بالترحيل."
+                })
+            if receipt_line.movement.company_id != company.pk or receipt_line.movement.status != StockMovement.Status.POSTED:
+                raise serializers.ValidationError({"allocations": "كل بند استلام يجب أن يكون مرحّلًا ويتبع الشركة."})
+            if receipt_line.product.product_type != Product.ProductType.GOODS:
+                raise serializers.ValidationError({"allocations": "رسملة التكلفة متاحة للأصناف المخزنية فقط."})
+            if not PurchaseReceipt.objects.filter(
+                company=company, stock_movement_id=receipt_line.movement_id,
+            ).exists():
+                raise serializers.ValidationError({"allocations": "بند المخزون المحدد ليس جزءًا من إذن استلام مشتريات."})
+            requested_by_source[source_line.pk] = requested_by_source.get(source_line.pk, Decimal("0")) + row["amount"]
+
+        for source_id, requested in requested_by_source.items():
+            source_line = PurchaseInvoiceLine.objects.select_related("invoice").get(pk=source_id)
+            nonrecoverable_tax = (
+                source_line.tax_amount
+                if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+                else Decimal("0")
+            )
+            capitalizable_amount = source_line.net_amount + nonrecoverable_tax
+            already_allocated = LandedCostAllocation.objects.filter(
+                source_invoice_line_id=source_id,
+            ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
+                total=Sum("amount"),
+            )["total"] or Decimal("0")
+            if already_allocated + requested > capitalizable_amount:
+                raise serializers.ValidationError({
+                    "allocations": f"إجمالي الرسملة يتجاوز صافي بند المصروف {source_line.description or source_line.pk}."
+                })
+        attrs["computed_total"] = sum((row["amount"] for row in allocations), Decimal("0"))
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        allocations = validated_data.pop("allocations")
+        total = validated_data.pop("computed_total")
+        invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).get(
+            pk=validated_data["source_invoice"].pk,
+        )
+        if invoice.status != PurchaseInvoice.Status.POSTED or invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE:
+            raise serializers.ValidationError({"source_invoice": "فاتورة المصدر لم تعد مؤهلة للرسملة."})
+        grouped = {}
+        for row in allocations:
+            grouped[row["source_invoice_line"].pk] = grouped.get(row["source_invoice_line"].pk, Decimal("0")) + row["amount"]
+        for source_id, requested in grouped.items():
+            source_line = PurchaseInvoiceLine.objects.select_for_update(of=("self",)).get(pk=source_id)
+            nonrecoverable_tax = (
+                source_line.tax_amount
+                if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+                else Decimal("0")
+            )
+            capitalizable_amount = source_line.net_amount + nonrecoverable_tax
+            already_allocated = LandedCostAllocation.objects.filter(
+                source_invoice_line_id=source_id,
+            ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
+                total=Sum("amount"),
+            )["total"] or Decimal("0")
+            if already_allocated + requested > capitalizable_amount:
+                raise serializers.ValidationError({"allocations": "تم استهلاك رصيد بند المصروف في رسملة أخرى؛ حدّث البيانات."})
+        document = LandedCostDocument.objects.create(**validated_data, total_amount=total)
+        for row in allocations:
+            allocation = LandedCostAllocation(document=document, **row)
+            allocation.full_clean()
+            allocation.save()
+        return document
+
+    def update(self, instance, validated_data):
+        raise serializers.ValidationError("لا يمكن تعديل مستند الرسملة بعد إنشائه؛ احذف المسودة وأعد إنشاءها.")

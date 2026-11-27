@@ -15,10 +15,10 @@ from accounting.services import get_account_for_role, post_journal, reverse_oper
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, ExchangeRate, FiscalYear
 from core.money import round_currency_amount
-from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
+from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine, Warehouse
 from inventory.services import post_stock_movement
 
-from .models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
+from .models import LandedCostAllocation, LandedCostDistribution, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 
 
 def _account(company, role, activity=None):
@@ -1416,3 +1416,556 @@ def reverse_supplier_return(return_id, user, entry_date):
         "reversed_at", "status",
     ))
     return document
+
+
+
+def _landed_cost_branch(company, warehouse):
+    branch = resolve_warehouse_branch(company, warehouse)
+    if not branch or not branch.is_active:
+        raise ValidationError("لا يمكن رسملة تكلفة على مخزن بلا فرع نشط.")
+    return branch
+
+
+def _allocate_landed_cost_to_stock(allocation):
+    """Split one landed-cost amount over remaining stock, COGS, and stock losses."""
+    receipt_line = allocation.receipt_line
+    amount = allocation.amount
+    quantity = receipt_line.quantity
+    company = allocation.document.company
+    if quantity <= 0 or amount <= 0:
+        raise ValidationError("كمية الاستلام ومبلغ الرسملة يجب أن يكونا موجبين.")
+    if receipt_line.movement.status != StockMovement.Status.POSTED:
+        raise ValidationError("لا يمكن رسملة بند استلام غير مرحّل.")
+    if receipt_line.product.costing_method not in (
+        Product.CostingMethod.FIFO, Product.CostingMethod.WEIGHTED_AVERAGE,
+    ):
+        raise ValidationError("طريقة تكلفة الصنف لا تدعم رسملة التكلفة الإضافية.")
+
+    layers = list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+        root_source_line=receipt_line,
+    ).select_related("warehouse", "warehouse__branch").order_by("pk"))
+    if not layers:
+        raise ValidationError(
+            f"لا توجد طبقات تكلفة مرتبطة بالاستلام الأصلي للصنف {receipt_line.product.code}."
+        )
+
+    remaining_by_balance = defaultdict(Decimal)
+    remaining_quantity = Decimal("0")
+    for layer in layers:
+        if layer.quantity_remaining <= 0:
+            continue
+        key = (layer.warehouse_id, layer.location_id, layer.expiry_date)
+        remaining_by_balance[key] += layer.quantity_remaining
+        remaining_quantity += layer.quantity_remaining
+
+    consumed_by_branch = defaultdict(lambda: {"cogs": Decimal("0"), "loss": Decimal("0")})
+    consumed_quantity = Decimal("0")
+    consumptions = StockCostConsumption.objects.select_for_update(of=("self",)).filter(
+        source_layer__root_source_line=receipt_line,
+        movement_line__movement__status=StockMovement.Status.POSTED,
+    ).select_related(
+        "movement_line__movement__source_warehouse",
+        "movement_line__movement__destination_warehouse",
+    ).order_by("pk")
+    for consumption in consumptions:
+        movement_line = consumption.movement_line
+        movement = movement_line.movement
+        if movement.movement_type in (
+            StockMovement.MovementType.ISSUE,
+            StockMovement.MovementType.SALES_RETURN_REVERSAL,
+        ):
+            category = "cogs"
+        elif (
+            movement.movement_type == StockMovement.MovementType.ADJUSTMENT
+            and movement_line.adjustment_direction == "out"
+        ):
+            category = "loss"
+        else:
+            # Transfers create descendant layers; they are not final consumption.
+            continue
+        if not movement.source_warehouse_id:
+            raise ValidationError("تعذر تحديد مخزن مصدر لاستهلاك طبقة تكلفة.")
+        branch = _landed_cost_branch(company, movement.source_warehouse)
+        consumed_by_branch[branch.pk][category] += consumption.quantity
+        consumed_quantity += consumption.quantity
+
+    traced_quantity = remaining_quantity + consumed_quantity
+    if abs(traced_quantity - quantity) > Decimal("0.0001"):
+        raise ValidationError(
+            f"تتبع تكلفة الصنف {receipt_line.product.code} غير مكتمل: "
+            f"الاستلام {quantity}، والمتبقي والمستهلك النهائي {traced_quantity}."
+        )
+
+    base_currency = company.base_currency
+    quantum = Decimal("1").scaleb(-base_currency.decimal_places)
+    unit_addition = (amount / quantity).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP)
+    buckets = []
+    for (warehouse_id, location_id, expiry_date), remaining in remaining_by_balance.items():
+        if remaining <= 0:
+            continue
+        balance = StockBalance.objects.select_for_update().get(
+            product_id=receipt_line.product_id,
+            warehouse_id=warehouse_id,
+            location_id=location_id,
+            expiry_date=expiry_date,
+        )
+        branch = _landed_cost_branch(company, balance.warehouse)
+        buckets.append({
+            "branch": branch, "kind": "inventory", "balance": balance,
+            "raw": remaining * amount / quantity,
+        })
+    for branch_id, categories in consumed_by_branch.items():
+        branch = Branch.objects.get(pk=branch_id, company=company, is_active=True)
+        for category in ("cogs", "loss"):
+            if categories[category] > 0:
+                buckets.append({
+                    "branch": branch, "kind": category, "balance": None,
+                    "raw": categories[category] * amount / quantity,
+                })
+
+    if not buckets:
+        raise ValidationError("لا توجد كميات مخزنية أو مستهلكة يمكن تحميل تكلفة عليها.")
+    rounded = [
+        bucket["raw"].quantize(quantum, rounding=ROUND_HALF_UP)
+        for bucket in buckets
+    ]
+    residual = amount - sum(rounded, Decimal("0"))
+    if residual:
+        largest = max(range(len(buckets)), key=lambda index: buckets[index]["raw"])
+        rounded[largest] += residual
+    if any(value < 0 for value in rounded) or sum(rounded, Decimal("0")) != amount:
+        raise ValidationError("تعذر موازنة توزيع تكلفة الشراء بعد التقريب.")
+
+    result = defaultdict(lambda: {
+        "inventory": Decimal("0"), "cogs": Decimal("0"), "loss": Decimal("0"),
+    })
+    for bucket, value in zip(buckets, rounded):
+        result[bucket["branch"].pk][bucket["kind"]] += value
+        if bucket["kind"] == "inventory" and value:
+            balance = bucket["balance"]
+            balance.inventory_value += value
+            if balance.quantity > 0:
+                balance.average_cost = (balance.inventory_value / balance.quantity).quantize(
+                    Decimal("0.000001"), rounding=ROUND_HALF_UP,
+                )
+            balance.save(update_fields=("inventory_value", "average_cost", "updated_at"))
+
+    # Update all remaining descendant layers, including layers created by transfers.
+    for layer in layers:
+        if layer.quantity_remaining > 0:
+            layer.unit_cost = (layer.unit_cost + unit_addition).quantize(
+                Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+            )
+            layer.save(update_fields=("unit_cost",))
+
+    return {
+        branch_id: amounts for branch_id, amounts in result.items()
+        if sum(amounts.values(), Decimal("0")) > 0
+    }
+
+
+def _post_landed_cost_journal(company, branch, entry_date, entry_number, description, lines, user):
+    year = FiscalYear.objects.filter(
+        company=company, status=FiscalYear.Status.OPEN,
+        start_date__lte=entry_date, end_date__gte=entry_date,
+    ).order_by("-start_date").first()
+    if not year:
+        raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ رسملة التكلفة.")
+    entry = JournalEntry.objects.create(
+        company=company, branch=branch, fiscal_year=year,
+        entry_number=entry_number, entry_date=entry_date,
+        description=description[:500], source_type=JournalEntry.Source.PURCHASES,
+        created_by=user,
+    )
+    journal_lines = []
+    for row in lines:
+        account, line_description, debit, credit = row[:4]
+        cost_center = row[4] if len(row) > 4 else None
+        if debit or credit:
+            journal_lines.append(JournalLine(
+                entry=entry, account=account, description=line_description[:240],
+                debit=debit, credit=credit, cost_center=cost_center,
+            ))
+    JournalLine.objects.bulk_create(journal_lines)
+    try:
+        return post_journal(entry.pk, actor=user)
+    except DjangoValidationError as exc:
+        detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+        raise ValidationError(detail) from exc
+
+
+@transaction.atomic
+def post_landed_cost_document(document_id, user):
+    """Capitalize freight/customs/etc. against the already-posted direct expense invoice."""
+    document = LandedCostDocument.objects.select_for_update(of=("self",)).select_related(
+        "company", "company__base_currency", "source_invoice", "source_invoice__branch",
+        "source_invoice__activity",
+    ).get(pk=document_id)
+    if document.status != LandedCostDocument.Status.DRAFT:
+        raise ValidationError("مستند رسملة التكلفة مرحّل بالفعل أو غير قابل للترحيل.")
+    invoice = PurchaseInvoice.objects.select_for_update(of=("self",)).select_related(
+        "company", "branch", "activity", "supplier",
+    ).get(pk=document.source_invoice_id)
+    if (
+        invoice.status != PurchaseInvoice.Status.POSTED
+        or invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE
+        or invoice.company_id != document.company_id
+        or not invoice.branch_id
+    ):
+        raise ValidationError("فاتورة مصروف المصدر غير صالحة لرسملة التكلفة.")
+    if not invoice.journal_entry_id or invoice.journal_entry.status != JournalEntry.Status.POSTED:
+        raise ValidationError("يجب أن يكون قيد فاتورة المصروف المصدر مرحّلًا قبل الرسملة.")
+
+    allocations = list(document.allocations.select_for_update(of=("self",)).select_related(
+        "source_invoice_line__expense_account", "receipt_line__product",
+        "receipt_line__movement", "receipt_line__movement__destination_warehouse",
+    ).order_by("receipt_line_id", "source_invoice_line_id", "pk"))
+    if not allocations:
+        raise ValidationError("مستند الرسملة لا يحتوي على بنود.")
+
+    # Match inventory posting lock order: products -> warehouses -> balances -> cost layers -> consumptions.
+    receipt_line_ids = sorted({line.receipt_line_id for line in allocations})
+    product_ids = sorted({line.receipt_line.product_id for line in allocations})
+    warehouse_ids = set(StockCostLayer.objects.filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).values_list("warehouse_id", flat=True))
+    warehouse_ids.update(StockMovementLine.objects.filter(
+        pk__in=receipt_line_ids,
+    ).values_list("movement__destination_warehouse_id", flat=True))
+    warehouse_ids.discard(None)
+    list(Product.objects.select_for_update().filter(pk__in=product_ids).order_by("pk"))
+    list(Warehouse.objects.select_for_update().filter(pk__in=sorted(warehouse_ids)).order_by("pk"))
+    list(StockBalance.objects.select_for_update().filter(
+        product_id__in=product_ids, warehouse_id__in=warehouse_ids,
+    ).order_by("id"))
+    list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+    list(StockCostConsumption.objects.select_for_update(of=("self",)).filter(
+        source_layer__root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+
+    if sum((line.amount for line in allocations), Decimal("0")) != document.total_amount:
+        raise ValidationError("إجمالي مستند الرسملة لا يطابق مجموع بنوده.")
+
+    for source_line_id in sorted({line.source_invoice_line_id for line in allocations}):
+        source_line = PurchaseInvoiceLine.objects.select_for_update(of=("self",)).get(pk=source_line_id)
+        nonrecoverable_tax = (
+            source_line.tax_amount
+            if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+            else Decimal("0")
+        )
+        capitalizable_amount = source_line.net_amount + nonrecoverable_tax
+        used = LandedCostAllocation.objects.filter(
+            source_invoice_line_id=source_line_id,
+        ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
+            total=Sum("amount"),
+        )["total"] or Decimal("0")
+        if used > capitalizable_amount:
+            raise ValidationError("إجمالي الرسملة يتجاوز قيمة بند المصروف والضريبة غير القابلة للخصم.")
+
+    source_branch = Branch.objects.select_for_update(of=("self",)).get(
+        pk=invoice.branch_id, company=invoice.company, is_active=True,
+    )
+    prepared = []
+    for allocation in allocations:
+        if allocation.source_invoice_line.invoice_id != invoice.pk:
+            raise ValidationError("بند المصروف لا يتبع فاتورة المصدر.")
+        expense_account = allocation.source_invoice_line.expense_account
+        if (
+            not expense_account or not expense_account.is_active or expense_account.is_group
+            or not expense_account.allow_posting or expense_account.nature != ChartOfAccount.Nature.EXPENSE
+        ):
+            raise ValidationError("حساب بند المصروف يجب أن يكون حساب مصروف تفصيليًا نشطًا ويسمح بالترحيل.")
+        if allocation.receipt_line.movement.company_id != invoice.company_id:
+            raise ValidationError("بند الاستلام لا يتبع الشركة.")
+        amounts = _allocate_landed_cost_to_stock(allocation)
+        if sum((sum(bucket.values(), Decimal("0")) for bucket in amounts.values()), Decimal("0")) != allocation.amount:
+            raise ValidationError("توزيع بند الرسملة لا يساوي مبلغ البند.")
+        prepared.append((allocation, amounts))
+
+    has_remote_branch = any(
+        branch_id != source_branch.pk
+        for _, amounts in prepared
+        for branch_id in amounts
+    )
+    clearing = (
+        _account(invoice.company, AccountRole.Role.INTER_BRANCH_CLEARING, invoice.activity)
+        if has_remote_branch else None
+    )
+    prepared_accounts = {}
+    for allocation, amounts in prepared:
+        expense_account = allocation.source_invoice_line.expense_account
+        for branch_id, bucket in amounts.items():
+            if bucket["inventory"]:
+                prepared_accounts["inventory"] = _account(invoice.company, AccountRole.Role.INVENTORY, invoice.activity)
+            if bucket["cogs"]:
+                prepared_accounts["cogs"] = _account(invoice.company, AccountRole.Role.COGS, invoice.activity)
+            if bucket["loss"]:
+                prepared_accounts["loss"] = _account(invoice.company, AccountRole.Role.INVENTORY_ADJUSTMENT_LOSS, invoice.activity)
+        used_accounts = [expense_account, *prepared_accounts.values()]
+        if clearing:
+            used_accounts.append(clearing)
+        if len({account.pk for account in used_accounts}) != len(used_accounts):
+            raise ValidationError("يجب فصل حساب المصروف عن حسابات المخزون والتكلفة والخسائر والتسوية بين الفروع.")
+
+    for allocation, amounts in prepared:
+        expense_account = allocation.source_invoice_line.expense_account
+        local = amounts.get(source_branch.pk, {
+            "inventory": Decimal("0"), "cogs": Decimal("0"), "loss": Decimal("0"),
+        })
+        remote_total = sum(
+            (sum(bucket.values(), Decimal("0")) for branch_id, bucket in amounts.items() if branch_id != source_branch.pk),
+            Decimal("0"),
+        )
+        source_lines = []
+        descriptions = {
+            "inventory": "رسملة نصيب الفرع من تكلفة الشراء على المخزون",
+            "cogs": "تحميل نصيب الفرع من تكلفة الشراء على تكلفة المبيعات",
+            "loss": "تحميل نصيب الفرع من تكلفة الشراء على خسائر المخزون",
+        }
+        for category in ("inventory", "cogs", "loss"):
+            value = local[category]
+            if value:
+                source_lines.append((
+                    prepared_accounts[category], descriptions[category], value, Decimal("0"),
+                    allocation.source_invoice_line.cost_center,
+                ))
+        if remote_total:
+            source_lines.append((clearing, "تسوية نصيب الفروع الأخرى من تكلفة الشراء", remote_total, Decimal("0")))
+        source_lines.append((
+            expense_account, "إعادة تصنيف مصروف الشحن/الجمارك إلى تكلفة المخزون والمبيعات",
+            Decimal("0"), allocation.amount, allocation.source_invoice_line.cost_center,
+        ))
+        source_entry = _post_landed_cost_journal(
+            invoice.company, source_branch, document.document_date,
+            f"PUR-LC-{document.pk}-{allocation.pk}-SRC",
+            f"رسملة تكلفة شراء من فاتورة {invoice.invoice_number}",
+            source_lines, user,
+        )
+        allocation.source_journal_entry = source_entry
+        allocation.save(update_fields=("source_journal_entry",))
+
+        for branch_id, bucket in sorted(amounts.items()):
+            branch = Branch.objects.get(pk=branch_id, company=invoice.company, is_active=True)
+            distribution = LandedCostDistribution.objects.create(
+                allocation=allocation, branch=branch,
+                inventory_amount=bucket["inventory"],
+                cogs_amount=bucket["cogs"],
+                adjustment_loss_amount=bucket["loss"],
+            )
+            if branch_id == source_branch.pk:
+                distribution.journal_entry = source_entry
+            else:
+                remote_lines = []
+                for category in ("inventory", "cogs", "loss"):
+                    value = bucket[category]
+                    if value:
+                        remote_lines.append((
+                            prepared_accounts[category], descriptions[category],
+                            value, Decimal("0"), allocation.source_invoice_line.cost_center,
+                        ))
+                remote_total = sum(bucket.values(), Decimal("0"))
+                remote_lines.append((
+                    clearing, "مقابل رسملة تكلفة الشراء بين الفروع",
+                    Decimal("0"), remote_total,
+                ))
+                distribution.journal_entry = _post_landed_cost_journal(
+                    invoice.company, branch, document.document_date,
+                    f"PUR-LC-{document.pk}-{allocation.pk}-{branch.pk}",
+                    f"نصيب الفرع من رسملة تكلفة فاتورة {invoice.invoice_number}",
+                    remote_lines, user,
+                )
+            distribution.save(update_fields=("journal_entry",))
+
+    document.status = LandedCostDocument.Status.POSTED
+    document.posted_by = user
+    document.posted_at = timezone.now()
+    document.save(update_fields=("status", "posted_by", "posted_at"))
+    AuditEvent.objects.create(
+        actor=user, company=invoice.company, branch=source_branch,
+        action=AuditEvent.Action.ACTION, resource="purchasing.landed_cost.posted",
+        object_id=str(document.pk), http_method="POST", status_code=200, succeeded=True,
+        metadata={
+            "document_number": document.document_number,
+            "source_invoice_id": invoice.pk,
+            "total_amount": str(document.total_amount),
+            "allocation_count": len(allocations),
+            "journal_entry_ids": sorted({
+                allocation.source_journal_entry_id
+                for allocation, _ in prepared if allocation.source_journal_entry_id
+            }),
+        },
+    )
+    return document
+
+
+
+@transaction.atomic
+def reverse_landed_cost_document(document_id, user, entry_date):
+    """Reverse landed-cost journals and stock valuation when no later stock consumption exists."""
+    document = LandedCostDocument.objects.select_for_update(of=("self",)).select_related(
+        "company", "company__base_currency",
+    ).get(pk=document_id)
+    if document.status != LandedCostDocument.Status.POSTED:
+        raise ValidationError("لا يمكن عكس إلا مستند رسملة تكلفة مرحّل.")
+    if document.reversal_journal_entry_id:
+        raise ValidationError("تم عكس مستند الرسملة من قبل.")
+    if entry_date < document.document_date:
+        raise ValidationError("تاريخ عكس الرسملة لا يجوز أن يسبق تاريخ المستند.")
+
+    allocations = list(document.allocations.select_for_update(of=("self",)).select_related(
+        "source_invoice_line", "receipt_line__product",
+    ).prefetch_related("distributions").order_by("receipt_line_id", "source_invoice_line_id", "pk"))
+    if not allocations:
+        raise ValidationError("لا توجد بنود رسملة يمكن عكسها.")
+
+    # Lock the same inventory dimensions in the same order used by stock movements.
+    receipt_line_ids = sorted({line.receipt_line_id for line in allocations})
+    product_ids = sorted({line.receipt_line.product_id for line in allocations})
+    warehouse_ids = set(StockCostLayer.objects.filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).values_list("warehouse_id", flat=True))
+    warehouse_ids.update(StockMovementLine.objects.filter(
+        pk__in=receipt_line_ids,
+    ).values_list("movement__destination_warehouse_id", flat=True))
+    warehouse_ids.discard(None)
+    list(Product.objects.select_for_update().filter(pk__in=product_ids).order_by("pk"))
+    list(Warehouse.objects.select_for_update().filter(pk__in=sorted(warehouse_ids)).order_by("pk"))
+    list(StockBalance.objects.select_for_update().filter(
+        product_id__in=product_ids, warehouse_id__in=warehouse_ids,
+    ).order_by("id"))
+    list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+    list(StockCostConsumption.objects.select_for_update(of=("self",)).filter(
+        source_layer__root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+
+    for allocation in allocations:
+        if not allocation.source_journal_entry_id:
+            raise ValidationError("قيد إعادة تصنيف مصروف المصدر غير مرتبط ببند الرسملة.")
+        receipt_line = allocation.receipt_line
+        if StockCostConsumption.objects.filter(
+            source_layer__root_source_line=receipt_line,
+            created_at__gt=document.posted_at,
+        ).exists():
+            raise ValidationError(
+                f"لا يمكن عكس الرسملة للصنف {receipt_line.product.code} بعد حدوث استهلاك مخزني لاحق؛ "
+                "يلزم معالجة أثر التكلفة اللاحق أولًا."
+            )
+
+        layers = list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+            root_source_line=receipt_line,
+        ).select_related("warehouse").order_by("pk"))
+        quantity = receipt_line.quantity
+        if quantity <= 0:
+            raise ValidationError("كمية الاستلام الأصلية غير صالحة لعكس الرسملة.")
+        unit_addition = (allocation.amount / quantity).quantize(
+            Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+        )
+        for layer in layers:
+            if layer.quantity_remaining > 0:
+                if layer.unit_cost < unit_addition:
+                    raise ValidationError("تعذر عكس زيادة تكلفة طبقة المخزون دون إنتاج تكلفة سالبة.")
+                layer.unit_cost = (layer.unit_cost - unit_addition).quantize(
+                    Decimal("0.00000001"), rounding=ROUND_HALF_UP,
+                )
+                layer.save(update_fields=("unit_cost",))
+
+        distributions = list(allocation.distributions.select_for_update(of=("self",)).select_related("branch").order_by("branch_id"))
+        inventory_total = sum((dist.inventory_amount for dist in distributions), Decimal("0"))
+        remaining_by_balance = defaultdict(Decimal)
+        for layer in layers:
+            if layer.quantity_remaining > 0:
+                key = (layer.warehouse_id, layer.location_id, layer.expiry_date)
+                remaining_by_balance[key] += layer.quantity_remaining
+        if inventory_total:
+            remaining_quantity = sum(remaining_by_balance.values(), Decimal("0"))
+            if remaining_quantity <= 0:
+                raise ValidationError("قيمة مخزون مرسملة موجودة دون طبقات متبقية لعكسها.")
+            currency = document.company.base_currency
+            quantum = Decimal("1").scaleb(-currency.decimal_places)
+            raw = {
+                key: qty * allocation.amount / quantity
+                for key, qty in remaining_by_balance.items()
+            }
+            rounded = {
+                key: value.quantize(quantum, rounding=ROUND_HALF_UP)
+                for key, value in raw.items()
+            }
+            residual = inventory_total - sum(rounded.values(), Decimal("0"))
+            if residual:
+                largest = max(raw, key=raw.get)
+                rounded[largest] += residual
+            for (warehouse_id, location_id, expiry_date), value in rounded.items():
+                balance = StockBalance.objects.select_for_update().get(
+                    product_id=receipt_line.product_id,
+                    warehouse_id=warehouse_id,
+                    location_id=location_id,
+                    expiry_date=expiry_date,
+                )
+                if balance.inventory_value < value:
+                    raise ValidationError("قيمة المخزون الحالية أقل من مبلغ الرسملة المطلوب عكسه.")
+                balance.inventory_value -= value
+                if balance.quantity > 0:
+                    balance.average_cost = (balance.inventory_value / balance.quantity).quantize(
+                        Decimal("0.000001"), rounding=ROUND_HALF_UP,
+                    )
+                balance.save(update_fields=("inventory_value", "average_cost", "updated_at"))
+
+    reversal_by_original = {}
+    for allocation in allocations:
+        original_entries = []
+        if allocation.source_journal_entry_id:
+            original_entries.append(allocation.source_journal_entry_id)
+        original_entries.extend(
+            distribution.journal_entry_id
+            for distribution in allocation.distributions.all()
+            if distribution.journal_entry_id
+        )
+        for original_id in sorted(set(original_entries)):
+            if original_id in reversal_by_original:
+                continue
+            original = JournalEntry.objects.select_for_update(of=("self",)).get(pk=original_id)
+            if original.status != JournalEntry.Status.POSTED:
+                raise ValidationError("يوجد قيد رسملة غير مرحّل أو سبق عكسه.")
+            try:
+                reversal = reverse_operational_journal(
+                    original.pk, user, entry_date, JournalEntry.Source.PURCHASES,
+                )
+            except DjangoValidationError as exc:
+                detail = exc.message_dict if hasattr(exc, "message_dict") else exc.messages
+                raise ValidationError(detail) from exc
+            reversal_by_original[original_id] = reversal
+
+        source_reversal = reversal_by_original[allocation.source_journal_entry_id]
+        LandedCostAllocation.objects.filter(pk=allocation.pk).update(
+            source_reversal_journal_entry=source_reversal,
+        )
+        for distribution in allocation.distributions.all():
+            if distribution.journal_entry_id:
+                LandedCostDistribution.objects.filter(pk=distribution.pk).update(
+                    reversal_journal_entry=reversal_by_original[distribution.journal_entry_id],
+                )
+
+    first_reversal = next(iter(reversal_by_original.values()))
+    LandedCostDocument.objects.filter(pk=document.pk).update(
+        status=LandedCostDocument.Status.REVERSED,
+        reversal_journal_entry=first_reversal,
+        reversed_at=timezone.now(),
+    )
+    AuditEvent.objects.create(
+        actor=user, company=document.company,
+        branch=allocations[0].source_journal_entry.branch,
+        action=AuditEvent.Action.ACTION, resource="purchasing.landed_cost.reversed",
+        object_id=str(document.pk), http_method="POST", status_code=200, succeeded=True,
+        metadata={
+            "document_number": document.document_number,
+            "reversal_date": entry_date.isoformat(),
+            "reversal_journal_entry_ids": sorted(
+                reversal.pk for reversal in reversal_by_original.values()
+            ),
+        },
+    )
+    return LandedCostDocument.objects.get(pk=document.pk)

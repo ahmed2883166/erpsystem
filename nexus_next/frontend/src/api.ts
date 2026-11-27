@@ -144,6 +144,62 @@ export type SupplierQuotation = {
   line_items:{id:number;rfq_line:number;product_code:string;product_name:string;quantity:string;unit_price:string;discount_percent:string;tax_rate:string;net_amount:string;tax_amount:string;total_amount:string}[];
   total_before_tax:string; tax_total:string; grand_total:string; submitted_at:string;
 };
+
+
+
+export type PurchaseAnalysisReport = {
+  company:number; date_from:string|null; date_to:string|null; branch:number|null;supplier:number|null;product:number|null;activity:number|null;
+  totals:{purchase_net:string;returned_net:string;net_purchases:string;nonrecoverable_tax:string;inventory_nonrecoverable_tax:string;total_cost:string;tax_amount:string;invoice_count:number;line_count:number};
+  rows:{
+    kind:"inventory"|"direct_expense";supplier_id:number;supplier_name:string;
+    product_id:number|null;product_code:string;product_name:string;
+    expense_account_id:number|null;expense_account_code:string;expense_account_name:string;
+    branch_id:number|null;branch_name:string;warehouse_id:number|null;warehouse_name:string;
+    activity_id:number|null;activity_name:string;invoice_count:number;line_count:number;
+    quantity:string;returned_quantity:string;purchase_net:string;returned_net:string;
+    nonrecoverable_tax:string;net_purchases:string;total_cost:string;tax_amount:string;
+  }[];
+};
+
+export type PurchaseMatchingReport = {
+  company:number; date_from:string|null; date_to:string|null; branch:number|null; supplier:number|null; product:number|null;
+  totals:{line_count:number;unreceived_line_count:number;uninvoiced_line_count:number;overinvoiced_line_count:number;order_value:string;invoiced_net_amount:string;price_variance:string};
+  rows:{
+    order_id:number;order_number:string;order_date:string;order_status:string;
+    supplier_id:number;supplier_name:string;warehouse_id:number;warehouse_name:string;branch_id:number|null;branch_name:string;
+    order_line_id:number;product_id:number;product_code:string;product_name:string;
+    ordered_quantity:string;received_quantity:string;recorded_received_quantity:string;receipt_link_discrepancy:string;
+    invoiced_quantity:string;returned_quantity:string;uninvoiced_received_quantity:string;unreceived_quantity:string;overinvoiced_quantity:string;
+    order_unit_price:string;expected_order_value:string;invoiced_net_amount:string;price_variance:string;
+    receipt_numbers:string[];invoice_numbers:string[];
+  }[];
+};
+
+export type LandedCostDocument = {
+  id:number; company:number; source_invoice:number; source_invoice_number:string; supplier_name:string;
+  document_number:string; document_date:string; status:"draft"|"posted"|"reversed"; total_amount:string;
+  notes:string; allocation_lines:{
+    id:number; source_invoice_line:number; source_description:string; expense_account:number;
+    receipt_line:number; product:number; product_code:string; product_name:string; quantity:string;
+    basis:"value"|"quantity"|"weight"|"volume"|"manual"; amount:string;
+    distributions:{branch:number;branch_name:string;inventory_amount:string;cogs_amount:string;adjustment_loss_amount:string;journal_entry:number|null}[];
+  }[]; created_at:string; posted_at:string|null; reversed_at:string|null;
+};
+export type LandedCostReport = {
+  company:number|string; date_from:string|null; date_to:string|null; branch:number|null; supplier:number|null; product:number|null;
+  totals:{allocated:string;inventory:string;cogs:string;adjustment_loss:string;reversed:string};
+  rows:{
+    document_id:number;document_number:string;document_date:string;document_status:string;
+    source_invoice_id:number;source_invoice_number:string;supplier_id:number;supplier_name:string;
+    expense_line_id:number;expense_description:string;expense_account_code:string;
+    receipt_line_id:number;product_id:number;product_code:string;product_name:string;warehouse_id:number;
+    branch_id:number;branch_name:string;allocation_basis:string;allocation_amount:string;
+    source_line_capitalizable_amount:string;source_line_allocated_to_date:string;source_line_unallocated:string;
+    inventory_amount:string;cogs_amount:string;adjustment_loss_amount:string;
+    journal_entry:number|null;reversal_journal_entry:number|null;
+  }[];
+};
+
 export type PurchaseReceipt = { id: number; company: number; supplier: number; supplier_name: string; warehouse: number; warehouse_name: string; receipt_number: string; receipt_date: string; supplier_delivery_ref: string; notes: string; movement_status: "draft" | "posted"; movement_number: string; line_items: { id: number; product: number; product_code: string; product_name: string; quantity: string; unit_cost: string; cost_amount: string; expiry_date: string | null }[]; created_at: string };
 export type PurchaseInvoice = {
   id:number; company:number; supplier:number; supplier_name:string; activity:number|null;
@@ -225,6 +281,25 @@ export const purchasingApi = {
   cancelRequisition: async (id: number) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRequisition>(`/api/purchasing/requisitions/${id}/cancel/`, { method: "POST" }); },
 
   grniAging: (companyId:number, asOf:string) => request<GRNIAgingReport>(`/api/purchasing/receipts/grni-aging/?company=${companyId}&as_of=${asOf}`),
+  landedCosts: (companyId:number) => request<LandedCostDocument[]>(`/api/purchasing/landed-costs/?company=${companyId}&ordering=-document_date`),
+  createLandedCost: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>("/api/purchasing/landed-costs/", {method:"POST",body:JSON.stringify(payload)}); },
+  postLandedCost: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>(`/api/purchasing/landed-costs/${id}/post/`, {method:"POST"}); },
+  reverseLandedCost: async (id:number,entryDate:string) => { await request<{detail:string}>("/api/csrf/"); return request<LandedCostDocument>(`/api/purchasing/landed-costs/${id}/reverse/`, {method:"POST",body:JSON.stringify({entry_date:entryDate})}); },
+  purchaseAnalysisReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number;activity?:number}={}) => {
+    const params=new URLSearchParams({company:String(companyId)});
+    Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
+    return request<PurchaseAnalysisReport>(`/api/purchasing/invoices/analysis-report/?${params.toString()}`);
+  },
+  purchaseMatchingReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number}={}) => {
+    const params=new URLSearchParams({company:String(companyId)});
+    Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
+    return request<PurchaseMatchingReport>(`/api/purchasing/orders/matching-report/?${params.toString()}`);
+  },
+  landedCostReport: (companyId:number,filters:{date_from?:string;date_to?:string;branch?:number;supplier?:number;product?:number}={}) => {
+    const params=new URLSearchParams({company:String(companyId)});
+    Object.entries(filters).forEach(([key,value])=>{if(value!==undefined&&value!==null&&value!=="")params.set(key,String(value));});
+    return request<LandedCostReport>(`/api/purchasing/landed-costs/report/?${params.toString()}`);
+  },
   rfqs: (companyId: number) => request<PurchaseRFQ[]>(`/api/purchasing/rfqs/?company=${companyId}&ordering=-issue_date`),
   quotations: (companyId: number) => request<SupplierQuotation[]>(`/api/purchasing/quotations/?rfq__company=${companyId}&ordering=-quotation_date`),
   createRFQ: async (payload: unknown) => { await request<{ detail: string }>("/api/csrf/"); return request<PurchaseRFQ>("/api/purchasing/rfqs/", { method:"POST", body:JSON.stringify(payload) }); },
