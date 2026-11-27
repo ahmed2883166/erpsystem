@@ -16,14 +16,6 @@ from .transfer_serializers import (
 from .transfer_services import dispatch_stock_transfer, receive_stock_transfer
 
 
-def _default_branch(company_id):
-    return Warehouse.objects.filter(
-        company_id=company_id, is_active=True, branch__is_active=True,
-    ).exclude(branch__isnull=True).order_by("-branch__is_head_office", "branch__code").values_list(
-        "branch_id", flat=True,
-    ).first()
-
-
 def _can_access_transfer_warehouse(user, warehouse):
     if warehouse.branch_id:
         return can_access_branch(user, warehouse.branch_id, warehouse.company_id)
@@ -136,7 +128,7 @@ class StockTransferViewSet(viewsets.ModelViewSet):
     def in_transit(self, request):
         queryset = self.filter_queryset(self.get_queryset()).filter(
             status__in=(StockTransfer.Status.IN_TRANSIT, StockTransfer.Status.PARTIALLY_RECEIVED),
-        ).prefetch_related("lines__product")
+        ).prefetch_related("lines__product__unit")
         rows = []
         for transfer in queryset:
             lines = [{
@@ -179,7 +171,20 @@ class StockTransferReceiptViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.is_superuser and not is_platform_owner(self.request.user):
             return queryset
         branches = accessible_branches(self.request.user)
-        return queryset.filter(
+        from companies.models import Branch
+        default_company_ids = []
+        for company_id in companies.values_list("id", flat=True):
+            branch = Branch.objects.filter(
+                company_id=company_id, is_active=True,
+            ).order_by("-is_head_office", "code").first()
+            if branch and can_access_branch(self.request.user, branch.pk, company_id):
+                default_company_ids.append(company_id)
+        source_scope = (
             Q(transfer__source_warehouse__branch__in=branches)
-            | Q(transfer__destination_warehouse__branch__in=branches)
-        ).distinct()
+            | Q(transfer__source_warehouse__branch__isnull=True, transfer__company_id__in=default_company_ids)
+        )
+        destination_scope = (
+            Q(transfer__destination_warehouse__branch__in=branches)
+            | Q(transfer__destination_warehouse__branch__isnull=True, transfer__company_id__in=default_company_ids)
+        )
+        return queryset.filter(source_scope, destination_scope).distinct()
