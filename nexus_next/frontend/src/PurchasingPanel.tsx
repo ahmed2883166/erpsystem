@@ -930,6 +930,22 @@ const postInvoice = async (id: number) => {
         <p className="inventory-report-note">يتم عرض أثر الرسملة حسب الفرع، مع فصل قيمة المخزون عن تكلفة المبيعات وخسائر المخزون، وربط كل توزيع بقيده المحاسبي.</p>
       </div>}
     </div>}
+    {tab === "aging" && agingView === "matching" && <div className="inventory-form">
+      <div className="inventory-form-row"><label>من تاريخ الأمر<input type="date" value={matchingReportFrom} onChange={e=>{setMatchingReportFrom(e.target.value);setPurchaseMatchingReport(null);}}/></label><label>إلى تاريخ الأمر<input type="date" value={matchingReportTo} onChange={e=>{setMatchingReportTo(e.target.value);setPurchaseMatchingReport(null);}}/></label></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseMatchingReport()}>{busy?"جارٍ التحميل…":"عرض تقرير المطابقة"}</button></div>
+      {purchaseMatchingReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>قيمة أوامر الشراء</span><strong>{money(purchaseMatchingReport.totals.order_value)}</strong></div>
+          <div><span>صافي الفواتير المرحلة</span><strong>{money(purchaseMatchingReport.totals.invoiced_net_amount)}</strong></div>
+          <div><span>فرق السعر</span><strong>{money(purchaseMatchingReport.totals.price_variance)}</strong></div>
+          <div><span>بنود غير مستلمة</span><strong>{purchaseMatchingReport.totals.unreceived_line_count}</strong></div>
+          <div><span>بنود مستلمة غير مفوترة</span><strong>{purchaseMatchingReport.totals.uninvoiced_line_count}</strong></div>
+          <div><span>بنود مفوترة بأكثر من الاستلام</span><strong>{purchaseMatchingReport.totals.overinvoiced_line_count}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>أمر الشراء</th><th>المورد / المخزن</th><th>الصنف</th><th>المطلوب</th><th>المستلم</th><th>المفوتر</th><th>غير مفوتر</th><th>غير مستلم</th><th>فرق السعر</th><th>الاستلامات / الفواتير</th></tr></thead><tbody>{purchaseMatchingReport.rows.map(row=><tr key={row.order_line_id}><td>{row.order_number}<small>{row.order_date}</small></td><td>{row.supplier_name}<small>{row.warehouse_name}</small></td><td>{row.product_code} · {row.product_name}</td><td>{row.ordered_quantity}</td><td>{row.received_quantity}<small>{Number(row.receipt_link_discrepancy)!==0?("فرق ربط: "+row.receipt_link_discrepancy):""}</small></td><td>{row.invoiced_quantity}</td><td>{row.uninvoiced_received_quantity}</td><td>{row.unreceived_quantity}</td><td>{money(row.price_variance)}</td><td><small>استلام: {row.receipt_numbers.join("، ")||"—"}</small><small>فاتورة: {row.invoice_numbers.join("، ")||"—"}</small></td></tr>)}</tbody></table>{purchaseMatchingReport.rows.length===0&&<div className="table-empty">لا توجد بنود أوامر شراء في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">يقارن التقرير كميات أمر الشراء بالاستلام والفواتير المرحلة، ويظهر الكميات غير المفوترة أو غير المستلمة وفروق أسعار الفواتير ومرتجعات الموردين.</p>
+      </div>}
+    </div>}
     {tab === "aging" && agingView === "grni" && <div className="inventory-form">
       <label>تاريخ المطابقة<input type="date" value={agingAsOf} onChange={e=>{setAgingAsOf(e.target.value);setGrniReport(null);}}/></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadGrni()}>{busy?"جارٍ التحميل…":"عرض تقرير GRNI"}</button></div>
