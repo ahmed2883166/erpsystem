@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 from companies.models import Company
 
 from .models import (
-    Product, StockMovement, StockMovementLine, StockTransfer, StockTransferLine,
+    StockMovement, StockMovementLine, StockTransfer, StockTransferLine,
     StockTransferReceipt, StockTransferReceiptLine, Warehouse,
 )
 from .services import post_stock_movement
