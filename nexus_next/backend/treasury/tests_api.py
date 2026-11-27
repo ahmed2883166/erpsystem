@@ -1910,7 +1910,7 @@ class PettyCashWorkflowTests(APITestCase):
             {"actual_balance": "400"}, format="json",
         )
         self.assertEqual(closed.status_code, 200, closed.data)
-        self.assertEqual(closed.data["returned_amount"], "400.0000")
+        self.assertEqual(Decimal(str(closed.data["returned_amount"])), Decimal("400.0000"))
         fund = PettyCashFund.objects.get(pk=fund_id)
         self.assertEqual(fund.status, PettyCashFund.Status.CLOSED)
         balance = self.client.get(f"/api/treasury/petty-cash-funds/{fund_id}/balance/")
