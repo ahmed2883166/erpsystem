@@ -1746,6 +1746,7 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
         totals = {
             "allocated": Decimal("0"), "inventory": Decimal("0"),
             "cogs": Decimal("0"), "adjustment_loss": Decimal("0"),
+            "reversed": Decimal("0"),
         }
         for document in qs.order_by("document_date", "document_number"):
             for allocation in document.allocations.all():
@@ -1768,10 +1769,13 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
                         distribution.inventory_amount + distribution.cogs_amount
                         + distribution.adjustment_loss_amount
                     )
-                    totals["allocated"] += allocated
-                    totals["inventory"] += distribution.inventory_amount
-                    totals["cogs"] += distribution.cogs_amount
-                    totals["adjustment_loss"] += distribution.adjustment_loss_amount
+                    if document.status == LandedCostDocument.Status.REVERSED:
+                        totals["reversed"] += allocated
+                    else:
+                        totals["allocated"] += allocated
+                        totals["inventory"] += distribution.inventory_amount
+                        totals["cogs"] += distribution.cogs_amount
+                        totals["adjustment_loss"] += distribution.adjustment_loss_amount
                     rows.append({
                         "document_id": document.pk,
                         "document_number": document.document_number,
