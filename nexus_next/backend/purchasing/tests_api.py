@@ -4421,9 +4421,8 @@ class SupplierPaymentIntegrityTests(TransactionTestCase):
     """Atomicity and PostgreSQL concurrency regressions for supplier disbursements."""
 
     def setUp(self):
-        PurchasingWorkflowTests.setUp(self)
         self.client = APIClient()
-        self.client.force_authenticate(self.user)
+        PurchasingWorkflowTests.setUp(self)
 
     def _create_posted_invoice(self, invoice_number):
         receipt_id, receipt_line_id = PurchasingWorkflowTests._create_and_post_receipt(self)
