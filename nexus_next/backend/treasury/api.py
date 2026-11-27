@@ -68,7 +68,7 @@ def _statement_cell(row, index):
 
 
 def _ofx_tag(block, name):
-    match = re.search(rf"<{name}>([^<\\r\\n]+)", block, flags=re.I)
+    match = re.search(rf"<{name}>([^<\r\n]+)", block, flags=re.I)
     return match.group(1).strip() if match else ""
 
 
@@ -129,7 +129,7 @@ def _parse_bank_statement(upload, statement_date):
     elif extension in ("ofx", "qfx"):
         text = raw.decode("utf-8-sig", errors="replace")
         for block in re.findall(r"<STMTTRN>(.*?)</STMTTRN>", text, flags=re.I | re.S):
-            posted = re.match(r"\\d{8}", _ofx_tag(block, "DTPOSTED"))
+            posted = re.match(r"\d{8}", _ofx_tag(block, "DTPOSTED"))
             rows.append(_statement_row(
                 _parse_statement_date(posted.group(0) if posted else _ofx_tag(block, "DTPOSTED")),
                 _parse_statement_amount(_ofx_tag(block, "TRNAMT")),
