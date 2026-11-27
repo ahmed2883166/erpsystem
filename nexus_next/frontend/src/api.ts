@@ -366,6 +366,26 @@ export const purchasingApi = {
 };
 
 
+export type CashCommitmentPayment = {
+  id:number; payment_date:string; amount:string; base_amount:string; journal_entry:number;
+  journal_number:string; reversal_journal_entry:number|null; reversal_journal_number:string; reference:string; notes:string; created_at:string;
+};
+export type CashCommitment = {
+  id:number; company:number; company_name:string; branch:number|null; branch_name:string;
+  commitment_type:"tax"|"recurring_expense"|"friday_overtime"|"other"; title:string; period_label:string;
+  amount:string; currency_code:string; exchange_rate:string; base_amount:string; due_date:string;
+  payable_account:number; payable_account_code:string; payable_account_name:string;
+  origin_type:string; origin_id:number|null; status:"open"|"partially_paid"|"paid"|"void";
+  notes:string; paid_base_amount:string; remaining_base_amount:string; payments:CashCommitmentPayment[];
+  created_at:string; updated_at:string;
+};
+export type CashCommitmentSchedule = {
+  id:number; company:number; company_name:string; branch:number|null; title:string; amount:string;
+  currency_code:string; exchange_rate:string; base_amount:string;
+  frequency:"monthly"|"quarterly"|"semiannual"|"annual"; interval_months:number; anchor_day:number;
+  next_due_date:string; end_date:string|null; payable_account:number; payable_account_code:string;
+  active:boolean; notes:string; created_at:string; updated_at:string;
+};
 export type TreasuryLiquiditySummary = {
   company:number; as_of:string; base_currency:string; branch:number|null; scope:string;
   total_base_balance:string; note:string;
@@ -378,8 +398,8 @@ export type TreasuryLiquidityForecast = {
   branch:number|null; actual_cash_balance:string; expected_collections:string;
   expected_supplier_payments:string; expected_payroll:string; expected_payments:string;
   expected_net:string; projected_closing_balance:string; note:string; coverage_notes:string[];
-  daily:{date:string;collections:string;supplier_payments:string;payroll:string;payments:string;net:string;projected_balance:string}[];
-  items:{kind:"collections"|"supplier_payments"|"payroll";document:string;party:string;due_date:string;forecast_date:string;balance:string;status:string;date_basis:string}[];
+  daily:{date:string;collections:string;supplier_payments:string;payroll:string;other_commitments:string;payments:string;net:string;projected_balance:string}[];
+  items:{kind:"collections"|"supplier_payments"|"payroll"|"other_commitments";document:string;party:string;due_date:string;forecast_date:string;balance:string;status:string;date_basis:string}[];
 };
 export type TreasuryAccount = {
   id: number; company: number; branch: number | null; branch_name: string; account: number;
@@ -469,6 +489,15 @@ export const treasuryApi = {
   },
   // جلب حركات الخزينة مرتبة من الأحدث.
   transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
+  commitments: (companyId:number) => request<CashCommitment[]>(`/api/treasury/commitments/?company=${companyId}&ordering=due_date`),
+  createCommitment: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitment>("/api/treasury/commitments/",{method:"POST",body:JSON.stringify(payload)}); },
+  updateCommitment: async (id:number,payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitment>(`/api/treasury/commitments/${id}/`,{method:"PATCH",body:JSON.stringify(payload)}); },
+  voidCommitment: async (id:number) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitment>(`/api/treasury/commitments/${id}/void/`,{method:"POST"}); },
+  recordCommitmentPayment: async (id:number,payload:{payment_date:string;amount:string;journal_entry:number;reference?:string;notes?:string}) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitmentPayment>(`/api/treasury/commitments/${id}/record-payment/`,{method:"POST",body:JSON.stringify(payload)}); },
+  reverseCommitmentPayment: async (id:number,paymentId:number,reversalJournalEntry:number) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitmentPayment>(`/api/treasury/commitments/${id}/reverse-payment/`,{method:"POST",body:JSON.stringify({payment_id:paymentId,reversal_journal_entry:reversalJournalEntry})}); },
+  commitmentSchedules: (companyId:number) => request<CashCommitmentSchedule[]>(`/api/treasury/commitment-schedules/?company=${companyId}`),
+  createCommitmentSchedule: async (payload:unknown) => { await request<{detail:string}>("/api/csrf/"); return request<CashCommitmentSchedule>("/api/treasury/commitment-schedules/",{method:"POST",body:JSON.stringify(payload)}); },
+  generateCommitmentSchedule: async (id:number,throughDate:string) => { await request<{detail:string}>("/api/csrf/"); return request<{generated:number;next_due_date:string;active:boolean}>(`/api/treasury/commitment-schedules/${id}/generate/`,{method:"POST",body:JSON.stringify({through_date:throughDate})}); },
   // جلب سجل الشيكات الواردة والصادرة للشركة.
   cheques: (companyId:number) => request<TreasuryCheque[]>(`/api/treasury/cheques/?company=${companyId}&ordering=due_date`),
   // تسجيل شيك جديد.
