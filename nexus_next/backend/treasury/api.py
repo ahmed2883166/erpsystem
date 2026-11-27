@@ -2013,6 +2013,11 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
         if not through_date:
             raise ValidationError({"through_date": "أدخل تاريخًا صحيحًا لتوليد الاستحقاقات حتى تاريخه."})
         if not schedule.active:
+            if schedule.end_date and schedule.next_due_date > schedule.end_date:
+                return response.Response({
+                    "generated": 0, "next_due_date": schedule.next_due_date,
+                    "active": False,
+                })
             raise ValidationError("الجدول الدوري متوقف.")
         next_due = schedule.next_due_date
         generated = 0
