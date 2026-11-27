@@ -2848,6 +2848,89 @@ class SalesWorkflowTests(APITestCase):
 
 
 
+    def test_sales_postings_reconcile_to_income_statement_balance_sheet_and_trial_balance(self):
+        """Reconcile a posted sale and partial return through the financial statements."""
+        delivery_id, delivery_line_id = self._create_delivery("FS-RECON-DEL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "FS-RECON-INV",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": delivery_line_id,
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "FS-RECON-RET",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        income = self.client.get(
+            f"/api/accounting/journal-entries/income-statement/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-12"
+        )
+        self.assertEqual(income.status_code, 200, income.data)
+        self.assertEqual(income.data["revenue_total"], Decimal("100.0000"))
+        self.assertEqual(income.data["cost_of_sales_total"], Decimal("40.0000"))
+        self.assertEqual(income.data["gross_profit"], Decimal("60.0000"))
+        self.assertEqual(income.data["expenses_total"], Decimal("0.0000"))
+        self.assertEqual(income.data["net_profit"], Decimal("60.0000"))
+
+        balance_sheet = self.client.get(
+            f"/api/accounting/journal-entries/balance-sheet/?company={self.company.pk}&as_of=2026-03-12"
+        )
+        self.assertEqual(balance_sheet.status_code, 200, balance_sheet.data)
+        self.assertEqual(balance_sheet.data["total_assets"], Decimal("274.0000"))
+        self.assertEqual(balance_sheet.data["total_liabilities"], Decimal("214.0000"))
+        self.assertEqual(balance_sheet.data["total_equity"], Decimal("60.0000"))
+        self.assertEqual(balance_sheet.data["difference"], Decimal("0.0000"))
+
+        trial_balance = self.client.get(
+            f"/api/accounting/journal-entries/trial-balance/?company={self.company.pk}"
+            "&date_from=2026-03-01&date_to=2026-03-12"
+        )
+        self.assertEqual(trial_balance.status_code, 200, trial_balance.data)
+        self.assertEqual(trial_balance.data["difference"], Decimal("0.0000"))
+        self.assertEqual(
+            trial_balance.data["debit_total"], trial_balance.data["credit_total"]
+        )
+
+        inventory_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INVENTORY
+        ).account
+        receivable_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.ACCOUNTS_RECEIVABLE
+        ).account
+        grni_account = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.GOODS_RECEIVED_NOT_INVOICED
+        ).account
+        inventory_line = balance_sheet.data["assets"]
+        balances = {row["account_id"]: row["balance"] for row in inventory_line}
+        self.assertEqual(balances[inventory_account.pk], Decimal("160.0000"))
+        self.assertEqual(balances[receivable_account.pk], Decimal("114.0000"))
+        liabilities = {row["account_id"]: row["balance"] for row in balance_sheet.data["liabilities"]}
+        self.assertEqual(liabilities[grni_account.pk], Decimal("200.0000"))
+
     def test_branch_limited_user_cannot_read_sales_documents_from_other_branch(self):
         from sales.models import SalesDelivery, SalesOrder, SalesReturn
 
