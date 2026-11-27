@@ -49,7 +49,7 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
 from .serializers import LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_landed_cost_document, reverse_landed_cost_document, post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
@@ -187,6 +187,130 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
             approval.save(update_fields=("status", "decided_at"))
         order.refresh_from_db()
         return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
+
+    @action(detail=False, methods=("get",), url_path="matching-report")
+    def matching_report(self, request):
+        """مطابقة الكميات والقيم بين أمر الشراء والاستلام وفواتير المورد."""
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير المطابقة."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        orders = self.get_queryset().filter(company_id=company_id).select_related(
+            "supplier", "warehouse", "warehouse__branch",
+        ).prefetch_related("lines__product", "lines__receipt_links__receipt_line__movement__purchase_receipt")
+        date_from = parse_date(request.query_params.get("date_from", "")) if request.query_params.get("date_from") else None
+        date_to = parse_date(request.query_params.get("date_to", "")) if request.query_params.get("date_to") else None
+        if request.query_params.get("date_from") and not date_from:
+            raise ValidationError({"date_from": "تاريخ البداية غير صالح."})
+        if request.query_params.get("date_to") and not date_to:
+            raise ValidationError({"date_to": "تاريخ النهاية غير صالح."})
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."})
+        if date_from:
+            orders = orders.filter(order_date__gte=date_from)
+        if date_to:
+            orders = orders.filter(order_date__lte=date_to)
+
+        supplier_id = request.query_params.get("supplier")
+        if supplier_id:
+            try:
+                supplier_id = int(supplier_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"supplier": "معرّف المورد غير صالح."}) from None
+            orders = orders.filter(supplier_id=supplier_id)
+        branch_id = request.query_params.get("branch")
+        if branch_id:
+            try:
+                branch_id = int(branch_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
+            if not can_access_branch(request.user, branch_id, company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            orders = orders.filter(warehouse__branch_id=branch_id)
+        product_id = request.query_params.get("product")
+        if product_id:
+            try:
+                product_id = int(product_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"product": "معرّف الصنف غير صالح."}) from None
+            orders = orders.filter(lines__product_id=product_id).distinct()
+
+        rows = []
+        totals = {
+            "ordered_quantity": Decimal("0"), "received_quantity": Decimal("0"),
+            "invoiced_quantity": Decimal("0"), "uninvoiced_received_quantity": Decimal("0"),
+            "unreceived_quantity": Decimal("0"), "price_variance": Decimal("0"),
+        }
+        for order in orders.order_by("order_date", "order_number"):
+            for line in order.lines.all():
+                links = list(line.receipt_links.select_related(
+                    "receipt_line__movement__purchase_receipt",
+                ).order_by("pk"))
+                receipt_line_ids = [link.receipt_line_id for link in links]
+                invoice_lines = list(PurchaseInvoiceLine.objects.filter(
+                    receipt_line_id__in=receipt_line_ids,
+                    invoice__status=PurchaseInvoice.Status.POSTED,
+                ).select_related("invoice").order_by("invoice__invoice_date", "pk"))
+                received_quantity = sum((link.quantity for link in links), Decimal("0"))
+                invoiced_quantity = sum((item.billed_quantity for item in invoice_lines), Decimal("0"))
+                invoiced_net = sum((item.net_amount for item in invoice_lines), Decimal("0"))
+                price_variance = sum((
+                    item.net_amount - (item.billed_quantity * line.unit_price)
+                    for item in invoice_lines
+                ), Decimal("0"))
+                returned_quantity = SupplierReturnLine.objects.filter(
+                    invoice_line__in=invoice_lines,
+                    return_document__status=SupplierReturn.Status.POSTED,
+                ).aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+                uninvoiced_quantity = max(received_quantity - invoiced_quantity, Decimal("0"))
+                unreceived_quantity = max(line.quantity - received_quantity, Decimal("0"))
+                overinvoiced_quantity = max(invoiced_quantity - received_quantity, Decimal("0"))
+                expected_value = line.quantity * line.unit_price
+                rows.append({
+                    "order_id": order.pk, "order_number": order.order_number,
+                    "order_date": order.order_date.isoformat(), "order_status": order.status,
+                    "supplier_id": order.supplier_id, "supplier_name": order.supplier.name_ar,
+                    "warehouse_id": order.warehouse_id, "warehouse_name": order.warehouse.name_ar,
+                    "branch_id": order.warehouse.branch_id, "branch_name": order.warehouse.branch.name_ar if order.warehouse.branch_id else "",
+                    "order_line_id": line.pk, "product_id": line.product_id,
+                    "product_code": line.product.code, "product_name": line.product.name_ar,
+                    "ordered_quantity": str(line.quantity),
+                    "received_quantity": str(received_quantity),
+                    "recorded_received_quantity": str(line.received_quantity),
+                    "receipt_link_discrepancy": str(line.received_quantity - received_quantity),
+                    "invoiced_quantity": str(invoiced_quantity),
+                    "returned_quantity": str(returned_quantity),
+                    "uninvoiced_received_quantity": str(uninvoiced_quantity),
+                    "unreceived_quantity": str(unreceived_quantity),
+                    "overinvoiced_quantity": str(overinvoiced_quantity),
+                    "order_unit_price": str(line.unit_price),
+                    "expected_order_value": str(expected_value),
+                    "invoiced_net_amount": str(invoiced_net),
+                    "price_variance": str(price_variance),
+                    "receipt_numbers": sorted({
+                        link.receipt_line.movement.purchase_receipt.receipt_number
+                        for link in links if hasattr(link.receipt_line.movement, "purchase_receipt")
+                    }),
+                    "invoice_numbers": sorted({item.invoice.invoice_number for item in invoice_lines}),
+                })
+                totals["ordered_quantity"] += line.quantity
+                totals["received_quantity"] += received_quantity
+                totals["invoiced_quantity"] += invoiced_quantity
+                totals["uninvoiced_received_quantity"] += uninvoiced_quantity
+                totals["unreceived_quantity"] += unreceived_quantity
+                totals["price_variance"] += price_variance
+
+        return Response({
+            "company": company_id,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
+            "branch": branch_id, "supplier": supplier_id, "product": product_id,
+            "totals": {key: str(value) for key, value in totals.items()},
+            "rows": rows,
+        })
 
 
 class PurchaseReceiptViewSet(PurchaseBaseViewSet):
