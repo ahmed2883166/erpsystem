@@ -49,7 +49,7 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [landedCosts, setLandedCosts] = useState<LandedCostDocument[]>([]);
   const [landedCostReport, setLandedCostReport] = useState<LandedCostReport | null>(null);
   const [landedCostForm, setLandedCostForm] = useState({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
-  const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;amount:string;basis:"manual"|"quantity"|"weight"|"volume"|"manual"}[]>([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
+  const [landedCostLines, setLandedCostLines] = useState<{source_invoice_line:string;receipt_line:string;receipt_lines:string[];amount:string;basis:"manual"|"quantity"|"value"}[]>([{source_invoice_line:"",receipt_line:"",receipt_lines:[],amount:"",basis:"manual"}]);
   const [landedCostReportFrom, setLandedCostReportFrom] = useState("");
   const [landedCostReportTo, setLandedCostReportTo] = useState("");
   const [purchaseMatchingReport, setPurchaseMatchingReport] = useState<PurchaseMatchingReport | null>(null);
@@ -206,8 +206,10 @@ const loadAging = async () => {
   const saveLandedCost = async (event:FormEvent) => {
     event.preventDefault();
     if (!companyId || !selectedLandedCostInvoice || !landedCostForm.document_number.trim()
-      || !landedCostLines.length || landedCostLines.some(line => !line.source_invoice_line || !line.receipt_line || Number(line.amount) <= 0)) {
-      setError("حدد فاتورة مصروف مرحلة ورقم المستند وبنود الاستلام ومبالغ صحيحة."); return;
+      || !landedCostLines.length || landedCostLines.some(line =>
+        !line.source_invoice_line || Number(line.amount) <= 0
+        || (line.basis === "manual" ? !line.receipt_line : line.receipt_lines.length < 1))) {
+      setError("حدد فاتورة مصروف مرحلة وبند المصروف وطريقة التوزيع وبنود الاستلام ومبلغًا صحيحًا."); return;
     }
     setBusy(true); setError("");
     try {
@@ -217,12 +219,15 @@ const loadAging = async () => {
         document_date:landedCostForm.document_date, notes:landedCostForm.notes,
         allocations:landedCostLines.map(line => ({
           source_invoice_line:Number(line.source_invoice_line),
-          receipt_line:Number(line.receipt_line), amount:line.amount, basis:line.basis,
+          ...(line.basis === "manual"
+            ? {receipt_line:Number(line.receipt_line)}
+            : {receipt_lines:line.receipt_lines.map(Number)}),
+          amount:line.amount, basis:line.basis,
         })),
       });
       setShowForm(false);
       setLandedCostForm({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
-      setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);
+      setLandedCostLines([{source_invoice_line:"",receipt_line:"",receipt_lines:[],amount:"",basis:"manual"}]);
       setNotice("تم حفظ مستند رسملة التكلفة كمسودة. لم يؤثر على الحسابات أو المخزون قبل الترحيل.");
       await refresh();
     } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ مستند الرسملة."); }
@@ -687,16 +692,16 @@ const postInvoice = async (id: number) => {
 
     {showForm && tab === "landed-cost" && <form className="inventory-form" onSubmit={e=>void saveLandedCost(e)}>
       <div className="inventory-wide"><h3>مستند رسملة تكلفة شراء</h3><p>اربط فاتورة مصروف شحن أو جمارك أو تأمين بسطور استلام البضاعة. سيظل المستند مسودة حتى تنفذ الترحيل.</p></div>
-      <label className="inventory-wide">فاتورة المصروف المصدر<select required value={landedCostForm.source_invoice} onChange={e=>{setLandedCostForm({...landedCostForm,source_invoice:e.target.value});setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}]);}}><option value="">اختر فاتورة مصروف مرحلة</option>{eligibleLandedCostInvoices.map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
+      <label className="inventory-wide">فاتورة المصروف المصدر<select required value={landedCostForm.source_invoice} onChange={e=>{setLandedCostForm({...landedCostForm,source_invoice:e.target.value});setLandedCostLines([{source_invoice_line:"",receipt_line:"",receipt_lines:[],amount:"",basis:"manual"}]);}}><option value="">اختر فاتورة مصروف مرحلة</option>{eligibleLandedCostInvoices.map(row=><option key={row.id} value={row.id}>{row.invoice_number} · {row.supplier_name} · {money(row.grand_total)}</option>)}</select></label>
       <label>رقم مستند الرسملة<input required value={landedCostForm.document_number} onChange={e=>setLandedCostForm({...landedCostForm,document_number:e.target.value})}/></label>
       <label>تاريخ الرسملة<input required type="date" value={landedCostForm.document_date} onChange={e=>setLandedCostForm({...landedCostForm,document_date:e.target.value})}/></label>
       <label className="inventory-wide">ملاحظات<textarea value={landedCostForm.notes} onChange={e=>setLandedCostForm({...landedCostForm,notes:e.target.value})}/></label>
-      <div className="inventory-wide"><div className="work-panel-head"><h3>توزيع المصروف على الاستلامات</h3><button className="subtle-button" type="button" onClick={()=>setLandedCostLines(old=>[...old,{source_invoice_line:"",receipt_line:"",amount:"",basis:"manual"}])}>＋ إضافة توزيع</button></div></div>
+      <div className="inventory-wide"><div className="work-panel-head"><h3>توزيع المصروف على الاستلامات</h3><button className="subtle-button" type="button" onClick={()=>setLandedCostLines(old=>[...old,{source_invoice_line:"",receipt_line:"",receipt_lines:[],amount:"",basis:"manual"}])}>＋ إضافة توزيع</button></div></div>
       {landedCostLines.map((line,index)=><div className="inventory-form-row inventory-wide" key={index}>
         <label>بند المصروف<select required value={line.source_invoice_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,source_invoice_line:e.target.value}:x))}><option value="">اختر بندًا</option>{selectedLandedCostInvoice?.invoice_lines.filter(x=>!!x.expense_account).map(x=><option key={x.id} value={x.id}>{x.description||x.expense_account_name||("بند "+x.id)} · {money(x.net_amount)}</option>)}</select></label>
-        <label>بند الاستلام<select required value={line.receipt_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,receipt_line:e.target.value}:x))}><option value="">اختر استلامًا</option>{receipts.filter(x=>x.movement_status==="posted").flatMap(receipt=>receipt.line_items.map(item=><option key={item.id} value={item.id}>{receipt.receipt_number} · {item.product_code} · {item.product_name}</option>))}</select></label>
-        <label>طريقة التوزيع<input value="يدوي لكل بند استلام" readOnly /></label>
-        <label>مبلغ التحميل<input required type="number" min="0.0001" step="0.0001" value={line.amount} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,amount:e.target.value}:x))}/></label>
+        <label>طريقة التوزيع<select value={line.basis} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,basis:e.target.value as "manual"|"value"|"quantity",receipt_line:"",receipt_lines:[]}:x))}><option value="manual">يدوي</option><option value="value">حسب قيمة الاستلام</option><option value="quantity">حسب الكمية المستلمة</option></select></label>
+        {line.basis === "manual" ? <label>بند الاستلام<select required value={line.receipt_line} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,receipt_line:e.target.value}:x))}><option value="">اختر استلامًا</option>{receipts.filter(x=>x.movement_status==="posted").flatMap(receipt=>receipt.line_items.map(item=><option key={item.id} value={item.id}>{receipt.receipt_number} · {item.product_code} · {item.product_name}</option>))}</select></label> : <label>بنود الاستلام<select required multiple value={line.receipt_lines} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,receipt_lines:Array.from(e.target.selectedOptions).map(option=>option.value)}:x))}>{receipts.filter(x=>x.movement_status==="posted").flatMap(receipt=>receipt.line_items.map(item=><option key={item.id} value={item.id}>{receipt.receipt_number} · {item.product_code} · {item.product_name} · كمية {item.quantity} · قيمة {item.cost_amount}</option>))}</select></label>}
+        <label>{line.basis === "manual" ? "مبلغ التحميل" : "إجمالي المبلغ المراد توزيعه"}<input required type="number" min="0.0001" step="0.0001" value={line.amount} onChange={e=>setLandedCostLines(old=>old.map((x,i)=>i===index?{...x,amount:e.target.value}:x))}/></label>
         <button className="subtle-button" type="button" disabled={landedCostLines.length===1} onClick={()=>setLandedCostLines(old=>old.filter((_,i)=>i!==index))}>حذف</button>
       </div>)}
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy||!eligibleLandedCostInvoices.length}>حفظ مسودة الرسملة</button><button className="subtle-button" type="button" onClick={()=>setShowForm(false)}>إلغاء</button></div>
