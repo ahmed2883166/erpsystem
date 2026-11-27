@@ -1985,7 +1985,7 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
         schedule = serializer.instance
         self._write(schedule.company_id)
         if schedule.occurrences.filter(commitment__isnull=False).exists():
-            changed_fields = set(serializer.validated_data) - {"active"}
+            changed_fields = set(serializer.initial_data) - {"active"}
             if changed_fields:
                 raise ValidationError("بعد توليد الاستحقاقات لا يمكن تعديل تفاصيل الجدول؛ يمكنك إيقافه أو إعادة تفعيله فقط.")
         company = serializer.validated_data.get("company", schedule.company)
