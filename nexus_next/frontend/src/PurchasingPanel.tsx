@@ -190,6 +190,58 @@ const loadAging = async () => {
     finally { setBusy(false); }
   };
 
+  const eligibleLandedCostInvoices = invoices.filter(row =>
+    row.invoice_type === "direct_expense" && row.status === "posted" && row.invoice_lines.some(line => !!line.expense_account),
+  );
+  const selectedLandedCostInvoice = eligibleLandedCostInvoices.find(row => row.id === Number(landedCostForm.source_invoice)) || null;
+  const saveLandedCost = async (event:FormEvent) => {
+    event.preventDefault();
+    if (!companyId || !selectedLandedCostInvoice || !landedCostForm.document_number.trim()
+      || !landedCostLines.length || landedCostLines.some(line => !line.source_invoice_line || !line.receipt_line || Number(line.amount) <= 0)) {
+      setError("حدد فاتورة مصروف مرحلة ورقم المستند وبنود الاستلام ومبالغ صحيحة."); return;
+    }
+    setBusy(true); setError("");
+    try {
+      await purchasingApi.createLandedCost({
+        company:companyId, source_invoice:selectedLandedCostInvoice.id,
+        document_number:landedCostForm.document_number.trim(),
+        document_date:landedCostForm.document_date, notes:landedCostForm.notes,
+        allocations:landedCostLines.map(line => ({
+          source_invoice_line:Number(line.source_invoice_line),
+          receipt_line:Number(line.receipt_line), amount:line.amount, basis:line.basis,
+        })),
+      });
+      setShowForm(false);
+      setLandedCostForm({source_invoice:"",document_number:"",document_date:new Date().toISOString().slice(0,10),notes:""});
+      setLandedCostLines([{source_invoice_line:"",receipt_line:"",amount:"",basis:"value"}]);
+      setNotice("تم حفظ مستند رسملة التكلفة كمسودة. لم يؤثر على الحسابات أو المخزون قبل الترحيل.");
+      await refresh();
+    } catch(reason) { setError(reason instanceof Error?reason.message:"تعذر حفظ مستند الرسملة."); }
+    finally { setBusy(false); }
+  };
+  const postLandedCost = async (id:number) => {
+    setBusy(true);setError("");setNotice("");
+    try { await purchasingApi.postLandedCost(id);setNotice("تم ترحيل رسملة التكلفة وتحديث المخزون والقيود.");await refresh(); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر ترحيل رسملة التكلفة."); }
+    finally { setBusy(false); }
+  };
+  const reverseLandedCost = async (id:number) => {
+    const entryDate = window.prompt("أدخل تاريخ عكس الرسملة (YYYY-MM-DD):", new Date().toISOString().slice(0,10));
+    if(!entryDate)return;
+    setBusy(true);setError("");setNotice("");
+    try { await purchasingApi.reverseLandedCost(id,entryDate);setNotice("تم عكس الرسملة والقيود المرتبطة بها.");await refresh(); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر عكس الرسملة."); }
+    finally { setBusy(false); }
+  };
+  const loadLandedCostReport = async () => {
+    if(!companyId)return;
+    if(landedCostReportFrom && landedCostReportTo && landedCostReportFrom>landedCostReportTo){setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.");return;}
+    setBusy(true);setError("");
+    try { setLandedCostReport(await purchasingApi.landedCostReport(companyId,{date_from:landedCostReportFrom||undefined,date_to:landedCostReportTo||undefined})); }
+    catch(reason) { setError(reason instanceof Error?reason.message:"تعذر تحميل تقرير رسملة التكلفة."); }
+    finally { setBusy(false); }
+  };
+
 
 
   const saveRFQ = async (event: FormEvent) => {
