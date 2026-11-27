@@ -259,7 +259,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
                 invoiced_quantity = sum((item.billed_quantity for item in invoice_lines), Decimal("0"))
                 invoiced_net = sum((item.net_amount for item in invoice_lines), Decimal("0"))
                 price_variance = sum((
-                    item.net_amount - (item.billed_quantity * line.unit_price)
+                    (item.net_amount - (item.billed_quantity * line.unit_price)).quantize(Decimal("0.0001"))
                     for item in invoice_lines
                 ), Decimal("0"))
                 returned_quantity = SupplierReturnLine.objects.filter(
@@ -269,7 +269,7 @@ class PurchaseOrderViewSet(PurchaseBaseViewSet):
                 uninvoiced_quantity = max(received_quantity - invoiced_quantity, Decimal("0"))
                 unreceived_quantity = max(line.quantity - received_quantity, Decimal("0"))
                 overinvoiced_quantity = max(invoiced_quantity - received_quantity, Decimal("0"))
-                expected_value = line.quantity * line.unit_price
+                expected_value = (line.quantity * line.unit_price).quantize(Decimal("0.0001"))
                 rows.append({
                     "order_id": order.pk, "order_number": order.order_number,
                     "order_date": order.order_date.isoformat(), "order_status": order.status,
