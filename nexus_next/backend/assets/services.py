@@ -1050,7 +1050,7 @@ def post_asset_purchase_invoice(invoice_id, user=None):
 
 @transaction.atomic
 def post_asset_supplier_payment(payment_id, user=None):
-    """ترحيل سداد فاتورة الأصل على حساب الموردين مع منع تجاوز الرصيد المستحق."""
+    """ترحيل سداد فاتورة الأصل بعد التحقق من الخزينة والرصيد قبل إنشاء القيد."""
     payment = AssetSupplierPayment.objects.select_for_update(of=("self",)).select_related(
         "company", "branch", "invoice", "supplier", "payment_account",
     ).get(pk=payment_id)
@@ -1062,6 +1062,7 @@ def post_asset_supplier_payment(payment_id, user=None):
         require_financial_approval(FinancialApprovalRequest.DocumentType.ASSET_SUPPLIER_PAYMENT, payment)
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
+
     invoice = AssetPurchaseInvoice.objects.select_for_update(of=("self",)).get(pk=payment.invoice_id)
     if invoice.status != AssetPurchaseInvoice.Status.POSTED:
         raise ValidationError("لا يمكن سداد فاتورة أصل غير مرحلة.")
@@ -1081,12 +1082,47 @@ def post_asset_supplier_payment(payment_id, user=None):
     ).order_by("-start_date").first()
     if not year:
         raise ValidationError("لا توجد سنة مالية مفتوحة تشمل تاريخ السداد.")
+
     payable = get_account_for_role(payment.company, AccountRole.Role.ACCOUNTS_PAYABLE)
     cash = payment.payment_account
-    if cash.company_id != payment.company_id or cash.nature != "asset" or not cash.is_active or cash.is_group or not cash.allow_posting:
+    if (
+        cash.company_id != payment.company_id or cash.nature != "asset"
+        or not cash.is_active or cash.is_group or not cash.allow_posting
+    ):
         raise ValidationError("حساب البنك أو الخزينة غير صالح.")
     if cash.pk == payable.pk:
         raise ValidationError("يجب فصل حساب الموردين عن حساب البنك أو الخزينة.")
+
+    # Lock the treasury record before checking the ledger balance. This serializes
+    # payments made from the same cash/bank account and prevents concurrent overdrafts.
+    from treasury.models import TreasuryAccount, TreasuryTransaction
+    treasury_account = TreasuryAccount.objects.select_for_update(of=("self",)).filter(
+        company=payment.company, account=cash,
+    ).first()
+    if not treasury_account or not treasury_account.is_active or treasury_account.kind not in (
+        TreasuryAccount.Kind.CASH, TreasuryAccount.Kind.BANK,
+    ):
+        raise ValidationError("حساب السداد يجب أن يكون مرتبطًا بخزينة أو بنك نشط.")
+    if treasury_account.branch_id and treasury_account.branch_id != payment.branch_id:
+        raise ValidationError("حساب الخزينة أو البنك لا يتبع فرع سند السداد.")
+    if treasury_account.currency_code != payment.company.base_currency.code:
+        raise ValidationError("سداد فاتورة الأصل يتطلب حساب خزينة بعملة الشركة الأساسية.")
+
+    totals = cash.journal_lines.filter(
+        entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+    ).aggregate(debit=Sum("debit"), credit=Sum("credit"))
+    opening_balance = (
+        Decimal("0") if treasury_account.opening_journal_entry_id
+        else treasury_account.opening_balance
+    )
+    available_balance = (
+        opening_balance + (totals["debit"] or Decimal("0"))
+        - (totals["credit"] or Decimal("0"))
+    )
+    if available_balance < payment.amount:
+        raise ValidationError(
+            f"الرصيد المتاح في حساب الخزينة أو البنك غير كافٍ للسداد؛ المتاح {available_balance}."
+        )
 
     entry = JournalEntry.objects.create(
         company=payment.company, branch=payment.branch, fiscal_year=year,
@@ -1103,19 +1139,10 @@ def post_asset_supplier_payment(payment_id, user=None):
     except DjangoValidationError as exc:
         raise ValidationError(exc.message_dict if hasattr(exc, "message_dict") else exc.messages) from exc
 
-    # Keep bank/cash movements visible in the treasury cash-flow subsystem as well as the GL.
-    from treasury.models import TreasuryAccount, TreasuryTransaction
+    # The treasury mirror is linked to the already-posted journal and remains
+    # inside this atomic transaction: a failure rolls back both journal and payment.
     from treasury.services import record_posted_document_bank_movement
-    treasury_account = TreasuryAccount.objects.filter(
-        company=payment.company, account=cash, kind=TreasuryAccount.Kind.BANK, is_active=True,
-    ).first()
-    if (
-        not treasury_account
-        or (treasury_account.branch_id and treasury_account.branch_id != payment.branch_id)
-        or treasury_account.currency_code != payment.company.base_currency.code
-    ):
-        raise ValidationError("حساب السداد يجب أن يكون مرتبطًا بحساب خزينة/بنك نشط بعملة الشركة ومطابقًا للفرع.")
-    record_posted_document_bank_movement(
+    movement = record_posted_document_bank_movement(
         company=payment.company, branch=payment.branch, fiscal_year=year, account=cash,
         kind=TreasuryTransaction.Kind.PAYMENT, amount=payment.amount,
         transaction_date=payment.payment_date, document_number=f"AUTO-FA-PAY-{payment.pk}",
@@ -1123,6 +1150,8 @@ def post_asset_supplier_payment(payment_id, user=None):
         counter_account=payable, journal_entry=posted, user=user, reference=payment.reference,
         cash_flow_category=TreasuryTransaction.CashFlowCategory.INVESTING,
     )
+    if movement is None:
+        raise ValidationError("تعذر تسجيل حركة سداد الأصل في الخزينة؛ لم يتم اعتماد السداد.")
     payment.journal_entry = posted
     payment.status = AssetSupplierPayment.Status.POSTED
     payment.posted_at = timezone.now()
