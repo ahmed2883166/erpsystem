@@ -12,8 +12,8 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, CashCommitmentOccurrence
-from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer, CashCommitmentSerializer, CashCommitmentPaymentSerializer, CashCommitmentScheduleSerializer
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, CashCommitmentOccurrence, PettyCashFund, PettyCashExpense, PettyCashSettlement, PettyCashTransfer, PettyCashCount
+from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer, CashCommitmentSerializer, CashCommitmentPaymentSerializer, CashCommitmentScheduleSerializer, PettyCashFundSerializer, PettyCashExpenseSerializer, PettyCashCountSerializer
 from .services import (
     post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
     reverse_treasury_fx_revaluation, can_reverse_treasury_fx_revaluation,
@@ -24,6 +24,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 import re
 import zipfile
+import uuid
 
 
 def _parse_statement_date(value):
@@ -2062,3 +2063,289 @@ class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
             "generated": generated, "next_due_date": schedule.next_due_date,
             "active": schedule.active,
         })
+
+
+class PettyCashFundViewSet(TreasuryBaseViewSet):
+    serializer_class = PettyCashFundSerializer
+    queryset = PettyCashFund.objects.select_related(
+        "company", "branch", "custodian", "funding_account", "petty_cash_account",
+        "funding_account__account", "petty_cash_account__account",
+    ).all()
+
+    def get_queryset(self):
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            qs = qs.filter(branch__in=accessible_branches(self.request.user))
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            if not company_id.isdigit():
+                raise ValidationError({"company": "الشركة المحددة غير صحيحة."})
+            self._scope(int(company_id))
+            qs = qs.filter(company_id=int(company_id))
+        branch = self.request.query_params.get("branch")
+        if branch:
+            if not branch.isdigit() or not can_access_branch(self.request.user, int(branch)):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            qs = qs.filter(branch_id=int(branch))
+        return qs
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        branch = serializer.validated_data["branch"]
+        self._scope(company.pk)
+        self._write(company.pk)
+        if not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية إدارة العهدة في هذا الفرع.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        fund = serializer.instance
+        self._write(fund.company_id)
+        if "status" in serializer.validated_data and serializer.validated_data["status"] == PettyCashFund.Status.CLOSED:
+            if self._balance(fund) != 0 or fund.expenses.filter(status=PettyCashExpense.Status.DRAFT).exists():
+                raise ValidationError("لا يمكن إغلاق عهدة بها رصيد أو مصروفات غير مسواة.")
+        if fund.transfers.exists() or fund.expenses.exists():
+            for field in ("company", "branch", "custodian", "funding_account", "petty_cash_account", "authorized_amount"):
+                if field in serializer.validated_data and getattr(serializer.validated_data[field], "pk", serializer.validated_data[field]) != getattr(fund, f"{field}_id", getattr(fund, field)):
+                    raise ValidationError({field: "لا يمكن تغيير بيانات تأسيس العهدة بعد بدء حركتها."})
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._write(instance.company_id)
+        if instance.transfers.exists() or instance.expenses.exists():
+            raise ValidationError("لا يمكن حذف عهدة لها حركة؛ استخدم حالة الإيقاف أو الإغلاق للحفاظ على الأثر.")
+        instance.status = PettyCashFund.Status.CLOSED
+        instance.save(update_fields=("status", "updated_at"))
+
+    @staticmethod
+    def _balance(fund, as_of=None):
+        from accounting.models import JournalEntry, JournalLine
+        rows = JournalLine.objects.filter(
+            account_id=fund.petty_cash_account.account_id,
+            entry__company_id=fund.company_id,
+            entry__status__in=(JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED),
+        )
+        if as_of:
+            rows = rows.filter(entry__entry_date__lte=as_of)
+        totals = rows.aggregate(debit=Sum("debit"), credit=Sum("credit"))
+        return (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+
+    @decorators.action(detail=True, methods=("get",), url_path="balance")
+    def balance(self, request, pk=None):
+        fund = self.get_object()
+        self._scope(fund.company_id)
+        value = self._balance(fund)
+        return response.Response({
+            "fund": fund.pk, "as_of": timezone.localdate(),
+            "authorized_amount": fund.authorized_amount, "book_balance": value,
+            "unsettled_expenses": fund.expenses.filter(status=PettyCashExpense.Status.DRAFT).aggregate(total=Sum("amount"))["total"] or Decimal("0"),
+            "available_for_expenses": max(Decimal("0"), value),
+        })
+
+    def _transfer(self, fund, amount, transfer_kind, transaction_date, user):
+        from companies.models import FiscalYear
+        from .services import post_treasury_transaction
+        year = FiscalYear.objects.filter(
+            company=fund.company, status=FiscalYear.Status.OPEN,
+            start_date__lte=transaction_date, end_date__gte=transaction_date,
+        ).first()
+        if not year:
+            raise ValidationError({"transaction_date": "لا توجد سنة مالية مفتوحة في تاريخ الحركة."})
+        doc = TreasuryTransaction.objects.create(
+            company=fund.company, branch=fund.branch, fiscal_year=year,
+            source_account=fund.funding_account, destination_account=fund.petty_cash_account,
+            kind=TreasuryTransaction.Kind.TRANSFER,
+            document_number=f"PCF-{fund.pk}-{uuid.uuid4().hex[:10].upper()}",
+            transaction_date=transaction_date, amount=amount,
+            description=("صرف عهدة نثرية " if transfer_kind == PettyCashTransfer.Kind.INITIAL else "تغذية عهدة نثرية ") + fund.name,
+            reference=f"PETTY-CASH:{fund.pk}", created_by=user,
+        )
+        post_treasury_transaction(doc.pk, user=user)
+        PettyCashTransfer.objects.create(
+            fund=fund, kind=transfer_kind, amount=amount,
+            treasury_transaction=doc, created_by=user,
+        )
+        return doc
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="fund")
+    def fund(self, request, pk=None):
+        fund = PettyCashFund.objects.select_for_update().get(pk=self.get_object().pk)
+        self._write(fund.company_id)
+        if fund.status != PettyCashFund.Status.ACTIVE:
+            raise ValidationError("لا يمكن تمويل عهدة غير نشطة.")
+        if PettyCashTransfer.objects.filter(fund=fund, kind=PettyCashTransfer.Kind.INITIAL).exists():
+            raise ValidationError("تم صرف العهدة التأسيسية من قبل؛ استخدم إجراء التغذية بعد التسوية.")
+        try:
+            amount = Decimal(str(request.data.get("amount", "")))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError({"amount": "أدخل مبلغًا صحيحًا."}) from None
+        movement_date = dateparse.parse_date(str(request.data.get("transaction_date", "")))
+        if not amount.is_finite() or amount <= 0 or not movement_date:
+            raise ValidationError({"detail": "أدخل مبلغًا موجبًا وتاريخ حركة صحيحًا."})
+        if amount > fund.authorized_amount:
+            raise ValidationError({"amount": "لا يجوز صرف عهدة تأسيسية تتجاوز الحد المعتمد."})
+        if self._balance(fund) != 0:
+            raise ValidationError({"amount": "يجب أن يكون رصيد حساب العهدة صفرًا قبل الصرف التأسيسي."})
+        doc = self._transfer(fund, amount, PettyCashTransfer.Kind.INITIAL, movement_date, request.user)
+        return response.Response({"transfer_id": doc.pk, "document_number": doc.document_number, "journal_entry": doc.journal_entry_id, "amount": amount}, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="replenish")
+    def replenish(self, request, pk=None):
+        fund = PettyCashFund.objects.select_for_update().get(pk=self.get_object().pk)
+        self._write(fund.company_id)
+        if fund.status != PettyCashFund.Status.ACTIVE:
+            raise ValidationError("لا يمكن تغذية عهدة غير نشطة.")
+        try:
+            amount = Decimal(str(request.data.get("amount", "")))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError({"amount": "أدخل مبلغًا صحيحًا."}) from None
+        movement_date = dateparse.parse_date(str(request.data.get("transaction_date", "")))
+        if not amount.is_finite() or amount <= 0 or not movement_date:
+            raise ValidationError({"detail": "أدخل مبلغًا موجبًا وتاريخ حركة صحيحًا."})
+        settlements = list(fund.settlements.select_for_update().filter(total_amount__gt=models.F("replenished_amount")).order_by("settlement_date", "id"))
+        if any(item.settlement_date > movement_date for item in settlements):
+            raise ValidationError({"transaction_date": "تاريخ التغذية لا يجوز أن يسبق تاريخ التسوية."})
+        outstanding = sum((item.total_amount - item.replenished_amount for item in settlements), Decimal("0"))
+        if outstanding <= 0 or amount != outstanding:
+            raise ValidationError({"amount": f"قيمة التغذية يجب أن تساوي إجمالي التسويات غير المغذاة ({outstanding})."})
+        balance = self._balance(fund)
+        if balance + amount > fund.authorized_amount:
+            raise ValidationError({"amount": "التغذية ستتجاوز قيمة العهدة المعتمدة."})
+        doc = self._transfer(fund, amount, PettyCashTransfer.Kind.REPLENISHMENT, movement_date, request.user)
+        for settlement in settlements:
+            settlement.replenished_amount = settlement.total_amount
+            settlement.save(update_fields=("replenished_amount",))
+        return response.Response({"transfer_id": doc.pk, "document_number": doc.document_number, "journal_entry": doc.journal_entry_id, "amount": amount})
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="settle")
+    def settle(self, request, pk=None):
+        from accounting.models import JournalEntry, JournalLine
+        from accounting.services import post_journal
+        from companies.models import FiscalYear
+        fund = PettyCashFund.objects.select_for_update().get(pk=self.get_object().pk)
+        self._write(fund.company_id)
+        if fund.status != PettyCashFund.Status.ACTIVE:
+            raise ValidationError("لا يمكن تسوية عهدة غير نشطة.")
+        raw_ids = request.data.get("expense_ids")
+        if not isinstance(raw_ids, list) or not raw_ids or any(not str(item).isdigit() for item in raw_ids):
+            raise ValidationError({"expense_ids": "حدد مصروفات مسودة للتسوية."})
+        expense_ids = sorted({int(item) for item in raw_ids})
+        expenses = list(PettyCashExpense.objects.select_for_update().filter(
+            pk__in=expense_ids, fund=fund, status=PettyCashExpense.Status.DRAFT,
+        ).select_related("expense_account"))
+        if len(expenses) != len(expense_ids):
+            raise ValidationError({"expense_ids": "بعض المصروفات غير موجودة أو سبق تسويتها أو لا تتبع هذه العهدة."})
+        settlement_date = dateparse.parse_date(str(request.data.get("settlement_date", "")))
+        if not settlement_date or any(item.expense_date > settlement_date for item in expenses):
+            raise ValidationError({"settlement_date": "تاريخ التسوية غير صحيح أو يسبق تاريخ أحد المصروفات."})
+        missing_receipts = [item.pk for item in expenses if not item.receipt_number.strip()]
+        if missing_receipts:
+            raise ValidationError({"expense_ids": f"يجب إدخال رقم إيصال أو مستند لكل مصروف قبل التسوية: {missing_receipts}."})
+        total = sum((item.amount for item in expenses), Decimal("0"))
+        if self._balance(fund) < total:
+            raise ValidationError({"expense_ids": "رصيد العهدة الدفتري لا يكفي لتسوية المصروفات المحددة."})
+        year = FiscalYear.objects.filter(
+            company=fund.company, status=FiscalYear.Status.OPEN,
+            start_date__lte=settlement_date, end_date__gte=settlement_date,
+        ).first()
+        if not year:
+            raise ValidationError({"settlement_date": "لا توجد سنة مالية مفتوحة في تاريخ التسوية."})
+        entry = JournalEntry.objects.create(
+            company=fund.company, branch=fund.branch, fiscal_year=year,
+            entry_number=f"PC-S-{fund.pk}-{uuid.uuid4().hex[:10].upper()}",
+            entry_date=settlement_date, description=f"تسوية مصروفات العهدة النثرية {fund.name}",
+            source_type=JournalEntry.Source.MANUAL, created_by=request.user,
+        )
+        lines = [
+            JournalLine(entry=entry, account=item.expense_account, debit=item.amount, credit=0,
+                        description=item.description[:300])
+            for item in expenses
+        ]
+        lines.append(JournalLine(
+            entry=entry, account=fund.petty_cash_account.account, debit=0, credit=total,
+            description=f"تسوية عهدة نثرية - {fund.name}",
+        ))
+        JournalLine.objects.bulk_create(lines)
+        post_journal(entry.pk, actor=request.user)
+        settlement = PettyCashSettlement.objects.create(
+            fund=fund, settlement_date=settlement_date, journal_entry=entry,
+            total_amount=total, created_by=request.user,
+        )
+        PettyCashExpense.objects.filter(pk__in=expense_ids).update(
+            status=PettyCashExpense.Status.SETTLED, settlement=settlement,
+        )
+        return response.Response({
+            "settlement_id": settlement.pk, "journal_entry": entry.pk,
+            "journal_number": entry.entry_number, "total_amount": total,
+            "expense_count": len(expenses),
+        }, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="count")
+    def count(self, request, pk=None):
+        fund = self.get_object()
+        self._write(fund.company_id)
+        count_date = dateparse.parse_date(str(request.data.get("count_date", "")))
+        try:
+            actual = Decimal(str(request.data.get("actual_balance", "")))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError({"actual_balance": "أدخل الرصيد الفعلي."}) from None
+        if not count_date or not actual.is_finite() or actual < 0:
+            raise ValidationError({"detail": "تاريخ الجرد أو الرصيد الفعلي غير صحيح."})
+        expected = self._balance(fund, as_of=count_date)
+        count = PettyCashCount.objects.create(
+            fund=fund, count_date=count_date, expected_balance=expected,
+            actual_balance=actual, notes=str(request.data.get("notes", ""))[:500],
+            counted_by=request.user,
+        )
+        return response.Response(PettyCashCountSerializer(count).data, status=status.HTTP_201_CREATED)
+
+
+class PettyCashExpenseViewSet(TreasuryBaseViewSet):
+    serializer_class = PettyCashExpenseSerializer
+    queryset = PettyCashExpense.objects.select_related(
+        "fund", "fund__company", "expense_account", "settlement", "settlement__journal_entry",
+    ).all()
+
+    def get_queryset(self):
+        qs = self.queryset.filter(fund__company__in=accessible_companies(self.request.user))
+        if not self.request.user.is_superuser or is_platform_owner(self.request.user):
+            qs = qs.filter(fund__branch__in=accessible_branches(self.request.user))
+        company_id = self.request.query_params.get("company")
+        if company_id:
+            if not company_id.isdigit():
+                raise ValidationError({"company": "الشركة المحددة غير صحيحة."})
+            self._scope(int(company_id))
+            qs = qs.filter(fund__company_id=int(company_id))
+        fund_id = self.request.query_params.get("fund")
+        if fund_id:
+            if not fund_id.isdigit():
+                raise ValidationError({"fund": "العهدة المحددة غير صحيحة."})
+            qs = qs.filter(fund_id=int(fund_id))
+        return qs
+
+    def perform_create(self, serializer):
+        fund = serializer.validated_data["fund"]
+        self._scope(fund.company_id)
+        self._write(fund.company_id)
+        if not can_access_branch(self.request.user, fund.branch_id, fund.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع العهدة.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        if serializer.instance.status != PettyCashExpense.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل مصروف تمت تسويته أو إلغاؤه.")
+        self._write(serializer.instance.fund.company_id)
+        if "fund" in serializer.validated_data and serializer.validated_data["fund"].pk != serializer.instance.fund_id:
+            raise ValidationError("لا يمكن نقل المصروف إلى عهدة أخرى.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._write(instance.fund.company_id)
+        if instance.status != PettyCashExpense.Status.DRAFT:
+            raise ValidationError("لا يمكن إلغاء مصروف تمت تسويته أو إلغاؤه.")
+        instance.status = PettyCashExpense.Status.VOID
+        instance.save(update_fields=("status", "updated_at"))
