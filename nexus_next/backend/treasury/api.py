@@ -347,7 +347,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         )
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn
         from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
-        from hr.models import PayrollCycle, PayrollPosting
+        from hr.models import PayrollCycle
         from treasury.models import TreasuryTransaction
         from companies.models import Branch, Company
 
