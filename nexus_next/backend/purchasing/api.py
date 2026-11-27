@@ -1401,9 +1401,14 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
             totals["tax_amount"] += Decimal(row["tax_amount"])
             totals["line_count"] += row["line_count"]
             rows.append(row)
-        totals["invoice_count"] = len({
-            invoice.pk for invoice in invoices
-        })
+        totals["invoice_count"] = len({invoice.pk for invoice in invoices})
+        inventory_nonrecoverable_tax = sum((
+            allocation.inventory_amount + allocation.cogs_amount + allocation.adjustment_loss_amount
+            for invoice in invoices for allocation in invoice.tax_allocations.all()
+        ), Decimal("0"))
+        totals["inventory_nonrecoverable_tax"] = inventory_nonrecoverable_tax
+        totals["nonrecoverable_tax"] += inventory_nonrecoverable_tax
+        totals["total_cost"] += inventory_nonrecoverable_tax
         rows.sort(key=lambda row: (
             row["supplier_name"], row["kind"], row["product_code"] or row["expense_account_code"],
             row["branch_name"], row["warehouse_name"],
@@ -1419,6 +1424,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                 "returned_net": str(totals["returned_net"]),
                 "net_purchases": str(totals["net_purchases"]),
                 "nonrecoverable_tax": str(totals["nonrecoverable_tax"]),
+                "inventory_nonrecoverable_tax": str(totals["inventory_nonrecoverable_tax"]),
                 "total_cost": str(totals["total_cost"]),
                 "tax_amount": str(totals["tax_amount"]),
                 "invoice_count": totals["invoice_count"],
