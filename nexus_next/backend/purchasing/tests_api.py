@@ -2435,6 +2435,30 @@ class PurchasingWorkflowTests(APITestCase):
         self.assertEqual(cancelled_rejected.status_code, 200, cancelled_rejected.data)
         self.assertEqual(cancelled_rejected.data["status"], PurchaseRequisition.Status.CANCELLED)
 
+        approved = self.client.post("/api/purchasing/requisitions/", {
+            "company": self.company.pk, "request_number": "REQ-CANCEL-APPROVED",
+            "request_date": "2026-03-10",
+            "lines": [{"product": self.product.pk, "requested_quantity": "1",
+                       "estimated_unit_price": "100"}],
+        }, format="json")
+        self.assertEqual(approved.status_code, 201, approved.data)
+        self.client.post(f"/api/purchasing/requisitions/{approved.data['id']}/submit/", {}, format="json")
+        self.client.force_authenticate(reviewer)
+        approval = self.client.post(
+            f"/api/purchasing/requisitions/{approved.data['id']}/review/",
+            {"decision": "approve"}, format="json",
+        )
+        self.assertEqual(approval.status_code, 200, approval.data)
+        self.client.force_authenticate(self.user)
+        blocked_cancel = self.client.post(
+            f"/api/purchasing/requisitions/{approved.data['id']}/cancel/", {}, format="json"
+        )
+        self.assertEqual(blocked_cancel.status_code, 400, blocked_cancel.data)
+        self.assertEqual(
+            PurchaseRequisition.objects.get(pk=approved.data["id"]).status,
+            PurchaseRequisition.Status.APPROVED,
+        )
+
     def test_requisition_conversion_requires_estimated_price_for_every_line(self):
         from purchasing.models import PurchaseRequisition
 
