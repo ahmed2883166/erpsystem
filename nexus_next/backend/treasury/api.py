@@ -12,8 +12,8 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
-from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, CashCommitmentOccurrence
+from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer, CashCommitmentSerializer, CashCommitmentPaymentSerializer, CashCommitmentScheduleSerializer
 from .services import (
     post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
     reverse_treasury_fx_revaluation, can_reverse_treasury_fx_revaluation,
@@ -734,6 +734,38 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                 "بعض نتائج المرتبات بعملة غير العملة الأساسية لم تدخل التوقع؛ لا يوجد لها تحويل عملة معتمد محفوظ في نتيجة المرتب."
             )
 
+        # Commitments outside operational subledgers are forecast-only. Their
+        # linked posted payments are already reflected in actual cash and are
+        # therefore subtracted from the outstanding commitment balance.
+        from treasury.models import CashCommitment, CashCommitmentPayment
+        commitment_qs = CashCommitment.objects.filter(
+            company_id=company_id, status__in=(CashCommitment.Status.OPEN, CashCommitment.Status.PARTIALLY_PAID),
+            due_date__lte=end_date,
+        ).select_related("branch")
+        if branch_id:
+            commitment_qs = commitment_qs.filter(models.Q(branch_id=branch_id) | models.Q(branch__isnull=True))
+        elif branch_ids:
+            commitment_qs = commitment_qs.filter(models.Q(branch_id__in=branch_ids) | models.Q(branch__isnull=True))
+        for commitment in commitment_qs:
+            payments = commitment.payments.select_related("reversal_journal_entry").filter(payment_date__lte=today)
+            paid_base = sum((
+                payment.base_amount for payment in payments
+                if not payment.reversal_journal_entry_id
+                or payment.reversal_journal_entry.status == JournalEntry.Status.REVERSED
+            ), Decimal("0"))
+            remaining = max(Decimal("0"), commitment.base_amount - paid_base)
+            if remaining <= 0:
+                continue
+            forecast_date = max(commitment.due_date, today)
+            daily[forecast_date].setdefault("other_commitments", Decimal("0"))
+            daily[forecast_date]["other_commitments"] += remaining
+            items.append({
+                "kind": "other_commitments", "document": commitment.title,
+                "party": "التزامات نقدية أخرى", "due_date": commitment.due_date.isoformat(),
+                "forecast_date": forecast_date.isoformat(), "balance": str(remaining),
+                "status": "متأخر" if commitment.due_date < today else "مستحق/متوقع",
+                "date_basis": "متأخر" if commitment.due_date < today else "تاريخ الاستحقاق",
+            })
         actual_response = self.liquidity_summary(request)
         actual_data = actual_response.data
         actual_cash = Decimal(actual_data["total_base_balance"])
@@ -760,7 +792,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                 "payments": str(payments), "net": str(net),
                 "projected_balance": str(running),
             })
-        total_payments = total_supplier_payments + total_payroll
+        total_payments = total_supplier_payments + total_payroll + total_other_commitments
         return response.Response({
             "company": company_id, "as_of": today.isoformat(), "horizon_days": horizon_days,
             "end_date": end_date.isoformat(), "base_currency": base_currency,
@@ -1733,3 +1765,229 @@ class TreasuryChequeViewSet(TreasuryBaseViewSet):
         cheque.status = TreasuryCheque.Status.CANCELLED
         cheque.save(update_fields=("status", "updated_at"))
         return response.Response(self.get_serializer(cheque).data)
+
+
+class CashCommitmentViewSet(TreasuryBaseViewSet):
+    serializer_class = CashCommitmentSerializer
+    queryset = CashCommitment.objects.select_related("company", "branch", "payable_account").prefetch_related(
+        "payments__journal_entry", "payments__reversal_journal_entry"
+    ).all()
+    filterset_fields = ("company", "branch", "commitment_type", "status", "due_date")
+    ordering_fields = ("due_date", "created_at", "amount", "base_amount")
+
+    def get_queryset(self):
+        qs = self.queryset.filter(company__in=accessible_companies(self.request.user))
+        branch = self.request.query_params.get("branch")
+        if branch:
+            if not branch.isdigit():
+                raise ValidationError({"branch": "الفرع المحدد غير صحيح."})
+            branch_id = int(branch)
+            qs = qs.filter(models.Q(branch_id=branch_id) | models.Q(branch__isnull=True))
+            if not can_access_branch(self.request.user, branch_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+        return qs
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        self._scope(company.pk)
+        self._write(company.pk)
+        branch = serializer.validated_data.get("branch")
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية إدارة الالتزامات في هذا الفرع.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        commitment = serializer.instance
+        self._write(commitment.company_id)
+        if commitment.status == CashCommitment.Status.VOID or commitment.payments.exists():
+            raise ValidationError("لا يمكن تعديل التزام ملغي أو له دفعات مسجلة.")
+        company = serializer.validated_data.get("company", commitment.company)
+        if company.pk != commitment.company_id:
+            raise ValidationError("لا يمكن نقل الالتزام بين الشركات.")
+        branch = serializer.validated_data.get("branch", commitment.branch)
+        if branch and not can_access_branch(self.request.user, branch.pk, commitment.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الالتزام.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._write(instance.company_id)
+        if instance.status == CashCommitment.Status.VOID:
+            raise ValidationError("الالتزام ملغي بالفعل.")
+        if self._paid_total(instance) > 0:
+            raise ValidationError("لا يمكن إلغاء التزام عليه دفعات فعالة.")
+        instance.status = CashCommitment.Status.VOID
+        instance.save(update_fields=("status", "updated_at"))
+
+    @staticmethod
+    def _paid_total(commitment):
+        from accounting.models import JournalEntry
+        return sum((
+            payment.base_amount for payment in commitment.payments.select_related("reversal_journal_entry").all()
+            if not payment.reversal_journal_entry_id
+            or payment.reversal_journal_entry.status == JournalEntry.Status.REVERSED
+        ), Decimal("0"))
+
+    def _refresh_status(self, commitment):
+        paid = self._paid_total(commitment)
+        if commitment.status != CashCommitment.Status.VOID:
+            commitment.status = (
+                CashCommitment.Status.PAID if paid >= commitment.base_amount
+                else CashCommitment.Status.PARTIALLY_PAID if paid > 0
+                else CashCommitment.Status.OPEN
+            )
+            commitment.save(update_fields=("status", "updated_at"))
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="record-payment")
+    def record_payment(self, request, pk=None):
+        """ربط دفعة بقيد سداد مرحّل ومخصص للالتزام دون إنشاء قيد جديد."""
+        from accounting.models import JournalEntry, JournalLine
+        commitment = self.get_object()
+        self._scope(commitment.company_id)
+        self._write(commitment.company_id)
+        if commitment.status == CashCommitment.Status.VOID:
+            raise ValidationError("لا يمكن سداد التزام ملغي.")
+        journal_id = request.data.get("journal_entry")
+        payment_date = dateparse.parse_date(str(request.data.get("payment_date", "")))
+        try:
+            amount = Decimal(str(request.data.get("amount", "")))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError({"amount": "أدخل مبلغًا صحيحًا."}) from None
+        if not journal_id or not str(journal_id).isdigit() or not payment_date or not amount.is_finite() or amount <= 0:
+            raise ValidationError({"detail": "أدخل قيد السداد وتاريخه ومبلغًا موجبًا صحيحًا."})
+        journal = JournalEntry.objects.select_for_update().filter(
+            pk=int(journal_id), company_id=commitment.company_id, status=JournalEntry.Status.POSTED
+        ).first()
+        if not journal:
+            raise ValidationError({"journal_entry": "يجب اختيار قيد يومية مرحّل تابع للشركة."})
+        if journal.entry_date != payment_date:
+            raise ValidationError({"payment_date": "تاريخ السداد يجب أن يطابق تاريخ قيد اليومية."})
+        lines = list(JournalLine.objects.filter(entry=journal).select_related("account"))
+        debit_total = sum((line.debit for line in lines), Decimal("0"))
+        credit_total = sum((line.credit for line in lines), Decimal("0"))
+        payable_debit = sum((line.debit for line in lines if line.account_id == commitment.payable_account_id), Decimal("0"))
+        if payable_debit != amount or debit_total != amount or credit_total != amount:
+            raise ValidationError("يجب أن يكون القيد مخصصًا لهذه الدفعة وحدها، ومدين حساب الالتزام وإجمالي المدين والدائن يساوي المبلغ.")
+        if amount > commitment.base_amount - self._paid_total(commitment):
+            raise ValidationError({"amount": "قيمة الدفعة تتجاوز الرصيد المتبقي من الالتزام."})
+        payment = CashCommitmentPayment.objects.create(
+            commitment=commitment, payment_date=payment_date, amount=amount,
+            base_amount=amount, journal_entry=journal,
+            reference=str(request.data.get("reference", ""))[:120],
+            notes=str(request.data.get("notes", ""))[:500], created_by=request.user,
+        )
+        self._refresh_status(commitment)
+        return response.Response(CashCommitmentPaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="reverse-payment")
+    def reverse_payment(self, request, pk=None):
+        """ربط قيد عكسي مرحّل بالسداد لإعادة الالتزام إلى رصيده المستحق."""
+        from accounting.models import JournalEntry, JournalLine
+        commitment = self.get_object()
+        self._scope(commitment.company_id)
+        self._write(commitment.company_id)
+        payment_id = request.data.get("payment_id")
+        reversal_id = request.data.get("reversal_journal_entry")
+        payment = commitment.payments.select_for_update().filter(pk=payment_id).first()
+        if not payment or payment.reversal_journal_entry_id:
+            raise ValidationError({"payment_id": "دفعة غير موجودة أو سبق ربط عكس بها."})
+        reversal = JournalEntry.objects.select_for_update().filter(
+            pk=reversal_id, company_id=commitment.company_id, status=JournalEntry.Status.POSTED
+        ).first()
+        if not reversal:
+            raise ValidationError({"reversal_journal_entry": "اختر قيد عكس مرحّل تابع للشركة."})
+        lines = list(JournalLine.objects.filter(entry=reversal))
+        credit_total = sum((line.credit for line in lines), Decimal("0"))
+        debit_total = sum((line.debit for line in lines), Decimal("0"))
+        payable_credit = sum((line.credit for line in lines if line.account_id == commitment.payable_account_id), Decimal("0"))
+        if payable_credit != payment.base_amount or debit_total != payment.base_amount or credit_total != payment.base_amount:
+            raise ValidationError("قيد العكس يجب أن يعيد نفس مبلغ الالتزام إلى حساب الخصوم.")
+        payment.reversal_journal_entry = reversal
+        payment.save(update_fields=("reversal_journal_entry",))
+        self._refresh_status(commitment)
+        return response.Response(CashCommitmentPaymentSerializer(payment).data)
+
+    @decorators.action(detail=True, methods=("post",), url_path="void")
+    def void(self, request, pk=None):
+        commitment = self.get_object()
+        self._write(commitment.company_id)
+        if commitment.status == CashCommitment.Status.VOID or self._paid_total(commitment) > 0:
+            raise ValidationError("لا يمكن إلغاء التزام ملغي بالفعل أو عليه دفعات فعالة.")
+        commitment.status = CashCommitment.Status.VOID
+        commitment.save(update_fields=("status", "updated_at"))
+        return response.Response(self.get_serializer(commitment).data)
+
+
+class CashCommitmentScheduleViewSet(TreasuryBaseViewSet):
+    serializer_class = CashCommitmentScheduleSerializer
+    queryset = CashCommitmentSchedule.objects.select_related("company", "branch", "payable_account").all()
+    filterset_fields = ("company", "branch", "frequency", "active")
+
+    def get_queryset(self):
+        return self.queryset.filter(company__in=accessible_companies(self.request.user))
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data["company"]
+        self._scope(company.pk)
+        self._write(company.pk)
+        branch = serializer.validated_data.get("branch")
+        if branch and not can_access_branch(self.request.user, branch.pk, company.pk):
+            raise PermissionDenied("لا تملك صلاحية إدارة الجدول الدوري في هذا الفرع.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        schedule = serializer.instance
+        self._write(schedule.company_id)
+        if schedule.occurrences.filter(commitment__isnull=False).exists():
+            raise ValidationError("لا يمكن تعديل جدول بعد توليد استحقاقاته؛ أوقفه وأنشئ جدولًا جديدًا.")
+        serializer.save()
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",), url_path="generate")
+    def generate(self, request, pk=None):
+        """توليد الاستحقاقات حتى تاريخ محدد مع منع تكرار أي شهر."""
+        from calendar import monthrange
+        from datetime import date as date_type
+        schedule = self.get_object()
+        self._write(schedule.company_id)
+        if schedule.branch_id and not can_access_branch(request.user, schedule.branch_id, schedule.company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الجدول.")
+        through_date = dateparse.parse_date(str(request.data.get("through_date", "")))
+        if not through_date:
+            raise ValidationError({"through_date": "أدخل تاريخًا صحيحًا لتوليد الاستحقاقات حتى تاريخه."})
+        if not schedule.active:
+            raise ValidationError("الجدول الدوري متوقف.")
+        next_due = schedule.next_due_date
+        generated = 0
+        while next_due <= through_date and (not schedule.end_date or next_due <= schedule.end_date):
+            occurrence, created = CashCommitmentOccurrence.objects.get_or_create(
+                schedule=schedule, due_date=next_due,
+            )
+            if created:
+                commitment = CashCommitment.objects.create(
+                    company=schedule.company, branch=schedule.branch,
+                    commitment_type=CashCommitment.Kind.RECURRING_EXPENSE,
+                    title=schedule.title, period_label=next_due.strftime("%Y-%m"),
+                    amount=schedule.amount, currency_code=schedule.currency_code,
+                    exchange_rate=schedule.exchange_rate, base_amount=schedule.base_amount,
+                    due_date=next_due, payable_account=schedule.payable_account,
+                    origin_type="recurring_schedule_occurrence", origin_id=occurrence.pk,
+                    notes=schedule.notes, created_by=request.user,
+                )
+                occurrence.commitment = commitment
+                occurrence.save(update_fields=("commitment",))
+                generated += 1
+            month_index = next_due.month - 1 + schedule.interval_months
+            year = next_due.year + month_index // 12
+            month = month_index % 12 + 1
+            day = min(schedule.anchor_day, monthrange(year, month)[1])
+            next_due = date_type(year, month, day)
+        schedule.next_due_date = next_due
+        if schedule.end_date and next_due > schedule.end_date:
+            schedule.active = False
+        schedule.save(update_fields=("next_due_date", "active", "updated_at"))
+        return response.Response({
+            "generated": generated, "next_due_date": schedule.next_due_date,
+            "active": schedule.active,
+        })
