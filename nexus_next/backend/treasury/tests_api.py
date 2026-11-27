@@ -1287,3 +1287,99 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.assertEqual(created.data["status"], "issued")
         presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")
         self.assertEqual(presented.status_code, 200, presented.data)
+
+
+class TreasuryLiquiditySummaryTests(APITestCase):
+    def setUp(self):
+        currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
+        self.company = Company.objects.create(
+            code="LIQ", name_ar="شركة السيولة", country="EG",
+            activity="commercial", base_currency=currency,
+        )
+        self.branch = Branch.objects.create(
+            company=self.company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        self.year = FiscalYear.objects.create(
+            company=self.company, name="2026",
+            start_date=date(2026, 1, 1), end_date=date(2026, 12, 31),
+        )
+        self.user = get_user_model().objects.create_user(
+            username="liquidity-user", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=self.user, company=self.company, role="accountant", all_branches=True,
+        )
+        self.client.force_authenticate(self.user)
+        self.cash_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1100", name_ar="الصندوق",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        self.revenue_gl = ChartOfAccount.objects.create(
+            company=self.company, code="4100", name_ar="إيرادات",
+            nature=ChartOfAccount.Nature.REVENUE,
+        )
+        self.cash = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=self.cash_gl,
+            kind="cash", code="CASH-LIQ", name_ar="الخزينة",
+        )
+
+    def test_liquidity_summary_counts_posted_ledger_only_and_excludes_closing_entries(self):
+        posted = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="LIQ-POSTED", entry_date=date(2026, 3, 1),
+            description="رصيد نقدي مرحل",
+        )
+        JournalLine.objects.create(
+            entry=posted, account=self.cash_gl, debit=Decimal("1250"), credit=0,
+        )
+        JournalLine.objects.create(
+            entry=posted, account=self.revenue_gl, debit=0, credit=Decimal("1250"),
+        )
+        post_journal(posted.pk, actor=self.user)
+
+        draft = JournalEntry.objects.create(
+            company=self.company, branch=self.branch, fiscal_year=self.year,
+            entry_number="LIQ-DRAFT", entry_date=date(2026, 3, 2),
+            description="مسودة لا تدخل الرصيد",
+        )
+        JournalLine.objects.create(
+            entry=draft, account=self.cash_gl, debit=Decimal("900"), credit=0,
+        )
+        JournalLine.objects.create(
+            entry=draft, account=self.revenue_gl, debit=0, credit=Decimal("900"),
+        )
+
+        response = self.client.get(
+            f"/api/treasury/accounts/liquidity-summary/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Decimal(response.data["total_base_balance"]), Decimal("1250"))
+        self.assertEqual(Decimal(response.data["accounts"][0]["base_balance"]), Decimal("1250"))
+
+    def test_liquidity_summary_keeps_foreign_nominal_and_base_carrying_values_separate(self):
+        usd = Currency.objects.create(code="USD", name_ar="دولار أمريكي")
+        foreign_gl = ChartOfAccount.objects.create(
+            company=self.company, code="1120", name_ar="بنك دولار",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        foreign_account = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=foreign_gl,
+            kind="bank", code="BANK-USD-LIQ", name_ar="بنك دولار",
+            currency_code="USD", opening_balance=Decimal("150000"),
+            opening_foreign_amount=Decimal("5000"),
+            opening_exchange_rate=Decimal("30"),
+            opening_exchange_rate_date=date(2025, 12, 31),
+        )
+        TreasuryFxPosition.objects.create(
+            account=foreign_account, foreign_amount=Decimal("5000"),
+            carrying_base_amount=Decimal("150000"),
+        )
+
+        response = self.client.get(
+            f"/api/treasury/accounts/liquidity-summary/?company={self.company.pk}&as_of=2026-03-31"
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(item for item in response.data["accounts"] if item["id"] == foreign_account.pk)
+        self.assertEqual(row["currency"], "USD")
+        self.assertEqual(Decimal(row["balance"]), Decimal("5000"))
+        self.assertEqual(Decimal(row["base_balance"]), Decimal("150000"))
