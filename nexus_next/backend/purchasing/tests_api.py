@@ -18,7 +18,7 @@ from inventory.services import post_stock_movement
 from purchasing.services import supplier_credit_balance
 from suppliers.models import Supplier
 from treasury.models import TreasuryAccount, TreasuryTransaction
-from purchasing.models import PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
+from purchasing.models import LandedCostAllocation, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderReceiptLine, PurchaseServiceAcceptance, SupplierPayment, SupplierReturn
 
 
 class PurchasingWorkflowTests(APITestCase):
@@ -3556,3 +3556,160 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             "lines": [{"product": self.product.pk, "quantity": "1", "unit_price": "100", "tax_rate": "0"}],
         }, format="json")
         self.assertEqual(denied_create.status_code, 403, denied_create.data)
+
+
+
+    def test_landed_cost_posts_across_branches_without_duplicate_supplier_payable_and_can_reverse(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        second_branch = Branch.objects.create(
+            company=self.company, code="LC-BR-02", name_ar="فرع رسملة ثان",
+        )
+        second_warehouse = Warehouse.objects.create(
+            company=self.company, branch=second_branch, code="LC-WH-02", name_ar="مخزن رسملة ثان",
+        )
+        transfer = StockMovement.objects.create(
+            company=self.company, movement_number="LC-XFER-01",
+            movement_type=StockMovement.MovementType.TRANSFER, movement_date=date(2026, 3, 11),
+            source_warehouse=self.warehouse, destination_warehouse=second_warehouse,
+            created_by=self.user,
+        )
+        StockMovementLine.objects.create(movement=transfer, product=self.product, quantity=Decimal("1"))
+        post_stock_movement(transfer.pk, self.user)
+
+        issue = StockMovement.objects.create(
+            company=self.company, movement_number="LC-ISS-01",
+            movement_type=StockMovement.MovementType.ISSUE, movement_date=date(2026, 3, 12),
+            source_warehouse=second_warehouse, created_by=self.user,
+        )
+        StockMovementLine.objects.create(movement=issue, product=self.product, quantity=Decimal("1"))
+        post_stock_movement(issue.pk, self.user)
+
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        source_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "LC-EXP-001", "invoice_date": "2026-03-13",
+            "lines": [{
+                "description": "شحن وجمارك",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "20.0000",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(source_response.status_code, 201, source_response.data)
+        source_posted = self.client.post(
+            f"/api/purchasing/invoices/{source_response.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(source_posted.status_code, 200, source_posted.data)
+        source_invoice = PurchaseInvoice.objects.get(pk=source_response.data["id"])
+        source_line = source_invoice.lines.get()
+
+        created = self.client.post("/api/purchasing/landed-costs/", {
+            "company": self.company.pk,
+            "source_invoice": source_invoice.pk,
+            "document_number": "LC-001",
+            "document_date": "2026-03-14",
+            "allocations": [{
+                "source_invoice_line": source_line.pk,
+                "receipt_line": receipt_line_id,
+                "basis": "manual",
+                "amount": "20.0000",
+            }],
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+
+        posted = self.client.post(
+            f"/api/purchasing/landed-costs/{created.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        document = LandedCostDocument.objects.get(pk=created.data["id"])
+        self.assertEqual(document.status, LandedCostDocument.Status.POSTED)
+        self.assertEqual(document.total_amount, Decimal("20.0000"))
+        self.assertEqual(source_invoice.status, PurchaseInvoice.Status.POSTED)
+        self.assertEqual(source_invoice.journal_entry.lines.get(
+            account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE).account,
+        ).credit, Decimal("20.0000"))
+
+        source_balance = StockBalance.objects.get(product=self.product, warehouse=self.warehouse)
+        self.assertEqual(source_balance.quantity, Decimal("1"))
+        self.assertEqual(source_balance.inventory_value, Decimal("110.0000"))
+        self.assertEqual(source_balance.average_cost, Decimal("110.000000"))
+
+        allocation = LandedCostAllocation.objects.get(document=document)
+        distributions = {
+            row.branch_id: row for row in allocation.distributions.select_related("journal_entry")
+        }
+        self.assertEqual(distributions[self.branch.pk].inventory_amount, Decimal("10.0000"))
+        self.assertEqual(distributions[self.branch.pk].cogs_amount, Decimal("0.0000"))
+        self.assertEqual(distributions[second_branch.pk].cogs_amount, Decimal("10.0000"))
+        self.assertEqual(
+            distributions[second_branch.pk].journal_entry.lines.get(
+                account=AccountRole.objects.get(company=self.company, role=AccountRole.Role.COGS).account,
+            ).debit,
+            Decimal("10.0000"),
+        )
+        clearing = AccountRole.objects.get(
+            company=self.company, role=AccountRole.Role.INTER_BRANCH_CLEARING,
+        ).account
+        all_landed_entries = [allocation.source_journal_entry, *[
+            row.journal_entry for row in distributions.values()
+        ]]
+        clearing_debit = sum(
+            (entry.lines.filter(account=clearing).aggregate(total=Sum("debit"))["total"] or Decimal("0"))
+            for entry in set(all_landed_entries)
+        )
+        clearing_credit = sum(
+            (entry.lines.filter(account=clearing).aggregate(total=Sum("credit"))["total"] or Decimal("0"))
+            for entry in set(all_landed_entries)
+        )
+        self.assertEqual(clearing_debit, Decimal("10.0000"))
+        self.assertEqual(clearing_credit, Decimal("10.0000"))
+
+        reversed_response = self.client.post(
+            f"/api/purchasing/landed-costs/{document.pk}/reverse/",
+            {"entry_date": "2026-03-20"}, format="json",
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        document.refresh_from_db()
+        source_balance.refresh_from_db()
+        self.assertEqual(document.status, LandedCostDocument.Status.REVERSED)
+        self.assertEqual(source_balance.inventory_value, Decimal("100.0000"))
+        self.assertEqual(source_balance.average_cost, Decimal("100.000000"))
+        self.assertEqual(source_invoice.journal_entry.status, JournalEntry.Status.POSTED)
+        self.assertEqual(allocation.source_journal_entry.status, JournalEntry.Status.REVERSED)
+
+    def test_landed_cost_cannot_exceed_unallocated_direct_expense_line(self):
+        _, receipt_line_id = self._create_and_post_receipt()
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        source_response = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "LC-EXP-LIMIT", "invoice_date": "2026-03-13",
+            "lines": [{
+                "description": "شحن",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "20.0000",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(source_response.status_code, 201, source_response.data)
+        self.client.post(
+            f"/api/purchasing/invoices/{source_response.data['id']}/post/", {}, format="json",
+        )
+        source_line = PurchaseInvoice.objects.get(pk=source_response.data["id"]).lines.get()
+        rejected = self.client.post("/api/purchasing/landed-costs/", {
+            "company": self.company.pk,
+            "source_invoice": source_response.data["id"],
+            "document_number": "LC-OVER-001",
+            "document_date": "2026-03-14",
+            "allocations": [{
+                "source_invoice_line": source_line.pk,
+                "receipt_line": receipt_line_id,
+                "basis": "manual",
+                "amount": "20.0001",
+            }],
+        }, format="json")
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertFalse(LandedCostDocument.objects.filter(document_number="LC-OVER-001").exists())
