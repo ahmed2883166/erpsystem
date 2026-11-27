@@ -3910,3 +3910,11 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             {row["kind"] for row in report.data["rows"]},
             {"inventory", "direct_expense"},
         )
+        excel = self.client.get(
+            f"/api/purchasing/invoices/analysis-report-export-excel/?company={self.company.pk}",
+        )
+        self.assertEqual(excel.status_code, 200)
+        self.assertEqual(
+            excel["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
