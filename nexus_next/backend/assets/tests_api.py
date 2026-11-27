@@ -1,10 +1,14 @@
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
+
+from django.core.exceptions import ValidationError
 
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from assets.models import AssetImpairment, AssetPurchaseInvoice, AssetSupplierPayment, FixedAsset
+from assets.services import post_asset_supplier_payment
 from accounting.models import AccountRole, ChartOfAccount, JournalEntry, TaxCode
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, FiscalYear
@@ -691,6 +695,172 @@ class FixedAssetWorkflowTests(APITestCase):
         )
         self.assertEqual(overpayment.status_code, 400, overpayment.data)
         self.assertFalse(AssetSupplierPayment.objects.filter(payment_number="FA-PAY-1002").exists())
+
+    def _create_supplier_asset_invoice(self, amount="100000.0000"):
+        payable = self._account("2100", "الموردون", "liability")
+        AccountRole.objects.create(company=self.company, role=AccountRole.Role.ACCOUNTS_PAYABLE, account=payable)
+        supplier = Supplier.objects.create(
+            company=self.company, code="SUP-FA-TREASURY", name_ar="مورد اختبار سداد الأصول",
+        )
+        payload = self._payload()
+        payload["acquisition_mode"] = "supplier_invoice"
+        created = self.client.post("/api/assets/fixed-assets/", payload, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        invoice_response = self.client.post(
+            f"/api/assets/fixed-assets/{created.data['id']}/purchase-invoice/",
+            {
+                "supplier": supplier.pk, "invoice_number": "FA-TREASURY-INV",
+                "invoice_date": "2026-01-10", "net_amount": amount,
+                "fiscal_year": self.year.pk,
+            },
+            format="json",
+        )
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.data)
+        invoice = AssetPurchaseInvoice.objects.get(pk=invoice_response.data["id"])
+        self.assertEqual(invoice.status, AssetPurchaseInvoice.Status.POSTED)
+        return invoice, supplier
+
+    def _asset_supplier_payment(self, invoice, supplier, account, number, amount="100.0000"):
+        return AssetSupplierPayment.objects.create(
+            company=self.company, branch=self.branch, invoice=invoice, supplier=supplier,
+            payment_number=number, payment_date=date(2026, 1, 15),
+            payment_account=account, amount=Decimal(amount),
+        )
+
+    def test_asset_supplier_payment_accepts_cash_treasury_and_posts_investing_movement(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        cash_gl = self._account("1101", "الصندوق", "asset")
+        cash_treasury = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=cash_gl,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-FA-PAY",
+            name_ar="صندوق سداد الأصول", opening_balance=Decimal("10000"),
+        )
+        payment = self._asset_supplier_payment(
+            invoice, supplier, cash_gl, "FA-CASH-PAY-1", "2500.0000",
+        )
+
+        posted = post_asset_supplier_payment(payment.pk, self.user)
+
+        self.assertEqual(posted.status, AssetSupplierPayment.Status.POSTED)
+        self.assertEqual(posted.journal_entry.lines.get(account=cash_gl).credit, Decimal("2500.0000"))
+        movement = TreasuryTransaction.objects.get(
+            document_number=f"AUTO-FA-PAY-{payment.pk}",
+            journal_entry=posted.journal_entry,
+        )
+        self.assertEqual(movement.source_account, cash_treasury)
+        self.assertEqual(movement.kind, TreasuryTransaction.Kind.PAYMENT)
+        self.assertEqual(movement.cash_flow_category, TreasuryTransaction.CashFlowCategory.INVESTING)
+
+    def test_asset_supplier_payment_rejects_insufficient_treasury_balance_before_journal(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        low_gl = self._account("1102", "صندوق منخفض الرصيد", "asset")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=low_gl,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-FA-LOW",
+            name_ar="صندوق منخفض الرصيد", opening_balance=Decimal("50"),
+        )
+        payment = self._asset_supplier_payment(
+            invoice, supplier, low_gl, "FA-LOW-PAY-1", "100.0000",
+        )
+        journal_count = JournalEntry.objects.count()
+
+        with self.assertRaises(ValidationError):
+            post_asset_supplier_payment(payment.pk, self.user)
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, AssetSupplierPayment.Status.DRAFT)
+        self.assertIsNone(payment.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+        self.assertFalse(TreasuryTransaction.objects.filter(
+            document_number=f"AUTO-FA-PAY-{payment.pk}",
+        ).exists())
+
+    def test_asset_supplier_payment_rejects_unlinked_inactive_wrong_branch_and_foreign_treasury(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        other_branch = Branch.objects.create(
+            company=self.company, code="OTHER", name_ar="فرع آخر",
+        )
+        invalid_accounts = []
+
+        unlinked_gl = self._account("1111", "حساب غير مربوط بخزينة", "asset")
+        invalid_accounts.append(("FA-UNLINKED", unlinked_gl))
+
+        inactive_gl = self._account("1112", "خزينة موقوفة", "asset")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=inactive_gl,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-FA-INACTIVE",
+            name_ar="بنك موقوف", is_active=False,
+        )
+        invalid_accounts.append(("FA-INACTIVE", inactive_gl))
+
+        wrong_branch_gl = self._account("1113", "خزينة فرع آخر", "asset")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=other_branch, account=wrong_branch_gl,
+            kind=TreasuryAccount.Kind.CASH, code="CASH-FA-OTHER",
+            name_ar="خزينة فرع آخر",
+        )
+        invalid_accounts.append(("FA-WRONG-BRANCH", wrong_branch_gl))
+
+        foreign_gl = self._account("1114", "بنك بعملة أجنبية", "asset")
+        TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=foreign_gl,
+            kind=TreasuryAccount.Kind.BANK, code="BANK-FA-USD",
+            name_ar="بنك دولار", currency_code="USD",
+        )
+        invalid_accounts.append(("FA-FOREIGN", foreign_gl))
+
+        journal_count = JournalEntry.objects.count()
+        for number, account in invalid_accounts:
+            with self.subTest(payment_number=number):
+                payment = self._asset_supplier_payment(
+                    invoice, supplier, account, number, "100.0000",
+                )
+                with self.assertRaises(ValidationError):
+                    post_asset_supplier_payment(payment.pk, self.user)
+                payment.refresh_from_db()
+                self.assertEqual(payment.status, AssetSupplierPayment.Status.DRAFT)
+                self.assertIsNone(payment.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+
+    def test_asset_supplier_payment_rolls_back_journal_if_treasury_mirror_fails(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        payment = self._asset_supplier_payment(
+            invoice, supplier, self.cash_gl, "FA-ROLLBACK-PAY-1", "100.0000",
+        )
+        journal_count = JournalEntry.objects.count()
+
+        with patch(
+            "treasury.services.record_posted_document_bank_movement",
+            side_effect=ValidationError("treasury mirror failure"),
+        ):
+            with self.assertRaises(ValidationError):
+                post_asset_supplier_payment(payment.pk, self.user)
+
+        payment.refresh_from_db()
+        self.assertEqual(payment.status, AssetSupplierPayment.Status.DRAFT)
+        self.assertIsNone(payment.journal_entry_id)
+        self.assertEqual(JournalEntry.objects.count(), journal_count)
+        self.assertFalse(TreasuryTransaction.objects.filter(
+            document_number=f"AUTO-FA-PAY-{payment.pk}",
+        ).exists())
+
+    def test_asset_supplier_payment_cannot_be_posted_twice(self):
+        invoice, supplier = self._create_supplier_asset_invoice()
+        payment = self._asset_supplier_payment(
+            invoice, supplier, self.cash_gl, "FA-DUPLICATE-PAY-1", "100.0000",
+        )
+
+        posted = post_asset_supplier_payment(payment.pk, self.user)
+        with self.assertRaises(ValidationError):
+            post_asset_supplier_payment(payment.pk, self.user)
+
+        self.assertEqual(
+            TreasuryTransaction.objects.filter(
+                document_number=f"AUTO-FA-PAY-{payment.pk}",
+                journal_entry=posted.journal_entry,
+            ).count(),
+            1,
+        )
 
     def test_asset_vendor_invoice_requires_financial_approval_above_policy_limit(self):
         payable = self._account("2100", "الموردون", "liability")
