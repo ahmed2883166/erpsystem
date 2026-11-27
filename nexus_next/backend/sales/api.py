@@ -1053,11 +1053,16 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             )
             invoice_count = invoices.count()
             return_count = returns.count()
-        allocated_sales_cost = ExpressionWrapper(
-            F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),
-            output_field=DecimalField(max_digits=20, decimal_places=4),
+        def allocated_sales_cost_expression():
+            # Build a fresh expression for each queryset; Django resolves expressions in place.
+            return ExpressionWrapper(
+                F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),
+                output_field=DecimalField(max_digits=20, decimal_places=4),
+            )
+
+        sales_cost = amount(
+            invoice_lines.aggregate(total=Sum(allocated_sales_cost_expression()))["total"]
         )
-        sales_cost = amount(invoice_lines.aggregate(total=Sum(allocated_sales_cost))["total"])
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
         sales_net = amount(sales_totals["net"])
         returned_net = amount(return_totals["net"])
@@ -1069,7 +1074,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         ).annotate(
             invoice_count=Count("invoice_id", distinct=True),
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum(allocated_sales_cost),
+            discount=Sum("discount_amount"), cost=Sum(allocated_sales_cost_expression()),
         )
         customer_returns = return_lines.values(
             "sales_return__invoice__customer_id",
@@ -1118,7 +1123,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             "product_id", "product__code", "product__name_ar",
         ).annotate(
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+            discount=Sum("discount_amount"), cost=Sum(allocated_sales_cost_expression()),
             invoice_count=Count("invoice_id", distinct=True),
         )
         product_returns = return_lines.values(
