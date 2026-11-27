@@ -48,7 +48,7 @@ def _default_branch_company_ids(user, companies):
     return company_ids
 from .models import LandedCostDocument, PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
 from .serializers import LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
-from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
+from .services import post_landed_cost_document, post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
 class PurchaseBaseViewSet(viewsets.ModelViewSet):
@@ -1636,3 +1636,22 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
             if not warehouse or not _purchase_warehouse_accessible(self.request.user, warehouse):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
         serializer.save(created_by=self.request.user)
+
+
+    @action(detail=True, methods=("post",))
+    def post(self, request, pk=None):
+        """ترحيل الرسملة وتحديث المخزون والقيود في معاملة واحدة."""
+        document = self.get_object()
+        self._check_write(document.company_id)
+        if not document.source_invoice.branch_id or not can_access_branch(
+            request.user, document.source_invoice.branch_id, document.company_id,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة المصروف المصدر.")
+        for allocation in document.allocations.select_related(
+            "receipt_line__movement__destination_warehouse",
+        ).all():
+            warehouse = allocation.receipt_line.movement.destination_warehouse
+            if not warehouse or not _purchase_warehouse_accessible(request.user, warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
+        posted = post_landed_cost_document(document.pk, request.user)
+        return Response(self.get_serializer(posted).data, status=status.HTTP_200_OK)
