@@ -521,20 +521,27 @@ class PettyCashExpenseSerializer(serializers.ModelSerializer):
     fund_name = serializers.CharField(source="fund.name", read_only=True)
     expense_account_code = serializers.CharField(source="expense_account.code", read_only=True)
     expense_account_name = serializers.CharField(source="expense_account.name_ar", read_only=True)
+    receipt_file = serializers.SerializerMethodField()
+    receipt_upload = serializers.FileField(write_only=True, required=False, allow_null=True)
     settlement_journal_number = serializers.CharField(source="settlement.journal_entry.entry_number", read_only=True, default="")
     class Meta:
         model = PettyCashExpense
         fields = ("id", "fund", "fund_name", "expense_date", "description", "amount",
                   "expense_account", "expense_account_code", "expense_account_name",
-                  "receipt_number", "receipt_file", "vendor_name", "status", "settlement",
+                  "receipt_number", "receipt_file", "receipt_file_name", "receipt_upload", "vendor_name", "status", "settlement",
                   "settlement_journal_number", "submitted_at", "approved_by", "approved_at",
                   "approval_note", "rejected_by", "rejected_at", "rejection_note",
                   "created_at", "updated_at")
         read_only_fields = ("status", "settlement", "submitted_at", "approved_by", "approved_at",
                             "approval_note", "rejected_by", "rejected_at", "rejection_note",
-                            "created_at", "updated_at")
+                            "receipt_file", "receipt_file_name", "created_at", "updated_at")
 
-    def validate_receipt_file(self, value):
+    def get_receipt_file(self, obj):
+        if not obj.receipt_file_data:
+            return None
+        return f"/api/treasury/petty-cash-expenses/{obj.pk}/receipt/"
+
+    def validate_receipt_upload(self, value):
         if value is None:
             return value
         if value.size > 10 * 1024 * 1024:
@@ -552,6 +559,27 @@ class PettyCashExpenseSerializer(serializers.ModelSerializer):
         if not valid:
             raise serializers.ValidationError("محتوى الملف لا يطابق نوع المرفق المسموح.")
         return value
+
+    @staticmethod
+    def _receipt_values(upload):
+        import os
+        return {
+            "receipt_file_data": upload.read(),
+            "receipt_file_name": os.path.basename(upload.name or "receipt")[:255],
+            "receipt_file_content_type": upload.content_type or "application/octet-stream",
+        }
+
+    def create(self, validated_data):
+        upload = validated_data.pop("receipt_upload", None)
+        if upload:
+            validated_data.update(self._receipt_values(upload))
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        upload = validated_data.pop("receipt_upload", None)
+        if upload:
+            validated_data.update(self._receipt_values(upload))
+        return super().update(instance, validated_data)
 
     def validate(self, attrs):
         fund = attrs.get("fund", getattr(self.instance, "fund", None))
