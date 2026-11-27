@@ -943,7 +943,7 @@ const postInvoice = async (id: number) => {
     </div>}
     {tab === "aging" && agingView === "analysis" && <div className="inventory-form">
       <div className="inventory-form-row"><label>من تاريخ الفاتورة<input type="date" value={purchaseAnalysisFrom} onChange={e=>{setPurchaseAnalysisFrom(e.target.value);setPurchaseAnalysisReport(null);}}/></label><label>إلى تاريخ الفاتورة<input type="date" value={purchaseAnalysisTo} onChange={e=>{setPurchaseAnalysisTo(e.target.value);setPurchaseAnalysisReport(null);}}/></label></div>
-      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseAnalysisReport()}>{busy?"جارٍ التحميل…":"عرض تحليل المشتريات"}</button></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadPurchaseAnalysisReport()}>{busy?"جارٍ التحميل…":"عرض تحليل المشتريات"}</button>{purchaseAnalysisReport && <a className="subtle-button" href={`/api/purchasing/invoices/analysis-report-export-excel/?company=${companyId}${purchaseAnalysisFrom? `&date_from=${purchaseAnalysisFrom}`:""}${purchaseAnalysisTo? `&date_to=${purchaseAnalysisTo}`:""}`}>تصدير Excel</a>}</div>
       {purchaseAnalysisReport && <div className="inventory-wide">
         <div className="stock-card-summary">
           <div><span>صافي المشتريات</span><strong>{money(purchaseAnalysisReport.totals.net_purchases)}</strong></div>
