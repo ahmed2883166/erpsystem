@@ -1625,13 +1625,19 @@ def post_landed_cost_document(document_id, user):
 
     for source_line_id in sorted({line.source_invoice_line_id for line in allocations}):
         source_line = PurchaseInvoiceLine.objects.select_for_update(of=("self",)).get(pk=source_line_id)
+        nonrecoverable_tax = (
+            source_line.tax_amount
+            if source_line.tax_code_id and not source_line.tax_code.input_tax_recoverable
+            else Decimal("0")
+        )
+        capitalizable_amount = source_line.net_amount + nonrecoverable_tax
         used = LandedCostAllocation.objects.filter(
             source_invoice_line_id=source_line_id,
         ).exclude(document__status=LandedCostDocument.Status.REVERSED).aggregate(
             total=Sum("amount"),
         )["total"] or Decimal("0")
-        if used > source_line.net_amount:
-            raise ValidationError("إجمالي الرسملة يتجاوز صافي بند فاتورة المصروف المصدر.")
+        if used > capitalizable_amount:
+            raise ValidationError("إجمالي الرسملة يتجاوز قيمة بند المصروف والضريبة غير القابلة للخصم.")
 
     source_branch = Branch.objects.select_for_update(of=("self",)).get(
         pk=invoice.branch_id, company=invoice.company, is_active=True,
