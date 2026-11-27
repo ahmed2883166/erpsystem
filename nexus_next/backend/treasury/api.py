@@ -2166,14 +2166,7 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         fund = serializer.instance
         self._write(fund.company_id)
         if "status" in serializer.validated_data and serializer.validated_data["status"] == PettyCashFund.Status.CLOSED:
-            pending_expenses = fund.expenses.filter(status__in=(
-                PettyCashExpense.Status.DRAFT, PettyCashExpense.Status.PENDING_APPROVAL,
-                PettyCashExpense.Status.APPROVED,
-            )).exists()
-            pending_counts = fund.counts.filter(status=PettyCashCount.Status.PENDING).exists()
-            unreplenished = fund.settlements.filter(total_amount__gt=models.F("replenished_amount")).exists()
-            if self._balance(fund) != 0 or pending_expenses or pending_counts or unreplenished:
-                raise ValidationError("لا يمكن إغلاق العهدة قبل تصفير الرصيد، وتسوية/رفض المصروفات، واعتماد الجرد، وتغذية جميع التسويات.")
+            raise ValidationError("استخدم إجراء إغلاق العهدة لتأكيد النقدية الفعلية ورد الرصيد المتبقي للخزينة.")
         if fund.transfers.exists() or fund.expenses.exists():
             for field in ("company", "branch", "custodian", "funding_account", "petty_cash_account", "authorized_amount"):
                 if field in serializer.validated_data and getattr(serializer.validated_data[field], "pk", serializer.validated_data[field]) != getattr(fund, f"{field}_id", getattr(fund, field)):
@@ -2183,6 +2176,7 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
     @transaction.atomic
     @decorators.action(detail=True, methods=("post",), url_path="close")
     def close(self, request, pk=None):
+        from companies.models import FiscalYear
         fund = PettyCashFund.objects.select_for_update().get(pk=self.get_object().pk)
         self._write(fund.company_id)
         if fund.status == PettyCashFund.Status.CLOSED:
@@ -2192,19 +2186,54 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
             PettyCashExpense.Status.APPROVED,
         )).exists()
         pending_counts = fund.counts.filter(status=PettyCashCount.Status.PENDING).exists()
-        unreplenished = fund.settlements.filter(total_amount__gt=models.F("replenished_amount")).exists()
         balance = self._balance(fund)
-        if balance != 0 or pending_expenses or pending_counts or unreplenished:
+        if pending_expenses or pending_counts or balance < 0:
             raise ValidationError({
-                "detail": "لا يمكن إغلاق العهدة قبل تصفير الرصيد، وتسوية/رفض المصروفات، واعتماد الجرد، وتغذية جميع التسويات.",
+                "detail": "لا يمكن إغلاق العهدة قبل إنهاء المصروفات المفتوحة واعتماد الجرد والتحقق من الرصيد.",
                 "book_balance": str(balance),
                 "pending_expenses": pending_expenses,
                 "pending_counts": pending_counts,
-                "unreplenished_settlements": unreplenished,
             })
+        try:
+            actual = Decimal(str(request.data.get("actual_balance", "")))
+        except (InvalidOperation, TypeError, ValueError):
+            raise ValidationError({"actual_balance": "أدخل النقدية الفعلية الموجودة بالعهدة قبل الإغلاق."}) from None
+        if not actual.is_finite() or actual < 0 or actual != balance:
+            raise ValidationError({"actual_balance": f"النقدية الفعلية يجب أن تطابق الرصيد الدفتري ({balance})."})
+        if balance > 0:
+            if not fund.funding_account.is_active:
+                raise ValidationError("حساب الخزينة المستلم متوقف؛ لا يمكن رد المتبقي.")
+            movement_date = timezone.localdate()
+            year = FiscalYear.objects.filter(
+                company=fund.company, status=FiscalYear.Status.OPEN,
+                start_date__lte=movement_date, end_date__gte=movement_date,
+            ).first()
+            if not year:
+                raise ValidationError({"detail": "لا توجد سنة مالية مفتوحة بتاريخ إغلاق العهدة."})
+            doc = TreasuryTransaction.objects.create(
+                company=fund.company, branch=fund.branch, fiscal_year=year,
+                source_account=fund.petty_cash_account, destination_account=fund.funding_account,
+                kind=TreasuryTransaction.Kind.TRANSFER,
+                document_number=f"PC-RETURN-{fund.pk}-{uuid.uuid4().hex[:10].upper()}",
+                transaction_date=movement_date, amount=balance,
+                description=f"رد متبقي العهدة عند الإغلاق {fund.name}",
+                reference=f"PETTY-CASH-CLOSE:{fund.pk}", created_by=request.user,
+            )
+            post_treasury_transaction(doc.pk, user=request.user)
+            PettyCashTransfer.objects.create(
+                fund=fund, kind=PettyCashTransfer.Kind.CLOSURE_RETURN,
+                amount=balance, treasury_transaction=doc, created_by=request.user,
+            )
+        remaining = self._balance(fund)
+        if remaining != 0:
+            raise ValidationError({"detail": "لم يصل رصيد العهدة إلى الصفر بعد رد المتبقي؛ لم يتم إغلاقها.", "book_balance": str(remaining)})
         fund.status = PettyCashFund.Status.CLOSED
         fund.save(update_fields=("status", "updated_at"))
-        return response.Response(PettyCashFundSerializer(fund).data)
+        return response.Response({
+            **PettyCashFundSerializer(fund).data,
+            "returned_amount": balance,
+            "book_balance_after_close": remaining,
+        })
 
     def perform_destroy(self, instance):
         self._write(instance.company_id)
