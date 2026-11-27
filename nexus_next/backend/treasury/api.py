@@ -349,6 +349,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
         from hr.models import PayrollCycle, PayrollPosting
         from treasury.models import TreasuryTransaction
+        from companies.models import Branch, Company
 
         company_raw = request.query_params.get("company", "")
         if not company_raw.isdigit():
@@ -375,12 +376,10 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             branch_ids = [branch_id]
         if not branch_ids:
             raise PermissionDenied("لا توجد فروع متاحة لعرض توقع السيولة.")
-        company = visible_company = self.get_queryset().filter(company_id=company_id).select_related(
-            "company__base_currency"
-        ).first()
-        if not visible_company:
-            raise PermissionDenied("لا توجد حسابات خزينة متاحة ضمن نطاق الشركة.")
-        base_currency = visible_company.company.base_currency.code
+        company = Company.objects.select_related("base_currency").filter(pk=company_id).first()
+        if not company:
+            raise ValidationError({"company": "الشركة المحددة غير موجودة."})
+        base_currency = company.base_currency.code
 
         daily = defaultdict(lambda: {
             "collections": Decimal("0"), "supplier_payments": Decimal("0"),
@@ -492,7 +491,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             ),
             payment_date__lte=end_date,
         ).prefetch_related("postings__payment_treasury_transaction")
-        base_currency_id = visible_company.company.base_currency_id
+        base_currency_id = company.base_currency_id
         skipped_foreign_payroll = False
         for cycle in payroll_cycles:
             results = cycle.results.filter(
