@@ -1087,6 +1087,10 @@ class LandedCostAllocation(models.Model):
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
         related_name="landed_cost_source_allocation",
     )
+    source_reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="landed_cost_source_allocation_reversal",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1140,6 +1144,10 @@ class LandedCostDistribution(models.Model):
     journal_entry = models.OneToOneField(
         "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
         related_name="landed_cost_distribution",
+    )
+    reversal_journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="landed_cost_distribution_reversal",
     )
 
     class Meta:
