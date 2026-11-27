@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { formatMoney, multiplyDecimalToFixed } from "./formatters";
-import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule } from "./api";
+import { api, treasuryApi, bankReconciliationApi, type BankStatementImportPreview, type Account, type Branch, type FiscalYear, type TreasuryAccount, type TreasuryTransaction, type TreasuryCheque, type BankReconciliation, type BankReconciliationSummary, type Currency, type ExchangeRate, type TreasuryFxRevaluation, type TreasuryLiquiditySummary, type TreasuryLiquidityForecast, type CashCommitment, type CashCommitmentSchedule, type DirectCashFlowReport, type IndirectCashFlowReport } from "./api";
 
 type Props = { companyId: number };
 const today = () => new Date().toISOString().slice(0, 10);
@@ -12,7 +12,7 @@ const money = (v: string | number) => formatMoney(v);
 
 // شاشة الخزينة والبنوك وإدارة الحسابات والحركات والتسويات البنكية.
 export default function TreasuryPanel({companyId}: Props) {
-  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity"|"commitments">("transactions");
+  const [tab,setTab]=useState<"transactions"|"accounts"|"cheques"|"reconciliation"|"liquidity"|"commitments"|"cashflow">("transactions");
   const [liquidity,setLiquidity]=useState<TreasuryLiquiditySummary|null>(null);
   const [commitments,setCommitments]=useState<CashCommitment[]>([]);
   const [commitmentSchedules,setCommitmentSchedules]=useState<CashCommitmentSchedule[]>([]);
@@ -20,6 +20,13 @@ export default function TreasuryPanel({companyId}: Props) {
   const [scheduleForm,setScheduleForm]=useState({branch:"",title:"",amount:"",currency_code:"",exchange_rate:"1",frequency:"monthly" as CashCommitmentSchedule["frequency"],next_due_date:today(),end_date:"",payable_account:"",notes:""});
   const [scheduleThrough,setScheduleThrough]=useState(today());
   const [paymentForms,setPaymentForms]=useState<Record<number,{amount:string;journal_entry:string;payment_date:string}>>({});
+  const [cashFlowMethod,setCashFlowMethod]=useState<"direct"|"indirect">("direct");
+  const [cashFlowDateFrom,setCashFlowDateFrom]=useState(()=>`${new Date().getFullYear()}-01-01`);
+  const [cashFlowDateTo,setCashFlowDateTo]=useState(today());
+  const [cashFlowBranch,setCashFlowBranch]=useState("");
+  const [directCashFlow,setDirectCashFlow]=useState<DirectCashFlowReport|null>(null);
+  const [indirectCashFlow,setIndirectCashFlow]=useState<IndirectCashFlowReport|null>(null);
+  const [cashFlowLoading,setCashFlowLoading]=useState(false);
 
   const [forecast,setForecast]=useState<TreasuryLiquidityForecast|null>(null);
   const [forecastDays,setForecastDays]=useState(90);
@@ -73,6 +80,21 @@ export default function TreasuryPanel({companyId}: Props) {
   useEffect(()=>{void load();},[load]);
   const refreshSummary=useCallback(async(id:string)=>{if(!id){setSummary(null);return;}try{setSummary(await bankReconciliationApi.summary(Number(id)));}catch(e){setError((e as Error).message||"تعذر تحميل التسوية.");}},[]);
   useEffect(()=>{if(tab==="reconciliation"&&selectedRecon)void refreshSummary(selectedRecon);},[tab,selectedRecon,refreshSummary]);
+  const loadCashFlow=useCallback(async()=>{
+    if(!cashFlowDateFrom||!cashFlowDateTo){setError("حدد تاريخ بداية ونهاية التقرير.");return;}
+    if(cashFlowDateFrom>cashFlowDateTo){setError("تاريخ البداية يجب ألا يتجاوز تاريخ النهاية.");return;}
+    setCashFlowLoading(true);setError("");
+    try{
+      const branchId=cashFlowBranch?Number(cashFlowBranch):undefined;
+      if(cashFlowMethod==="direct"){
+        setDirectCashFlow(await treasuryApi.directCashFlow(companyId,cashFlowDateFrom,cashFlowDateTo,branchId));
+      }else{
+        setIndirectCashFlow(await treasuryApi.indirectCashFlow(companyId,cashFlowDateFrom,cashFlowDateTo,branchId));
+      }
+    }catch(e){setError((e as Error).message||"تعذر تحميل قائمة التدفقات النقدية.");}
+    finally{setCashFlowLoading(false);}
+  },[companyId,cashFlowDateFrom,cashFlowDateTo,cashFlowBranch,cashFlowMethod]);
+  useEffect(()=>{if(tab==="cashflow")void loadCashFlow();},[tab,loadCashFlow]);
   // حفظ حساب خزينة أو بنك جديد ببيانات الفرع والحساب المقابل.
 const saveCommitment=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitment({...commitmentForm,company:companyId,branch:commitmentForm.branch?Number(commitmentForm.branch):null,payable_account:Number(commitmentForm.payable_account)});setCommitmentForm(old=>({...old,title:"",period_label:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الالتزام.");}finally{setBusy(false);}};
   const saveCommitmentSchedule=async(e:React.FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{await treasuryApi.createCommitmentSchedule({...scheduleForm,company:companyId,branch:scheduleForm.branch?Number(scheduleForm.branch):null,payable_account:Number(scheduleForm.payable_account),end_date:scheduleForm.end_date||null});setScheduleForm(old=>({...old,title:"",amount:"",notes:""}));await load();}catch(err){setError((err as Error).message||"تعذر حفظ الجدول الدوري.");}finally{setBusy(false);}};
@@ -154,9 +176,66 @@ const eligible=(lineAmount:string)=>summary?.outstanding_transactions.filter(t=>
   return <section className="work-panel treasury-panel">
     <div className="work-panel-head"><div><h2>الخزينة والبنوك</h2><p>حسابات مستقلة وسندات وتسويات بنكية مرتبطة بالدفاتر</p></div><span className="coming-soon">{accounts.length} حساب</span></div>
     {error&&<div className="error-banner">{error}</div>}
-    <div className="module-tabs"><button className={tab==="liquidity"?"active":""} onClick={()=>setTab("liquidity")}>مركز السيولة</button><button className={tab==="commitments"?"active":""} onClick={()=>setTab("commitments")}>الالتزامات النقدية</button><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
+    <div className="module-tabs"><button className={tab==="liquidity"?"active":""} onClick={()=>setTab("liquidity")}>مركز السيولة</button><button className={tab==="cashflow"?"active":""} onClick={()=>setTab("cashflow")}>قائمة التدفقات النقدية</button><button className={tab==="commitments"?"active":""} onClick={()=>setTab("commitments")}>الالتزامات النقدية</button><button className={tab==="transactions"?"active":""} onClick={()=>setTab("transactions")}>سندات القبض والصرف والتحويل</button><button className={tab==="accounts"?"active":""} onClick={()=>setTab("accounts")}>الخزائن والحسابات البنكية</button><button className={tab==="cheques"?"active":""} onClick={()=>setTab("cheques")}>الشيكات الواردة والصادرة</button><button className={tab==="reconciliation"?"active":""} onClick={()=>setTab("reconciliation")}>التسوية البنكية</button></div>
     
-    {tab==="commitments"?<>
+    {tab==="cashflow"?<>
+      <div className="treasury-form">
+        <label>طريقة العرض<select value={cashFlowMethod} onChange={e=>setCashFlowMethod(e.target.value as "direct"|"indirect")}><option value="direct">الطريقة المباشرة</option><option value="indirect">الطريقة غير المباشرة</option></select></label>
+        <label>من تاريخ<input type="date" value={cashFlowDateFrom} onChange={e=>setCashFlowDateFrom(e.target.value)}/></label>
+        <label>إلى تاريخ<input type="date" value={cashFlowDateTo} onChange={e=>setCashFlowDateTo(e.target.value)}/></label>
+        <label>الفرع<select value={cashFlowBranch} onChange={e=>setCashFlowBranch(e.target.value)}><option value="">كل الفروع المتاحة</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name_ar}</option>)}</select></label>
+        <button type="button" disabled={cashFlowLoading} onClick={()=>void loadCashFlow()}>{cashFlowLoading?"جارٍ التحميل…":"تحديث التقرير"}</button>
+      </div>
+      {cashFlowMethod==="direct"&&directCashFlow?<>
+        <div className="treasury-summary-grid">
+          <div><small>التدفق التشغيلي</small><strong>{money(directCashFlow.operating_cash_flow)} {baseCurrencyCode}</strong></div>
+          <div><small>التدفق الاستثماري</small><strong>{money(directCashFlow.investing_cash_flow)} {baseCurrencyCode}</strong></div>
+          <div><small>التدفق التمويلي</small><strong>{money(directCashFlow.financing_cash_flow)} {baseCurrencyCode}</strong></div>
+          <div><small>صافي التغير النقدي</small><strong>{money(directCashFlow.net_increase_decrease_in_cash)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد أول الفترة</small><strong>{money(directCashFlow.opening_cash_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد آخر الفترة</small><strong>{money(directCashFlow.closing_cash_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد الأستاذ آخر الفترة</small><strong>{money(directCashFlow.ledger_closing_cash_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>فرق المطابقة</small><strong>{money(directCashFlow.reconciliation_difference)} {baseCurrencyCode}</strong></div>
+        </div>
+        {directCashFlow.sections.map(section=><div className="data-table-wrap" key={section.category}>
+          <h3>{section.label}</h3>
+          <p>مقبوضات: {money(section.cash_receipts)} · مدفوعات: {money(section.cash_payments)} · الصافي: {money(section.net_cash_flow)} {baseCurrencyCode}</p>
+          <table><thead><tr><th>الحساب المقابل</th><th>النوع</th><th>مقبوضات</th><th>مدفوعات</th></tr></thead><tbody>
+            {section.details.map((row,index)=><tr key={row.counter_account_id||index}><td>{row.counter_account_code||""} · {row.counter_account_name}</td><td>{row.kind==="receipt"?"قبض":"صرف"}</td><td>{money(row.inflows)}</td><td>{money(row.outflows)}</td></tr>)}
+            {!section.details.length&&<tr><td colSpan={4}>لا توجد حركات في هذا التصنيف.</td></tr>}
+          </tbody></table>
+        </div>)}
+        {!!directCashFlow.uncategorized_counterparty_transactions.length&&<div className="error-banner">هناك {directCashFlow.uncategorized_counterparty_transactions.length} حركة تحتاج مراجعة الحساب المقابل أو تصنيف التدفق النقدي.</div>}
+        {!!directCashFlow.non_cash_investing_transactions.length&&<div className="data-table-wrap"><h3>استثمارات غير نقدية (إفصاح منفصل)</h3><table><thead><tr><th>المستند</th><th>الأصل</th><th>المورد</th><th>القيمة</th><th>المسدد نقدًا</th><th>غير المسدد</th></tr></thead><tbody>
+          {directCashFlow.non_cash_investing_transactions.map((row,index)=><tr key={row.invoice_number+index}><td>{row.invoice_number}</td><td>{row.asset_name}</td><td>{row.supplier_name}</td><td>{money(row.gross_amount)}</td><td>{money(row.cash_paid_during_period)}</td><td>{money(row.unpaid_at_period_end)}</td></tr>)}
+        </tbody></table></div>}
+        <p className="form-wide">{directCashFlow.note}</p>
+      </>:null}
+      {cashFlowMethod==="indirect"&&indirectCashFlow?<>
+        <div className="treasury-summary-grid">
+          <div><small>صافي الربح</small><strong>{money(indirectCashFlow.net_profit)} {baseCurrencyCode}</strong></div>
+          <div><small>تسويات غير نقدية</small><strong>{money(indirectCashFlow.non_cash_adjustments.net)} {baseCurrencyCode}</strong></div>
+          <div><small>تدفق تشغيلي</small><strong>{money(indirectCashFlow.operating_cash_flow)} {baseCurrencyCode}</strong></div>
+          <div><small>تدفق استثماري</small><strong>{money(indirectCashFlow.investing_cash_flow)} {baseCurrencyCode}</strong></div>
+          <div><small>تدفق تمويلي</small><strong>{money(indirectCashFlow.financing_cash_flow)} {baseCurrencyCode}</strong></div>
+          <div><small>صافي التغير النقدي</small><strong>{money(indirectCashFlow.net_increase_decrease_in_cash)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد أول الفترة</small><strong>{money(indirectCashFlow.opening_cash_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد آخر الفترة</small><strong>{money(indirectCashFlow.closing_cash_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>رصيد الأستاذ آخر الفترة</small><strong>{money(indirectCashFlow.ledger_closing_cash_balance)} {baseCurrencyCode}</strong></div>
+          <div><small>فرق المطابقة</small><strong>{money(indirectCashFlow.reconciliation_difference)} {baseCurrencyCode}</strong></div>
+        </div>
+        <div className="data-table-wrap"><h3>تسويات صافي الربح</h3><table><thead><tr><th>البند</th><th>القيمة</th></tr></thead><tbody>
+          <tr><td>الإهلاك</td><td>{money(indirectCashFlow.non_cash_adjustments.depreciation)}</td></tr><tr><td>خسائر استبعاد الأصول</td><td>{money(indirectCashFlow.non_cash_adjustments.disposal_loss)}</td></tr><tr><td>أرباح استبعاد الأصول</td><td>{money(indirectCashFlow.non_cash_adjustments.disposal_gain)}</td></tr><tr><td>صافي التسويات غير النقدية</td><td>{money(indirectCashFlow.non_cash_adjustments.net)}</td></tr>
+        </tbody></table></div>
+        <div className="data-table-wrap"><h3>تغيرات رأس المال العامل</h3><table><thead><tr><th>الحساب</th><th>رصيد أول الفترة</th><th>رصيد آخر الفترة</th><th>التغير</th><th>أثر التدفق</th></tr></thead><tbody>
+          {indirectCashFlow.working_capital.map((row,index)=><tr key={row.role+index}><td>{row.account_code} · {row.account_name}</td><td>{money(row.opening_balance)}</td><td>{money(row.closing_balance)}</td><td>{money(row.change)}</td><td>{money(row.cash_flow_adjustment)}</td></tr>)}
+          {!indirectCashFlow.working_capital.length&&<tr><td colSpan={5}>لا توجد حسابات رأس مال عامل مرتبطة بالأدوار.</td></tr>}
+        </tbody></table></div>
+        {!!indirectCashFlow.missing_account_roles.length&&<div className="error-banner">أدوار حسابات تحتاج ربطًا لإكمال القائمة: {indirectCashFlow.missing_account_roles.join("، ")}</div>}
+        <p className="form-wide">{indirectCashFlow.note}</p>
+      </>:null}
+      {cashFlowLoading&&<p className="form-wide">جارٍ إعداد قائمة التدفقات النقدية…</p>}
+    </>:tab==="commitments"?<>
       <div className="form-wide"><strong>سجل الالتزامات النقدية</strong><p>للمبالغ غير الموجودة بالفعل في فواتير العملاء والموردين أو دورة المرتبات. التسجيل هنا لا ينشئ قيدًا محاسبيًا ولا يغير رصيد البنك.</p></div>
       <form className="treasury-form" onSubmit={saveCommitment}>
         <label>نوع الالتزام<select value={commitmentForm.commitment_type} onChange={e=>setCommitmentForm({...commitmentForm,commitment_type:e.target.value as CashCommitment["commitment_type"]})}><option value="tax">ضرائب ورسوم</option><option value="recurring_expense">مصروف دوري</option><option value="friday_overtime">أجور إضافية</option><option value="other">التزامات أخرى</option></select></label>
