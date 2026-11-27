@@ -199,7 +199,7 @@ class SalesInvoice(models.Model):
 
     company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="sales_invoices")
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT, related_name="sales_invoices")
-    delivery = models.OneToOneField(SalesDelivery, null=True, blank=True, on_delete=models.PROTECT, related_name="invoice")
+    delivery = models.ForeignKey(SalesDelivery, null=True, blank=True, on_delete=models.PROTECT, related_name="invoices")
     branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="sales_invoices")
     invoice_number = models.CharField(max_length=80)
     invoice_date = models.DateField()
