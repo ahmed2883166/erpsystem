@@ -1104,7 +1104,7 @@ export type BankReconciliationSummary = { reconciliation: BankReconciliation; st
 // واجهات التسوية البنكية: تجمع طلبات القراءة والإنشاء والتعديل والإجراءات الخاصة بهذه الوحدة.
 export type BankStatementImportPreview = {
   file_name:string; total:number; new_count:number; duplicate_count:number;
-  rows:{date:string;amount:string;description:string;reference:string}[];
+  rows:{date:string;amount:string;description:string;reference:string}[]; rows_truncated?:boolean;
   duplicates:{date:string;amount:string;description:string;reference:string}[];
 };
 export type BankStatementImportResult = {imported:number;duplicate_count:number;message:string};
