@@ -15,7 +15,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, PettyCashExpense, PettyCashSettlement, PettyCashCount, PettyCashCustodianHandover
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, PettyCashExpense, PettyCashSettlement, PettyCashCount, PettyCashCustodianHandover, PettyCashTransfer
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -1860,7 +1860,7 @@ class PettyCashWorkflowTests(APITestCase):
         self.assertEqual(fund.custodian_id, self.new_custodian.pk)
         self.assertEqual(PettyCashCustodianHandover.objects.get(pk=handover.data["id"]).previous_custodian_id, self.user.pk)
 
-    def test_close_rejects_unreplenished_settlements_and_open_balance(self):
+    def test_close_requires_physical_balance_confirmation(self):
         fund_id = self._create_fund()
         self.client.post(
             f"/api/treasury/petty-cash-funds/{fund_id}/fund/",
@@ -1883,6 +1883,40 @@ class PettyCashWorkflowTests(APITestCase):
         closed = self.client.post(f"/api/treasury/petty-cash-funds/{fund_id}/close/", {}, format="json")
         self.assertEqual(closed.status_code, 400, closed.data)
         self.assertEqual(PettyCashFund.objects.get(pk=fund_id).status, PettyCashFund.Status.ACTIVE)
+
+    def test_close_returns_remaining_cash_to_funding_account_and_closes_fund(self):
+        fund_id = self._create_fund()
+        funded = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/fund/",
+            {"amount": "500", "transaction_date": "2026-03-01"}, format="json",
+        )
+        self.assertEqual(funded.status_code, 201, funded.data)
+        expense = self.client.post("/api/treasury/petty-cash-expenses/", {
+            "fund": fund_id, "expense_date": "2026-03-02", "description": "مصروف نهائي قبل الإغلاق",
+            "amount": "100", "expense_account": self.expense_gl.pk, "receipt_number": "R-500",
+        }, format="json")
+        self.assertEqual(expense.status_code, 201, expense.data)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/submit/", {}, format="json")
+        self.client.force_authenticate(self.approver)
+        self.client.post(f"/api/treasury/petty-cash-expenses/{expense.data['id']}/approve/", {}, format="json")
+        self.client.force_authenticate(self.user)
+        settled = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/settle/",
+            {"expense_ids": [expense.data["id"]], "settlement_date": "2026-03-03"}, format="json",
+        )
+        self.assertEqual(settled.status_code, 201, settled.data)
+        closed = self.client.post(
+            f"/api/treasury/petty-cash-funds/{fund_id}/close/",
+            {"actual_balance": "400"}, format="json",
+        )
+        self.assertEqual(closed.status_code, 200, closed.data)
+        self.assertEqual(closed.data["returned_amount"], "400.0000")
+        fund = PettyCashFund.objects.get(pk=fund_id)
+        self.assertEqual(fund.status, PettyCashFund.Status.CLOSED)
+        self.assertEqual(PettyCashFundViewSet._balance(fund), Decimal("0"))
+        return_transfer = PettyCashTransfer.objects.get(fund=fund, kind=PettyCashTransfer.Kind.CLOSURE_RETURN)
+        self.assertEqual(return_transfer.amount, Decimal("400"))
+        self.assertEqual(return_transfer.treasury_transaction.status, TreasuryTransaction.Status.POSTED)
 
 
     def test_receipt_attachment_upload_and_authorized_download(self):
