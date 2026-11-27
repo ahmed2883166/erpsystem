@@ -2848,6 +2848,87 @@ class SalesWorkflowTests(APITestCase):
 
 
 
+    def test_sales_performance_report_preserves_return_and_reversal_periods(self):
+        delivery_id, delivery_line_id = self._create_delivery("REPORT-REVERSAL-DEL")
+        invoice = self.client.post("/api/sales-documents/invoices/", {
+            "company": self.company.pk,
+            "customer": self.customer.pk,
+            "delivery": delivery_id,
+            "invoice_number": "REPORT-REVERSAL-INV",
+            "invoice_date": "2026-03-10",
+            "lines": [{
+                "delivery_line": delivery_line_id,
+                "unit_price": "100",
+                "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(invoice.status_code, 201, invoice.data)
+        posted_invoice = self.client.post(
+            f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.data)
+
+        sales_return = self.client.post("/api/sales-documents/returns/", {
+            "company": self.company.pk,
+            "invoice": invoice.data["id"],
+            "return_number": "REPORT-REVERSAL-RET",
+            "return_date": "2026-03-12",
+            "lines": [{
+                "invoice_line": invoice.data["invoice_lines"][0]["id"],
+                "quantity": "1",
+            }],
+        }, format="json")
+        self.assertEqual(sales_return.status_code, 201, sales_return.data)
+        posted_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/post/", {}, format="json"
+        )
+        self.assertEqual(posted_return.status_code, 200, posted_return.data)
+
+        reversed_return = self.client.post(
+            f"/api/sales-documents/returns/{sales_return.data['id']}/reverse/",
+            {"entry_date": "2026-03-14"}, format="json",
+        )
+        self.assertEqual(reversed_return.status_code, 200, reversed_return.data)
+
+        # The original return remains visible in its own period after reversal.
+        original_period = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-12&date_to=2026-03-12"
+        )
+        self.assertEqual(original_period.status_code, 200, original_period.data)
+        self.assertEqual(original_period.data["totals"]["return_count"], 1)
+        self.assertEqual(original_period.data["totals"]["return_net"], "100.0000")
+        self.assertEqual(original_period.data["totals"]["return_tax"], "14.0000")
+        self.assertEqual(original_period.data["totals"]["net_sales"], "100.0000")
+        self.assertEqual(original_period.data["totals"]["gross_profit"], "60.0000")
+        self.assertEqual(original_period.data["by_product"][0]["quantity_returned"], "1.0000")
+
+        # The reversal is a positive adjustment in its own posting period.
+        reversal_period = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-14&date_to=2026-03-14"
+        )
+        self.assertEqual(reversal_period.status_code, 200, reversal_period.data)
+        self.assertEqual(reversal_period.data["totals"]["return_net"], "-100.0000")
+        self.assertEqual(reversal_period.data["totals"]["return_tax"], "-14.0000")
+        self.assertEqual(reversal_period.data["totals"]["net_sales"], "100.0000")
+        self.assertEqual(reversal_period.data["totals"]["net_cost"], "40.0000")
+        self.assertEqual(reversal_period.data["totals"]["gross_profit"], "60.0000")
+        self.assertEqual(reversal_period.data["by_customer"][0]["quantity_returned"], "-1.0000")
+        self.assertEqual(reversal_period.data["by_product"][0]["return_net"], "-100.0000")
+
+        # Both events cancel when the report spans both posting dates.
+        combined_period = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-10&date_to=2026-03-14"
+        )
+        self.assertEqual(combined_period.status_code, 200, combined_period.data)
+        self.assertEqual(combined_period.data["totals"]["return_net"], "0.0000")
+        self.assertEqual(combined_period.data["totals"]["return_tax"], "0.0000")
+        self.assertEqual(combined_period.data["totals"]["net_sales"], "200.0000")
+        self.assertEqual(combined_period.data["totals"]["gross_profit"], "120.0000")
+
+
     def test_sales_postings_reconcile_to_income_statement_balance_sheet_and_trial_balance(self):
         """Reconcile a posted sale and partial return through the financial statements."""
         delivery_id, delivery_line_id = self._create_delivery("FS-RECON-DEL")
