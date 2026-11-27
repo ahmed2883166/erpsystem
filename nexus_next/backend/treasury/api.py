@@ -335,6 +335,294 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             "note": "الأرصدة محسوبة حتى اليوم من القيود المرحلة فقط، مع استبعاد قيود الإقفال. التحويلات الداخلية لا تغيّر إجمالي الشركة، والعملات الأجنبية معروضة اسميًا وبقيمتها الدفترية الأساسية.",
         })
 
+
+    @decorators.action(detail=False, methods=("get",), url_path="liquidity-forecast")
+    def liquidity_forecast(self, request):
+        """توقع السيولة من الأرصدة المفتوحة ودورات المرتبات المعتمدة دون تكرار المقبوضات أو المدفوعات."""
+        from collections import defaultdict
+        from datetime import timedelta
+        from django.db.models import Sum
+        from sales.models import (
+            SalesInvoice, CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesReturn,
+        )
+        from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn
+        from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
+        from hr.models import PayrollCycle
+        from treasury.models import TreasuryTransaction
+        from companies.models import Branch, Company
+
+        company_raw = request.query_params.get("company", "")
+        if not company_raw.isdigit():
+            raise ValidationError({"company": "حدد الشركة لعرض توقع السيولة."})
+        company_id = int(company_raw)
+        self._scope(company_id)
+        today = timezone.localdate()
+        horizon_raw = request.query_params.get("days", "90")
+        try:
+            horizon_days = int(horizon_raw)
+        except (TypeError, ValueError):
+            raise ValidationError({"days": "اختر أفقًا صحيحًا: 30 أو 60 أو 90 أو 180 يومًا."}) from None
+        if horizon_days not in (30, 60, 90, 180):
+            raise ValidationError({"days": "أفق التوقع المتاح 30 أو 60 أو 90 أو 180 يومًا."})
+        end_date = today + timedelta(days=horizon_days)
+        branch_raw = request.query_params.get("branch")
+        branch_id = None
+        if branch_raw:
+            if not branch_raw.isdigit() or not can_access_branch(request.user, int(branch_raw), company_id):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
+            branch_id = int(branch_raw)
+        branch_ids = list(accessible_branches(request.user, company_id).values_list("id", flat=True))
+        if branch_id:
+            branch_ids = [branch_id]
+        if not branch_ids:
+            raise PermissionDenied("لا توجد فروع متاحة لعرض توقع السيولة.")
+        company = Company.objects.select_related("base_currency").filter(pk=company_id).first()
+        if not company:
+            raise ValidationError({"company": "الشركة المحددة غير موجودة."})
+        base_currency = company.base_currency.code
+
+        daily = defaultdict(lambda: {
+            "collections": Decimal("0"), "supplier_payments": Decimal("0"),
+            "payroll": Decimal("0"),
+        })
+        items = []
+        coverage_notes = [
+            "المبالغ معروضة بالعملة الأساسية للشركة؛ يتم استخدام القيمة الدفترية الأساسية للمستندات الأجنبية.",
+            "المستندات المتأخرة تُعرض كتدفق مستحق اليوم مع الاحتفاظ بتاريخ استحقاقها الأصلي.",
+            "الشيكات غير المربوطة بفاتورة لا تُضاف منفصلة حتى لا تتكرر مع ذمم العملاء؛ سندات الصرف المرحلة داخلة بالفعل في الرصيد الفعلي.",
+            "الالتزامات القديمة المسجلة في قاعدة SQLite المنفصلة غير مضافة إلى توقعات قاعدة AdmRail الحالية.",
+        ]
+
+        def add_item(kind, document, party, due_date, amount, label):
+            amount = max(Decimal(amount), Decimal("0"))
+            if amount <= 0 or due_date > end_date:
+                return
+            forecast_date = max(due_date, today)
+            daily[forecast_date][kind] += amount
+            items.append({
+                "kind": kind, "document": str(document), "party": str(party),
+                "due_date": due_date.isoformat(), "forecast_date": forecast_date.isoformat(),
+                "balance": str(amount), "status": label,
+                "date_basis": "متأخر" if due_date < today else "تاريخ الاستحقاق",
+            })
+
+        # Receivables: posted invoices less posted receipts, posted batch allocations,
+        # and posted sales returns. Reversed and draft documents do not reduce the balance.
+        sales_invoices = SalesInvoice.objects.filter(
+            company_id=company_id, status=SalesInvoice.Status.POSTED,
+            invoice_date__lte=end_date,
+        ).filter(
+            models.Q(branch_id__in=branch_ids)
+            | models.Q(delivery__warehouse__branch_id__in=branch_ids)
+        ).select_related("customer", "branch").prefetch_related(
+            "receipts", "returns",
+        )
+        batch_paid_by_invoice = {
+            row["invoice_id"]: row["total"]
+            for row in CustomerReceiptBatchAllocation.objects.filter(
+                invoice__in=sales_invoices,
+                batch__status=CustomerReceiptBatch.Status.POSTED,
+                batch__receipt_date__lte=end_date,
+            ).values("invoice_id").annotate(total=Sum("amount"))
+        }
+        for invoice in sales_invoices:
+            posted_receipts = [
+                receipt for receipt in invoice.receipts.all()
+                if receipt.status == CustomerReceipt.Status.POSTED
+                and receipt.receipt_date <= end_date
+            ]
+            paid = sum((
+                receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount
+                for receipt in posted_receipts
+            ), Decimal("0"))
+            for receipt in posted_receipts:
+                if receipt.receipt_date > today:
+                    add_item(
+                        "collections", receipt.receipt_number, invoice.customer.name_ar,
+                        receipt.receipt_date,
+                        receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount,
+                        "سند قبض مرحّل بتاريخ مستقبلي",
+                    )
+            batch_paid = batch_paid_by_invoice.get(invoice.pk, Decimal("0"))
+            returned = sum((
+                item.grand_total for item in invoice.returns.all()
+                if item.status == SalesReturn.Status.POSTED and item.return_date <= end_date
+            ), Decimal("0"))
+            balance = max(invoice.grand_total - paid - batch_paid - returned, Decimal("0"))
+            due_date = invoice.invoice_date + timedelta(days=invoice.customer.payment_terms_days)
+            add_item(
+                "collections", invoice.invoice_number, invoice.customer.name_ar, due_date,
+                balance, "رصيد عميل مفتوح",
+            )
+
+        # Future-dated batch receipts are counted once at batch level, split by allocations.
+        future_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, status=CustomerReceiptBatch.Status.POSTED,
+            receipt_date__gt=today, receipt_date__lte=end_date, branch_id__in=branch_ids,
+        ).prefetch_related("allocations__invoice__customer")
+        for batch in future_batches:
+            allocated = Decimal("0")
+            for allocation in batch.allocations.all():
+                allocated += allocation.amount
+                add_item(
+                    "collections", batch.receipt_number,
+                    allocation.invoice.customer.name_ar, batch.receipt_date,
+                    allocation.amount, "سند قبض مجمع مرحّل بتاريخ مستقبلي",
+                )
+            unallocated = max(batch.amount - allocated, Decimal("0"))
+            if unallocated:
+                add_item(
+                    "collections", batch.receipt_number, batch.customer.name_ar,
+                    batch.receipt_date, unallocated, "دفعة مقدمة من عميل بتاريخ مستقبلي",
+                )
+
+        # Supplier operating invoices: subtract posted payments and returns only.
+        purchase_invoices = PurchaseInvoice.objects.filter(
+            company_id=company_id, status=PurchaseInvoice.Status.POSTED,
+            invoice_date__lte=end_date,
+        ).filter(
+            models.Q(branch_id__in=branch_ids)
+            | models.Q(receipt__warehouse__branch_id__in=branch_ids)
+        ).select_related("supplier").prefetch_related("payments", "returns")
+        for invoice in purchase_invoices:
+            paid = sum((
+                payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount
+                for payment in invoice.payments.all()
+                if payment.status == SupplierPayment.Status.POSTED and payment.payment_date <= end_date
+            ), Decimal("0"))
+            for payment in invoice.payments.all():
+                if payment.status == SupplierPayment.Status.POSTED and today < payment.payment_date <= end_date:
+                    add_item(
+                        "supplier_payments", payment.payment_number, invoice.supplier.name_ar,
+                        payment.payment_date,
+                        payment.carrying_base_amount if payment.carrying_base_amount is not None else payment.amount,
+                        "سند صرف مورد مرحّل بتاريخ مستقبلي",
+                    )
+            returned = sum((
+                item.grand_total for item in invoice.returns.all()
+                if item.status == SupplierReturn.Status.POSTED and item.return_date <= end_date
+            ), Decimal("0"))
+            balance = max(invoice.grand_total - paid - returned, Decimal("0"))
+            due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
+            add_item(
+                "supplier_payments", invoice.invoice_number, invoice.supplier.name_ar, due_date,
+                balance, "رصيد مورد مفتوح",
+            )
+
+        # Fixed-asset supplier invoices are a separate payable source and are
+        # included once, independently of purchasing invoices.
+        asset_invoices = AssetPurchaseInvoice.objects.filter(
+            company_id=company_id, status=AssetPurchaseInvoice.Status.POSTED,
+            invoice_date__lte=end_date, branch_id__in=branch_ids,
+        ).select_related("supplier").prefetch_related("payments")
+        for invoice in asset_invoices:
+            paid = sum((
+                payment.amount for payment in invoice.payments.all()
+                if payment.status == AssetSupplierPayment.Status.POSTED and payment.payment_date <= end_date
+            ), Decimal("0"))
+            for payment in invoice.payments.all():
+                if payment.status == AssetSupplierPayment.Status.POSTED and today < payment.payment_date <= end_date:
+                    add_item(
+                        "supplier_payments", payment.payment_number, invoice.supplier.name_ar,
+                        payment.payment_date, payment.amount,
+                        "سند سداد أصل ثابت مرحّل بتاريخ مستقبلي",
+                    )
+            balance = max(invoice.grand_total - paid, Decimal("0"))
+            due_date = invoice.invoice_date + timedelta(days=invoice.supplier.payment_terms_days)
+            add_item(
+                "supplier_payments", invoice.invoice_number, invoice.supplier.name_ar, due_date,
+                balance, "فاتورة أصل ثابت مفتوحة",
+            )
+
+        # Approved/posted payroll cycles: count branch net pay, but exclude any
+        # branch payment whose treasury transaction has already been posted.
+        payroll_cycles = PayrollCycle.objects.filter(
+            company_id=company_id,
+            status__in=(
+                PayrollCycle.Status.APPROVED, PayrollCycle.Status.POSTED,
+                PayrollCycle.Status.PAYMENT_PENDING, PayrollCycle.Status.PAID,
+            ),
+            payment_date__lte=end_date,
+        ).prefetch_related("postings__payment_treasury_transaction")
+        base_currency_id = company.base_currency_id
+        skipped_foreign_payroll = False
+        for cycle in payroll_cycles:
+            results = cycle.results.filter(
+                employee__branch_id__in=branch_ids,
+                employee__currency_id=base_currency_id,
+            ).values("employee__branch_id").annotate(total=Sum("net_pay"))
+            postings = {posting.branch_id: posting for posting in cycle.postings.all()}
+            for result in results:
+                posting = postings.get(result["employee__branch_id"])
+                payment_doc = posting.payment_treasury_transaction if posting else None
+                branch = Branch.objects.filter(pk=result["employee__branch_id"]).only("name_ar").first()
+                branch_name = branch.name_ar if branch else "مرتبات الفرع"
+                payroll_amount = result["total"] or Decimal("0")
+                if payment_doc and payment_doc.status == TreasuryTransaction.Status.POSTED:
+                    if payment_doc.transaction_date > today:
+                        add_item(
+                            "payroll", payment_doc.document_number, branch_name,
+                            payment_doc.transaction_date, payroll_amount,
+                            "سند صرف مرتبات مرحّل بتاريخ مستقبلي",
+                        )
+                    continue
+                add_item(
+                    "payroll", f"PAY-{cycle.pk}", branch_name,
+                    cycle.payment_date, payroll_amount,
+                    "استحقاق مرتبات غير مصروف",
+                )
+            if cycle.results.filter(employee__branch_id__in=branch_ids).exclude(
+                employee__currency_id=base_currency_id
+            ).exists():
+                skipped_foreign_payroll = True
+        if skipped_foreign_payroll:
+            coverage_notes.append(
+                "بعض نتائج المرتبات بعملة غير العملة الأساسية لم تدخل التوقع؛ لا يوجد لها تحويل عملة معتمد محفوظ في نتيجة المرتب."
+            )
+
+        actual_response = self.liquidity_summary(request)
+        actual_data = actual_response.data
+        actual_cash = Decimal(actual_data["total_base_balance"])
+        dates = sorted(daily)
+        running = actual_cash
+        daily_rows = []
+        total_collections = Decimal("0")
+        total_supplier_payments = Decimal("0")
+        total_payroll = Decimal("0")
+        for day in dates:
+            row = daily[day]
+            collections = row["collections"]
+            supplier_payments = row["supplier_payments"]
+            payroll = row["payroll"]
+            payments = supplier_payments + payroll
+            net = collections - payments
+            running += net
+            total_collections += collections
+            total_supplier_payments += supplier_payments
+            total_payroll += payroll
+            daily_rows.append({
+                "date": day.isoformat(), "collections": str(collections),
+                "supplier_payments": str(supplier_payments), "payroll": str(payroll),
+                "payments": str(payments), "net": str(net),
+                "projected_balance": str(running),
+            })
+        total_payments = total_supplier_payments + total_payroll
+        return response.Response({
+            "company": company_id, "as_of": today.isoformat(), "horizon_days": horizon_days,
+            "end_date": end_date.isoformat(), "base_currency": base_currency,
+            "branch": branch_id, "actual_cash_balance": str(actual_cash),
+            "expected_collections": str(total_collections),
+            "expected_supplier_payments": str(total_supplier_payments),
+            "expected_payroll": str(total_payroll),
+            "expected_payments": str(total_payments),
+            "expected_net": str(total_collections - total_payments),
+            "projected_closing_balance": str(actual_cash + total_collections - total_payments),
+            "daily": daily_rows,
+            "items": sorted(items, key=lambda item: (item["forecast_date"], item["kind"], item["document"])),
+            "coverage_notes": coverage_notes,
+            "note": "التوقع تقديري من الفواتير المرحلة المفتوحة ودورات المرتبات المعتمدة أو المرحلة. الرصيد الفعلي منفصل، ولا تُضاف سندات القبض أو الصرف المرحلة مرة ثانية.",
+        })
+
     @decorators.action(detail=True, methods=("post",), url_path="revalue")
     def revalue(self, request, pk=None):
         """إعادة تقييم مركز عملة الحساب بسعر صرف معتمد وتسجيل قيد الفروق."""

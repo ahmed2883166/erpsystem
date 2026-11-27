@@ -1383,3 +1383,99 @@ class TreasuryLiquiditySummaryTests(APITestCase):
         self.assertEqual(row["currency"], "USD")
         self.assertEqual(Decimal(row["balance"]), Decimal("5000"))
         self.assertEqual(Decimal(row["base_balance"]), Decimal("150000"))
+
+
+class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
+    def test_forecast_uses_only_remaining_posted_receivables_payables_and_unpaid_payroll(self):
+        from datetime import timedelta
+        from customers.models import Customer
+        from suppliers.models import Supplier
+        from sales.models import SalesInvoice, CustomerReceipt
+        from purchasing.models import PurchaseInvoice, SupplierPayment
+        from hr.models import Employee, PayrollCycle, PayrollResult
+        from django.utils import timezone
+
+        today = timezone.localdate()
+        customer = Customer.objects.create(
+            company=self.company, code="C-LIQ-1", name_ar="عميل اختبار",
+            payment_terms_days=5,
+        )
+        sales_invoice = SalesInvoice.objects.create(
+            company=self.company, customer=customer, branch=self.branch,
+            invoice_number="SI-LIQ-1", invoice_date=today - timedelta(days=10),
+            status=SalesInvoice.Status.POSTED, grand_total=Decimal("100"),
+        )
+        CustomerReceipt.objects.create(
+            company=self.company, customer=customer, invoice=sales_invoice,
+            receipt_number="CR-LIQ-1", receipt_date=today - timedelta(days=2),
+            amount=Decimal("40"), status=CustomerReceipt.Status.POSTED,
+        )
+        CustomerReceipt.objects.create(
+            company=self.company, customer=customer, invoice=sales_invoice,
+            receipt_number="CR-LIQ-2", receipt_date=today - timedelta(days=1),
+            amount=Decimal("20"), status=CustomerReceipt.Status.REVERSED,
+        )
+
+        supplier = Supplier.objects.create(
+            company=self.company, code="S-LIQ-1", name_ar="مورد اختبار",
+            payment_terms_days=3,
+        )
+        purchase_invoice = PurchaseInvoice.objects.create(
+            company=self.company, supplier=supplier, branch=self.branch,
+            invoice_number="PI-LIQ-1", invoice_date=today - timedelta(days=8),
+            status=PurchaseInvoice.Status.POSTED, grand_total=Decimal("80"),
+        )
+        SupplierPayment.objects.create(
+            company=self.company, supplier=supplier, invoice=purchase_invoice,
+            payment_number="SP-LIQ-1", payment_date=today - timedelta(days=1),
+            amount=Decimal("30"), status=SupplierPayment.Status.POSTED,
+        )
+
+        employee = Employee.objects.create(
+            company=self.company, branch=self.branch, code="E-LIQ-1",
+            full_name_ar="موظف اختبار", hire_date=today - timedelta(days=365),
+            currency=self.company.base_currency, basic_salary=Decimal("100"),
+        )
+        cycle = PayrollCycle.objects.create(
+            company=self.company, period_start=today - timedelta(days=30),
+            period_end=today - timedelta(days=1), payment_date=today + timedelta(days=10),
+            status=PayrollCycle.Status.APPROVED,
+        )
+        PayrollResult.objects.create(
+            cycle=cycle, employee=employee, basic_salary_snapshot=Decimal("100"),
+            net_pay=Decimal("75"),
+        )
+
+        result = self.client.get(
+            f"/api/treasury/accounts/liquidity-forecast/?company={self.company.pk}&days=30"
+        )
+        self.assertEqual(result.status_code, 200, result.data)
+        self.assertEqual(Decimal(result.data["expected_collections"]), Decimal("60"))
+        self.assertEqual(Decimal(result.data["expected_supplier_payments"]), Decimal("50"))
+        self.assertEqual(Decimal(result.data["expected_payroll"]), Decimal("75"))
+        self.assertEqual(Decimal(result.data["expected_payments"]), Decimal("125"))
+        self.assertEqual(Decimal(result.data["expected_net"]), Decimal("-65"))
+        self.assertEqual(Decimal(result.data["projected_closing_balance"]), Decimal("-65"))
+        self.assertEqual(len([item for item in result.data["items"] if item["document"] == "SI-LIQ-1"]), 1)
+        self.assertEqual(len([item for item in result.data["items"] if item["document"] == "PI-LIQ-1"]), 1)
+
+    def test_forecast_rejects_unsupported_horizon_and_enforces_branch_access(self):
+        invalid = self.client.get(
+            f"/api/treasury/accounts/liquidity-forecast/?company={self.company.pk}&days=45"
+        )
+        self.assertEqual(invalid.status_code, 400, invalid.data)
+
+        other = Branch.objects.create(
+            company=self.company, code="OTHER", name_ar="فرع آخر",
+        )
+        restricted = get_user_model().objects.create_user(
+            username="liquidity-restricted", password="test-password",
+        )
+        CompanyMembership.objects.create(
+            user=restricted, company=self.company, role="accountant", all_branches=False,
+        )
+        self.client.force_authenticate(restricted)
+        denied = self.client.get(
+            f"/api/treasury/accounts/liquidity-forecast/?company={self.company.pk}&days=30&branch={other.pk}"
+        )
+        self.assertEqual(denied.status_code, 403, denied.data)

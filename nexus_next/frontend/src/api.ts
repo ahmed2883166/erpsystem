@@ -372,6 +372,15 @@ export type TreasuryLiquiditySummary = {
   accounts:{id:number;code:string;name:string;kind:"cash"|"bank";branch_id:number|null;branch_name:string;
     currency:string;balance:string;foreign_amount:string|null;base_balance:string;is_foreign:boolean}[];
 };
+
+export type TreasuryLiquidityForecast = {
+  company:number; as_of:string; horizon_days:number; end_date:string; base_currency:string;
+  branch:number|null; actual_cash_balance:string; expected_collections:string;
+  expected_supplier_payments:string; expected_payroll:string; expected_payments:string;
+  expected_net:string; projected_closing_balance:string; note:string; coverage_notes:string[];
+  daily:{date:string;collections:string;supplier_payments:string;payroll:string;payments:string;net:string;projected_balance:string}[];
+  items:{kind:"collections"|"supplier_payments"|"payroll";document:string;party:string;due_date:string;forecast_date:string;balance:string;status:string;date_basis:string}[];
+};
 export type TreasuryAccount = {
   id: number; company: number; branch: number | null; branch_name: string; account: number;
   account_code: string; account_name: string; kind: "cash" | "bank"; code: string; name_ar: string;
@@ -451,6 +460,12 @@ export const treasuryApi = {
     if(asOf) q.set("as_of",asOf);
     if(branch) q.set("branch",String(branch));
     return request<TreasuryLiquiditySummary>(`/api/treasury/accounts/liquidity-summary/?${q.toString()}`);
+  },
+  // توقع التدفقات من الذمم المفتوحة ودورات المرتبات المعتمدة مع فصلها عن الرصيد الفعلي.
+  liquidityForecast: (companyId:number, days=90, branch?:number) => {
+    const q = new URLSearchParams({company:String(companyId),days:String(days)});
+    if(branch) q.set("branch",String(branch));
+    return request<TreasuryLiquidityForecast>(`/api/treasury/accounts/liquidity-forecast/?${q.toString()}`);
   },
   // جلب حركات الخزينة مرتبة من الأحدث.
   transactions: (companyId: number) => request<TreasuryTransaction[]>(`/api/treasury/transactions/?company=${companyId}&ordering=-transaction_date`),
