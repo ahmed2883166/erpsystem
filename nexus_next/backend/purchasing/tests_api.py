@@ -3860,3 +3860,53 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
             excel["Content-Type"],
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+
+    def test_purchase_analysis_report_groups_inventory_and_direct_expense_by_supplier(self):
+        receipt_id, receipt_line_id = self._create_and_post_receipt()
+        inventory_invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk, "receipt": receipt_id,
+            "invoice_number": "INV-ANALYSIS-001", "invoice_date": "2026-03-11",
+            "lines": [{
+                "receipt_line": receipt_line_id, "billed_quantity": "2",
+                "unit_price": "100", "tax_rate": "14",
+            }],
+        }, format="json")
+        self.assertEqual(inventory_invoice.status_code, 201, inventory_invoice.data)
+        inventory_posted = self.client.post(
+            f"/api/purchasing/invoices/{inventory_invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(inventory_posted.status_code, 200, inventory_posted.data)
+
+        expense = ChartOfAccount.objects.get(company=self.company, code="6000")
+        direct_invoice = self.client.post("/api/purchasing/invoices/", {
+            "company": self.company.pk, "supplier": self.supplier.pk,
+            "invoice_type": "direct_expense", "branch": self.branch.pk,
+            "invoice_number": "INV-ANALYSIS-002", "invoice_date": "2026-03-12",
+            "lines": [{
+                "description": "شحن",
+                "expense_account": expense.pk,
+                "billed_quantity": "1",
+                "unit_price": "20",
+                "tax_rate": "0",
+            }],
+        }, format="json")
+        self.assertEqual(direct_invoice.status_code, 201, direct_invoice.data)
+        direct_posted = self.client.post(
+            f"/api/purchasing/invoices/{direct_invoice.data['id']}/post/", {}, format="json",
+        )
+        self.assertEqual(direct_posted.status_code, 200, direct_posted.data)
+
+        report = self.client.get(
+            f"/api/purchasing/invoices/analysis-report/?company={self.company.pk}",
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        self.assertEqual(report.data["totals"]["invoice_count"], 2)
+        self.assertEqual(report.data["totals"]["line_count"], 2)
+        self.assertEqual(report.data["totals"]["purchase_net"], "220.0000")
+        self.assertEqual(report.data["totals"]["net_purchases"], "220.0000")
+        self.assertEqual(report.data["totals"]["tax_amount"], "28.0000")
+        self.assertEqual(
+            {row["kind"] for row in report.data["rows"]},
+            {"inventory", "direct_expense"},
+        )
