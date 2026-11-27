@@ -9,6 +9,15 @@ class Migration(migrations.Migration):
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
     operations = [
+        migrations.AlterField(
+            model_name="treasurytransaction",
+            name="status",
+            field=models.CharField(
+                choices=[("draft", "مسودة"), ("posted", "مرحّل"), ("void", "ملغي"), ("reversed", "معكوس")],
+                default="draft",
+                max_length=8,
+            ),
+        ),
         migrations.AddField(
             model_name="treasurytransaction", name="reversal_journal_entry",
             field=models.OneToOneField(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name="treasury_transaction_reversal", to="accounting.journalentry"),
