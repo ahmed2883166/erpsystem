@@ -63,6 +63,15 @@ def _statement_row(movement_date, amount, description="", reference=""):
     }
 
 
+def _statement_cell(row, index):
+    return row[index] if index is not None and index < len(row) else ""
+
+
+def _ofx_tag(block, name):
+    match = re.search(rf"<{name}>([^<\\r\\n]+)", block, flags=re.I)
+    return match.group(1).strip() if match else ""
+
+
 def _parse_bank_statement(upload, statement_date):
     """قراءة CSV/XLSX/OFX/MT940 إلى صفوف موحدة دون حفظها."""
     filename = (upload.name or "").lower()
@@ -111,26 +120,21 @@ def _parse_bank_statement(upload, statement_date):
         for row in values:
             if not row or not any(v is not None and str(v).strip() for v in row):
                 continue
-            def get_value(index):
-                return row[index] if index is not None and index < len(row) else ""
             rows.append(_statement_row(
-                _parse_statement_date(get_value(date_index)), _parse_statement_amount(get_value(amount_index)),
-                get_value(desc_index), get_value(ref_index),
+                _parse_statement_date(_statement_cell(row, date_index)),
+                _parse_statement_amount(_statement_cell(row, amount_index)),
+                _statement_cell(row, desc_index), _statement_cell(row, ref_index),
             ))
         workbook.close()
     elif extension in ("ofx", "qfx"):
         text = raw.decode("utf-8-sig", errors="replace")
         for block in re.findall(r"<STMTTRN>(.*?)</STMTTRN>", text, flags=re.I | re.S):
-            def tag(name):
-                match = re.search(rf"<{name}>([^<\r\n]+)", block, flags=re.I)
-                return match.group(1).strip() if match else ""
-            posted = re.match(r"\d{8}", tag("DTPOSTED"))
+            posted = re.match(r"\\d{8}", _ofx_tag(block, "DTPOSTED"))
             rows.append(_statement_row(
-                _parse_statement_date(posted.group(0) if posted else tag("DTPOSTED")),
-                _parse_statement_amount(tag("TRNAMT")),
-                tag("MEMO") or tag("NAME"), tag("FITID"),
-            ))
-        if not rows:
+                _parse_statement_date(posted.group(0) if posted else _ofx_tag(block, "DTPOSTED")),
+                _parse_statement_amount(_ofx_tag(block, "TRNAMT")),
+                _ofx_tag(block, "MEMO") or _ofx_tag(block, "NAME"), _ofx_tag(block, "FITID"),
+            ))        if not rows:
             raise ValueError("لم يتم العثور على حركات STMTTRN في ملف OFX.")
     elif extension in ("mt940", "sta", "940"):
         text = raw.decode("utf-8-sig", errors="replace")
