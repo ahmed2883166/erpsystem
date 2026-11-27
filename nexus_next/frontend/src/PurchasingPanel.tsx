@@ -885,7 +885,7 @@ const postInvoice = async (id: number) => {
         <div className="data-table-wrap"><table><thead><tr><th>التاريخ</th><th>نوع المستند</th><th>رقم المستند</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statement.rows.map((row, index) => <tr key={row.document_type + row.document_number + index}><td>{row.date}</td><td>{row.document_type === "invoice" ? "فاتورة مورد" : row.document_type === "supplier_return" ? "مرتجع مورد" : row.document_type === "supplier_return_reversal" ? "عكس مرتجع" : "سداد"}</td><td className="code-cell">{row.document_number}</td><td>{row.description}</td><td>{money(row.debit)}</td><td>{money(row.credit)}</td><td>{money(row.balance)}</td></tr>)}</tbody></table>{statement.rows.length === 0 && <div className="table-empty">لا توجد حركة خلال الفترة المحددة.</div>}</div>
       </div>}
     </div>}
-    {tab === "aging" && <div className="inventory-tabs"><button type="button" className={agingView==="supplier"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("supplier")}>أعمار مديونية الموردين</button><button type="button" className={agingView==="grni"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("grni")}>مطابقة GRNI</button></div>}
+    {tab === "aging" && <div className="inventory-tabs"><button type="button" className={agingView==="supplier"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("supplier")}>أعمار مديونية الموردين</button><button type="button" className={agingView==="grni"?"inventory-tab active":"inventory-tab"} onClick={()=>setAgingView("grni")}>مطابقة GRNI</button><button type="button" className={agingView==="landed-cost"?"inventory-tab active":"inventory-tab"} onClick={()=>{setAgingView("landed-cost");setLandedCostReport(null);}}>تسوية تكاليف الشراء</button></div>}
     {tab === "aging" && agingView === "supplier" && <div className="inventory-form">
       <label>تاريخ التقرير<input type="date" value={agingAsOf} onChange={(e) => { setAgingAsOf(e.target.value); setAging(null); }} /></label>
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={() => void loadAging()}>{busy ? "جارٍ التحميل…" : "عرض أعمار المديونية"}</button></div>
@@ -902,6 +902,20 @@ const postInvoice = async (id: number) => {
           <tbody>{aging.suppliers.map((row) => <tr key={row.supplier}><td className="code-cell">{row.supplier_code}</td><td>{row.supplier_name}</td><td>{money(row.not_due)}</td><td>{money(row["1_30"])}</td><td>{money(row["31_60"])}</td><td>{money(row["61_90"])}</td><td>{money(row.over_90)}</td><td><strong>{money(row.total_due)}</strong></td></tr>)}</tbody>
         </table>{aging.suppliers.length === 0 && <div className="table-empty">لا توجد أرصدة مستحقة على الموردين في تاريخ التقرير.</div>}</div>
         <p className="inventory-report-note">يُحسب تاريخ الاستحقاق من تاريخ الفاتورة مضافًا إليه أجل السداد المسجل للمورد، وتُخصم السدادات المرحلة فقط.</p>
+      </div>}
+    </div>}
+    {tab === "aging" && agingView === "landed-cost" && <div className="inventory-form">
+      <div className="inventory-form-row"><label>من تاريخ<input type="date" value={landedCostReportFrom} onChange={e=>{setLandedCostReportFrom(e.target.value);setLandedCostReport(null);}}/></label><label>إلى تاريخ<input type="date" value={landedCostReportTo} onChange={e=>{setLandedCostReportTo(e.target.value);setLandedCostReport(null);}}/></label></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="button" disabled={busy} onClick={()=>void loadLandedCostReport()}>{busy?"جارٍ التحميل…":"عرض تسوية تكاليف الشراء"}</button></div>
+      {landedCostReport && <div className="inventory-wide">
+        <div className="stock-card-summary">
+          <div><span>إجمالي التكلفة الموزعة</span><strong>{money(landedCostReport.totals.allocated)}</strong></div>
+          <div><span>المخزون المتبقي</span><strong>{money(landedCostReport.totals.inventory)}</strong></div>
+          <div><span>تكلفة المبيعات</span><strong>{money(landedCostReport.totals.cogs)}</strong></div>
+          <div><span>خسائر المخزون</span><strong>{money(landedCostReport.totals.adjustment_loss)}</strong></div>
+        </div>
+        <div className="data-table-wrap"><table><thead><tr><th>مستند الرسملة</th><th>فاتورة المصروف</th><th>المورد</th><th>الصنف</th><th>الفرع</th><th>المخزون</th><th>تكلفة المبيعات</th><th>الخسائر</th><th>القيد</th></tr></thead><tbody>{landedCostReport.rows.map((row,index)=><tr key={row.document_id+"-"+row.expense_line_id+"-"+row.branch_id+"-"+index}><td>{row.document_number}<small>{row.document_date}</small></td><td>{row.source_invoice_number}</td><td>{row.supplier_name}</td><td>{row.product_code} · {row.product_name}</td><td>{row.branch_name}</td><td>{money(row.inventory_amount)}</td><td>{money(row.cogs_amount)}</td><td>{money(row.adjustment_loss_amount)}</td><td>{row.journal_entry||"—"}</td></tr>)}</tbody></table>{landedCostReport.rows.length===0&&<div className="table-empty">لا توجد رسملات في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">يتم عرض أثر الرسملة حسب الفرع، مع فصل قيمة المخزون عن تكلفة المبيعات وخسائر المخزون، وربط كل توزيع بقيده المحاسبي.</p>
       </div>}
     </div>}
     {tab === "aging" && agingView === "grni" && <div className="inventory-form">
