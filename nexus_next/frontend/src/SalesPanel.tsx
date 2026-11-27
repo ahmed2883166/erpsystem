@@ -244,12 +244,22 @@ const createInvoice = async (event: React.FormEvent) => {
 const beginEditInvoice = (invoice: SalesInvoice) => {
     setTab("invoices"); setShowForm(true); setError(""); setEditingInvoiceId(invoice.id);
     setInvoiceForm({ mode: invoice.delivery ? "delivery" : "service", delivery: invoice.delivery ? String(invoice.delivery) : "", branch: invoice.branch ? String(invoice.branch) : "", customer: String(invoice.customer), invoice_number: invoice.invoice_number, invoice_date: invoice.invoice_date, transaction_currency: invoice.transaction_currency ? String(invoice.transaction_currency) : "", exchange_rate: invoice.exchange_rate || "", exchange_rate_date: invoice.exchange_rate_date || invoice.invoice_date });
-    setInvoiceLines(invoice.invoice_lines.map(line => ({
-      delivery_line: line.delivery_line ?? undefined, product: line.product, product_name: line.product_name, quantity: line.quantity,
-      unit_price: line.transaction_unit_price || line.unit_price, tax_rate: line.tax_rate,
-      tax_code: line.tax_code ? String(line.tax_code) : "",
-      discount_percent: line.discount_percent,
-    })));
+    setInvoiceLines(invoice.invoice_lines.map(line => {
+      const delivered = line.delivery_line === null ? null
+        : deliveries.find(row => row.id === invoice.delivery)?.line_items.find(row => row.id === line.delivery_line);
+      const otherInvoicesQuantity = line.delivery_line === null ? 0
+        : (invoicedQuantityByDeliveryLine.get(line.delivery_line) || 0) - Number(line.quantity);
+      const maxQuantity = delivered
+        ? Math.max(Number(delivered.quantity) - otherInvoicesQuantity, Number(line.quantity))
+        : Number(line.quantity);
+      return {
+        delivery_line: line.delivery_line ?? undefined, product: line.product, product_name: line.product_name, quantity: line.quantity,
+        max_quantity: String(maxQuantity),
+        unit_price: line.transaction_unit_price || line.unit_price, tax_rate: line.tax_rate,
+        tax_code: line.tax_code ? String(line.tax_code) : "",
+        discount_percent: line.discount_percent,
+      };
+    }));
   };
   const createReceipt = async (event: React.FormEvent) => {
     event.preventDefault();
