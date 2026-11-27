@@ -1053,15 +1053,18 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             )
             invoice_count = invoices.count()
             return_count = returns.count()
-        def allocated_sales_cost_expression():
-            # Build a fresh expression for each queryset; Django resolves expressions in place.
-            return ExpressionWrapper(
-                F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),
-                output_field=DecimalField(max_digits=20, decimal_places=4),
+        def invoice_lines_with_allocated_cost():
+            # Annotate the per-invoice share first, then aggregate the annotation.
+            # This avoids passing a mutable expression directly into multiple aggregates.
+            return invoice_lines.annotate(
+                _allocated_sales_cost=ExpressionWrapper(
+                    F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),
+                    output_field=DecimalField(max_digits=20, decimal_places=4),
+                )
             )
 
         sales_cost = amount(
-            invoice_lines.aggregate(total=Sum(allocated_sales_cost_expression()))["total"]
+            invoice_lines_with_allocated_cost().aggregate(total=Sum("_allocated_sales_cost"))["total"]
         )
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
         sales_net = amount(sales_totals["net"])
@@ -1069,12 +1072,12 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         net_sales = sales_net - returned_net
         net_cost = sales_cost - return_cost
 
-        customer_sales = invoice_lines.values(
+        customer_sales = invoice_lines_with_allocated_cost().values(
             "invoice__customer_id", "invoice__customer__name_ar",
         ).annotate(
             invoice_count=Count("invoice_id", distinct=True),
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum(allocated_sales_cost_expression()),
+            discount=Sum("discount_amount"), cost=Sum("_allocated_sales_cost"),
         )
         customer_returns = return_lines.values(
             "sales_return__invoice__customer_id",
@@ -1119,11 +1122,11 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             customer["return_tax"] += amount(row["tax"])
             customer["return_cost"] += amount(row["cost"])
 
-        product_sales = invoice_lines.values(
+        product_sales = invoice_lines_with_allocated_cost().values(
             "product_id", "product__code", "product__name_ar",
         ).annotate(
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum(allocated_sales_cost_expression()),
+            discount=Sum("discount_amount"), cost=Sum("_allocated_sales_cost"),
             invoice_count=Count("invoice_id", distinct=True),
         )
         product_returns = return_lines.values(
