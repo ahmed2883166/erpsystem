@@ -743,6 +743,7 @@ class PettyCashTransfer(models.Model):
     class Kind(models.TextChoices):
         INITIAL = "initial", "صرف عهدة"
         REPLENISHMENT = "replenishment", "تغذية عهدة"
+        CLOSURE_RETURN = "closure_return", "رد المتبقي عند الإغلاق"
 
     fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="transfers")
     kind = models.CharField(max_length=16, choices=Kind.choices)
