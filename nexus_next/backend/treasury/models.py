@@ -606,3 +606,169 @@ class CashCommitmentOccurrence(models.Model):
     class Meta:
         constraints = [models.UniqueConstraint(fields=("schedule", "due_date"), name="uq_cash_commit_occurrence_date")]
         ordering = ("due_date", "id")
+
+
+
+class PettyCashFund(models.Model):
+    """Imprest fund assigned to a named custodian and represented by a dedicated cash GL account."""
+    class Status(models.TextChoices):
+        ACTIVE = "active", "نشطة"
+        SUSPENDED = "suspended", "موقوفة"
+        CLOSED = "closed", "مغلقة"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="petty_cash_funds")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="petty_cash_funds")
+    code = models.CharField(max_length=32)
+    name = models.CharField(max_length=160)
+    custodian = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="petty_cash_funds")
+    funding_account = models.ForeignKey(TreasuryAccount, on_delete=models.PROTECT, related_name="petty_cash_funding_funds")
+    petty_cash_account = models.OneToOneField(TreasuryAccount, on_delete=models.PROTECT, related_name="petty_cash_fund")
+    authorized_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.ACTIVE)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="created_petty_cash_funds")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("code",)
+        constraints = [
+            models.UniqueConstraint(fields=("company", "code"), name="uq_petty_cash_fund_company_code"),
+            models.CheckConstraint(condition=models.Q(authorized_amount__gt=0), name="ck_petty_cash_fund_authorized_positive"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.branch_id and self.branch.company_id != self.company_id:
+            raise ValidationError({"branch": "فرع العهدة لا يتبع الشركة."})
+        for field_name in ("funding_account", "petty_cash_account"):
+            account = getattr(self, field_name, None)
+            if account and account.company_id != self.company_id:
+                raise ValidationError({field_name: "حساب الخزينة لا يتبع الشركة."})
+            if account and account.branch_id not in (None, self.branch_id):
+                raise ValidationError({field_name: "حساب الخزينة لا يتبع فرع العهدة."})
+            if account and account.currency_code != self.company.base_currency.code:
+                raise ValidationError({field_name: "العهدة تعمل بالعملة الأساسية للشركة حاليًا."})
+        if self.funding_account_id and self.petty_cash_account_id:
+            if self.funding_account_id == self.petty_cash_account_id:
+                raise ValidationError("حساب تمويل العهدة يجب أن يختلف عن حساب العهدة.")
+            if self.petty_cash_account.kind != TreasuryAccount.Kind.CASH:
+                raise ValidationError({"petty_cash_account": "اربط العهدة بحساب خزينة من نوع صندوق."})
+            if self.funding_account.kind not in (TreasuryAccount.Kind.CASH, TreasuryAccount.Kind.BANK):
+                raise ValidationError({"funding_account": "اختر حساب خزينة أو بنك فعال."})
+        if self.petty_cash_account_id and self.petty_cash_account.account.nature != ChartOfAccount.Nature.ASSET:
+            raise ValidationError({"petty_cash_account": "حساب العهدة يجب أن يكون من طبيعة الأصول."})
+
+
+class PettyCashSettlement(models.Model):
+    """One approved expense settlement posted as a single balanced journal."""
+    fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="settlements")
+    settlement_date = models.DateField()
+    journal_entry = models.OneToOneField(JournalEntry, on_delete=models.PROTECT, related_name="petty_cash_settlement")
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4)
+    replenished_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="petty_cash_settlements")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-settlement_date", "-id")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(total_amount__gt=0), name="ck_petty_cash_settlement_total_positive"),
+            models.CheckConstraint(condition=models.Q(replenished_amount__gte=0), name="ck_petty_cash_settlement_replenished_nonnegative"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.fund.company_id
+
+
+class PettyCashExpense(models.Model):
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        SETTLED = "settled", "تمت التسوية"
+        VOID = "void", "ملغاة"
+
+    fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="expenses")
+    expense_date = models.DateField()
+    description = models.CharField(max_length=300)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    expense_account = models.ForeignKey(ChartOfAccount, on_delete=models.PROTECT, related_name="petty_cash_expenses")
+    receipt_number = models.CharField(max_length=100, blank=True)
+    vendor_name = models.CharField(max_length=180, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.DRAFT)
+    settlement = models.ForeignKey(PettyCashSettlement, null=True, blank=True, on_delete=models.PROTECT, related_name="expenses")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="petty_cash_expenses")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("expense_date", "id")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_petty_cash_expense_amount_positive"),
+        ]
+        indexes = [models.Index(fields=("fund", "status", "expense_date"), name="petty_cash_exp_status_idx")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.fund.company_id
+
+    def clean(self):
+        super().clean()
+        if self.expense_account_id:
+            if self.expense_account.company_id != self.fund.company_id:
+                raise ValidationError({"expense_account": "حساب المصروف لا يتبع شركة العهدة."})
+            if self.expense_account.is_group or not self.expense_account.is_active or not self.expense_account.allow_posting:
+                raise ValidationError({"expense_account": "اختر حساب مصروف تفصيليًا ونشطًا وقابلًا للترحيل."})
+            if self.expense_account.nature != ChartOfAccount.Nature.EXPENSE:
+                raise ValidationError({"expense_account": "الحساب المقابل يجب أن يكون من طبيعة المصروفات."})
+        if self.settlement_id and self.settlement.fund_id != self.fund_id:
+            raise ValidationError({"settlement": "التسوية لا تتبع نفس العهدة."})
+
+
+class PettyCashTransfer(models.Model):
+    class Kind(models.TextChoices):
+        INITIAL = "initial", "صرف عهدة"
+        REPLENISHMENT = "replenishment", "تغذية عهدة"
+
+    fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="transfers")
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    treasury_transaction = models.OneToOneField(TreasuryTransaction, on_delete=models.PROTECT, related_name="petty_cash_transfer")
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT, related_name="petty_cash_transfers")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("created_at", "id")
+        constraints = [models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_petty_cash_transfer_amount_positive")]
+
+    @property
+    def company_id_for_permission(self):
+        return self.fund.company_id
+
+
+class PettyCashCount(models.Model):
+    fund = models.ForeignKey(PettyCashFund, on_delete=models.PROTECT, related_name="counts")
+    count_date = models.DateField()
+    expected_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    actual_balance = models.DecimalField(max_digits=20, decimal_places=4)
+    notes = models.CharField(max_length=500, blank=True)
+    counted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="petty_cash_counts")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-count_date", "-id")
+        constraints = [
+            models.CheckConstraint(condition=models.Q(expected_balance__gte=0), name="ck_petty_cash_count_expected_nonnegative"),
+            models.CheckConstraint(condition=models.Q(actual_balance__gte=0), name="ck_petty_cash_count_actual_nonnegative"),
+        ]
+
+    @property
+    def variance(self):
+        return self.actual_balance - self.expected_balance
+
+    @property
+    def company_id_for_permission(self):
+        return self.fund.company_id
