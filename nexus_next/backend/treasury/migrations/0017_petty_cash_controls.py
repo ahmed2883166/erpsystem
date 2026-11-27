@@ -13,6 +13,18 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.AlterField(
+            model_name="pettycashtransfer",
+            name="kind",
+            field=models.CharField(
+                choices=[
+                    ("initial", "صرف عهدة"),
+                    ("replenishment", "تغذية عهدة"),
+                    ("closure_return", "رد المتبقي عند الإغلاق"),
+                ],
+                max_length=16,
+            ),
+        ),
         migrations.AddField(
             model_name="pettycashexpense",
             name="receipt_file",
