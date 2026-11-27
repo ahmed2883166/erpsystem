@@ -12,7 +12,7 @@ from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, BankReconciliationSerializer, BankStatementLineSerializer
 from .services import (
     post_treasury_transaction, reverse_treasury_transaction, revalue_treasury_fx_account,
@@ -50,6 +50,82 @@ def _bank_book_balance(bank_account, statement_date, branch_ids):
     totals = book_lines.aggregate(debit=Sum("debit"), credit=Sum("credit"))
     opening_base = Decimal("0") if bank_account.opening_journal_entry_id else bank_account.opening_balance
     return opening_base + (totals["debit"] or Decimal("0")) - (totals["credit"] or Decimal("0"))
+
+
+
+def _allocated_line_amount(line):
+    return line.allocations.aggregate(total=Sum("amount"))["total"] or Decimal("0")
+
+
+def _allocated_transaction_amount(doc, bank_account):
+    return doc.reconciliation_allocations.filter(
+        line__reconciliation__bank_account=bank_account,
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
+
+
+def _allocate_bank_match(recon, line_id, transaction_id, raw_amount, user):
+    """تخصيص مبلغ جزئي بين سطر كشف البنك وحركة دفترية مع قفل الطرفين."""
+    if not recon.bank_account.branch_id and not has_company_wide_branch_access(
+        user, recon.company_id
+    ):
+        raise PermissionDenied("مطابقة كشف حساب بنكي عام تتطلب صلاحية الوصول إلى جميع فروع الشركة.")
+    if recon.status != BankReconciliation.Status.DRAFT:
+        raise ValidationError("التسوية ليست مسودة.")
+    try:
+        line = BankStatementLine.objects.select_for_update().get(
+            pk=line_id, reconciliation=recon,
+        )
+        doc = TreasuryTransaction.objects.select_for_update().get(
+            pk=transaction_id, company_id=recon.company_id,
+            status=TreasuryTransaction.Status.POSTED,
+            transaction_date__lte=recon.statement_date,
+        )
+    except (BankStatementLine.DoesNotExist, TreasuryTransaction.DoesNotExist, ValueError, TypeError):
+        raise ValidationError("سطر كشف البنك أو الحركة المحاسبية غير موجودة.") from None
+    if not can_access_branch(user, doc.branch_id, doc.company_id):
+        raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحركة المحاسبية.")
+    if recon.bank_account.branch_id and doc.branch_id != recon.bank_account.branch_id:
+        raise ValidationError("الحركة لا تخص فرع الحساب البنكي محل التسوية.")
+    signed_amount = _signed_bank_transaction_amount(doc, recon.bank_account)
+    if (line.amount > 0) != (signed_amount > 0):
+        raise ValidationError("اتجاه حركة كشف البنك لا يطابق اتجاه الحركة الدفترية.")
+    try:
+        amount = Decimal(str(raw_amount))
+    except (InvalidOperation, TypeError, ValueError):
+        raise ValidationError({"amount": "أدخل مبلغ المطابقة بصيغة رقمية صحيحة."}) from None
+    if not amount.is_finite() or amount <= 0:
+        raise ValidationError({"amount": "مبلغ المطابقة يجب أن يكون أكبر من صفر."})
+    if amount != amount.quantize(Decimal("0.0001")):
+        raise ValidationError({"amount": "مبلغ المطابقة لا يقبل أكثر من أربع منازل عشرية."})
+
+    line_remaining = abs(line.amount) - _allocated_line_amount(line)
+    if amount > line_remaining:
+        raise ValidationError({"amount": f"مبلغ المطابقة يتجاوز المتبقي في سطر البنك ({line_remaining})."})
+
+    other_reconciliation_allocations = doc.reconciliation_allocations.filter(
+        line__reconciliation__bank_account=recon.bank_account,
+    ).exclude(line__reconciliation=recon)
+    if other_reconciliation_allocations.exists():
+        raise ValidationError("الحركة مرتبطة بالفعل بتسوية بنكية أخرى لهذا الحساب.")
+    transaction_allocated = _allocated_transaction_amount(doc, recon.bank_account)
+    transaction_remaining = abs(signed_amount) - transaction_allocated
+    if amount > transaction_remaining:
+        raise ValidationError({"amount": f"مبلغ المطابقة يتجاوز المتبقي من الحركة الدفترية ({transaction_remaining})."})
+
+    allocation, created = BankStatementMatchAllocation.objects.get_or_create(
+        line=line, transaction=doc, defaults={"amount": amount},
+    )
+    if not created:
+        allocation.amount += amount
+        allocation.save(update_fields=("amount",))
+    line_total = _allocated_line_amount(line)
+    doc_total = _allocated_transaction_amount(doc, recon.bank_account)
+    line.matched_transaction = None
+    if line_total == abs(line.amount) and line.allocations.count() == 1 and doc_total == abs(signed_amount):
+        line.matched_transaction = doc
+    line.matched_at = timezone.now()
+    line.save(update_fields=("matched_transaction", "matched_at"))
+    return line
 
 
 class TreasuryBaseViewSet(viewsets.ModelViewSet):
@@ -700,36 +776,21 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
     @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
     def match(self, request, pk=None):
-        """مطابقة سطر كشف البنك مع الحركة المالية المقابلة."""
+        """مطابقة كاملة أو جزئية لسطر كشف مع حركة دفترية."""
         recon = self.get_object()
         self._write(recon.company_id)
-        if not recon.bank_account.branch_id and not has_company_wide_branch_access(
-            request.user, recon.company_id
-        ):
-            raise PermissionDenied("مطابقة كشف حساب بنكي عام تتطلب صلاحية الوصول إلى جميع فروع الشركة.")
-        if recon.status != BankReconciliation.Status.DRAFT:
-            raise ValidationError("التسوية ليست مسودة.")
-        try:
-            line = BankStatementLine.objects.select_for_update().get(pk=request.data.get("line_id"), reconciliation=recon)
-            doc = TreasuryTransaction.objects.select_for_update().get(pk=request.data.get("transaction_id"), company_id=recon.company_id, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date)
-        except (BankStatementLine.DoesNotExist, TreasuryTransaction.DoesNotExist, ValueError, TypeError):
-            raise ValidationError("سطر كشف البنك أو الحركة المحاسبية غير موجودة.") from None
-        if not can_access_branch(request.user, doc.branch_id, doc.company_id):
-            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحركة المحاسبية.")
-        if recon.bank_account.branch_id and doc.branch_id != recon.bank_account.branch_id:
-            raise ValidationError("الحركة لا تخص فرع الحساب البنكي محل التسوية.")
-        signed_amount = _signed_bank_transaction_amount(doc, recon.bank_account)
-        if line.amount != signed_amount:
-            raise ValidationError("قيمة السطر واتجاهه لا يطابقان حركة الدفاتر.")
-        if BankStatementLine.objects.filter(matched_transaction=doc).exclude(reconciliation=recon).exists():
-            raise ValidationError("هذه الحركة مرتبطة بالفعل بتسوية أخرى؛ لا يمكن مطابقتها مرتين.")
-        if TreasuryTransaction.objects.filter(bank_statement_matches__isnull=False, bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED, pk=doc.pk).exists():
-            raise ValidationError("هذه الحركة سبق تسويتها في كشف بنكي معتمد.")
-        if BankStatementLine.objects.filter(reconciliation=recon, matched_transaction=doc).exclude(pk=line.pk).exists():
-            raise ValidationError("الحركة مرتبطة بالفعل بسطر آخر في نفس التسوية.")
-        line.matched_transaction = doc
-        line.matched_at = timezone.now()
-        line.save(update_fields=("matched_transaction", "matched_at"))
+        line_id = request.data.get("line_id")
+        transaction_id = request.data.get("transaction_id")
+        raw_amount = request.data.get("amount")
+        if raw_amount in (None, ""):
+            try:
+                target_line = BankStatementLine.objects.get(pk=line_id, reconciliation=recon)
+            except (BankStatementLine.DoesNotExist, ValueError, TypeError):
+                raise ValidationError("سطر كشف البنك غير موجود.") from None
+            raw_amount = abs(target_line.amount)
+        line = _allocate_bank_match(
+            recon, line_id, transaction_id, raw_amount, request.user,
+        )
         return response.Response(BankStatementLineSerializer(line).data)
 
     @decorators.action(detail=True, methods=("post",))
@@ -750,72 +811,125 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
 
     @decorators.action(detail=True, methods=("get",))
     def summary(self, request, pk=None):
-        """إعداد ملخص جلسة التسوية والفروق بين الدفاتر وكشف البنك."""
+        """ملخص المطابقة الجزئية والحركات المعلقة وفروق التوقيت."""
         recon = self.get_object()
-        lines = recon.lines.select_related("matched_transaction")
-        matched_ids = list(lines.filter(matched_transaction__isnull=False).values_list("matched_transaction_id", flat=True))
+        lines = recon.lines.select_related("matched_transaction").prefetch_related(
+            "allocations__transaction",
+        )
         branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
         if recon.bank_account.branch_id:
             branch_ids = [recon.bank_account.branch_id]
         book_balance = _bank_book_balance(recon.bank_account, recon.statement_date, branch_ids)
         statement_balance = recon.opening_balance + sum((line.amount for line in lines), Decimal("0"))
-        outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
-            models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
+        outstanding = TreasuryTransaction.objects.filter(
+            company_id=recon.company_id, branch_id__in=branch_ids,
+            status=TreasuryTransaction.Status.POSTED,
+            transaction_date__lte=recon.statement_date,
+        ).filter(
+            models.Q(source_account=recon.bank_account)
+            | models.Q(destination_account=recon.bank_account)
         ).order_by("transaction_date", "id")
         outstanding_rows = []
         outstanding_total = Decimal("0")
         for doc in outstanding:
             signed = _signed_bank_transaction_amount(doc, recon.bank_account)
-            outstanding_total += signed
-            outstanding_rows.append({"id": doc.id, "date": doc.transaction_date, "document_number": doc.document_number, "description": doc.description, "amount": str(signed)})
-        expected_book = recon.closing_balance + outstanding_total
+            other_recon = doc.reconciliation_allocations.filter(
+                line__reconciliation__bank_account=recon.bank_account,
+            ).exclude(line__reconciliation=recon).exists()
+            if other_recon:
+                continue
+            allocated = _allocated_transaction_amount(doc, recon.bank_account)
+            remaining = abs(signed) - allocated
+            if remaining <= 0:
+                continue
+            signed_remaining = remaining if signed > 0 else -remaining
+            outstanding_total += signed_remaining
+            outstanding_rows.append({
+                "id": doc.id, "date": doc.transaction_date,
+                "document_number": doc.document_number, "description": doc.description,
+                "amount": str(signed_remaining), "original_amount": str(signed),
+                "allocated_amount": str(allocated), "remaining_amount": str(remaining),
+                "timing_difference_days": (recon.statement_date - doc.transaction_date).days,
+            })
+        unmatched_statement_total = Decimal("0")
+        matched_lines = 0
+        unmatched_lines = 0
+        for line in lines:
+            allocated = _allocated_line_amount(line)
+            remaining = max(Decimal("0"), abs(line.amount) - allocated)
+            if remaining == 0:
+                matched_lines += 1
+            else:
+                unmatched_lines += 1
+                unmatched_statement_total += remaining if line.amount > 0 else -remaining
+        expected_book = recon.closing_balance + outstanding_total - unmatched_statement_total
         return response.Response({
             "reconciliation": self.get_serializer(recon).data,
             "statement_calculated": str(statement_balance),
             "statement_difference": str(recon.closing_balance - statement_balance),
             "book_balance": str(book_balance),
             "outstanding_total": str(outstanding_total),
+            "unmatched_statement_total": str(unmatched_statement_total),
             "expected_book_balance": str(expected_book),
             "unexplained_difference": str(book_balance - expected_book),
-            "matched_lines": lines.filter(matched_transaction__isnull=False).count(),
-            "unmatched_lines": lines.filter(matched_transaction__isnull=True).count(),
+            "matched_lines": matched_lines,
+            "unmatched_lines": unmatched_lines,
             "lines": BankStatementLineSerializer(lines, many=True).data,
             "outstanding_transactions": outstanding_rows,
         })
 
+    @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
     def reconcile(self, request, pk=None):
-        """اعتماد نتيجة التسوية بعد التحقق من اكتمال المطابقات."""
-        with transaction.atomic():
-            scoped = self.get_object()
-            recon = BankReconciliation.objects.select_for_update().get(pk=scoped.pk)
-            self._write(recon.company_id)
-            if recon.bank_account.branch_id and not can_access_branch(request.user, recon.bank_account.branch_id, recon.company_id):
-                raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
-            if recon.status != BankReconciliation.Status.DRAFT:
-                raise ValidationError("التسوية معتمدة بالفعل.")
-            if recon.lines.filter(matched_transaction__isnull=True).exists():
-                raise ValidationError("لا يمكن الاعتماد قبل مطابقة جميع سطور كشف البنك.")
-            line_total = recon.opening_balance + (recon.lines.aggregate(total=Sum("amount"))["total"] or Decimal("0"))
-            if line_total != recon.closing_balance:
-                raise ValidationError("رصيد الإقفال لا يساوي الرصيد الافتتاحي مضافًا إليه صافي حركات الكشف.")
-            matched_ids = list(recon.lines.values_list("matched_transaction_id", flat=True))
-            branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
-            if recon.bank_account.branch_id:
-                branch_ids = [recon.bank_account.branch_id]
-            book_balance = _bank_book_balance(recon.bank_account, recon.statement_date, branch_ids)
-            outstanding = TreasuryTransaction.objects.filter(company_id=recon.company_id, branch_id__in=branch_ids, status=TreasuryTransaction.Status.POSTED, transaction_date__lte=recon.statement_date).exclude(pk__in=matched_ids).exclude(bank_statement_matches__reconciliation__status=BankReconciliation.Status.RECONCILED).filter(
-                models.Q(source_account=recon.bank_account) | models.Q(destination_account=recon.bank_account)
-            )
-            outstanding_total = Decimal("0")
-            for doc in outstanding:
-                outstanding_total += _signed_bank_transaction_amount(doc, recon.bank_account)
-            unexplained = book_balance - (recon.closing_balance + outstanding_total)
-            if unexplained != 0:
-                raise ValidationError({"difference": f"لا يمكن اعتماد التسوية؛ يوجد فرق غير مفسر في الدفاتر بقيمة {unexplained}."})
-            recon.status = BankReconciliation.Status.RECONCILED
-            recon.reconciled_at = timezone.now()
-            recon.save(update_fields=("status", "reconciled_at"))
+        """اعتماد التسوية بعد استنفاد كل مبالغ سطور الكشف والتحقق من الفروق."""
+        scoped = self.get_object()
+        recon = BankReconciliation.objects.select_for_update().get(pk=scoped.pk)
+        self._write(recon.company_id)
+        if recon.bank_account.branch_id and not can_access_branch(
+            request.user, recon.bank_account.branch_id, recon.company_id
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        if recon.status != BankReconciliation.Status.DRAFT:
+            raise ValidationError("التسوية معتمدة بالفعل.")
+        lines = list(recon.lines.select_for_update().all())
+        unmatched_total = Decimal("0")
+        for line in lines:
+            remaining = abs(line.amount) - _allocated_line_amount(line)
+            if remaining > 0:
+                unmatched_total += remaining
+        if unmatched_total > 0:
+            raise ValidationError("لا يمكن الاعتماد قبل استنفاد كامل قيمة جميع سطور كشف البنك.")
+        line_total = recon.opening_balance + (recon.lines.aggregate(total=Sum("amount"))["total"] or Decimal("0"))
+        if line_total != recon.closing_balance:
+            raise ValidationError("رصيد الإقفال لا يساوي الرصيد الافتتاحي مضافًا إليه صافي حركات الكشف.")
+        branch_ids = accessible_branches(request.user, recon.company_id).values_list("id", flat=True)
+        if recon.bank_account.branch_id:
+            branch_ids = [recon.bank_account.branch_id]
+        book_balance = _bank_book_balance(recon.bank_account, recon.statement_date, branch_ids)
+        outstanding = TreasuryTransaction.objects.filter(
+            company_id=recon.company_id, branch_id__in=branch_ids,
+            status=TreasuryTransaction.Status.POSTED,
+            transaction_date__lte=recon.statement_date,
+        ).filter(
+            models.Q(source_account=recon.bank_account)
+            | models.Q(destination_account=recon.bank_account)
+        )
+        outstanding_total = Decimal("0")
+        for doc in outstanding:
+            if doc.reconciliation_allocations.filter(
+                line__reconciliation__bank_account=recon.bank_account,
+            ).exclude(line__reconciliation=recon).exists():
+                continue
+            signed = _signed_bank_transaction_amount(doc, recon.bank_account)
+            remaining = abs(signed) - _allocated_transaction_amount(doc, recon.bank_account)
+            if remaining > 0:
+                outstanding_total += remaining if signed > 0 else -remaining
+        unexplained = book_balance - (recon.closing_balance + outstanding_total)
+        if unexplained != 0:
+            raise ValidationError({"difference": f"لا يمكن اعتماد التسوية؛ يوجد فرق غير مفسر في الدفاتر بقيمة {unexplained}."})
+        recon.status = BankReconciliation.Status.RECONCILED
+        recon.reconciled_at = timezone.now()
+        recon.save(update_fields=("status", "reconciled_at"))
         return response.Response(self.get_serializer(recon).data)
 
 
