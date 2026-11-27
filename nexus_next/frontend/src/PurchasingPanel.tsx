@@ -949,6 +949,7 @@ const postInvoice = async (id: number) => {
           <div><span>صافي المشتريات</span><strong>{money(purchaseAnalysisReport.totals.net_purchases)}</strong></div>
           <div><span>مرتجعات الموردين</span><strong>{money(purchaseAnalysisReport.totals.returned_net)}</strong></div>
           <div><span>ضريبة غير قابلة للخصم</span><strong>{money(purchaseAnalysisReport.totals.nonrecoverable_tax)}</strong></div>
+          <div><span>منها على المخزون / COGS</span><strong>{money(purchaseAnalysisReport.totals.inventory_nonrecoverable_tax)}</strong></div>
           <div><span>التكلفة بعد الضريبة غير القابلة للخصم</span><strong>{money(purchaseAnalysisReport.totals.total_cost)}</strong></div>
           <div><span>عدد الفواتير</span><strong>{purchaseAnalysisReport.totals.invoice_count}</strong></div>
         </div>
