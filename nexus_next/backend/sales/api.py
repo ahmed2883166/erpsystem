@@ -1056,7 +1056,8 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         allocated_sales_cost = ExpressionWrapper(
             F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),
             output_field=DecimalField(max_digits=20, decimal_places=4),
-        )\n        sales_cost = amount(invoice_lines.aggregate(total=Sum(allocated_sales_cost))["total"])
+        )
+        sales_cost = amount(invoice_lines.aggregate(total=Sum(allocated_sales_cost))["total"])
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
         sales_net = amount(sales_totals["net"])
         returned_net = amount(return_totals["net"])
