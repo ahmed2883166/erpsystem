@@ -2201,8 +2201,8 @@ class PettyCashFundViewSet(TreasuryBaseViewSet):
         if not actual.is_finite() or actual < 0 or actual != balance:
             raise ValidationError({"actual_balance": f"النقدية الفعلية يجب أن تطابق الرصيد الدفتري ({balance})."})
         if balance > 0:
-            if not fund.funding_account.is_active:
-                raise ValidationError("حساب الخزينة المستلم متوقف؛ لا يمكن رد المتبقي.")
+            if not fund.petty_cash_account.is_active or not fund.funding_account.is_active:
+                raise ValidationError("حساب العهدة أو حساب الخزينة المستلم متوقف؛ لا يمكن رد المتبقي.")
             movement_date = timezone.localdate()
             year = FiscalYear.objects.filter(
                 company=fund.company, status=FiscalYear.Status.OPEN,
