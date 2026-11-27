@@ -1010,6 +1010,20 @@ class TreasuryWorkflowTests(APITestCase):
         self.assertEqual(preview.data["new_count"], 1)
         self.assertEqual(preview.data["rows"][0]["reference"], "XL-1")
 
+    def test_bank_statement_csv_supports_semicolon_and_decimal_comma(self):
+        recon = self.client.post("/api/treasury/reconciliations/", {
+            "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "CSV-COMMA-001",
+            "statement_date": "2026-03-31", "opening_balance": "0.0000", "closing_balance": "12.7500",
+        }, format="json")
+        payload = "date;amount;description;reference\n2026-03-04;12,75;Deposit;REF-COMMA\n".encode()
+        preview = self.client.post(
+            f"/api/treasury/reconciliations/{recon.data['id']}/preview-import/",
+            {"file": SimpleUploadedFile("statement.csv", payload, content_type="text/csv")},
+            format="multipart",
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(Decimal(preview.data["rows"][0]["amount"]), Decimal("12.75"))
+
     def test_bank_statement_ofx_and_mt940_import_preview(self):
         recon = self.client.post("/api/treasury/reconciliations/", {
             "company": self.company.pk, "bank_account": self.bank.pk, "statement_number": "TEXT-001",
