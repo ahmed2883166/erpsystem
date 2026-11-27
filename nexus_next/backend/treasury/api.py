@@ -872,7 +872,7 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             "statement_calculated": str(statement_balance),
             "statement_difference": str(recon.closing_balance - statement_balance),
             "book_balance": str(book_balance),
-            "outstanding_total": str(outstanding_total),
+            "outstanding_total": str(outstanding_total.quantize(Decimal("0.0001"))),
             "unmatched_statement_total": str(unmatched_statement_total),
             "expected_book_balance": str(expected_book),
             "unexplained_difference": str(book_balance - expected_book),
