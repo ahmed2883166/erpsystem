@@ -15,7 +15,7 @@ from accounting.models import AccountRole, ChartOfAccount, JournalEntry, Journal
 from accounting.services import post_journal
 from approvals.models import DiscountApprovalPolicy, FinancialApprovalRequest
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
-from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, PettyCashExpense, PettyCashSettlement
+from treasury.models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, PettyCashExpense, PettyCashSettlement
 
 
 class TreasuryWorkflowTests(APITestCase):
@@ -697,7 +697,10 @@ class TreasuryWorkflowTests(APITestCase):
             company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
         )
         opening_bank_gl = ChartOfAccount.objects.create(
-            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",            nature=ChartOfAccount.Nature.ASSET,        )        opening_bank = self.client.post("/api/treasury/accounts/", {
+            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",
+            nature=ChartOfAccount.Nature.ASSET,
+        )
+        opening_bank = self.client.post("/api/treasury/accounts/", {
             "company": self.company.pk, "branch": self.branch.pk, "account": opening_bank_gl.pk,
             "kind": "bank", "code": "BANK-FEE-OPEN", "name_ar": "بنك اختبار العمولة",
             "currency_code": "EGP", "opening_balance": "250.0000",
@@ -1396,7 +1399,8 @@ class TreasuryChequeWorkflowTests(APITestCase):
         self.assertEqual(created.data["status"], "issued")
         presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")
         self.assertEqual(presented.status_code, 200, presented.data)
-class TreasuryLiquiditySummaryTests(APITestCase):    def setUp(self):
+class TreasuryLiquiditySummaryTests(APITestCase):
+    def setUp(self):
         currency = Currency.objects.create(code="EGP", name_ar="جنيه مصري")
         self.company = Company.objects.create(
             code="LIQ", name_ar="شركة السيولة", country="EG",
@@ -1599,9 +1603,31 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
         recon = BankReconciliation.objects.create(
             company=self.company, bank_account=bank,
             statement_number="ST-REOPEN-001", statement_date=date(2026, 3, 31),
-            opening_balance=Decimal("0"), closing_balance=Decimal("0"),
+            opening_balance=Decimal("0"), closing_balance=Decimal("25"),
             status=BankReconciliation.Status.RECONCILED,
             reconciled_at=timezone.now(), created_by=self.user,
+        )
+        transaction_response = self.client.post("/api/treasury/transactions/", {
+            "company": self.company.pk, "branch": self.branch.pk, "fiscal_year": self.year.pk,
+            "source_account": self.cash.pk, "counter_account": self.revenue_gl.pk,
+            "kind": "receipt", "document_number": "REOPEN-KEEP-001",
+            "transaction_date": "2026-03-15", "amount": "25.0000",
+            "description": "حركة مرتبطة بسطر كشف البنك",
+        }, format="json")
+        self.assertEqual(transaction_response.status_code, 201, transaction_response.data)
+        posted_transaction = self.client.post(
+            f"/api/treasury/transactions/{transaction_response.data['id']}/post/",
+            {}, format="json",
+        )
+        self.assertEqual(posted_transaction.status_code, 200, posted_transaction.data)
+        statement_line = BankStatementLine.objects.create(
+            reconciliation=recon, line_number=1, transaction_date=date(2026, 3, 15),
+            description="تحصيل بنكي", reference="REOPEN-REF",
+            amount=Decimal("25.0000"),
+        )
+        allocation = BankStatementMatchAllocation.objects.create(
+            line=statement_line, transaction_id=posted_transaction.data["id"],
+            amount=Decimal("25.0000"),
         )
         missing_reason = self.client.post(
             f"/api/treasury/reconciliations/{recon.pk}/reopen/", {}, format="json",
@@ -1630,6 +1656,11 @@ class TreasuryLiquidityForecastTests(TreasuryLiquiditySummaryTests):
             event.metadata["reason"],
             "تصحيح سطر كشف بنك تم إدخاله بقيمة غير صحيحة",
         )
+        self.assertTrue(BankStatementLine.objects.filter(pk=statement_line.pk, reconciliation=recon).exists())
+        allocation.refresh_from_db()
+        self.assertEqual(allocation.line_id, statement_line.pk)
+        self.assertEqual(allocation.transaction_id, posted_transaction.data["id"])
+        self.assertEqual(allocation.amount, Decimal("25.0000"))
 
     def test_reopen_is_blocked_when_a_later_bank_reconciliation_is_already_reconciled(self):
         bank_gl = ChartOfAccount.objects.create(
