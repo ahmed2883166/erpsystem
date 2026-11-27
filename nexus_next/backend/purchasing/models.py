@@ -987,3 +987,182 @@ class PurchaseServiceAcceptanceLine(models.Model):
         ).exclude(acceptance_id=self.acceptance_id).aggregate(total=models.Sum("quantity"))["total"] or Decimal("0")
         if accepted_before + self.quantity > self.order_line.quantity:
             raise ValidationError({"quantity": "كمية الخدمة المعتمدة تتجاوز كمية أمر الشراء المتبقية."})
+
+
+class LandedCostDocument(models.Model):
+    """مستند رسملة تكاليف الشراء الإضافية دون إنشاء مديونية مورد جديدة."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "مسودة"
+        POSTED = "posted", "مرحّل"
+        REVERSED = "reversed", "معكوس"
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="landed_cost_documents")
+    source_invoice = models.ForeignKey(
+        PurchaseInvoice, on_delete=models.PROTECT, related_name="landed_cost_documents",
+    )
+    document_number = models.CharField(max_length=40)
+    document_date = models.DateField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    total_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="created_landed_cost_documents",
+    )
+    posted_by = models.ForeignKey(
+        "accounts.User", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="posted_landed_cost_documents",
+    )
+    posted_at = models.DateTimeField(null=True, blank=True)
+    reversal_journal_entry = models.ForeignKey(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="landed_cost_document_reversals",
+    )
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-document_date", "-id")
+        constraints = [
+            models.UniqueConstraint(fields=("company", "document_number"), name="uq_landed_cost_company_no"),
+            models.CheckConstraint(condition=models.Q(total_amount__gte=0), name="ck_landed_cost_total_nonnegative"),
+        ]
+        indexes = [
+            models.Index(fields=("company", "status", "document_date"), name="pur_lcost_status_date_idx"),
+        ]
+
+    @property
+    def company_id_for_permission(self):
+        return self.company_id
+
+    def clean(self):
+        super().clean()
+        if self.source_invoice_id and (
+            self.source_invoice.company_id != self.company_id
+            or self.source_invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE
+            or self.source_invoice.status != PurchaseInvoice.Status.POSTED
+        ):
+            raise ValidationError({
+                "source_invoice": "يجب اختيار فاتورة مصروفات مباشرة مرحلة وتتبع نفس الشركة."
+            })
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(
+            pk=self.pk,
+        ).exclude(status=self.Status.DRAFT).exists():
+            raise ValidationError("مستند رسملة التكلفة بعد ترحيله غير قابل للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف مستند رسملة تكلفة مرحّل أو معكوس.")
+        return super().delete(*args, **kwargs)
+
+
+class LandedCostAllocation(models.Model):
+    """يربط بند مصروف مورد ببند استلام مخزني محدد."""
+
+    class Basis(models.TextChoices):
+        VALUE = "value", "القيمة"
+        QUANTITY = "quantity", "الكمية"
+        WEIGHT = "weight", "الوزن"
+        VOLUME = "volume", "الحجم"
+        MANUAL = "manual", "توزيع يدوي"
+
+    document = models.ForeignKey(
+        LandedCostDocument, on_delete=models.PROTECT, related_name="allocations",
+    )
+    source_invoice_line = models.ForeignKey(
+        PurchaseInvoiceLine, on_delete=models.PROTECT, related_name="landed_cost_allocations",
+    )
+    receipt_line = models.ForeignKey(
+        StockMovementLine, on_delete=models.PROTECT, related_name="landed_cost_allocations",
+    )
+    basis = models.CharField(max_length=12, choices=Basis.choices, default=Basis.VALUE)
+    amount = models.DecimalField(
+        max_digits=20, decimal_places=4, validators=[MinValueValidator(Decimal("0.0001"))],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("id",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("document", "source_invoice_line", "receipt_line"),
+                name="uq_lcost_doc_expense_receipt",
+            ),
+            models.CheckConstraint(condition=models.Q(amount__gt=0), name="ck_lcost_allocation_positive"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not self.document_id or not self.source_invoice_line_id or not self.receipt_line_id:
+            return
+        source = self.source_invoice_line
+        receipt = self.receipt_line
+        if source.invoice_id != self.document.source_invoice_id:
+            raise ValidationError({"source_invoice_line": "بند المصروف لا يتبع فاتورة المصدر المحددة."})
+        if source.invoice.invoice_type != PurchaseInvoice.InvoiceType.DIRECT_EXPENSE or not source.expense_account_id:
+            raise ValidationError({"source_invoice_line": "بند المصدر يجب أن يكون بند مصروف مباشر بحساب مصروف."})
+        if receipt.movement.company_id != self.document.company_id:
+            raise ValidationError({"receipt_line": "بند الاستلام لا يتبع شركة مستند الرسملة."})
+        if receipt.movement.status != StockMovement.Status.POSTED or receipt.product.product_type != "goods":
+            raise ValidationError({"receipt_line": "اختر بند استلام مخزني مرحّل لصنف مخزني."})
+
+    def save(self, *args, **kwargs):
+        if self.document_id and self.document.status != LandedCostDocument.Status.DRAFT:
+            raise ValidationError("لا يمكن تعديل توزيع مستند رسملة مرحّل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.document.status != LandedCostDocument.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف توزيع تابع لمستند رسملة مرحّل.")
+        return super().delete(*args, **kwargs)
+
+
+class LandedCostDistribution(models.Model):
+    """يحفظ نصيب الفرع من الرسملة مفصولًا بين المخزون والمبيعات والخسائر."""
+
+    allocation = models.ForeignKey(
+        LandedCostAllocation, on_delete=models.PROTECT, related_name="distributions",
+    )
+    branch = models.ForeignKey(
+        Branch, on_delete=models.PROTECT, related_name="landed_cost_distributions",
+    )
+    inventory_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    cogs_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    adjustment_loss_amount = models.DecimalField(max_digits=20, decimal_places=4, default=0)
+    journal_entry = models.OneToOneField(
+        "accounting.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="landed_cost_distribution",
+    )
+
+    class Meta:
+        ordering = ("branch_id", "id")
+        constraints = [
+            models.UniqueConstraint(fields=("allocation", "branch"), name="uq_lcost_allocation_branch"),
+            models.CheckConstraint(condition=models.Q(inventory_amount__gte=0), name="ck_lcost_dist_inventory_nonnegative"),
+            models.CheckConstraint(condition=models.Q(cogs_amount__gte=0), name="ck_lcost_dist_cogs_nonnegative"),
+            models.CheckConstraint(condition=models.Q(adjustment_loss_amount__gte=0), name="ck_lcost_dist_loss_nonnegative"),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.allocation_id and self.branch_id and self.branch.company_id != self.allocation.document.company_id:
+            raise ValidationError({"branch": "فرع التوزيع لا يتبع شركة مستند الرسملة."})
+        if self.allocation_id and (
+            self.allocation.document.status != LandedCostDocument.Status.DRAFT
+            and not self.journal_entry_id
+        ):
+            raise ValidationError("لا يمكن تعديل توزيع مرحّل.")
+
+    def save(self, *args, **kwargs):
+        if self.allocation_id and self.allocation.document.status != LandedCostDocument.Status.DRAFT:
+            raise ValidationError("توزيعات مستند الرسملة المرحّل غير قابلة للتعديل.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.allocation.document.status != LandedCostDocument.Status.DRAFT:
+            raise ValidationError("لا يمكن حذف توزيع تابع لمستند رسملة مرحّل.")
+        return super().delete(*args, **kwargs)
