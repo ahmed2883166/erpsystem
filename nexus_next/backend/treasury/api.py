@@ -793,17 +793,21 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
         )
         return response.Response(BankStatementLineSerializer(line).data)
 
+    @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
     def unmatch(self, request, pk=None):
-        """إلغاء المطابقة مع الإبقاء على بيانات سطر الكشف."""
+        """فك جميع تخصيصات سطر كشف البنك مع الإبقاء على بياناته."""
         recon = self.get_object()
         self._write(recon.company_id)
         if recon.status != BankReconciliation.Status.DRAFT:
             raise ValidationError("لا يمكن فك المطابقة بعد اعتماد التسوية.")
         try:
-            line = BankStatementLine.objects.get(pk=request.data.get("line_id"), reconciliation=recon)
+            line = BankStatementLine.objects.select_for_update().get(
+                pk=request.data.get("line_id"), reconciliation=recon,
+            )
         except (BankStatementLine.DoesNotExist, ValueError, TypeError):
             raise ValidationError("سطر كشف البنك غير موجود.") from None
+        line.allocations.all().delete()
         line.matched_transaction = None
         line.matched_at = None
         line.save(update_fields=("matched_transaction", "matched_at"))
