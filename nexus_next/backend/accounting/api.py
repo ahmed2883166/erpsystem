@@ -1797,7 +1797,7 @@ class JournalEntryViewSet(AccountingViewSet):
 
         treasury_rows = TreasuryTransaction.objects.filter(
             company_id=company_id,
-            status=TreasuryTransaction.Status.POSTED,
+            status__in=(TreasuryTransaction.Status.POSTED, TreasuryTransaction.Status.REVERSED),
             transaction_date__gte=date_from,
             transaction_date__lte=date_to,
             branch__in=visible_branches,
@@ -1812,6 +1812,31 @@ class JournalEntryViewSet(AccountingViewSet):
             "cash_flow_category", "kind", "counter_account__code"
         ))
 
+        # A reversed document remains a cash event on its original date. Its
+        # reversal is a separate opposite event on the reversal journal date.
+        treasury_reversals = TreasuryTransaction.objects.filter(
+            company_id=company_id,
+            status=TreasuryTransaction.Status.REVERSED,
+            reversal_journal_entry__status=JournalEntry.Status.POSTED,
+            reversal_journal_entry__entry_date__gte=date_from,
+            reversal_journal_entry__entry_date__lte=date_to,
+            branch__in=visible_branches,
+        ).exclude(kind=TreasuryTransaction.Kind.TRANSFER).select_related("counter_account")
+        for doc in treasury_reversals:
+            grouped.append({
+                "cash_flow_category": doc.cash_flow_category,
+                "kind": (
+                    TreasuryTransaction.Kind.PAYMENT
+                    if doc.kind == TreasuryTransaction.Kind.RECEIPT
+                    else TreasuryTransaction.Kind.RECEIPT
+                ),
+                "counter_account_id": doc.counter_account_id,
+                "counter_account__code": doc.counter_account.code if doc.counter_account_id else None,
+                "counter_account__name_ar": doc.counter_account.name_ar if doc.counter_account_id else None,
+                "amount": doc.amount,
+                "source": "treasury_reversal",
+            })
+
         # Petty-cash expenses are real operating cash payments made from a cash-equivalent
         # fund. Internal funding/replenishment transfers remain excluded from cash flows.
         petty_expenses = PettyCashExpense.objects.filter(
@@ -1819,7 +1844,9 @@ class JournalEntryViewSet(AccountingViewSet):
             status=PettyCashExpense.Status.SETTLED,
             settlement__settlement_date__gte=date_from,
             settlement__settlement_date__lte=date_to,
-            settlement__journal_entry__status=JournalEntry.Status.POSTED,
+            settlement__journal_entry__status__in=(
+                JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED,
+            ),
         ).values(
             "expense_account_id", "expense_account__code", "expense_account__name_ar",
         ).annotate(amount=Sum("amount"))
@@ -1833,13 +1860,37 @@ class JournalEntryViewSet(AccountingViewSet):
                 "amount": row["amount"], "source": "petty_cash_expense",
             })
 
+        petty_expense_reversals = PettyCashExpense.objects.filter(
+            fund__company_id=company_id, fund__branch__in=visible_branches,
+            status=PettyCashExpense.Status.SETTLED,
+            settlement__journal_entry__status=JournalEntry.Status.REVERSED,
+            settlement__journal_entry__reversal_entry__status=JournalEntry.Status.POSTED,
+            settlement__journal_entry__reversal_entry__entry_date__gte=date_from,
+            settlement__journal_entry__reversal_entry__entry_date__lte=date_to,
+        ).values(
+            "expense_account_id", "expense_account__code", "expense_account__name_ar",
+        ).annotate(amount=Sum("amount"))
+        for row in petty_expense_reversals:
+            grouped.append({
+                "cash_flow_category": TreasuryTransaction.CashFlowCategory.OPERATING,
+                "kind": TreasuryTransaction.Kind.RECEIPT,
+                "counter_account_id": row["expense_account_id"],
+                "counter_account__code": row["expense_account__code"],
+                "counter_account__name_ar": row["expense_account__name_ar"],
+                "amount": row["amount"], "source": "petty_cash_expense_reversal",
+            })
+
         # Approved count differences also change the petty-cash ledger balance.
         petty_counts = PettyCashCount.objects.filter(
             fund__company_id=company_id, fund__branch__in=visible_branches,
             status=PettyCashCount.Status.APPROVED,
             count_date__gte=date_from, count_date__lte=date_to,
-            adjustment_journal_entry__status=JournalEntry.Status.POSTED,
-        ).select_related("fund__petty_cash_account__account", "adjustment_journal_entry")
+            adjustment_journal_entry__status__in=(
+                JournalEntry.Status.POSTED, JournalEntry.Status.REVERSED,
+            ),
+        ).select_related(
+            "fund__petty_cash_account__account", "adjustment_journal_entry",
+        )
         for count in petty_counts:
             variance = count.variance
             if not variance:
@@ -1859,6 +1910,40 @@ class JournalEntryViewSet(AccountingViewSet):
                     counter_line.account.name_ar if counter_line else "فرق جرد عهدة"
                 ),
                 "amount": abs(variance), "source": "petty_cash_count_variance",
+            })
+
+        petty_count_reversals = PettyCashCount.objects.filter(
+            fund__company_id=company_id, fund__branch__in=visible_branches,
+            status=PettyCashCount.Status.APPROVED,
+            adjustment_journal_entry__status=JournalEntry.Status.REVERSED,
+            adjustment_journal_entry__reversal_entry__status=JournalEntry.Status.POSTED,
+            adjustment_journal_entry__reversal_entry__entry_date__gte=date_from,
+            adjustment_journal_entry__reversal_entry__entry_date__lte=date_to,
+        ).select_related(
+            "fund__petty_cash_account__account",
+            "adjustment_journal_entry__reversal_entry",
+        )
+        for count in petty_count_reversals:
+            variance = count.variance
+            if not variance:
+                continue
+            counter_line = JournalLine.objects.filter(
+                entry_id=count.adjustment_journal_entry_id,
+            ).exclude(
+                account_id=count.fund.petty_cash_account.account_id,
+            ).select_related("account").first()
+            grouped.append({
+                "cash_flow_category": TreasuryTransaction.CashFlowCategory.OPERATING,
+                "kind": (
+                    TreasuryTransaction.Kind.PAYMENT if variance > 0
+                    else TreasuryTransaction.Kind.RECEIPT
+                ),
+                "counter_account_id": counter_line.account_id if counter_line else None,
+                "counter_account__code": counter_line.account.code if counter_line else None,
+                "counter_account__name_ar": (
+                    counter_line.account.name_ar if counter_line else "عكس فرق جرد عهدة"
+                ),
+                "amount": abs(variance), "source": "petty_cash_count_reversal",
             })
 
         sections = []
