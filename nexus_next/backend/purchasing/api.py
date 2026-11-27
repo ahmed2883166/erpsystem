@@ -1438,8 +1438,22 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         """تصدير تحليل المشتريات إلى Excel بنفس نطاق الصلاحيات والفلاتر."""
         report_data = self.analysis_report(request).data
         workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "تحليل المشتريات"
+        summary = workbook.active
+        summary.title = "الملخص"
+        summary.append(["المؤشر", "القيمة"])
+        for key, label in (
+            ("purchase_net", "قيمة المشتريات قبل المرتجعات"),
+            ("returned_net", "قيمة مرتجعات الموردين"),
+            ("net_purchases", "صافي المشتريات"),
+            ("nonrecoverable_tax", "ضريبة غير قابلة للخصم"),
+            ("inventory_nonrecoverable_tax", "ضريبة غير قابلة للخصم موزعة على المخزون والفروع"),
+            ("total_cost", "التكلفة بعد الضريبة غير القابلة للخصم"),
+            ("tax_amount", "إجمالي الضريبة"),
+            ("invoice_count", "عدد الفواتير"),
+            ("line_count", "عدد البنود"),
+        ):
+            summary.append([label, report_data["totals"][key]])
+        sheet = workbook.create_sheet("تفاصيل التحليل")
         fields = [
             ("kind", "النوع"), ("supplier_name", "المورد"),
             ("product_code", "كود الصنف"), ("product_name", "الصنف"),
