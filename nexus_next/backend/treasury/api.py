@@ -11,6 +11,7 @@ from rest_framework import decorators, permissions, response, status, viewsets
 from django.db import models
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from audit.models import AuditEvent
 from companies.access import accessible_branches, accessible_companies, can_access_branch, can_access_company, has_company_role, has_company_wide_branch_access, is_platform_owner
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, BankStatementMatchAllocation, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, CashCommitmentOccurrence, PettyCashFund, PettyCashExpense, PettyCashSettlement, PettyCashTransfer, PettyCashCount
 from .serializers import TreasuryAccountSerializer, TreasuryTransactionSerializer, TreasuryChequeSerializer, BankReconciliationSerializer, BankStatementLineSerializer, CashCommitmentSerializer, CashCommitmentPaymentSerializer, CashCommitmentScheduleSerializer, PettyCashFundSerializer, PettyCashExpenseSerializer, PettyCashCountSerializer
@@ -1525,6 +1526,68 @@ class BankReconciliationViewSet(TreasuryBaseViewSet):
             "lines": BankStatementLineSerializer(lines, many=True).data,
             "outstanding_transactions": outstanding_rows,
         })
+
+    @transaction.atomic
+    @decorators.action(detail=True, methods=("post",))
+    def reopen(self, request, pk=None):
+        """إعادة فتح تسوية معتمدة بسبب موثق، مع حماية التسويات اللاحقة."""
+        scoped = self.get_object()
+        recon = BankReconciliation.objects.select_for_update().select_related(
+            "company", "bank_account",
+        ).get(pk=scoped.pk)
+        self._write(recon.company_id)
+        if recon.bank_account.branch_id and not can_access_branch(
+            request.user, recon.bank_account.branch_id, recon.company_id
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع الحساب البنكي.")
+        if not recon.bank_account.branch_id and not has_company_wide_branch_access(
+            request.user, recon.company_id
+        ):
+            raise PermissionDenied("إعادة فتح تسوية حساب بنكي عام تتطلب صلاحية جميع فروع الشركة.")
+        if recon.status != BankReconciliation.Status.RECONCILED:
+            raise ValidationError("لا يمكن إعادة فتح تسوية غير معتمدة.")
+        reason = str(request.data.get("reason") or "").strip()
+        if len(reason) < 10:
+            raise ValidationError({"reason": "اكتب سببًا واضحًا لإعادة الفتح لا يقل عن 10 أحرف."})
+        if len(reason) > 500:
+            raise ValidationError({"reason": "سبب إعادة الفتح لا يجوز أن يتجاوز 500 حرف."})
+        later_reconciliations = BankReconciliation.objects.filter(
+            bank_account_id=recon.bank_account_id,
+            status=BankReconciliation.Status.RECONCILED,
+        ).filter(
+            models.Q(statement_date__gt=recon.statement_date)
+            | models.Q(statement_date=recon.statement_date, pk__gt=recon.pk)
+        )
+        if later_reconciliations.exists():
+            raise ValidationError(
+                "لا يمكن إعادة فتح هذه التسوية لوجود تسوية لاحقة معتمدة على الحساب البنكي نفسه؛ "
+                "ابدأ بآخر تسوية معتمدة أولًا."
+            )
+        previous_reconciled_at = recon.reconciled_at
+        recon.status = BankReconciliation.Status.DRAFT
+        recon.reconciled_at = None
+        recon.save(update_fields=("status", "reconciled_at"))
+        AuditEvent.objects.create(
+            actor=request.user,
+            company_id=recon.company_id,
+            branch_id=recon.bank_account.branch_id,
+            action=AuditEvent.Action.ACTION,
+            resource="treasury.reconciliations.reopen",
+            object_id=str(recon.pk),
+            http_method="POST",
+            status_code=200,
+            succeeded=True,
+            metadata={
+                "event": "bank_reconciliation_reopened",
+                "reason": reason,
+                "statement_number": recon.statement_number,
+                "statement_date": recon.statement_date.isoformat(),
+                "previous_status": BankReconciliation.Status.RECONCILED,
+                "new_status": BankReconciliation.Status.DRAFT,
+                "previous_reconciled_at": previous_reconciled_at.isoformat() if previous_reconciled_at else None,
+            },
+        )
+        return response.Response(self.get_serializer(recon).data)
 
     @transaction.atomic
     @decorators.action(detail=True, methods=("post",))
