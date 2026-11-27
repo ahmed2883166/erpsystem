@@ -311,6 +311,10 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(destination_position.carrying_base_amount, Decimal("0.0000"))
 
     def test_foreign_transaction_reversal_uses_posting_order_not_backdated_document_date(self):
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("30"),
+        )
         original = self.make_postable_transaction(
             kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-POST-ORDER",
             amount=Decimal("3000"), rate=Decimal("30"),
@@ -366,6 +370,10 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(position.carrying_base_amount, Decimal("0.0000"))
 
     def test_foreign_transaction_reversal_requires_later_movements_to_be_reversed_first(self):
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("30"),
+        )
         receipt = self.make_postable_transaction(
             kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO-BLOCK",
             amount=Decimal("3000"), rate=Decimal("30"),
