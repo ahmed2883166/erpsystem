@@ -46,8 +46,8 @@ def _default_branch_company_ids(user, companies):
         if branch and can_access_branch(user, branch.pk, company_id):
             company_ids.append(company_id)
     return company_ids
-from .models import PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
-from .serializers import PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
+from .models import LandedCostDocument, PurchaseInvoice, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, PurchaseRequisition, PurchaseRFQ, PurchaseRFQInvitation, PurchaseServiceAcceptance, SupplierQuotation, SupplierPayment, SupplierRefund, SupplierReturn
+from .serializers import LandedCostDocumentSerializer, PurchaseInvoiceSerializer, PurchaseOrderSerializer, PurchaseReceiptSerializer, PurchaseRequisitionSerializer, PurchaseRFQSerializer, PurchaseServiceAcceptanceSerializer, SupplierQuotationSerializer, SupplierPaymentSerializer, SupplierRefundSerializer, SupplierReturnSerializer
 from .services import post_purchase_invoice, post_purchase_receipt, post_supplier_payment, post_supplier_refund, post_supplier_return, reverse_supplier_refund, reverse_supplier_return
 
 
@@ -1587,3 +1587,52 @@ class PurchaseServiceAcceptanceViewSet(PurchaseBaseViewSet):
         )
         document.refresh_from_db()
         return Response(self.get_serializer(document).data, status=status.HTTP_200_OK)
+
+
+
+class LandedCostDocumentViewSet(PurchaseBaseViewSet):
+    """إدارة مسودات رسملة تكاليف الاستيراد والشحن دون إنشاء فاتورة مورد ثانية."""
+
+    serializer_class = LandedCostDocumentSerializer
+    queryset = LandedCostDocument.objects.select_related(
+        "company", "source_invoice", "source_invoice__supplier", "source_invoice__branch",
+    ).prefetch_related(
+        "allocations__source_invoice_line", "allocations__receipt_line__product",
+        "allocations__distributions__branch",
+    )
+    filterset_fields = ("company", "status", "document_date", "source_invoice")
+    search_fields = ("document_number", "source_invoice__invoice_number", "source_invoice__supplier__name_ar")
+    ordering_fields = ("document_date", "document_number", "created_at")
+    http_method_names = ("get", "post", "head", "options")
+
+    def get_queryset(self):
+        companies = accessible_companies(self.request.user)
+        branches = accessible_branches(self.request.user)
+        defaults = _default_branch_company_ids(self.request.user, companies)
+        return self.queryset.filter(company__in=companies).filter(
+            Q(source_invoice__branch__in=branches)
+            | Q(source_invoice__branch__isnull=True, company_id__in=defaults)
+        ).distinct()
+
+    def create(self, request, *args, **kwargs):
+        try:
+            company_id = int(request.data.get("company"))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة."}) from None
+        self._check_write(company_id)
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        data = serializer.validated_data
+        company = data["company"]
+        self._check_write(company.pk)
+        source_invoice = data["source_invoice"]
+        if not source_invoice.branch_id or not can_access_branch(
+            self.request.user, source_invoice.branch_id, company.pk,
+        ):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى فرع فاتورة مصروف المصدر.")
+        for row in data["allocations"]:
+            warehouse = row["receipt_line"].movement.destination_warehouse
+            if not warehouse or not _purchase_warehouse_accessible(self.request.user, warehouse):
+                raise PermissionDenied("لا تملك صلاحية الوصول إلى أحد مخازن الاستلام المحددة.")
+        serializer.save(created_by=self.request.user)
