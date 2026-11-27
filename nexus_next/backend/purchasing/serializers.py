@@ -1437,10 +1437,12 @@ class LandedCostDocumentSerializer(serializers.ModelSerializer):
                 if residual:
                     largest = max(range(len(weights)), key=lambda index: weights[index])
                     shares[largest] += residual
-                if sum(shares, Decimal("0")) != amount or any(share <= 0 for share in shares):
+                if sum(shares, Decimal("0")) != amount:
                     raise serializers.ValidationError({"allocations": "تعذر توزيع المبلغ بدقة؛ تحقق من قيمة المصروف وأوزان بنود الاستلام."})
 
             for receipt_line, share in zip(receipt_lines, shares):
+                if share <= 0:
+                    continue
                 if receipt_line.movement.company_id != company.pk or receipt_line.movement.status != StockMovement.Status.POSTED:
                     raise serializers.ValidationError({"allocations": "كل بند استلام يجب أن يكون مرحّلًا ويتبع الشركة."})
                 if receipt_line.product.product_type != Product.ProductType.GOODS:
