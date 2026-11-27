@@ -954,6 +954,7 @@ const postInvoice = async (id: number) => {
           <div><span>عدد الفواتير</span><strong>{purchaseAnalysisReport.totals.invoice_count}</strong></div>
         </div>
         <div className="data-table-wrap"><table><thead><tr><th>النوع</th><th>المورد</th><th>الصنف / حساب المصروف</th><th>الفرع / المخزن</th><th>الكمية</th><th>المرتجع</th><th>صافي المشتريات</th><th>ضريبة غير قابلة للخصم</th><th>التكلفة</th></tr></thead><tbody>{purchaseAnalysisReport.rows.map((row,index)=><tr key={row.kind+"-"+row.supplier_id+"-"+(row.product_id||row.expense_account_id)+"-"+row.branch_id+"-"+index}><td>{row.kind==="inventory"?"مخزون":"مصروف مباشر"}</td><td>{row.supplier_name}</td><td>{row.kind==="inventory"?(row.product_code+" · "+row.product_name):(row.expense_account_code+" · "+row.expense_account_name)}</td><td>{row.branch_name}<small>{row.warehouse_name}</small></td><td>{row.quantity}</td><td>{row.returned_quantity}</td><td>{money(row.net_purchases)}</td><td>{money(row.nonrecoverable_tax)}</td><td>{money(row.total_cost)}</td></tr>)}</tbody></table>{purchaseAnalysisReport.rows.length===0&&<div className="table-empty">لا توجد فواتير مشتريات مرحلة في الفترة المحددة.</div>}</div>
+        <p className="inventory-report-note">ضريبة المدخلات غير القابلة للخصم الموزعة على المخزون وCOGS تظهر في إجمالي الملخص على مستوى الفاتورة والفرع، ولا تُكرر على صفوف الأصناف.</p>
         <p className="inventory-report-note">يحلل التقرير فواتير المشتريات المرحلة حسب المورد والصنف أو حساب المصروف والفرع والمخزن والنشاط، ويخصم مرتجعات الموردين المرحلة.</p>
       </div>}
     </div>}
