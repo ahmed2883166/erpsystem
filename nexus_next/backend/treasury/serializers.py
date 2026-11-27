@@ -507,6 +507,9 @@ class PettyCashFundSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("حساب التمويل يجب أن يختلف عن حساب العهدة.")
         if custodian and not custodian.is_active:
             raise serializers.ValidationError({"custodian": "أمين العهدة يجب أن يكون مستخدمًا نشطًا."})
+        authorized = attrs.get("authorized_amount", getattr(self.instance, "authorized_amount", None))
+        if authorized is not None and authorized <= 0:
+            raise serializers.ValidationError({"authorized_amount": "قيمة العهدة المعتمدة يجب أن تكون أكبر من صفر."})
         return attrs
 
 
