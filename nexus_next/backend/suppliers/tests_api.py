@@ -31,6 +31,29 @@ class SupplierApiTests(APITestCase):
         self.assertEqual(response.status_code, 201)
         self.assertTrue(Supplier.objects.filter(company=self.company, code="S-002").exists())
 
+    def test_duplicate_tax_number_is_rejected_within_company(self):
+        Supplier.objects.create(
+            company=self.company, code="S-TAX-1", name_ar="مورد قائم",
+            tax_number="123456789",
+        )
+        response = self.client.post("/api/purchases/suppliers/", {
+            "company": self.company.pk, "code": "S-TAX-2", "name_ar": "مورد مكرر",
+            "tax_number": " 123456789 ",
+        }, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("tax_number", response.data)
+
+    def test_same_tax_number_is_allowed_in_another_company(self):
+        Supplier.objects.create(
+            company=self.other_company, code="S-TAX-OTHER", name_ar="مورد شركة أخرى",
+            tax_number="123456789",
+        )
+        response = self.client.post("/api/purchases/suppliers/", {
+            "company": self.company.pk, "code": "S-TAX-3", "name_ar": "مورد الشركة",
+            "tax_number": "123456789",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+
     def test_viewer_cannot_create_supplier(self):
         viewer = get_user_model().objects.create_user(username="supplier_viewer", password="test-password")
         CompanyMembership.objects.create(user=viewer, company=self.company, role="viewer", all_branches=True)
