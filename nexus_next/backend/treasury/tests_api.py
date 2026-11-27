@@ -697,8 +697,8 @@ class TreasuryWorkflowTests(APITestCase):
             company=self.company, role=AccountRole.Role.RETAINED_EARNINGS, account=retained,
         )
         opening_bank_gl = ChartOfAccount.objects.create(
-            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",            nature=ChartOfAccount.Nature.ASSET,
-        )
+            company=self.company, code="1120", name_ar="بنك برصيد افتتاحي",
+            nature=ChartOfAccount.Nature.ASSET,        )
         opening_bank = self.client.post("/api/treasury/accounts/", {
             "company": self.company.pk, "branch": self.branch.pk, "account": opening_bank_gl.pk,
             "kind": "bank", "code": "BANK-FEE-OPEN", "name_ar": "بنك اختبار العمولة",
@@ -1396,8 +1396,8 @@ class TreasuryChequeWorkflowTests(APITestCase):
         }, format="json")
         self.assertEqual(created.status_code, 201, created.data)
         self.assertEqual(created.data["status"], "issued")
-        presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")        self.assertEqual(presented.status_code, 200, presented.data)
-
+        presented = self.client.post(f"/api/treasury/cheques/{created.data['id']}/present/", {}, format="json")
+        self.assertEqual(presented.status_code, 200, presented.data)
 
 class TreasuryLiquiditySummaryTests(APITestCase):
     def setUp(self):
