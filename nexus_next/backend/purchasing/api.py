@@ -1691,9 +1691,16 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
     @action(detail=False, methods=("get",))
     def report(self, request):
         """تقرير سجل رسملة التكلفة ومطابقة التوزيع مع المخزون وCOGS والخسائر."""
-        qs = self.get_queryset().filter(status__in=(
-            LandedCostDocument.Status.POSTED, LandedCostDocument.Status.REVERSED,
-        )).select_related("source_invoice__supplier").prefetch_related(
+        try:
+            company_id = int(request.query_params.get("company", ""))
+        except (TypeError, ValueError):
+            raise ValidationError({"company": "حدد الشركة لعرض تقرير رسملة التكلفة."}) from None
+        if not can_access_company(request.user, company_id):
+            raise PermissionDenied("لا تملك صلاحية الوصول إلى الشركة المحددة.")
+        qs = self.get_queryset().filter(
+            company_id=company_id,
+            status__in=(LandedCostDocument.Status.POSTED, LandedCostDocument.Status.REVERSED),
+        ).select_related("source_invoice__supplier").prefetch_related(
             "allocations__source_invoice_line__expense_account",
             "allocations__source_invoice_line__tax_code",
             "allocations__receipt_line__product",
@@ -1725,7 +1732,7 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
                 branch_id = int(branch_id)
             except (TypeError, ValueError):
                 raise ValidationError({"branch": "معرّف الفرع غير صالح."}) from None
-            if not can_access_branch(request.user, branch_id):
+            if not can_access_branch(request.user, branch_id, company_id):
                 raise PermissionDenied("لا تملك صلاحية الوصول إلى الفرع المحدد.")
         product_id = request.query_params.get("product")
         if product_id:
@@ -1796,7 +1803,7 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
                         "reversal_journal_entry": distribution.reversal_journal_entry_id,
                     })
         return Response({
-            "company": request.query_params.get("company"),
+            "company": company_id,
             "date_from": date_from.isoformat() if date_from else None,
             "date_to": date_to.isoformat() if date_to else None,
             "branch": branch_id, "supplier": supplier_id, "product": product_id,
