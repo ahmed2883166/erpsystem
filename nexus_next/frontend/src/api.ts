@@ -1148,7 +1148,7 @@ export type CustomerReceiptBatch = {
   id:number;company:number;customer:number;customer_name:string;branch:number;branch_name:string;
   receipt_number:string;receipt_date:string;method:"cash"|"bank";payment_account:number|null;
   payment_account_name:string|null;amount:string;allocated_amount:string;unallocated_amount:string;
-  allocation_lines:CustomerReceiptBatchAllocation[];reference:string;status:"draft"|"posted"|"reversed";
+  allocation_lines:CustomerReceiptBatchAllocation[];reference:string;print_template_snapshot?: {template_id:number|null;name:string;style:"classic"|"modern"|"compact";config:SalesDocumentTemplate["config"]};status:"draft"|"posted"|"reversed";
   journal_entry:number|null;journal_number:string|null;reversal_journal_entry:number|null;
   reversal_journal_number:string|null;reversal_date:string|null;created_at:string;posted_at:string|null;
 };
