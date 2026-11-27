@@ -2691,3 +2691,130 @@ class SalesWorkflowTests(APITestCase):
 
 
 
+
+
+    def test_branch_limited_user_cannot_read_sales_documents_from_other_branch(self):
+        from sales.models import SalesDelivery, SalesOrder, SalesReturn
+
+        other_branch = Branch.objects.create(
+            company=self.company, code="SALES-PRIVATE", name_ar="فرع خاص",
+        )
+        other_warehouse = Warehouse.objects.create(
+            company=self.company, branch=other_branch,
+            code="WH-PRIVATE", name_ar="مخزن الفرع الخاص",
+        )
+        other_order = SalesOrder.objects.create(
+            company=self.company, customer=self.customer, warehouse=other_warehouse,
+            order_number="SO-PRIVATE", order_date=date(2026, 3, 10),
+            created_by=self.user,
+        )
+        movement = StockMovement.objects.create(
+            company=self.company, movement_number="SD-PRIVATE",
+            movement_type=StockMovement.MovementType.ISSUE,
+            movement_date=date(2026, 3, 10), source_warehouse=other_warehouse,
+            created_by=self.user,
+        )
+        delivery = SalesDelivery.objects.create(
+            company=self.company, customer=self.customer, warehouse=other_warehouse,
+            stock_movement=movement, delivery_number="DEL-PRIVATE",
+            delivery_date=date(2026, 3, 10), created_by=self.user,
+        )
+        invoice = SalesInvoice.objects.create(
+            company=self.company, customer=self.customer, delivery=delivery,
+            invoice_number="INV-PRIVATE", invoice_date=date(2026, 3, 10),
+            created_by=self.user,
+        )
+        receipt = CustomerReceipt.objects.create(
+            company=self.company, customer=self.customer, invoice=invoice,
+            receipt_number="RC-PRIVATE", receipt_date=date(2026, 3, 10),
+            amount=Decimal("10"), created_by=self.user,
+        )
+        sales_return = SalesReturn.objects.create(
+            company=self.company, invoice=invoice, warehouse=other_warehouse,
+            branch=other_branch, return_number="RET-PRIVATE",
+            return_date=date(2026, 3, 11), created_by=self.user,
+        )
+
+        limited_user = get_user_model().objects.create_user(
+            username="sales-private-branch-reader", password="test-password",
+        )
+        membership = CompanyMembership.objects.create(
+            user=limited_user, company=self.company, role="accountant",
+            all_branches=False,
+        )
+        membership.branches.add(self.branch)
+        self.client.force_authenticate(limited_user)
+
+        documents = (
+            ("orders", other_order.pk),
+            ("deliveries", delivery.pk),
+            ("invoices", invoice.pk),
+            ("receipts", receipt.pk),
+            ("returns", sales_return.pk),
+        )
+        for resource, document_id in documents:
+            listing = self.client.get(f"/api/sales-documents/{resource}/")
+            self.assertEqual(listing.status_code, 200, listing.data)
+            rows = listing.data.get("results", listing.data) if isinstance(listing.data, dict) else listing.data
+            self.assertNotIn(document_id, [row["id"] for row in rows], resource)
+            detail = self.client.get(f"/api/sales-documents/{resource}/{document_id}/")
+            self.assertEqual(detail.status_code, 404, (resource, detail.data))
+
+        # Object-scoped actions must not bypass the same branch-filtered queryset.
+        self.assertEqual(
+            self.client.post(f"/api/sales-documents/invoices/{invoice.pk}/post/", {}, format="json").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.post(f"/api/sales-documents/receipts/{receipt.pk}/post/", {}, format="json").status_code,
+            404,
+        )
+
+    def test_sales_documents_from_an_unassigned_company_are_not_readable_by_id(self):
+        from sales.models import SalesDelivery
+
+        other_company = Company.objects.create(
+            code="SALES-FOREIGN", name_ar="شركة خارج النطاق", country="EG",
+            activity="commercial", base_currency=self.company.base_currency,
+        )
+        other_branch = Branch.objects.create(
+            company=other_company, code="MAIN", name_ar="الرئيسي", is_head_office=True,
+        )
+        other_customer = Customer.objects.create(
+            company=other_company, code="FOREIGN-CUS", name_ar="عميل شركة أخرى",
+        )
+        other_warehouse = Warehouse.objects.create(
+            company=other_company, branch=other_branch,
+            code="FOREIGN-WH", name_ar="مخزن شركة أخرى",
+        )
+        movement = StockMovement.objects.create(
+            company=other_company, movement_number="FOREIGN-SD",
+            movement_type=StockMovement.MovementType.ISSUE,
+            movement_date=date(2026, 3, 10), source_warehouse=other_warehouse,
+            created_by=self.user,
+        )
+        delivery = SalesDelivery.objects.create(
+            company=other_company, customer=other_customer, warehouse=other_warehouse,
+            stock_movement=movement, delivery_number="FOREIGN-DEL",
+            delivery_date=date(2026, 3, 10), created_by=self.user,
+        )
+        invoice = SalesInvoice.objects.create(
+            company=other_company, customer=other_customer, delivery=delivery,
+            invoice_number="FOREIGN-INV", invoice_date=date(2026, 3, 10),
+            created_by=self.user,
+        )
+
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/deliveries/{delivery.pk}/").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(f"/api/sales-documents/invoices/{invoice.pk}/").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/api/sales-documents/invoices/customer-aging/?company={other_company.pk}"
+            ).status_code,
+            403,
+        )
