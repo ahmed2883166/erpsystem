@@ -3673,6 +3673,14 @@ class SupplierReturnTransactionBoundaryTests(TransactionTestCase):
         self.assertEqual(report.data["totals"]["allocated"], "20.0000")
         self.assertEqual(report.data["totals"]["inventory"], "10.0000")
         self.assertEqual(report.data["totals"]["cogs"], "10.0000")
+        excel = self.client.get(
+            f"/api/purchasing/landed-costs/export-excel/?company={self.company.pk}",
+        )
+        self.assertEqual(excel.status_code, 200)
+        self.assertEqual(
+            excel["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
         reversed_response = self.client.post(
             f"/api/purchasing/landed-costs/{document.pk}/reverse/",
