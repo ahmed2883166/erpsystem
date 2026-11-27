@@ -310,6 +310,39 @@ class TreasuryFxSnapshotTests(TestCase):
         self.assertEqual(destination_position.foreign_amount, Decimal("0.0000"))
         self.assertEqual(destination_position.carrying_base_amount, Decimal("0.0000"))
 
+    def test_foreign_transaction_reversal_requires_later_revaluation_to_be_reversed_first(self):
+        self.setUp_fx_roles()
+        receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO-REV",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(receipt.pk)
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
+        revaluation = revalue_treasury_fx_account(
+            account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+            revaluation_date=date(2026, 3, 2), rate_date=date(2026, 3, 2),
+            branch=self.branch,
+        )
+        with self.assertRaises(ValidationError):
+            reverse_treasury_transaction(
+                transaction_id=receipt.pk, entry_date=date(2026, 3, 3),
+            )
+
+        reverse_treasury_fx_revaluation(
+            revaluation_id=revaluation.pk, entry_date=date(2026, 3, 3),
+        )
+        reversed_receipt = reverse_treasury_transaction(
+            transaction_id=receipt.pk, entry_date=date(2026, 3, 4),
+        )
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        self.assertEqual(reversed_receipt.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(position.foreign_amount, Decimal("0.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("0.0000"))
+
     def test_foreign_transaction_reversal_requires_later_movements_to_be_reversed_first(self):
         receipt = self.make_postable_transaction(
             kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO-BLOCK",
