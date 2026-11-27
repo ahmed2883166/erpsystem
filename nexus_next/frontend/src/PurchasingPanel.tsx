@@ -79,6 +79,7 @@ export default function PurchasingPanel({ companyId, company, activityAssignment
   const [orderLines, setOrderLines] = useState<{ product: string; quantity: string; unit_price: string; tax_rate: string }[]>([{ product: "", quantity: "1", unit_price: "0", tax_rate: "0" }]);
   const [requisitionForm, setRequisitionForm] = useState({ request_number: "", request_date: new Date().toISOString().slice(0, 10), required_date: "", department: "", purpose: "" });
   const [requisitionLines, setRequisitionLines] = useState<{ product: string; requested_quantity: string; estimated_unit_price: string }[]>([{ product: "", requested_quantity: "1", estimated_unit_price: "" }]);
+  const [editingReqId, setEditingReqId] = useState<number | null>(null);
   const [convertingReqId, setConvertingReqId] = useState<number | null>(null);
   const [conversionForm, setConversionForm] = useState({ supplier: "", warehouse: "", order_number: "", order_date: new Date().toISOString().slice(0, 10) });
   const [invoiceForm, setInvoiceForm] = useState({ invoice_type: "inventory" as "inventory" | "direct_expense", receipt: "", supplier: "", service_acceptance: "", branch: "", activity: "", invoice_number: "", invoice_date: new Date().toISOString().slice(0, 10), tax_rate: "0", tax_code: "", transaction_currency: "", exchange_rate: "", exchange_rate_date: new Date().toISOString().slice(0, 10), notes: "" });
@@ -349,17 +350,40 @@ const loadAging = async () => {
     }
     setBusy(true); setError("");
     try {
-      await purchasingApi.createRequisition({
+      const payload = {
         company: companyId, request_number: requisitionForm.request_number.trim(),
         request_date: requisitionForm.request_date, required_date: requisitionForm.required_date || null,
         department: requisitionForm.department, purpose: requisitionForm.purpose,
         lines: requisitionLines.map(line => ({ product: Number(line.product), requested_quantity: line.requested_quantity, estimated_unit_price: line.estimated_unit_price || null })),
-      });
+      };
+      if (editingReqId) await purchasingApi.updateRequisition(editingReqId, payload);
+      else await purchasingApi.createRequisition(payload);
+      setNotice(editingReqId ? "تم حفظ التعديلات وإعادة الطلب إلى مسودة." : "تم حفظ طلب الاحتياج كمسودة.");
+      setEditingReqId(null);
       setShowForm(false);
       setRequisitionForm(old => ({ ...old, request_number: "", department: "", purpose: "", required_date: "" }));
       setRequisitionLines([{ product: String(products[0]?.id || ""), requested_quantity: "1", estimated_unit_price: "" }]);
       await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر حفظ طلب الاحتياج."); }
+    finally { setBusy(false); }
+  };
+  const openRequisitionEdit = (row: PurchaseRequisition) => {
+    setEditingReqId(row.id);
+    setRequisitionForm({
+      request_number: row.request_number, request_date: row.request_date,
+      required_date: row.required_date || "", department: row.department || "", purpose: row.purpose || "",
+    });
+    setRequisitionLines(row.line_items.map(line => ({
+      product: String(line.product), requested_quantity: line.requested_quantity,
+      estimated_unit_price: line.estimated_unit_price || "",
+    })));
+    setTab("requisitions"); setShowForm(true); setError(""); setNotice("");
+  };
+  const cancelRequisition = async (id: number) => {
+    if (!window.confirm("هل تريد إلغاء طلب الاحتياج؟ لن يمكن إرساله للاعتماد بعد الإلغاء.")) return;
+    setBusy(true); setError("");
+    try { await purchasingApi.cancelRequisition(id); setNotice("تم إلغاء طلب الاحتياج."); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "تعذر إلغاء طلب الاحتياج."); }
     finally { setBusy(false); }
   };
   const submitRequisition = async (id: number) => {
@@ -652,7 +676,7 @@ const postInvoice = async (id: number) => {
   if (!companyId) return <section className="work-panel"><div className="table-empty">اختر شركة لعرض دورة المشتريات.</div></section>;
   return <section className="work-panel inventory-panel">
     <div className="work-panel-head"><div><h2>دورة المشتريات</h2><p>استلام البضاعة أولاً، ثم فاتورة المورد وتسوية حساب البضاعة المستلمة غير المفوترة.</p></div>
-      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || tab === "service-acceptances" || (tab === "sourcing" && sourcingView === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0 && !(suppliers.length>0 && branches.length>0 && expenseAccounts.length>0)) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => setShowForm((v) => !v)}>{showForm ? "إغلاق النموذج" : tab === "sourcing" ? (sourcingView === "rfqs" ? "＋ طلب عروض أسعار" : "＋ تسجيل عرض مورد") : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "service-acceptances" ? "محاضر إنجاز الخدمات" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : tab === "landed-cost" ? "＋ رسملة تكلفة شراء" : "كشف الحساب"}</button>
+      <button className="primary-button" type="button" disabled={busy || tab === "statement" || tab === "aging" || tab === "service-acceptances" || (tab === "sourcing" && sourcingView === "quotations" && !rfqs.some(x=>x.status==="open")) || ((tab === "invoices" && invoiceableReceipts.length === 0 && !(suppliers.length>0 && branches.length>0 && expenseAccounts.length>0)) || (tab === "payments" && paymentableInvoices.length === 0) || (tab === "returns" && returnableInvoices.length === 0) || (tab === "refunds" && refundableReturns.length === 0))} onClick={() => { if (!showForm && tab === "requisitions") { setEditingReqId(null); setRequisitionForm({ request_number: "", request_date: new Date().toISOString().slice(0, 10), required_date: "", department: "", purpose: "" }); setRequisitionLines([{ product: String(products[0]?.id || ""), requested_quantity: "1", estimated_unit_price: "" }]); } setShowForm((v) => !v); }}>{showForm ? "إغلاق النموذج" : tab === "sourcing" ? (sourcingView === "rfqs" ? "＋ طلب عروض أسعار" : "＋ تسجيل عرض مورد") : tab === "requisitions" ? "＋ طلب احتياج جديد" : tab === "orders" ? "＋ أمر شراء جديد" : tab === "service-acceptances" ? "محاضر إنجاز الخدمات" : tab === "receipts" ? "＋ إذن استلام جديد" : tab === "invoices" ? "＋ فاتورة مورد جديدة" : tab === "payments" ? "＋ سند صرف جديد" : tab === "returns" ? "＋ مرتجع مورد جديد" : tab === "refunds" ? "＋ استرداد من مورد" : tab === "landed-cost" ? "＋ رسملة تكلفة شراء" : "كشف الحساب"}</button>
     </div>
     <div className="inventory-tabs"><button className={tab === "sourcing" ? "inventory-tab active" : "inventory-tab"} onClick={() => {setTab("sourcing");setSourcingView("rfqs");setShowForm(false);setSearch("");}}>عروض الموردين <b>{rfqs.length}</b></button><button className={tab === "requisitions" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("requisitions"); setShowForm(false); setSearch(""); }}>طلبات الاحتياج <b>{requisitions.length}</b></button><button className={tab === "orders" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("orders"); setShowForm(false); setSearch(""); }}>أوامر الشراء <b>{orders.length}</b></button><button className={tab === "service-acceptances" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("service-acceptances"); setShowForm(false); setSearch(""); }}>استلام الخدمات <b>{serviceAcceptances.length}</b></button><button className={tab === "receipts" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("receipts"); setShowForm(false); setSearch(""); }}>أذون الاستلام <b>{receipts.length}</b></button><button className={tab === "invoices" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("invoices"); setShowForm(false); setSearch(""); }}>فواتير الموردين <b>{invoices.length}</b></button><button className={tab === "payments" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("payments"); setShowForm(false); setSearch(""); }}>سندات الصرف <b>{payments.length}</b></button><button className={tab === "returns" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("returns"); setShowForm(false); setSearch(""); }}>مرتجعات الموردين <b>{returns.length}</b></button><button className={tab === "refunds" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("refunds"); setShowForm(false); setSearch(""); }}>استردادات الموردين <b>{refunds.length}</b></button><button className={tab === "landed-cost" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("landed-cost"); setShowForm(false); setSearch(""); }}>رسملة تكاليف الشراء <b>{landedCosts.length}</b></button><button className={tab === "statement" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("statement"); setShowForm(false); setStatementSupplier((old) => old || String(suppliers[0]?.id || "")); setStatement(null); }}>كشف حساب المورد</button><button className={tab === "aging" ? "inventory-tab active" : "inventory-tab"} onClick={() => { setTab("aging"); setShowForm(false); setAging(null); }}>تقارير المشتريات</button></div>
     {error && <div className="error-banner">{error}</div>}
@@ -724,6 +748,7 @@ const postInvoice = async (id: number) => {
       <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>إنشاء أمر الشراء</button><button className="subtle-button" type="button" onClick={() => setConvertingReqId(null)}>إلغاء</button></div>
     </form>}
     {showForm && tab === "requisitions" && <form className="inventory-form" onSubmit={(event) => void saveRequisition(event)}>
+      <div className="inventory-wide"><h3>{editingReqId ? "تعديل طلب الاحتياج" : "طلب احتياج جديد"}</h3>{editingReqId && <p>بعد حفظ تعديل الطلب المرفوض سيعود لمسودة ويحتاج إلى اعتماد جديد.</p>}</div>
       <label>رقم طلب الاحتياج<input required value={requisitionForm.request_number} onChange={e => setRequisitionForm({ ...requisitionForm, request_number: e.target.value })} /></label>
       <label>تاريخ الطلب<input required type="date" value={requisitionForm.request_date} onChange={e => setRequisitionForm({ ...requisitionForm, request_date: e.target.value })} /></label>
       <label>تاريخ الاحتياج<input type="date" value={requisitionForm.required_date} onChange={e => setRequisitionForm({ ...requisitionForm, required_date: e.target.value })} /></label>
@@ -733,16 +758,18 @@ const postInvoice = async (id: number) => {
       {requisitionLines.map((line, index) => <div className="inventory-form-row inventory-wide" key={index}>
         <label>الصنف<select required value={line.product} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, product: e.target.value } : x))}><option value="">اختر الصنف</option>{products.map(x => <option key={x.id} value={x.id}>{x.code} - {x.name_ar}</option>)}</select></label>
         <label>الكمية المطلوبة<input required type="number" min="0.0001" step="0.0001" value={line.requested_quantity} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, requested_quantity: e.target.value } : x))} /></label>
-        <label>سعر تقديري للوحدة<input type="number" min="0" step="0.0001" value={line.estimated_unit_price} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, estimated_unit_price: e.target.value } : x))} /></label>
+        <label>سعر تقديري للوحدة<input required type="number" min="0" step="0.0001" value={line.estimated_unit_price} onChange={e => setRequisitionLines(old => old.map((x,i) => i===index ? { ...x, estimated_unit_price: e.target.value } : x))} /></label>
         <button className="subtle-button" type="button" disabled={requisitionLines.length===1} onClick={() => setRequisitionLines(old => old.filter((_,i)=>i!==index))}>حذف</button>
       </div>)}
-      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : "حفظ طلب الاحتياج كمسودة"}</button></div>
+      <div className="inventory-form-actions inventory-wide"><button className="primary-button" type="submit" disabled={busy}>{busy ? "جارٍ الحفظ…" : editingReqId ? "حفظ التعديلات" : "حفظ طلب الاحتياج كمسودة"}</button><button className="subtle-button" type="button" disabled={busy} onClick={() => { setEditingReqId(null); setShowForm(false); }}>إلغاء</button></div>
     </form>}
     {tab === "requisitions" && <div className="inventory-table-wrap"><table className="inventory-table"><thead><tr><th>رقم الطلب</th><th>القسم</th><th>تاريخ الاحتياج</th><th>الأصناف</th><th>الحالة</th><th>الإجراءات</th></tr></thead><tbody>
       {requisitions.filter(row => [row.request_number,row.department,row.purpose].join(" ").toLowerCase().includes(search.toLowerCase())).map(row => <tr key={row.id}>
         <td>{row.request_number}</td><td>{row.department || "—"}</td><td>{row.required_date || "—"}</td><td>{row.line_items.map(line => line.product_name + " × " + line.requested_quantity).join("، ")}</td><td><span className={statusPill(row.status)}>{({draft:"مسودة",submitted:"بانتظار الاعتماد",approved:"معتمد",rejected:"مرفوض",converted:"تم التحويل",cancelled:"ملغي"} as Record<string,string>)[row.status]}</span></td>
         <td className="table-actions"><button className="subtle-button" type="button" onClick={()=>openPrint("purchase_req","طلب احتياج",row.request_number,row.request_date,row.department||"—",row.line_items.map(line=>({label:line.product_name,code:line.product_code,quantity:line.requested_quantity,unitPrice:line.estimated_unit_price||undefined,detail:line.notes})),[{label:"تاريخ الاحتياج",value:row.required_date||"—"}],row.purpose)}>طباعة</button>
+          {(row.status === "draft" || row.status === "rejected") && <button className="subtle-button" disabled={busy} onClick={() => openRequisitionEdit(row)}>تعديل الطلب</button>}
           {row.status === "draft" && <button className="subtle-button" disabled={busy} onClick={() => void submitRequisition(row.id)}>إرسال للاعتماد</button>}
+          {(row.status === "draft" || row.status === "submitted" || row.status === "rejected") && <button className="subtle-button" disabled={busy} onClick={() => void cancelRequisition(row.id)}>إلغاء الطلب</button>}
           {row.status === "submitted" && <><button className="subtle-button" disabled={busy} onClick={() => void reviewRequisition(row.id,"approve")}>اعتماد</button><button className="subtle-button" disabled={busy} onClick={() => void reviewRequisition(row.id,"reject")}>رفض</button></>}
           {row.status === "approved" && <button className="subtle-button" disabled={busy} onClick={() => openRequisitionConversion(row)}>تحويل لأمر شراء</button>}
           {row.review_note && <small>{row.review_note}</small>}
