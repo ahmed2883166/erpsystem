@@ -9,7 +9,7 @@ from companies.models import Branch, Company, Currency, ExchangeRate, FiscalYear
 from .models import TreasuryAccount, TreasuryTransaction, TreasuryFxPosition, TreasuryFxRevaluation
 from .services import (
     post_treasury_transaction, revalue_treasury_fx_account,
-    reverse_treasury_fx_revaluation,
+    reverse_treasury_fx_revaluation, reverse_treasury_transaction,
 )
 
 
@@ -189,6 +189,150 @@ class TreasuryFxSnapshotTests(TestCase):
             payment.journal_entry.lines.get(account=loss).debit,
             Decimal("50.0000"),
         )
+
+    def test_foreign_receipt_reversal_restores_nominal_and_carrying_positions(self):
+        receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(receipt.pk)
+        receipt.refresh_from_db()
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        self.assertEqual(position.foreign_amount, Decimal("100.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("3000.0000"))
+
+        reversed_doc = reverse_treasury_transaction(
+            transaction_id=receipt.pk, entry_date=date(2026, 3, 2),
+        )
+        position.refresh_from_db()
+        receipt.refresh_from_db()
+        self.assertEqual(reversed_doc.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(position.foreign_amount, Decimal("0.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("0.0000"))
+        self.assertEqual(
+            receipt.reversal_journal_entry.lines.get(account=self.bank.account).debit,
+            Decimal("3000.0000"),
+        )
+        self.assertEqual(
+            receipt.reversal_journal_entry.lines.get(account=self.counter).credit,
+            Decimal("3000.0000"),
+        )
+        self.assertEqual(
+            receipt.reversal_journal_entry.lines.get(account=self.bank.account).transaction_amount,
+            Decimal("100.0000"),
+        )
+
+    def test_foreign_payment_reversal_restores_position_and_reverses_realized_fx_loss(self):
+        _, loss = self.setUp_fx_roles()
+        receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO-PAY",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(receipt.pk)
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 2), rate=Decimal("32"),
+        )
+        revalue_treasury_fx_account(
+            account_id=self.bank.pk, fiscal_year_id=self.year.pk,
+            revaluation_date=date(2026, 3, 2), rate_date=date(2026, 3, 2),
+            branch=self.branch,
+        )
+        ExchangeRate.objects.create(
+            company=self.company, currency=self.usd,
+            rate_date=date(2026, 3, 3), rate=Decimal("31"),
+        )
+        payment = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.PAYMENT, number="FX-P-UNDO",
+            amount=Decimal("1550"), rate=Decimal("31"),
+            foreign_amount=Decimal("50"), rate_date=date(2026, 3, 3),
+        )
+        post_treasury_transaction(payment.pk)
+        payment.refresh_from_db()
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        self.assertEqual(payment.carrying_amount, Decimal("1600.0000"))
+        self.assertEqual(payment.journal_entry.lines.get(account=loss).debit, Decimal("50.0000"))
+        self.assertEqual(position.foreign_amount, Decimal("50.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("1600.0000"))
+
+        reverse_treasury_transaction(
+            transaction_id=payment.pk, entry_date=date(2026, 3, 4),
+        )
+        payment.refresh_from_db()
+        position.refresh_from_db()
+        self.assertEqual(payment.status, TreasuryTransaction.Status.REVERSED)
+        self.assertEqual(position.foreign_amount, Decimal("100.0000"))
+        self.assertEqual(position.carrying_base_amount, Decimal("3200.0000"))
+        self.assertEqual(
+            payment.reversal_journal_entry.lines.get(account=loss).credit,
+            Decimal("50.0000"),
+        )
+        self.assertEqual(
+            payment.reversal_journal_entry.lines.get(account=self.bank.account).debit,
+            Decimal("1600.0000"),
+        )
+
+    def test_foreign_transfer_reversal_restores_both_account_positions(self):
+        receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO-TRANSFER",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(receipt.pk)
+        destination_ledger = ChartOfAccount.objects.create(
+            company=self.company, code="1121", name_ar="بنك دولار ثاني", nature="asset",
+        )
+        destination = TreasuryAccount.objects.create(
+            company=self.company, branch=self.branch, account=destination_ledger,
+            kind=TreasuryAccount.Kind.BANK, code="USD-2", name_ar="حساب دولار ثاني",
+            currency_code="USD",
+        )
+        transfer = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.TRANSFER, number="FX-T-UNDO",
+            amount=Decimal("1200"), rate=Decimal("30"),
+            foreign_amount=Decimal("40"), destination=destination,
+        )
+        post_treasury_transaction(transfer.pk)
+        source_position = TreasuryFxPosition.objects.get(account=self.bank)
+        destination_position = TreasuryFxPosition.objects.get(account=destination)
+        self.assertEqual(source_position.foreign_amount, Decimal("60.0000"))
+        self.assertEqual(destination_position.foreign_amount, Decimal("40.0000"))
+
+        reverse_treasury_transaction(
+            transaction_id=transfer.pk, entry_date=date(2026, 3, 2),
+        )
+        source_position.refresh_from_db()
+        destination_position.refresh_from_db()
+        self.assertEqual(source_position.foreign_amount, Decimal("100.0000"))
+        self.assertEqual(source_position.carrying_base_amount, Decimal("3000.0000"))
+        self.assertEqual(destination_position.foreign_amount, Decimal("0.0000"))
+        self.assertEqual(destination_position.carrying_base_amount, Decimal("0.0000"))
+
+    def test_foreign_transaction_reversal_requires_later_movements_to_be_reversed_first(self):
+        receipt = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.RECEIPT, number="FX-R-UNDO-BLOCK",
+            amount=Decimal("3000"), rate=Decimal("30"),
+            foreign_amount=Decimal("100"),
+        )
+        post_treasury_transaction(receipt.pk)
+        payment = self.make_postable_transaction(
+            kind=TreasuryTransaction.Kind.PAYMENT, number="FX-P-UNDO-BLOCK",
+            amount=Decimal("600"), rate=Decimal("30"),
+            foreign_amount=Decimal("20"), rate_date=date(2026, 3, 2),
+        )
+        post_treasury_transaction(payment.pk)
+        position = TreasuryFxPosition.objects.get(account=self.bank)
+        with self.assertRaises(ValidationError):
+            reverse_treasury_transaction(
+                transaction_id=receipt.pk, entry_date=date(2026, 3, 3),
+            )
+        receipt.refresh_from_db()
+        position.refresh_from_db()
+        self.assertEqual(receipt.status, TreasuryTransaction.Status.POSTED)
+        self.assertEqual(position.foreign_amount, Decimal("80.0000"))
+        self.assertFalse(receipt.reversal_journal_entry_id)
 
     def test_foreign_payment_reduces_position_when_realized_fx_difference_is_zero(self):
         receipt = self.make_postable_transaction(
