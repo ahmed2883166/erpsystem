@@ -4,7 +4,7 @@ The treasury FX workflow keeps the general ledger in the company's functional/ba
 
 ## Supported workflow
 
-1. Create an active foreign-currency cash/bank account with **zero opening balance**. The currency must exist in the company's active currency reference data.
+1. Create an active foreign-currency cash/bank account with either zero balance or a documented nominal opening balance supported by an approved company rate and opening journal. The currency must exist in the company's active currency reference data.
 2. Enter an approved company exchange rate for the transaction date (or the selected approved rate date not later than the transaction date).
 3. Create a receipt, payment, or same-currency transfer with the foreign nominal amount and approved rate. The application calculates the base-currency amount.
 4. Posting updates the locked foreign-currency position and writes a balanced base-currency journal.
