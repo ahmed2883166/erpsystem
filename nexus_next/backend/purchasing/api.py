@@ -1332,7 +1332,7 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                         "invoice_count": set(), "line_count": 0,
                         "quantity": Decimal("0"), "returned_quantity": Decimal("0"),
                         "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
-                        "tax_amount": Decimal("0"),
+                        "nonrecoverable_tax": Decimal("0"), "tax_amount": Decimal("0"),
                     })
                     returned = SupplierReturnLine.objects.filter(
                         invoice_line=line,
@@ -1346,6 +1346,8 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                     row["returned_net"] += returned_net
                     row["tax_amount"] += line.tax_amount
                 else:
+                    if product_id:
+                        continue
                     account = line.expense_account
                     if not account:
                         continue
@@ -1372,7 +1374,8 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                         if line.tax_code_id and not line.tax_code.input_tax_recoverable
                         else Decimal("0")
                     )
-                    row["purchase_net"] += line.net_amount + nonrecoverable_tax
+                    row["purchase_net"] += line.net_amount
+                    row["nonrecoverable_tax"] += nonrecoverable_tax
                     row["tax_amount"] += line.tax_amount
                 row["invoice_count"].add(invoice.pk)
                 row["line_count"] += 1
@@ -1380,17 +1383,21 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
         rows = []
         totals = {
             "purchase_net": Decimal("0"), "returned_net": Decimal("0"),
-            "net_purchases": Decimal("0"), "tax_amount": Decimal("0"),
+            "net_purchases": Decimal("0"), "nonrecoverable_tax": Decimal("0"),
+            "total_cost": Decimal("0"), "tax_amount": Decimal("0"),
             "invoice_count": set(), "line_count": 0,
         }
         for row in grouped.values():
             row["net_purchases"] = row["purchase_net"] - row["returned_net"]
+            row["total_cost"] = row["net_purchases"] + row["nonrecoverable_tax"]
             row["invoice_count"] = len(row["invoice_count"])
-            for key in ("quantity", "returned_quantity", "purchase_net", "returned_net", "net_purchases", "tax_amount"):
+            for key in ("quantity", "returned_quantity", "purchase_net", "returned_net", "nonrecoverable_tax", "net_purchases", "total_cost", "tax_amount"):
                 row[key] = str(row[key])
             totals["purchase_net"] += Decimal(row["purchase_net"])
             totals["returned_net"] += Decimal(row["returned_net"])
             totals["net_purchases"] += Decimal(row["net_purchases"])
+            totals["nonrecoverable_tax"] += Decimal(row["nonrecoverable_tax"])
+            totals["total_cost"] += Decimal(row["total_cost"])
             totals["tax_amount"] += Decimal(row["tax_amount"])
             totals["line_count"] += row["line_count"]
             rows.append(row)
@@ -1411,6 +1418,8 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
                 "purchase_net": str(totals["purchase_net"]),
                 "returned_net": str(totals["returned_net"]),
                 "net_purchases": str(totals["net_purchases"]),
+                "nonrecoverable_tax": str(totals["nonrecoverable_tax"]),
+                "total_cost": str(totals["total_cost"]),
                 "tax_amount": str(totals["tax_amount"]),
                 "invoice_count": totals["invoice_count"],
                 "line_count": totals["line_count"],
