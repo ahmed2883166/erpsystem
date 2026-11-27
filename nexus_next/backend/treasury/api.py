@@ -343,7 +343,7 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
         from datetime import timedelta
         from django.db.models import Sum
         from sales.models import (
-            SalesInvoice, CustomerReceipt, CustomerReceiptBatchAllocation, SalesReturn,
+            SalesInvoice, CustomerReceipt, CustomerReceiptBatch, CustomerReceiptBatchAllocation, SalesReturn,
         )
         from purchasing.models import PurchaseInvoice, SupplierPayment, SupplierReturn
         from assets.models import AssetPurchaseInvoice, AssetSupplierPayment
@@ -435,18 +435,10 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                         receipt.carrying_base_amount if receipt.carrying_base_amount is not None else receipt.amount,
                         "سند قبض مرحّل بتاريخ مستقبلي",
                     )
-            batch_allocations = CustomerReceiptBatchAllocation.objects.filter(
-                invoice=invoice, allocation_date__lte=end_date,
-                batch__status="posted", batch__receipt_date__lte=end_date,
-            ).select_related("batch")
-            batch_paid = sum((allocation.amount for allocation in batch_allocations), Decimal("0"))
-            for allocation in batch_allocations:
-                if allocation.batch.receipt_date > today:
-                    add_item(
-                        "collections", allocation.batch.receipt_number,
-                        invoice.customer.name_ar, allocation.batch.receipt_date,
-                        allocation.amount, "سند قبض مجمع مرحّل بتاريخ مستقبلي",
-                    )
+            batch_paid = CustomerReceiptBatchAllocation.objects.filter(
+                invoice=invoice, batch__status=CustomerReceiptBatch.Status.POSTED,
+                batch__receipt_date__lte=end_date,
+            ).aggregate(total=Sum("amount"))["total"] or Decimal("0")
             returned = sum((
                 item.grand_total for item in invoice.returns.all()
                 if item.status == SalesReturn.Status.POSTED and item.return_date <= end_date
@@ -457,6 +449,27 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
                 "collections", invoice.invoice_number, invoice.customer.name_ar, due_date,
                 balance, "رصيد عميل مفتوح",
             )
+
+        # Future-dated batch receipts are counted once at batch level, split by allocations.
+        future_batches = CustomerReceiptBatch.objects.filter(
+            company_id=company_id, status=CustomerReceiptBatch.Status.POSTED,
+            receipt_date__gt=today, receipt_date__lte=end_date, branch_id__in=branch_ids,
+        ).prefetch_related("allocations__invoice__customer")
+        for batch in future_batches:
+            allocated = Decimal("0")
+            for allocation in batch.allocations.all():
+                allocated += allocation.amount
+                add_item(
+                    "collections", batch.receipt_number,
+                    allocation.invoice.customer.name_ar, batch.receipt_date,
+                    allocation.amount, "سند قبض مجمع مرحّل بتاريخ مستقبلي",
+                )
+            unallocated = max(batch.amount - allocated, Decimal("0"))
+            if unallocated:
+                add_item(
+                    "collections", batch.receipt_number, batch.customer.name_ar,
+                    batch.receipt_date, unallocated, "دفعة مقدمة من عميل بتاريخ مستقبلي",
+                )
 
         # Supplier operating invoices: subtract posted payments and returns only.
         purchase_invoices = PurchaseInvoice.objects.filter(
