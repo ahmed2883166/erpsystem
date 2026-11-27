@@ -1840,7 +1840,15 @@ class LandedCostDocumentViewSet(PurchaseBaseViewSet):
             "journal_entry", "reversal_journal_entry",
         ]
         for row in report_data["rows"]:
-            sheet.append([row.get(field) or "" for field in fields])
+            values = []
+            for field in fields:
+                value = row.get(field)
+                if value is None:
+                    value = ""
+                if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+                    value = "'" + value
+                values.append(value)
+            sheet.append(values)
         sheet.freeze_panes = "A2"
         sheet.auto_filter.ref = sheet.dimensions
         for column in sheet.columns:
