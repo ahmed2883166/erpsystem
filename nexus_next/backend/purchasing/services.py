@@ -15,7 +15,7 @@ from accounting.services import get_account_for_role, post_journal, reverse_oper
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, ExchangeRate, FiscalYear
 from core.money import round_currency_amount
-from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine
+from inventory.models import Product, StockBalance, StockCostConsumption, StockCostLayer, StockMovement, StockMovementJournalLink, StockMovementLine, Warehouse
 from inventory.services import post_stock_movement
 
 from .models import LandedCostAllocation, LandedCostDistribution, LandedCostDocument, PurchaseInvoice, PurchaseInvoiceLine, PurchaseInvoiceTaxAllocation, PurchaseOrder, PurchaseOrderLine, PurchaseOrderReceiptLine, PurchaseReceipt, SupplierPayment, SupplierRefund, SupplierReturn, SupplierReturnLine
@@ -1619,9 +1619,32 @@ def post_landed_cost_document(document_id, user):
     allocations = list(document.allocations.select_for_update(of=("self",)).select_related(
         "source_invoice_line__expense_account", "receipt_line__product",
         "receipt_line__movement", "receipt_line__movement__destination_warehouse",
-    ).order_by("pk"))
+    ).order_by("receipt_line_id", "source_invoice_line_id", "pk"))
     if not allocations:
         raise ValidationError("مستند الرسملة لا يحتوي على بنود.")
+
+    # Match inventory posting lock order: products -> warehouses -> balances -> cost layers -> consumptions.
+    receipt_line_ids = sorted({line.receipt_line_id for line in allocations})
+    product_ids = sorted({line.receipt_line.product_id for line in allocations})
+    warehouse_ids = set(StockCostLayer.objects.filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).values_list("warehouse_id", flat=True))
+    warehouse_ids.update(StockMovementLine.objects.filter(
+        pk__in=receipt_line_ids,
+    ).values_list("movement__destination_warehouse_id", flat=True))
+    warehouse_ids.discard(None)
+    list(Product.objects.select_for_update().filter(pk__in=product_ids).order_by("pk"))
+    list(Warehouse.objects.select_for_update().filter(pk__in=sorted(warehouse_ids)).order_by("pk"))
+    list(StockBalance.objects.select_for_update().filter(
+        product_id__in=product_ids, warehouse_id__in=warehouse_ids,
+    ).order_by("id"))
+    list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+    list(StockCostConsumption.objects.select_for_update(of=("self",)).filter(
+        source_layer__root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+
     if sum((line.amount for line in allocations), Decimal("0")) != document.total_amount:
         raise ValidationError("إجمالي مستند الرسملة لا يطابق مجموع بنوده.")
 
@@ -1772,9 +1795,31 @@ def reverse_landed_cost_document(document_id, user, entry_date):
 
     allocations = list(document.allocations.select_for_update(of=("self",)).select_related(
         "source_invoice_line", "receipt_line__product",
-    ).prefetch_related("distributions").order_by("pk"))
+    ).prefetch_related("distributions").order_by("receipt_line_id", "source_invoice_line_id", "pk"))
     if not allocations:
         raise ValidationError("لا توجد بنود رسملة يمكن عكسها.")
+
+    # Lock the same inventory dimensions in the same order used by stock movements.
+    receipt_line_ids = sorted({line.receipt_line_id for line in allocations})
+    product_ids = sorted({line.receipt_line.product_id for line in allocations})
+    warehouse_ids = set(StockCostLayer.objects.filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).values_list("warehouse_id", flat=True))
+    warehouse_ids.update(StockMovementLine.objects.filter(
+        pk__in=receipt_line_ids,
+    ).values_list("movement__destination_warehouse_id", flat=True))
+    warehouse_ids.discard(None)
+    list(Product.objects.select_for_update().filter(pk__in=product_ids).order_by("pk"))
+    list(Warehouse.objects.select_for_update().filter(pk__in=sorted(warehouse_ids)).order_by("pk"))
+    list(StockBalance.objects.select_for_update().filter(
+        product_id__in=product_ids, warehouse_id__in=warehouse_ids,
+    ).order_by("id"))
+    list(StockCostLayer.objects.select_for_update(of=("self",)).filter(
+        root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
+    list(StockCostConsumption.objects.select_for_update(of=("self",)).filter(
+        source_layer__root_source_line_id__in=receipt_line_ids,
+    ).order_by("pk"))
 
     for allocation in allocations:
         if not allocation.source_journal_entry_id:
