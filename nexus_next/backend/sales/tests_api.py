@@ -14,7 +14,7 @@ from approvals.models import DiscountApprovalPolicy, SalesInvoiceApproval
 from companies.access import resolve_warehouse_branch
 from companies.models import Branch, Company, CompanyMembership, Currency, ExchangeRate, FiscalYear
 from customers.models import Customer, CustomerDiscountRule
-from sales.models import CustomerReceipt, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesDocumentTemplate
+from sales.models import CustomerReceipt, CustomerReceiptBatch, SalesInvoice, SalesInvoiceLine, SalesQuotation, SalesDocumentTemplate
 from inventory.models import Product, StockBalance, StockCostConsumption, StockMovement, StockMovementLine, UnitOfMeasure, Warehouse
 from inventory.services import post_stock_movement
 
@@ -2659,10 +2659,10 @@ class SalesWorkflowTests(APITestCase):
             SalesDocumentTemplate.objects.get(pk=delivery_template.pk).config["footer_text"],
             "تم تغيير القالب",
         )
-        receipt.refresh_from_db()
-        self.assertEqual(receipt.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
-        batch.refresh_from_db()
-        self.assertEqual(batch.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
+        saved_receipt = CustomerReceipt.objects.get(pk=receipt.data["id"])
+        self.assertEqual(saved_receipt.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
+        saved_batch = CustomerReceiptBatch.objects.get(pk=batch.data["id"])
+        self.assertEqual(saved_batch.print_template_snapshot["config"]["footer_text"], "نسخة ثابتة")
         saved_return = self.client.get(
             f"/api/sales-documents/returns/{sales_return.data['id']}/"
         ).data
