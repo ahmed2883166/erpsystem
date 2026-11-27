@@ -1427,6 +1427,53 @@ class SupplierRefundViewSet(PurchaseBaseViewSet):
             "rows": rows,
         })
 
+    @action(detail=False, methods=("get",), url_path="analysis-report-export-excel")
+    def analysis_report_export_excel(self, request):
+        """تصدير تحليل المشتريات إلى Excel بنفس نطاق الصلاحيات والفلاتر."""
+        report_data = self.analysis_report(request).data
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "تحليل المشتريات"
+        fields = [
+            ("kind", "النوع"), ("supplier_name", "المورد"),
+            ("product_code", "كود الصنف"), ("product_name", "الصنف"),
+            ("expense_account_code", "كود حساب المصروف"), ("expense_account_name", "حساب المصروف"),
+            ("branch_name", "الفرع"), ("warehouse_name", "المخزن"),
+            ("activity_name", "النشاط"), ("invoice_count", "عدد الفواتير"),
+            ("line_count", "عدد البنود"), ("quantity", "الكمية"),
+            ("returned_quantity", "الكمية المرتجعة"), ("purchase_net", "قيمة المشتريات"),
+            ("returned_net", "قيمة المرتجعات"), ("net_purchases", "صافي المشتريات"),
+            ("nonrecoverable_tax", "ضريبة غير قابلة للخصم"),
+            ("total_cost", "التكلفة بعد الضريبة غير القابلة للخصم"), ("tax_amount", "إجمالي الضريبة"),
+        ]
+        sheet.append([label for _, label in fields])
+        for row in report_data["rows"]:
+            values = []
+            for key, _ in fields:
+                value = row.get(key, "")
+                if value is None:
+                    value = ""
+                if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\\t", "\\r")):
+                    value = "'" + value
+                values.append(value)
+            sheet.append(values)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for column in sheet.columns:
+            width = min(max(max(len(str(cell.value or "")) for cell in column) + 2, 12), 36)
+            sheet.column_dimensions[column[0].column_letter].width = width
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+        response_file = HttpResponse(
+            output.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response_file["Content-Disposition"] = (
+            f'attachment; filename="purchase-analysis-report-{report_data["company"]}.xlsx"'
+        )
+        return response_file
+
 
 class SupplierPaymentViewSet(PurchaseBaseViewSet):
     serializer_class = SupplierPaymentSerializer
