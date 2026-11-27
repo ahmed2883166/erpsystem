@@ -2714,6 +2714,44 @@ class SalesWorkflowTests(APITestCase):
         self.assertEqual(invoice_templates.status_code, 200, invoice_templates.data)
         self.assertEqual(len(invoice_templates.data), 0)
 
+    def test_sales_performance_allocates_delivery_cost_by_partially_invoiced_quantity(self):
+        delivery_id, delivery_line_id = self._create_delivery("REPORT-PARTIAL-COST")
+        invoice_ids = []
+        for suffix in ("A", "B"):
+            invoice = self.client.post("/api/sales-documents/invoices/", {
+                "company": self.company.pk,
+                "customer": self.customer.pk,
+                "delivery": delivery_id,
+                "invoice_number": f"REPORT-PARTIAL-{suffix}",
+                "invoice_date": "2026-03-10",
+                "lines": [{
+                    "delivery_line": delivery_line_id,
+                    "quantity": "1",
+                    "unit_price": "100",
+                    "tax_rate": "0",
+                }],
+            }, format="json")
+            self.assertEqual(invoice.status_code, 201, invoice.data)
+            posted = self.client.post(
+                f"/api/sales-documents/invoices/{invoice.data['id']}/post/", {}, format="json"
+            )
+            self.assertEqual(posted.status_code, 200, posted.data)
+            invoice_ids.append(invoice.data["id"])
+
+        report = self.client.get(
+            f"/api/sales-documents/invoices/sales-performance/?company={self.company.pk}"
+            "&date_from=2026-03-10&date_to=2026-03-10"
+        )
+        self.assertEqual(report.status_code, 200, report.data)
+        # The delivery costs 80 for two units. Each partial invoice must receive
+        # only half of that cost; summing the full delivery-line cost per invoice
+        # would incorrectly double COGS to 160.
+        self.assertEqual(report.data["totals"]["invoice_count"], 2)
+        self.assertEqual(report.data["totals"]["net_cost"], "80.0000")
+        self.assertEqual(report.data["totals"]["gross_profit"], "120.0000")
+        self.assertEqual(report.data["by_customer"][0]["net_cost"], "80.0000")
+        self.assertEqual(report.data["by_product"][0]["net_cost"], "80.0000")
+
     def test_sales_performance_report_compares_sales_returns_and_gross_profit(self):
         delivery_id, delivery_line_id = self._create_delivery("REPORT-DEL-001")
         invoice = self.client.post("/api/sales-documents/invoices/", {

@@ -5,7 +5,7 @@ from io import BytesIO
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import HttpResponse
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -1032,6 +1032,10 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
         def amount(value):
             return value if value is not None else Decimal("0")
 
+        def cost_amount(value):
+            # Monetary cost is stored and reported to four decimal places.
+            return amount(value).quantize(Decimal("0.0001"))
+
         if product_id is not None:
             # عند اختيار صنف، تُحسب الإجماليات من بنوده فقط لا من إجمالي الفاتورة التي قد تضم أصنافًا أخرى.
             sales_totals = invoice_lines.aggregate(
@@ -1053,19 +1057,31 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             )
             invoice_count = invoices.count()
             return_count = returns.count()
-        sales_cost = amount(invoice_lines.aggregate(total=Sum("delivery_line__cost_amount"))["total"])
+        def invoice_lines_with_allocated_cost():
+            # Annotate the per-invoice share first, then aggregate the annotation.
+            # This avoids passing a mutable expression directly into multiple aggregates.
+            return invoice_lines.annotate(
+                _allocated_sales_cost=ExpressionWrapper(
+                    F("delivery_line__cost_amount") * F("quantity") / F("delivery_line__quantity"),
+                    output_field=DecimalField(max_digits=20, decimal_places=4),
+                )
+            )
+
+        sales_cost = cost_amount(
+            invoice_lines_with_allocated_cost().aggregate(total=Sum("_allocated_sales_cost"))["total"]
+        )
         return_cost = amount(return_lines.aggregate(total=Sum("cost_amount"))["total"])
         sales_net = amount(sales_totals["net"])
         returned_net = amount(return_totals["net"])
         net_sales = sales_net - returned_net
         net_cost = sales_cost - return_cost
 
-        customer_sales = invoice_lines.values(
+        customer_sales = invoice_lines_with_allocated_cost().values(
             "invoice__customer_id", "invoice__customer__name_ar",
         ).annotate(
             invoice_count=Count("invoice_id", distinct=True),
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+            discount=Sum("discount_amount"), cost=Sum("_allocated_sales_cost"),
         )
         customer_returns = return_lines.values(
             "sales_return__invoice__customer_id",
@@ -1087,7 +1103,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "return_net": Decimal("0"),
                 "sales_tax": amount(row["tax"]),
                 "return_tax": Decimal("0"),
-                "sales_cost": amount(row["cost"]),
+                "sales_cost": cost_amount(row["cost"]),
                 "return_cost": Decimal("0"),
             }
         for row in customer_returns:
@@ -1110,11 +1126,11 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
             customer["return_tax"] += amount(row["tax"])
             customer["return_cost"] += amount(row["cost"])
 
-        product_sales = invoice_lines.values(
+        product_sales = invoice_lines_with_allocated_cost().values(
             "product_id", "product__code", "product__name_ar",
         ).annotate(
             quantity=Sum("quantity"), net=Sum("net_amount"), tax=Sum("tax_amount"),
-            discount=Sum("discount_amount"), cost=Sum("delivery_line__cost_amount"),
+            discount=Sum("discount_amount"), cost=Sum("_allocated_sales_cost"),
             invoice_count=Count("invoice_id", distinct=True),
         )
         product_returns = return_lines.values(
@@ -1138,7 +1154,7 @@ class SalesInvoiceViewSet(SalesBaseViewSet):
                 "return_net": Decimal("0"),
                 "sales_tax": amount(row["tax"]),
                 "return_tax": Decimal("0"),
-                "sales_cost": amount(row["cost"]),
+                "sales_cost": cost_amount(row["cost"]),
                 "return_cost": Decimal("0"),
             }
         for row in product_returns:
