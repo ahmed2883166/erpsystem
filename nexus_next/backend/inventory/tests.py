@@ -939,7 +939,7 @@ class StockTransferLifecycleTests(StockPostingServiceTests):
 
 
     def test_fifo_cost_layers_keep_their_parentage_through_partial_receipts(self):
-        from .models import StockTransfer, StockCostLayer, Warehouse
+        from .models import StockCostLayer, Warehouse
         from .transfer_services import dispatch_stock_transfer, receive_stock_transfer
 
         self.product.costing_method = Product.CostingMethod.FIFO
