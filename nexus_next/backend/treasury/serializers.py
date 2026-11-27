@@ -2,7 +2,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from django.db import models
 from companies.models import Currency, ExchangeRate
-from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule
+from .models import TreasuryAccount, TreasuryTransaction, TreasuryCheque, TreasuryFxPosition, TreasuryFxRevaluation, BankReconciliation, BankStatementLine, CashCommitment, CashCommitmentPayment, CashCommitmentSchedule, PettyCashFund, PettyCashExpense, PettyCashCount, PettyCashSettlement, PettyCashTransfer
 
 
 class TreasuryAccountSerializer(serializers.ModelSerializer):
@@ -467,3 +467,83 @@ class CashCommitmentScheduleSerializer(serializers.ModelSerializer):
         if end_date and next_due and end_date < next_due:
             raise serializers.ValidationError({"end_date": "تاريخ النهاية يسبق أول استحقاق."})
         return attrs
+
+
+class PettyCashFundSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source="company.name_ar", read_only=True)
+    branch_name = serializers.CharField(source="branch.name_ar", read_only=True)
+    custodian_name = serializers.CharField(source="custodian.get_full_name", read_only=True)
+    funding_account_name = serializers.CharField(source="funding_account.name_ar", read_only=True)
+    petty_cash_account_name = serializers.CharField(source="petty_cash_account.name_ar", read_only=True)
+    class Meta:
+        model = PettyCashFund
+        fields = ("id", "company", "company_name", "branch", "branch_name", "code", "name",
+                  "custodian", "custodian_name", "funding_account", "funding_account_name",
+                  "petty_cash_account", "petty_cash_account_name", "authorized_amount",
+                  "status", "created_at", "updated_at")
+        read_only_fields = ("created_at", "updated_at")
+
+    def validate(self, attrs):
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        branch = attrs.get("branch", getattr(self.instance, "branch", None))
+        funding = attrs.get("funding_account", getattr(self.instance, "funding_account", None))
+        petty = attrs.get("petty_cash_account", getattr(self.instance, "petty_cash_account", None))
+        custodian = attrs.get("custodian", getattr(self.instance, "custodian", None))
+        if company and branch and branch.company_id != company.pk:
+            raise serializers.ValidationError({"branch": "الفرع لا يتبع الشركة."})
+        for field, account in (("funding_account", funding), ("petty_cash_account", petty)):
+            if account and company and account.company_id != company.pk:
+                raise serializers.ValidationError({field: "الحساب لا يتبع الشركة."})
+            if account and branch and account.branch_id not in (None, branch.pk):
+                raise serializers.ValidationError({field: "الحساب لا يتبع فرع العهدة."})
+            if account and company and account.currency_code != company.base_currency.code:
+                raise serializers.ValidationError({field: "العهدة بالعملة الأساسية للشركة حاليًا."})
+        if petty and petty.kind != TreasuryAccount.Kind.CASH:
+            raise serializers.ValidationError({"petty_cash_account": "اختر حساب صندوق مخصصًا للعهدة."})
+        if petty and petty.account.nature != ChartOfAccount.Nature.ASSET:
+            raise serializers.ValidationError({"petty_cash_account": "حساب العهدة يجب أن يكون أصلًا."})
+        if funding and petty and funding.pk == petty.pk:
+            raise serializers.ValidationError("حساب التمويل يجب أن يختلف عن حساب العهدة.")
+        if custodian and not custodian.is_active:
+            raise serializers.ValidationError({"custodian": "أمين العهدة يجب أن يكون مستخدمًا نشطًا."})
+        return attrs
+
+
+class PettyCashExpenseSerializer(serializers.ModelSerializer):
+    fund_name = serializers.CharField(source="fund.name", read_only=True)
+    expense_account_code = serializers.CharField(source="expense_account.code", read_only=True)
+    expense_account_name = serializers.CharField(source="expense_account.name_ar", read_only=True)
+    settlement_journal_number = serializers.CharField(source="settlement.journal_entry.entry_number", read_only=True, default="")
+    class Meta:
+        model = PettyCashExpense
+        fields = ("id", "fund", "fund_name", "expense_date", "description", "amount",
+                  "expense_account", "expense_account_code", "expense_account_name",
+                  "receipt_number", "vendor_name", "status", "settlement",
+                  "settlement_journal_number", "created_at", "updated_at")
+        read_only_fields = ("status", "settlement", "created_at", "updated_at")
+
+    def validate(self, attrs):
+        fund = attrs.get("fund", getattr(self.instance, "fund", None))
+        account = attrs.get("expense_account", getattr(self.instance, "expense_account", None))
+        if fund and fund.status != PettyCashFund.Status.ACTIVE:
+            raise serializers.ValidationError({"fund": "لا يمكن تسجيل مصروف على عهدة غير نشطة."})
+        if fund and account:
+            if account.company_id != fund.company_id or account.is_group or not account.is_active or not account.allow_posting or account.nature != ChartOfAccount.Nature.EXPENSE:
+                raise serializers.ValidationError({"expense_account": "اختر حساب مصروف تفصيليًا ونشطًا تابعًا للشركة."})
+        amount = attrs.get("amount", getattr(self.instance, "amount", None))
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError({"amount": "المبلغ يجب أن يكون أكبر من صفر."})
+        return attrs
+
+
+class PettyCashCountSerializer(serializers.ModelSerializer):
+    variance = serializers.SerializerMethodField()
+    counted_by_name = serializers.CharField(source="counted_by.get_full_name", read_only=True)
+    class Meta:
+        model = PettyCashCount
+        fields = ("id", "fund", "count_date", "expected_balance", "actual_balance",
+                  "variance", "notes", "counted_by", "counted_by_name", "created_at")
+        read_only_fields = ("expected_balance", "counted_by", "created_at")
+
+    def get_variance(self, obj):
+        return obj.variance
