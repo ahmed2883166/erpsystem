@@ -742,10 +742,17 @@ class TreasuryAccountViewSet(TreasuryBaseViewSet):
             company_id=company_id, status__in=(CashCommitment.Status.OPEN, CashCommitment.Status.PARTIALLY_PAID),
             due_date__lte=end_date,
         ).select_related("branch")
+        company_wide_commitment_access = has_company_wide_branch_access(request.user, company_id)
         if branch_id:
-            commitment_qs = commitment_qs.filter(models.Q(branch_id=branch_id) | models.Q(branch__isnull=True))
-        elif branch_ids:
-            commitment_qs = commitment_qs.filter(models.Q(branch_id__in=branch_ids) | models.Q(branch__isnull=True))
+            commitment_scope = models.Q(branch_id=branch_id)
+            if company_wide_commitment_access:
+                commitment_scope |= models.Q(branch__isnull=True)
+            commitment_qs = commitment_qs.filter(commitment_scope)
+        else:
+            commitment_scope = models.Q(branch_id__in=branch_ids)
+            if company_wide_commitment_access:
+                commitment_scope |= models.Q(branch__isnull=True)
+            commitment_qs = commitment_qs.filter(commitment_scope)
         for commitment in commitment_qs:
             payments = commitment.payments.select_related("journal_entry", "reversal_journal_entry").filter(payment_date__lte=today)
             paid_base = sum((
